@@ -6,14 +6,14 @@ import { prisma } from './prisma.js';
 // ── 加密（AES-256-GCM）：用用户自己的 Key，服务端只加密代管 ──
 const SECRET = process.env.AI_KEY_SECRET || 'dev-ai-secret-change-in-production';
 const KEY = crypto.createHash('sha256').update(SECRET).digest();
-function enc(text: string): string {
+export function enc(text: string): string {
   if (!text) return '';
   const iv = crypto.randomBytes(12);
   const c = crypto.createCipheriv('aes-256-gcm', KEY, iv);
   const ct = Buffer.concat([c.update(text, 'utf8'), c.final()]);
   return Buffer.concat([iv, c.getAuthTag(), ct]).toString('base64');
 }
-function dec(b64: string): string {
+export function dec(b64: string): string {
   if (!b64) return '';
   try {
     const buf = Buffer.from(b64, 'base64');

@@ -19,6 +19,17 @@ model Tenant {
   users              User[]
   accounts           Account[]
   aiConfig           AiConfig?
+  qccConfig          QccConfig?
+}
+
+// 工作区自配的企查查 OpenAPI 凭证（BYO-key）。secretKey 加密存储。
+model QccConfig {
+  tenantId     String   @id
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  baseUrl      String   @default("https://api.qichacha.com")
+  appKey       String   @default("")
+  secretKeyEnc String   @default("")
+  updatedAt    DateTime @updatedAt
 }
 
 // 工作区自配的 AI 模型（BYO-key）：OpenAI 兼容。key 加密存储，用用户自己的额度调用。

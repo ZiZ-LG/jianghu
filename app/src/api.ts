@@ -57,6 +57,12 @@ export const api = {
   suggestGenerate: (opportunityId: string): Promise<{ added: number; suggestions: Suggestion[] }> => req('/api/suggest/generate', { method: 'POST', body: JSON.stringify({ opportunityId }) }),
   suggestAccept: (id: string): Promise<{ edge: any }> => req(`/api/suggest/${id}/accept`, { method: 'POST' }),
   suggestReject: (id: string): Promise<{ ok: true }> => req(`/api/suggest/${id}/reject`, { method: 'POST' }),
+  // 企查查 / 自动建图
+  qccConfig: (): Promise<{ configured: boolean; baseUrl: string; appKey: string; hasSecret: boolean }> => req('/api/qcc/config'),
+  qccSaveConfig: (b: { baseUrl?: string; appKey?: string; secretKey?: string }) => req('/api/qcc/config', { method: 'PUT', body: JSON.stringify(b) }),
+  qccTest: (): Promise<{ ok: boolean; message?: string }> => req('/api/qcc/test', { method: 'POST' }),
+  enrichCompany: (name: string): Promise<{ source: string; company: string; persons: { name: string; title: string }[]; note: string }> =>
+    req('/api/enrich/company', { method: 'POST', body: JSON.stringify({ name }) }),
 };
 
 export interface Suggestion {

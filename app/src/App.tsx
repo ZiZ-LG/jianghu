@@ -17,6 +17,7 @@ import { TeamBilling } from './components/TeamBilling';
 import { AiSettings } from './components/AiSettings';
 import { StrategyConsole } from './components/StrategyConsole';
 import { SuggestionPanel } from './components/SuggestionPanel';
+import { EnrichPanel } from './components/EnrichPanel';
 
 export default function App() {
   const [state, dispatch] = useReducer(reducer, { accounts: [] });
@@ -37,6 +38,7 @@ export default function App() {
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [generating, setGenerating] = useState(false);
+  const [enrichOpen, setEnrichOpen] = useState(false);
 
   // 启动：有 token 则恢复会话 + 拉取云端数据
   useEffect(() => {
@@ -142,6 +144,20 @@ export default function App() {
     catch (e: any) { setSyncErr('忽略失败：' + e.message); }
   };
 
+  // ── 企查查自动建图：导入发现的关键人为节点（带溯源日志，待验证）──
+  const importPersons = (persons: { name: string; title: string; source: string }[]) => {
+    if (!account) return;
+    let n = account.persons.filter((p) => !p.isCompetitor).length;
+    const today = new Date().toISOString().slice(0, 10);
+    const label = (src: string) => (src === 'qcc' ? '企查查导入' : src === 'ai' ? 'AI 推测·待核实' : '角色待补齐');
+    for (const dp of persons) {
+      const x = 220 + (n % 4) * 150, y = 150 + Math.floor(n / 4) * 135; n++;
+      const p = newPerson(dp.name, dp.title, x, y, false);
+      p.logs = [{ date: today, content: `📥 ${label(dp.source)}（${account.name}）`, visibility: 'team' }];
+      act({ type: 'ADD_PERSON', accId: account.id, person: p });
+    }
+  };
+
   if (booting) return <div className="boot">加载中…</div>;
   if (!auth) return <Auth onAuthed={onAuthed} />;
 
@@ -183,6 +199,7 @@ export default function App() {
               <span className="mt-name">{opp.name}</span>
               <button className="btn ghost xs" onClick={() => setOppFormOpen(true)}>编辑商机</button>
               <button className="btn ghost xs" onClick={() => setRelEditorOpen(true)}>＋ 关系</button>
+              <button className="btn ghost xs" onClick={() => setEnrichOpen(true)}>🏢 建图</button>
               <button className="btn ghost xs" onClick={() => setSuggestOpen(true)}>🔮 荐关系{suggestions.length > 0 ? ` (${suggestions.length})` : ''}</button>
               <button className="btn primary xs" onClick={() => setConsoleOpen(true)}>🧠 AI 推演</button>
             </div>
@@ -223,6 +240,9 @@ export default function App() {
           onClose={() => setConsoleOpen(false)} onOpenSettings={() => setAiSettingsOpen(true)} />
       )}
       {aiSettingsOpen && <AiSettings role={auth.user.role} onClose={() => setAiSettingsOpen(false)} />}
+      {enrichOpen && account && (
+        <EnrichPanel accountName={account.name} role={auth.user.role} onImport={importPersons} onClose={() => setEnrichOpen(false)} />
+      )}
       {suggestOpen && (
         <SuggestionPanel suggestions={suggestions} generating={generating}
           onRegenerate={generateSuggestions} onAccept={acceptSuggestion} onReject={rejectSuggestion}

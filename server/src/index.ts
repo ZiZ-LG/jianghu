@@ -11,6 +11,7 @@ import { applyAction } from './mutate.js';
 import { createDemoForTenant } from './seed-demo.js';
 import { aiRoutes } from './ai.js';
 import { suggestRoutes } from './suggest.js';
+import { enrichRoutes } from './enrich.js';
 
 // 加载本地 .env（生产环境用真实环境变量，文件不存在则忽略）
 try { process.loadEnvFile(); } catch { /* no .env in prod */ }
@@ -34,6 +35,7 @@ app.get('/api/health', async () => ({ ok: true }));
 authRoutes(app);
 aiRoutes(app);
 suggestRoutes(app);
+enrichRoutes(app);
 
 // ── 数据：拉取整树 / 应用变更 ──
 app.get('/api/state', { preHandler: [app.authenticate] }, async (req) => assembleState(req.user.tenantId));
