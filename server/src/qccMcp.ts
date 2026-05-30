@@ -95,14 +95,15 @@ export async function qccMcpFetch(cfg: QccMcpConfig, company: string): Promise<D
     });
   } catch { /* 通知失败不影响后续调用 */ }
 
-  // 3) 调用关键人员工具。不同账号工具名可能略有差异，按优先级尝试。
-  const candidates = ['get_key_personnel', 'get_company_key_personnel', 'get_main_staff', 'get_company_profile'];
+  // 3) 调用关键人员工具。企查查 company 服务器的真实工具名 = get_key_personnel，入参仅 searchKey。
+  //    （保留少量候选以兼容不同账号/未来变更；真实账号实测以 get_key_personnel 命中。）
+  const candidates = ['get_key_personnel', 'get_company_key_personnel', 'get_main_staff'];
   let lastErr = '';
   for (const tool of candidates) {
     try {
       const r = await rpc(cfg, {
         jsonrpc: '2.0', id: 2, method: 'tools/call',
-        params: { name: tool, arguments: { searchKey: company, keyword: company, companyName: company } },
+        params: { name: tool, arguments: { searchKey: company } },
       }, sessionId);
       if (r.json?.error) { lastErr = r.json.error?.message || ''; continue; }
       const persons = parsePersonsFromToolResult(r.json?.result);
@@ -132,8 +133,9 @@ function parsePersonsFromToolResult(result: any): DiscoveredPerson[] {
   return out.filter((p) => { const k = p.name + '|' + p.title; if (seen.has(k)) return false; seen.add(k); return true; });
 }
 
-const NAME_KEYS = ['name', 'Name', 'personName', 'PersonName', 'staffName'];
-const TITLE_KEYS = ['job', 'Job', 'position', 'Position', 'title', 'Title', 'jobTitle', 'duty'];
+// 企查查 MCP 真实返回为中文字段名（如 {"姓名":"梁华","职务":"董事长"}）；同时兼容英文键以防未来变更。
+const NAME_KEYS = ['姓名', 'name', 'Name', 'personName', 'PersonName', 'staffName'];
+const TITLE_KEYS = ['职务', '职位', 'job', 'Job', 'position', 'Position', 'title', 'Title', 'jobTitle', 'duty'];
 
 function collectPersons(node: any, out: DiscoveredPerson[], depth = 0): void {
   if (!node || depth > 6 || out.length >= 40) return;
