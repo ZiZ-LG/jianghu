@@ -1,0 +1,98 @@
+import { useState } from 'react';
+import type { Account, CustomerType } from '../types';
+import { CUSTOMER_TYPE_LABEL } from '../types';
+import { Modal } from './Modal';
+
+export function CustomerHub({
+  accounts, onOpen, onCreate, onLoadDemo, onDeleteAccount,
+  tenantName, userName, plan, onOpenTeam, onLogout, onOpenAiSettings,
+}: {
+  accounts: Account[];
+  onOpen: (accId: string) => void;
+  onCreate: (name: string, customerType: CustomerType) => void;
+  onLoadDemo: () => void;
+  onDeleteAccount: (accId: string) => void;
+  tenantName: string;
+  userName: string;
+  plan: string;
+  onOpenTeam: () => void;
+  onLogout: () => void;
+  onOpenAiSettings: () => void;
+}) {
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState('');
+  const [ctype, setCtype] = useState<CustomerType>(2);
+
+  const submit = () => {
+    if (!name.trim()) return;
+    onCreate(name.trim(), ctype);
+    setName(''); setCtype(2); setCreating(false);
+  };
+
+  return (
+    <div className="hub">
+      <div className="hub-top">
+        <div className="logo lg">江</div>
+        <div>
+          <div className="hub-title">{tenantName}</div>
+          <div className="hub-sub">江湖 · 销售干系人作战地图 · 客户工作台</div>
+        </div>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center' }}>
+          <button className="team-chip" onClick={onOpenAiSettings}>🧠 AI 模型</button>
+          <button className="team-chip" onClick={onOpenTeam}>👥 团队 · ❤️ 支持</button>
+          <span className="who">{userName}</span>
+          <button className="btn ghost" onClick={onLoadDemo}>载入示例</button>
+          <button className="btn primary" onClick={() => setCreating(true)}>＋ 新建客户</button>
+          <button className="btn ghost" onClick={onLogout} title="退出登录">退出</button>
+        </div>
+      </div>
+
+      {accounts.length === 0 ? (
+        <div className="hub-empty">
+          <div className="hub-empty-emoji">🗺️</div>
+          <div className="hub-empty-t">还没有客户</div>
+          <div className="hub-empty-s">从「新建客户」开始你的第一张作战地图，或先「载入示例数据」体验完整功能。</div>
+          <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+            <button className="btn primary" onClick={() => setCreating(true)}>＋ 新建客户</button>
+            <button className="btn ghost" onClick={onLoadDemo}>载入示例（西部电力建设集团）</button>
+          </div>
+        </div>
+      ) : (
+        <div className="hub-grid">
+          {accounts.map((a) => (
+            <div key={a.id} className="acc-card" onClick={() => onOpen(a.id)}>
+              <div className="acc-card-top">
+                <div className="acc-emoji">🏢</div>
+                <button className="acc-del" title="删除客户"
+                  onClick={(e) => { e.stopPropagation(); if (confirm(`删除客户「${a.name}」及其全部商机/干系人？`)) onDeleteAccount(a.id); }}>🗑</button>
+              </div>
+              <div className="acc-name">{a.name}</div>
+              <div className="acc-type">{CUSTOMER_TYPE_LABEL[a.customerType]}</div>
+              <div className="acc-meta">{a.opportunities.length} 个商机 · {a.persons.length} 位干系人</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {creating && (
+        <Modal title="新建客户" onClose={() => setCreating(false)}
+          footer={<>
+            <button className="btn ghost" onClick={() => setCreating(false)}>取消</button>
+            <button className="btn primary" onClick={submit} disabled={!name.trim()}>创建</button>
+          </>}>
+          <label className="fld">
+            <span>客户名称</span>
+            <input autoFocus value={name} onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && submit()} placeholder="如：西部电力建设集团" />
+          </label>
+          <label className="fld">
+            <span>客户类型</span>
+            <select value={ctype} onChange={(e) => setCtype(Number(e.target.value) as CustomerType)}>
+              {([1, 2, 3] as CustomerType[]).map((t) => <option key={t} value={t}>{CUSTOMER_TYPE_LABEL[t]}</option>)}
+            </select>
+          </label>
+        </Modal>
+      )}
+    </div>
+  );
+}

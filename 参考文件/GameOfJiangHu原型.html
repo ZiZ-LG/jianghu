@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Game of JiangHu</title>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Marked -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+        .transition-all { transition-property: all; transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1); transition-duration: 500ms; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        /* G64111 Color System */
+        .bg-role-A { background-color: #9333ea; color: white; } /* 紫 */
+        .bg-role-D { background-color: #dc2626; color: white; } /* 红 */
+        .bg-role-U { background-color: #2563eb; color: white; } /* 蓝 */
+        .bg-role-R { background-color: #f97316; color: white; } /* 橙 */
+        .bg-role-C { background-color: #16a34a; color: white; } /* 绿 */
+        .bg-role-K { background-color: #000000; color: white; } /* 黑 - 外部/杀手 */
+
+        /* Animation */
+        .typing-dot { animation: typing 1.4s infinite ease-in-out both; }
+        .typing-dot:nth-child(1) { animation-delay: -0.32s; }
+        .typing-dot:nth-child(2) { animation-delay: -0.16s; }
+        @keyframes typing { 0%, 80%, 100% { transform: scale(0); } 40% { transform: scale(1); } }
+        
+        .markdown-body p { margin-bottom: 0.5em; font-size: 0.9rem; }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-900 overflow-hidden">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+
+        // --- Icons ---
+        const ICON_PATHS = {
+            'users': <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></>,
+            'zap': <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>,
+            'layout-grid': <><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></>,
+            'globe': <><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></>,
+            'star': <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />,
+            'activity': <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>,
+            'target': <><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></>,
+            'play': <polygon points="5 3 19 12 5 21 5 3"/>,
+            'send': <><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></>,
+            'x': <><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>,
+            'plus': <><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></>,
+            'minus': <line x1="5" y1="12" x2="19" y2="12"/>,
+            'equal': <><line x1="5" y1="9" x2="19" y2="9"/><line x1="5" y1="15" x2="19" y2="15"/></>,
+            'chevron-down': <polyline points="6 9 12 15 18 9"/>,
+            'chevron-right': <polyline points="9 18 15 12 9 6"/>,
+            'building': <><rect x="4" y="2" width="16" height="20" rx="2" ry="2" /><line x1="9" y1="22" x2="9" y2="22.01" /><line x1="15" y1="22" x2="15" y2="22.01" /><line x1="12" y1="22" x2="12" y2="22.01" /><line x1="12" y1="2" x2="12" y2="4" /><line x1="4" y1="2" x2="4" y2="4" /><line x1="20" y1="2" x2="20" y2="4" /></>,
+            'calendar': <><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></>,
+            'cpu': <><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></>,
+            'briefcase': <><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></>,
+            'home': <><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></>,
+            'coffee': <><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></>,
+            'check': <polyline points="20 6 9 17 4 12"/>,
+            'skull': <><path d="m12.5 17-.5-1-.5 1h1z"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><path d="M8 20v2h8v-2"/><path d="M12.5 17l-.5-1-.5 1h1z"/><path d="M16 20a2 2 0 0 0 1.56-3.25 8 8 0 1 0-11.12 0A2 2 0 0 0 8 20"/></>,
+        };
+
+        const Icon = ({ name, size = 16, className = "" }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+                {ICON_PATHS[name] || ICON_PATHS['globe']}
+            </svg>
+        );
+
+        // --- Data Models ---
+
+        const SENTIMENT_ICONS = {
+            'positive': { char: '+', color: 'text-green-600', bg: 'bg-green-50', border: 'border-green-200' },
+            'negative': { char: '−', color: 'text-red-500', bg: 'bg-red-50', border: 'border-red-200' },
+            'neutral': { char: '=', color: 'text-gray-400', bg: 'bg-gray-50', border: 'border-gray-200' },
+            'supporter': { char: '⭐️', color: 'text-yellow-500', bg: 'bg-yellow-50', border: 'border-yellow-200' },
+            'opponent': { char: '❌', color: 'text-red-700', bg: 'bg-red-100', border: 'border-red-300' }
+        };
+
+        const SALES_STAGES = [
+            { id: 1, name: '线索收集', focus: ['zhao'] },
+            { id: 2, name: '立项商机', focus: ['zhao', 'qian'] },
+            { id: 3, name: '标准化引导', focus: ['sun', 'li', 'wang'] },
+            { id: 4, name: '需求调研', focus: ['li', 'zheng', 'wu'] },
+            { id: 5, name: '方案认可', focus: ['sun', 'qian', 'wang'] },
+            { id: 6, name: '客户立项', focus: ['zhao', 'qian'] },
+            { id: 7, name: '招投标', focus: ['qian', 'sun', 'wu'] },
+            { id: 8, name: '合同双签', focus: ['zhao', 'zhou'] },
+        ];
+
+        // 饱和数据注入
+        const ACCOUNT_DATA = {
+            id: 'power_group',
+            name: '中国电力建设集团 (Account Base)',
+            // 存量资产：基本信息 (8个节点)
+            nodes: [
+                { id: 'zhao', name: '赵建国', role: '集团副总', level: 1, form: { progress: 30, f:'孙子在美国', o:'技术转管理', r:'书法', m:'安全着陆' }, logs: [] },
+                { id: 'qian', name: '钱大钧', role: '物资部长', level: 2, form: { progress: 80, f:'儿子找工作', o:'采购深耕20年', r:'红酒', m:'权力变现' }, logs: [] },
+                { id: 'sun', name: '孙学文', role: '专家组长', level: 2, form: { progress: 90, f:'书香门第', o:'国务院津贴', r:'摄影', m:'学术尊重' }, logs: [] },
+                { id: 'li', name: '李进', role: '项目经理', level: 3, form: { progress: 50, f:'凤凰男', o:'执行力强', r:'王者荣耀', m:'升职加薪' }, logs: [] },
+                { id: 'zhou', name: '周小波', role: '财务审核', level: 3, form: { progress: 20, f:'二胎', o:'审计出身', r:'钓鱼', m:'稳定' }, logs: [] },
+                // 新增节点
+                { id: 'wu', name: '吴强', role: '采购经理', level: 3, form: { progress: 40, f:'单身', o:'钱大钧心腹', r:'KTV', m:'搞钱' }, logs: [] },
+                { id: 'zheng', name: '郑工', role: '信息骨干', level: 3, form: { progress: 60, f:'刚结婚', o:'技术宅', r:'动漫', m:'技术成长' }, logs: [] },
+                { id: 'wang', name: '王教授', role: '外部顾问', level: 2, form: { progress: 70, f:'未知', o:'行业大拿', r:'茶道', m:'咨询费' }, logs: [] },
+                { id: 'competitor', name: '友商A', role: '竞争对手', level: 2, form: { progress: 0, f:'', o:'', r:'', m:'' }, logs: [] } // L4 专用
+            ],
+            // L1 & L3 存量关系 (Org & Base Sentiment)
+            globalEdges: [
+                // L1 组织汇报 (正交线)
+                { source: 'zhao', target: 'qian', type: 'L1', label: '直属' },
+                { source: 'zhao', target: 'sun', type: 'L1', label: '分管' },
+                { source: 'qian', target: 'wu', type: 'L1', label: '直属' }, // 吴向钱汇报
+                { source: 'sun', target: 'zheng', type: 'L1', label: '师徒' }, // 郑向孙汇报
+                { source: 'li', target: 'qian', type: 'L1', label: '业务' }, // 李虚线向钱
+                { source: 'li', target: 'sun', type: 'L1', label: '技术' }, // 李虚线向孙
+                { source: 'qian', target: 'zhou', type: 'L1', label: '行政' },
+                
+                // L3 存量私交 (Base Sentiment)
+                { source: 'sun', target: 'li', type: 'L3', label: '校友', color: '#16a34a' },
+                { source: 'qian', target: 'wu', type: 'L3', label: '亲戚', color: '#16a34a' }, // 裙带关系
+                { source: 'qian', target: 'sun', type: 'L3', label: '宿怨', color: '#ef4444', style: 'dashed' }, // 长期不和
+                { source: 'wang', target: 'sun', type: 'L3', label: '同门', color: '#16a34a' }, // 外部专家关系
+            ],
+            // 增量机会：项目上下文
+            projects: [
+                {
+                    id: 'proj_west',
+                    name: '西部水电站数字化改造',
+                    stage: 3, // 标准化引导
+                    winScore: 45,
+                    // 动态覆盖：在此项目中的角色与态度
+                    nodeOverrides: {
+                        'zhao': { adur: 'A', sentiment: 'neutral' },
+                        'qian': { adur: 'R', sentiment: 'negative' }, 
+                        'sun':  { adur: 'C', sentiment: 'supporter' }, 
+                        'li':   { adur: 'U', sentiment: 'positive' },
+                        'zhou': { adur: 'R', sentiment: 'neutral' },
+                        'wu':   { adur: 'R', sentiment: 'opponent' }, // 吴是强反对
+                        'zheng':{ adur: 'U', sentiment: 'positive' }, // 郑支持
+                        'wang': { adur: 'R', sentiment: 'neutral' },  // 王顾问中立
+                        'competitor': { adur: 'K', sentiment: 'opponent' }
+                    },
+                    // 动态连线：项目权力流 (L2) & 情感 (L3 Project) & 战略 (L4)
+                    projectEdges: [
+                        // L2 决策权力 (Power)
+                        { source: 'sun', target: 'qian', type: 'L2', label: '技术否决', color: '#b91c1c', style: 'solid', width: 3 },
+                        { source: 'wang', target: 'zhao', type: 'L2', label: '顾问影响', color: '#9333ea', style: 'dashed', width: 2 }, // 专家影响老总
+                        { source: 'wu', target: 'li', type: 'L2', label: '卡流程', color: '#f97316', style: 'solid', width: 2 }, // 采购经理卡项目经理
+                        { source: 'zheng', target: 'sun', type: 'L2', label: '数据支撑', color: '#16a34a', style: 'solid' },
+                        { source: 'qian', target: 'zhou', type: 'L2', label: '授意严查', color: '#1f2937', style: 'solid', width: 2 },
+
+                        // L3 情感阵营 (Project Specific Sentiment)
+                        { source: 'wu', target: 'li', type: 'L3', label: '刁难', color: '#ef4444', style: 'solid' },
+                        { source: 'zheng', target: 'li', type: 'L3', label: '共鸣', color: '#16a34a', style: 'dashed' }, // 同为干活人
+                        { source: 'wang', target: 'qian', type: 'L3', label: '被拉拢', color: '#f97316', style: 'dashed' }, // 专家被钱拉拢
+
+                        // L4 战略本质 (Strategy & Risk)
+                        { source: 'competitor', target: 'wu', type: 'L4', label: '利益输送', color: '#ef4444', style: 'solid', width: 2 }, // 友商搞定吴
+                        { source: 'competitor', target: 'wang', type: 'L4', label: '学术公关', color: '#f97316', style: 'dashed' }, // 友商公关专家
+                        { source: 'sun', target: 'zhao', type: 'L4', label: '信任背书', color: '#16a34a', style: 'solid', width: 3 }, // 我方核心路径
+                    ]
+                }
+            ]
+        };
+
+        const LAYOUT = {
+            'zhao': { x: 400, y: 80 },
+            'wang': { x: 600, y: 80 }, // 外部专家在高层旁
+            'qian': { x: 250, y: 250 },
+            'sun':  { x: 550, y: 250 },
+            'wu':   { x: 150, y: 400 }, // 采购经理
+            'zhou': { x: 300, y: 400 },
+            'li':   { x: 450, y: 400 },
+            'zheng':{ x: 600, y: 400 }, // 信息骨干
+            'competitor': { x: 50, y: 250 } // 外部友商
+        };
+
+        // --- Gemini API ---
+        const callGemini = async (prompt, apiKey) => {
+            if (!apiKey) throw new Error("请输入 API Key");
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+            const payload = { contents: [{ parts: [{ text: prompt }] }] };
+            const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            const data = await response.json();
+            return data.candidates?.[0]?.content?.parts?.[0]?.text || "暂无回应";
+        };
+
+        // --- Sub-Components ---
+
+        const BadgeCorner = ({ position, children, className }) => {
+            const posClass = {
+                'tl': '-top-2 -left-2',
+                'tr': '-top-2 -right-2',
+                'bl': '-bottom-2 -left-2',
+                'br': '-bottom-2 -right-2'
+            }[position];
+            return (
+                <div className={`absolute ${posClass} w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm border border-white z-20 ${className}`}>
+                    {children}
+                </div>
+            );
+        };
+
+        const ProgressBar = ({ percent }) => (
+            <div className="absolute -bottom-4 left-1/2 transform -translate-x-1/2 w-10 h-1.5 bg-gray-200 rounded-full overflow-hidden border border-white shadow-sm">
+                <div className="h-full bg-blue-600 rounded-full transition-all duration-500" style={{ width: `${percent}%` }}></div>
+            </div>
+        );
+
+        const NodeItem = ({ node, override, pos, onClick, showBadges, showProgress, isHidden }) => {
+            if (isHidden) return null;
+
+            // Merge base data with project override
+            const data = { ...node, ...override };
+            
+            // Resolve Role Badge (TL)
+            const role = data.adur || '?';
+            const roleColor = `bg-role-${role}`;
+            
+            // Resolve Sentiment Badge (TR)
+            const sentiment = SENTIMENT_ICONS[data.sentiment || 'neutral'];
+
+            return (
+                <div 
+                    onClick={onClick}
+                    className="absolute w-16 h-16 cursor-pointer group transition-transform duration-300 hover:scale-105"
+                    style={{ left: pos.x, top: pos.y, transform: 'translate(-50%, -50%)' }}
+                >
+                    {/* Main Body */}
+                    <div className={`w-full h-full rounded-full bg-white border-2 flex items-center justify-center shadow-md relative z-10 transition-colors ${showBadges ? 'border-gray-300 group-hover:border-blue-400' : 'border-gray-200'}`}>
+                        {data.role === '竞争对手' ? (
+                            <Icon name="skull" size={24} className="text-gray-700" />
+                        ) : (
+                            <div className="text-xs font-bold text-gray-800 text-center leading-tight px-1">
+                                {node.name}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Badges (Only in Project Mode or specific views) */}
+                    {showBadges && (
+                        <>
+                            {/* TL: Role (ADUR) */}
+                            <BadgeCorner position="tl" className={`${roleColor} text-white`}>{role}</BadgeCorner>
+                            
+                            {/* TR: Sentiment */}
+                            <BadgeCorner position="tr" className={`${sentiment.bg} ${sentiment.color} ${sentiment.border}`}>{sentiment.char}</BadgeCorner>
+                        </>
+                    )}
+
+                    {/* Bottom: FORM Progress */}
+                    {(showBadges || showProgress) && data.role !== '竞争对手' && (
+                        <ProgressBar percent={node.form.progress} />
+                    )}
+
+                    {/* Role Description Label */}
+                    <div className="absolute top-full mt-5 left-1/2 transform -translate-x-1/2 whitespace-nowrap z-0">
+                        <div className="bg-gray-50/90 border border-gray-100 shadow-sm text-[9px] font-medium text-gray-500 px-2 py-0.5 rounded-full backdrop-blur-sm">
+                            {node.role}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const StrategyConsole = ({ logs, onSend, isThinking, apiKey, setApiKey }) => {
+            const [input, setInput] = useState('');
+            const scrollRef = useRef(null);
+            
+            useEffect(() => { if(scrollRef.current) scrollRef.current.scrollLeft = scrollRef.current.scrollWidth; }, [logs]);
+
+            return (
+                <div className="h-48 bg-white border-t border-gray-200 flex flex-col shadow-2xl z-30">
+                    <div className="h-8 bg-gray-50 border-b border-gray-200 px-4 flex items-center justify-between">
+                        <div className="flex items-center text-xs font-bold text-gray-600">
+                            <Icon name="activity" size={12} className="mr-1" /> 战略推演台 (Strategy Console)
+                        </div>
+                        <input type="password" value={apiKey} onChange={e=>setApiKey(e.target.value)} placeholder="Gemini API Key" className="bg-white border border-gray-300 rounded px-2 py-0.5 text-[10px] w-32 outline-none" />
+                    </div>
+                    <div className="flex-1 overflow-x-auto p-4 flex items-center space-x-4 bg-slate-50" ref={scrollRef}>
+                        {logs.map((log, i) => (
+                            <div key={i} className={`flex-shrink-0 w-72 p-3 rounded-lg border text-xs shadow-sm ${log.role === 'user' ? 'bg-blue-50 border-blue-200' : 'bg-white border-gray-200'}`}>
+                                <div className={`font-bold mb-1 uppercase tracking-wider ${log.role === 'user' ? 'text-blue-700' : 'text-purple-700'}`}>
+                                    {log.role === 'user' ? '► 假设策略' : '● 局势推演'}
+                                </div>
+                                <div className="leading-relaxed text-gray-700 whitespace-pre-wrap">{log.content}</div>
+                            </div>
+                        ))}
+                        {isThinking && <div className="flex-shrink-0 p-4"><div className="flex space-x-1"><div className="w-1.5 h-1.5 bg-gray-400 rounded-full typing-dot"></div><div className="w-1.5 h-1.5 bg-gray-400 rounded-full typing-dot"></div></div></div>}
+                    </div>
+                    <div className="h-12 border-t border-gray-200 bg-white px-4 flex items-center space-x-2">
+                        <Icon name="play" size={14} className="text-green-600" />
+                        <input 
+                            value={input}
+                            onChange={e=>setInput(e.target.value)}
+                            onKeyDown={e => e.key === 'Enter' && (onSend(input), setInput(''))}
+                            className="flex-1 text-xs outline-none bg-transparent"
+                            placeholder="输入假设策略（例如：如果我想绕过钱大钧直接找赵总，会有什么风险？）..."
+                        />
+                        <button onClick={() => {onSend(input); setInput('')}} className="p-1.5 bg-blue-600 text-white rounded hover:bg-blue-700"><Icon name="send" size={12} /></button>
+                    </div>
+                </div>
+            );
+        };
+
+        const DetailDrawer = ({ node, onClose }) => {
+            if (!node) return null;
+
+            const formItems = [
+                { key: 'f', label: 'Family (家庭)', icon: 'home', color: 'blue' },
+                { key: 'o', label: 'Occupation (职业)', icon: 'briefcase', color: 'purple' },
+                { key: 'r', label: 'Recreation (娱乐)', icon: 'coffee', color: 'orange' },
+                { key: 'm', label: 'Motivation (动力)', icon: 'target', color: 'red' }
+            ];
+
+            return (
+                <div className="w-96 bg-white border-l border-gray-200 flex flex-col h-full z-20 shadow-xl animate-in slide-in-from-right duration-300">
+                    <div className="h-14 border-b border-gray-100 flex items-center justify-between px-4 bg-gray-50">
+                        <span className="font-bold text-sm text-gray-700">情报档案</span>
+                        <button onClick={onClose}><Icon name="x" size={16} className="text-gray-400" /></button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-5">
+                        <div className="flex items-center space-x-3 mb-6">
+                            <div className="w-12 h-12 rounded-full bg-gray-200 flex items-center justify-center text-xl font-bold text-gray-600">{node.name[0]}</div>
+                            <div>
+                                <div className="font-bold text-lg">{node.name}</div>
+                                <div className="text-xs text-gray-500">{node.role}</div>
+                            </div>
+                        </div>
+                        
+                        <div className="mb-6">
+                            <div className="flex justify-between text-xs font-bold text-gray-500 mb-1"><span>FORM 完整度</span><span>{node.form.progress}%</span></div>
+                            <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden"><div className="h-full bg-blue-600" style={{width: `${node.form.progress}%`}}></div></div>
+                        </div>
+
+                        <div className="space-y-3 mb-8">
+                            {formItems.map(item => {
+                                const content = node.form[item.key];
+                                if (!content) return null;
+                                return (
+                                    <div key={item.key} className={`bg-${item.color}-50 p-3 rounded-lg border border-${item.color}-100`}>
+                                        <div className={`text-[10px] font-bold text-${item.color}-500 uppercase mb-1 flex items-center`}>
+                                            <span className="mr-1.5"><Icon name={item.icon} size={12} /></span>
+                                            {item.label}
+                                        </div>
+                                        <div className="text-xs text-gray-800 leading-relaxed">{content}</div>
+                                    </div>
+                                )
+                            })}
+                        </div>
+
+                        <div>
+                            <div className="text-xs font-bold text-gray-900 border-b border-gray-100 pb-2 mb-3 flex items-center"><Icon name="calendar" size={12} className="mr-1"/> 交往日志</div>
+                            <div className="space-y-4 pl-2 border-l border-gray-200 ml-1">
+                                {node.logs && node.logs.map((log, i) => (
+                                    <div key={i} className="relative">
+                                        <div className="absolute -left-[13px] top-1.5 w-2 h-2 rounded-full bg-blue-400 border-2 border-white"></div>
+                                        <div className="text-[10px] text-gray-400 mb-0.5">{log.date}</div>
+                                        <div className="text-xs text-gray-600 bg-gray-50 p-2 rounded">{log.content}</div>
+                                    </div>
+                                ))}
+                                {(!node.logs || node.logs.length === 0) && <div className="text-xs text-gray-400 italic pl-2">暂无记录</div>}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const Sidebar = ({ context, setContext, activeStage, setStage }) => {
+            const [isAccountExpanded, setIsAccountExpanded] = useState(true);
+            const [isProjectExpanded, setIsProjectExpanded] = useState(false);
+
+            return (
+                <aside className="w-64 bg-gray-50 border-r border-gray-200 flex flex-col z-20">
+                    <div className="h-14 flex items-center px-4 border-b border-gray-200 bg-white">
+                        <div className="w-6 h-6 bg-black text-white rounded flex items-center justify-center font-bold mr-2 text-xs">江</div>
+                        <span className="font-bold text-sm tracking-wide">Game of JiangHu</span>
+                    </div>
+                    
+                    <div className="flex-1 overflow-y-auto">
+                        <div className="p-4 pb-0">
+                            <div className="text-[10px] font-bold text-gray-400 uppercase mb-2">客户与商机 (Accounts)</div>
+                            <div className="space-y-1">
+                                {/* Level 1: Account Base */}
+                                <div 
+                                    onClick={() => { setContext('global'); setIsAccountExpanded(!isAccountExpanded); }} 
+                                    className={`px-3 py-2 rounded text-xs cursor-pointer flex items-center justify-between ${context === 'global' ? 'bg-gray-800 text-white shadow' : 'text-gray-600 hover:bg-gray-200'}`}
+                                >
+                                    <div className="flex items-center">
+                                        <Icon name="globe" size={12} className="mr-2" /> 
+                                        <span>中国电力建设集团 (存量)</span>
+                                    </div>
+                                    <Icon name={isAccountExpanded ? "chevron-down" : "chevron-right"} size={12} />
+                                </div>
+
+                                {/* Level 2: Opportunity Base (Nested) */}
+                                {isAccountExpanded && (
+                                    <div className="ml-3 pl-2 border-l-2 border-gray-200 space-y-1 animate-in slide-in-from-top-2 duration-200">
+                                        <div 
+                                            onClick={() => {
+                                                if (context !== 'proj_west') {
+                                                    setContext('proj_west');
+                                                    setIsProjectExpanded(true);
+                                                } else {
+                                                    setIsProjectExpanded(!isProjectExpanded);
+                                                }
+                                            }}
+                                            className={`px-3 py-2 rounded text-xs cursor-pointer flex items-center justify-between ${context === 'proj_west' ? 'bg-blue-600 text-white shadow' : 'text-gray-600 hover:bg-gray-100'}`}
+                                        >
+                                            <div className="flex items-center">
+                                                <Icon name="target" size={12} className="mr-2" /> 
+                                                <span>西部水电站 (动态)</span>
+                                            </div>
+                                            <Icon name={isProjectExpanded ? "chevron-down" : "chevron-right"} size={12} />
+                                        </div>
+
+                                        {/* Level 3: Sales Stages (Doubly Nested) */}
+                                        {isProjectExpanded && (
+                                            <div className="ml-3 mt-1 space-y-0.5 animate-in slide-in-from-top-2 duration-200">
+                                                {SALES_STAGES.map(stage => {
+                                                    const isActive = activeStage === stage.id && context === 'proj_west';
+                                                    return (
+                                                        <div 
+                                                            key={stage.id} 
+                                                            onClick={(e) => { 
+                                                                e.stopPropagation(); 
+                                                                setContext('proj_west');
+                                                                setStage(stage.id); 
+                                                            }}
+                                                            className={`pl-3 pr-2 py-1.5 text-[10px] cursor-pointer flex items-center rounded border-l-2 ${isActive ? 'border-blue-500 text-blue-700 bg-blue-50 font-bold' : 'border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-gray-700'}`}
+                                                        >
+                                                            {isActive && <div className="w-1.5 h-1.5 rounded-full bg-blue-500 mr-2"></div>}
+                                                            {stage.name}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Mac-style Legend */}
+                    <div className="p-4 bg-white/80 backdrop-blur border-t border-gray-200">
+                        <div className="text-[10px] font-bold text-gray-400 uppercase mb-2">图例说明</div>
+                        <div className="grid grid-cols-2 gap-2 text-[10px] text-gray-500">
+                            <div className="flex items-center"><div className="w-3 h-3 bg-role-A text-white flex items-center justify-center rounded mr-1">A</div> 批准者</div>
+                            <div className="flex items-center"><div className="w-3 h-3 bg-role-D text-white flex items-center justify-center rounded mr-1">D</div> 决策者</div>
+                            <div className="flex items-center"><div className="w-3 h-3 bg-role-U text-white flex items-center justify-center rounded mr-1">U</div> 使用者</div>
+                            <div className="flex items-center"><div className="w-3 h-3 bg-role-R text-white flex items-center justify-center rounded mr-1">R</div> 推荐者</div>
+                            <div className="flex items-center text-green-600"><Icon name="plus" size={10} className="mr-1"/> 好感</div>
+                            <div className="flex items-center text-red-500"><Icon name="x" size={10} className="mr-1"/> 反对</div>
+                        </div>
+                    </div>
+                </aside>
+            );
+        };
+
+        // --- Main Application ---
+
+        const App = () => {
+            // State
+            const [context, setContext] = useState('global'); 
+            const [view, setView] = useState('L1'); 
+            const [selectedNode, setSelectedNode] = useState(null);
+            const [apiKey, setApiKey] = useState('');
+            const [strategyLogs, setStrategyLogs] = useState([{ role: 'ai', content: 'G64111 战术推演系统已就绪。请选择一个项目并输入假设策略。' }]);
+            const [isThinking, setIsThinking] = useState(false);
+            const [activeStage, setActiveStage] = useState(3);
+            
+            // Pan & Zoom State
+            const [translateX, setTranslateX] = useState(0);
+            const [translateY, setTranslateY] = useState(0);
+            const [scale, setScale] = useState(1);
+            const [isDragging, setIsDragging] = useState(false);
+            const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+            const canvasRef = useRef(null);
+
+            // Derived Data
+            const currentProject = context === 'global' ? null : ACCOUNT_DATA.projects.find(p => p.id === context);
+            const isProjectMode = !!currentProject;
+
+            // Pan & Zoom Handlers
+            const handleMouseDown = (e) => {
+                // 如果点击的是节点或按钮，不启动拖拽
+                if (e.target.closest('.cursor-pointer') || e.target.closest('button')) {
+                    return;
+                }
+                if (e.button === 0) { // Left mouse button
+                    setIsDragging(true);
+                    setDragStart({ x: e.clientX - translateX, y: e.clientY - translateY });
+                    e.preventDefault();
+                }
+            };
+
+            const handleMouseMove = (e) => {
+                if (isDragging) {
+                    setTranslateX(e.clientX - dragStart.x);
+                    setTranslateY(e.clientY - dragStart.y);
+                    e.preventDefault();
+                }
+            };
+
+            const handleMouseUp = () => {
+                setIsDragging(false);
+            };
+
+            const handleWheel = (e) => {
+                e.preventDefault();
+                const delta = e.deltaY > 0 ? 0.9 : 1.1;
+                const newScale = Math.max(0.1, Math.min(3, scale * delta));
+                
+                // 获取鼠标在画布上的位置
+                const rect = canvasRef.current?.getBoundingClientRect();
+                if (rect) {
+                    const mouseX = e.clientX - rect.left;
+                    const mouseY = e.clientY - rect.top;
+                    
+                    // 计算缩放中心点相对于画布的位置
+                    const scalePointX = (mouseX - translateX) / scale;
+                    const scalePointY = (mouseY - translateY) / scale;
+                    
+                    // 调整平移，使缩放中心点保持不变
+                    setTranslateX(mouseX - scalePointX * newScale);
+                    setTranslateY(mouseY - scalePointY * newScale);
+                }
+                
+                setScale(newScale);
+            };
+
+            // Strategy Handler
+            const handleStrategy = async (text) => {
+                if(!text.trim()) return;
+                setStrategyLogs(prev => [...prev, { role: 'user', content: text }]);
+                setIsThinking(true);
+                
+                const prompt = `销售场景推演：
+                当前项目：${isProjectMode ? currentProject.name : '集团全景'}。
+                局势数据：${JSON.stringify(isProjectMode ? currentProject.nodeOverrides : '无')}。
+                用户策略：${text}。
+                请基于G64111方法论，预测该策略对ADUR角色和赢面分数的影响。`;
+
+                try {
+                    const res = await callGemini(prompt, apiKey);
+                    setStrategyLogs(prev => [...prev, { role: 'ai', content: res }]);
+                } catch(e) {
+                    setStrategyLogs(prev => [...prev, { role: 'ai', content: "API Key 无效或网络错误。" }]);
+                }
+                setIsThinking(false);
+            };
+
+            // Canvas Renderer
+            const renderCanvas = () => {
+                let edgesToRender = [];
+                
+                // Logic for mixing edges based on View & Context
+                if (view === 'L1') {
+                    // L1: Always show Global Org Lines (Orthogonal)
+                    edgesToRender = ACCOUNT_DATA.globalEdges.filter(e => e.type === 'L1');
+                } else if (isProjectMode) {
+                    // Project Context: L2/L3/L4 show Project Edges
+                    // L2: Power only
+                    // L3: Sentiment only
+                    // L4: Strategy/Risk only
+                    edgesToRender = currentProject.projectEdges.filter(e => e.type === view);
+                    
+                    // Fallback for L2 if no project specific L2 edges exist yet (optional logic, kept simple here)
+                } else {
+                    // Global Context L2/L3: Show base relationships (No L2 in base data example above, only L3)
+                    edgesToRender = ACCOUNT_DATA.globalEdges.filter(e => e.type === view);
+                }
+
+                return (
+                    <svg 
+                        className="w-full h-full pointer-events-none absolute top-0 left-0"
+                    >
+                        <defs>
+                            <marker id="arrow" markerWidth="6" markerHeight="6" refX="24" refY="3" orient="auto"><path d="M0,0 L0,6 L6,3 z" fill="#9ca3af" /></marker>
+                            <marker id="arrow-red" markerWidth="6" markerHeight="6" refX="24" refY="3" orient="auto"><path d="M0,0 L0,6 L6,3 z" fill="#ef4444" /></marker>
+                            <marker id="arrow-orange" markerWidth="6" markerHeight="6" refX="24" refY="3" orient="auto"><path d="M0,0 L0,6 L6,3 z" fill="#f97316" /></marker>
+                            <marker id="arrow-green" markerWidth="6" markerHeight="6" refX="24" refY="3" orient="auto"><path d="M0,0 L0,6 L6,3 z" fill="#16a34a" /></marker>
+                            <marker id="arrow-dark" markerWidth="6" markerHeight="6" refX="24" refY="3" orient="auto"><path d="M0,0 L0,6 L6,3 z" fill="#1f2937" /></marker>
+                        </defs>
+                        {edgesToRender.map((edge, i) => {
+                            const s = LAYOUT[edge.source];
+                            const t = LAYOUT[edge.target];
+                            if(!s || !t) return null;
+
+                            const isOrthogonal = view === 'L1';
+                            const color = edge.color || '#cbd5e1';
+                            const dash = edge.style === 'dashed' ? '4,4' : '';
+                            const width = edge.width || 1.5;
+
+                            let d = '';
+                            if (isOrthogonal) {
+                                const midY = (s.y + t.y) / 2;
+                                d = `M ${s.x} ${s.y} V ${midY} H ${t.x} V ${t.y}`;
+                            } else {
+                                d = `M ${s.x} ${s.y} L ${t.x} ${t.y}`;
+                            }
+                            
+                            // Map color to arrow ID
+                            let arrowId = 'url(#arrow)';
+                            if (color === '#ef4444' || color === '#b91c1c') arrowId = 'url(#arrow-red)';
+                            else if (color === '#f97316') arrowId = 'url(#arrow-orange)';
+                            else if (color === '#16a34a') arrowId = 'url(#arrow-green)';
+                            else if (color === '#1f2937') arrowId = 'url(#arrow-dark)';
+
+                            return (
+                                <g key={i}>
+                                    <path d={d} fill="none" stroke={color} strokeWidth={width} strokeDasharray={dash} markerEnd={arrowId} />
+                                    {edge.label && !isOrthogonal && (
+                                        <text x={(s.x+t.x)/2} y={(s.y+t.y)/2} textAnchor="middle" fill={color} fontSize="10" dy="-5" fontWeight="bold" className="bg-white/80">{edge.label}</text>
+                                    )}
+                                </g>
+                            );
+                        })}
+                    </svg>
+                );
+            };
+
+            return (
+                <div className="flex h-screen w-full bg-gray-100">
+                    {/* Left Sidebar */}
+                    <Sidebar 
+                        context={context} 
+                        setContext={setContext}
+                        activeStage={activeStage}
+                        setStage={setActiveStage}
+                    />
+
+                    {/* Main Content */}
+                    <main className="flex-1 flex flex-col relative overflow-hidden">
+                        
+                        {/* Top Bar: View Tabs */}
+                        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-white/90 backdrop-blur shadow-sm border border-gray-200 rounded-lg p-1 flex space-x-1 z-20">
+                            {[
+                                {id: 'L1', label: 'L1 组织架构'},
+                                {id: 'L2', label: 'L2 决策权力'},
+                                {id: 'L3', label: 'L3 情感阵营'},
+                                {id: 'L4', label: 'L4 战略本质'}
+                            ].map(tab => (
+                                <button 
+                                    key={tab.id} 
+                                    onClick={() => setView(tab.id)}
+                                    className={`px-3 py-1.5 rounded text-xs font-bold transition-all ${view === tab.id ? 'bg-gray-900 text-white shadow' : 'text-gray-500 hover:bg-gray-100'}`}
+                                >
+                                    {tab.label}
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* Canvas */}
+                        <div 
+                            ref={canvasRef}
+                            className={`flex-1 relative bg-slate-50 overflow-hidden ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
+                            onClick={(e) => {
+                                // 如果点击的是节点，不取消选择
+                                if (!e.target.closest('.cursor-pointer')) {
+                                    setSelectedNode(null);
+                                }
+                            }}
+                            onMouseDown={handleMouseDown}
+                            onMouseMove={handleMouseMove}
+                            onMouseUp={handleMouseUp}
+                            onMouseLeave={handleMouseUp}
+                            onWheel={handleWheel}
+                        >
+                            <div className="absolute inset-0 opacity-[0.03]" style={{ backgroundImage: 'radial-gradient(#000 1px, transparent 1px)', backgroundSize: '20px 20px' }} />
+                            
+                            {/* Sales Stage Focus Hint */}
+                            {isProjectMode && (
+                                <div className="absolute top-20 left-0 w-full text-center pointer-events-none z-10">
+                                     <div className="inline-block bg-blue-50 border border-blue-100 text-blue-800 px-3 py-1 rounded-full text-xs shadow-sm">
+                                        ℹ️ 当前阶段重点：搞定 <strong>{SALES_STAGES.find(s => s.id === activeStage)?.name}</strong> 环节的关键人
+                                     </div>
+                                </div>
+                            )}
+
+                            {/* Transform Wrapper for Canvas Content */}
+                            <div
+                                style={{
+                                    transform: `translate(${translateX}px, ${translateY}px) scale(${scale})`,
+                                    transformOrigin: '0 0',
+                                    position: 'absolute',
+                                    top: 0,
+                                    left: 0,
+                                    width: '100%',
+                                    height: '100%'
+                                }}
+                            >
+                                {renderCanvas()}
+
+                                {ACCOUNT_DATA.nodes.map(node => (
+                                    <NodeItem 
+                                        key={node.id}
+                                        node={node}
+                                        override={isProjectMode ? currentProject.nodeOverrides[node.id] : {}}
+                                        pos={LAYOUT[node.id]}
+                                        showBadges={isProjectMode || view !== 'L1'}
+                                        showProgress={true} 
+                                        isHidden={view === 'L4' && node.id !== 'competitor' && !['wu', 'wang', 'sun'].includes(node.id)} // L4 Strategic Focus
+                                        onClick={(e) => { e.stopPropagation(); setSelectedNode(node); }}
+                                    />
+                                ))}
+                            </div>
+
+                            {/* Clean Win Score (Bottom Left) */}
+                            {isProjectMode && (
+                                <div className="absolute bottom-4 left-4 z-10 pointer-events-none">
+                                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">商机赢面</div>
+                                    <div className="text-5xl font-black text-gray-800 flex items-end leading-none tracking-tighter">
+                                        {currentProject.winScore}<span className="text-lg font-medium text-gray-400 mb-1 ml-1">/100</span>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Bottom Strategy Console */}
+                        <StrategyConsole 
+                            logs={strategyLogs} 
+                            onSend={handleStrategy} 
+                            isThinking={isThinking}
+                            apiKey={apiKey}
+                            setApiKey={setApiKey}
+                        />
+                    </main>
+
+                    {/* Right Drawer */}
+                    <DetailDrawer node={selectedNode} onClose={() => setSelectedNode(null)} />
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

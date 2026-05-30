@@ -1,0 +1,184 @@
+// 江湖 多租户数据模型
+// 开发：SQLite。生产：把 provider 改为 "postgresql" 并设置 DATABASE_URL 即可（字段未用原生 enum/json，跨库可移植）。
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Tenant {
+  id                 String    @id
+  name               String
+  plan               String    @default("free") // free | pro
+  subscriptionStatus String    @default("active") // active | past_due | canceled
+  seatLimit          Int       @default(50) // 免费多人协作，宽松上限防滥用（无付费墙）
+  createdAt          DateTime  @default(now())
+  users              User[]
+  accounts           Account[]
+  aiConfig           AiConfig?
+}
+
+// 工作区自配的 AI 模型（BYO-key）：OpenAI 兼容。key 加密存储，用用户自己的额度调用。
+model AiConfig {
+  tenantId  String   @id
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  provider  String   @default("openai-compatible") // openai-compatible | mock
+  baseUrl   String   @default("")
+  model     String   @default("")
+  apiKeyEnc String   @default("") // AES-256-GCM 密文（base64）
+  updatedAt DateTime @updatedAt
+}
+
+model User {
+  id           String   @id @default(uuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  phone        String?  @unique
+  email        String?  @unique
+  passwordHash String
+  name         String
+  role         String   @default("member") // owner | admin | member | viewer
+  createdAt    DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+model Account {
+  id                String        @id
+  tenantId          String
+  tenant            Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name              String
+  customerType      Int
+  unifiedCreditCode String?
+  createdAt         DateTime      @default(now())
+  persons           Person[]
+  opportunities     Opportunity[]
+  edges             Edge[]
+
+  @@index([tenantId])
+}
+
+model Person {
+  id           String  @id
+  tenantId     String
+  accountId    String
+  account      Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  name         String
+  title        String
+  orgLevel     Int     @default(3)
+  isCompetitor Boolean @default(false)
+  avatarUrl    String?
+  coachLevel   Int?
+  x            Float   @default(300)
+  y            Float   @default(240)
+  form         String  @default("{}") // JSON
+  logs         String  @default("[]") // JSON
+
+  @@index([accountId])
+}
+
+model Opportunity {
+  id                   String         @id
+  tenantId             String
+  accountId            String
+  account              Account        @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  name                 String
+  customerType         Int
+  pipelineStage        String
+  engageStage          String
+  changeMode           String?
+  singleSalesGoal      String         @default("")
+  customerBusinessGoal String?
+  buyingMotivation     String?
+  c3Items              String         @default("{}") // JSON
+  c5Items              String         @default("{}") // JSON
+  roles                OppRole[]
+  edges                Edge[]
+  bis                  BurningIssue[]
+  ucvs                 UCV[]
+  suggestions          RelSuggestion[]
+
+  @@index([accountId])
+}
+
+// AI 关系推断候选（待人审）。绝不自动写库，accept 后才生成正式 Edge。
+model RelSuggestion {
+  id              String      @id
+  tenantId        String
+  opportunityId   String
+  opportunity     Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  sourcePersonId  String
+  targetPersonId  String
+  layer           String
+  label           String
+  confidence      Float       @default(0.5)
+  origin          String      @default("graph") // graph | llm | qcc
+  evidence        String      @default("")
+  status          String      @default("pending") // pending | accepted | rejected
+  createdAt       DateTime    @default(now())
+
+  @@index([opportunityId])
+}
+
+model OppRole {
+  id                String      @id @default(uuid())
+  tenantId          String
+  opportunityId     String
+  opportunity       Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  personId          String
+  role              String
+  sentiment         String
+  sentimentValue    Int?
+  confidence        String
+  isKeyInfluencer   Boolean     @default(false)
+  procurementType   String?
+  procurementStatus String?
+
+  @@unique([opportunityId, personId])
+}
+
+model Edge {
+  id            String       @id
+  tenantId      String
+  accountId     String
+  account       Account      @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  opportunityId String?
+  opportunity   Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  source        String
+  target        String
+  layer         String
+  label         String
+  color         String?
+  style         String?
+  width         Float?
+  directed      Boolean      @default(false)
+  origin        String       @default("manual")
+
+  @@index([accountId])
+}
+
+model BurningIssue {
+  id            String      @id
+  tenantId      String
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  personId      String
+  description   String
+  category      String
+  isPrivate     Boolean     @default(true)
+  confidence    String
+}
+
+model UCV {
+  id               String      @id
+  tenantId         String
+  opportunityId    String
+  opportunity      Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  targetBiId       String
+  description      String
+  competitorCannot String
+  status           String
+}

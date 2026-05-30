@@ -1,0 +1,21 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+build/
+
+# 密钥与本地数据库（切勿提交）
+.env
+*.db
+*.db-journal
+
+# 日志
+*.log
+npm-debug.log*
+
+# 系统/编辑器/本地工具
+.DS_Store
+.vscode/
+.idea/
+.claude/

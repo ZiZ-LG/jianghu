@@ -1,0 +1,234 @@
+import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
+import type { Layer, Role, CustomerType, Edge } from './types';
+import { reducer, newAccount, newOpportunity, newPerson, type Action } from './store';
+import { api, type AuthResult, type Suggestion } from './api';
+import { scoreFromDomain } from './lib/g64111';
+import { Auth } from './components/Auth';
+import { CustomerHub } from './components/CustomerHub';
+import { Sidebar } from './components/Sidebar';
+import { LayerTabs } from './components/LayerTabs';
+import { Canvas } from './components/Canvas';
+import { DetailDrawer } from './components/DetailDrawer';
+import { WinTendencyPanel } from './components/WinTendencyPanel';
+import { OpportunityForm } from './components/OpportunityForm';
+import { PersonForm } from './components/PersonForm';
+import { RelationshipEditor } from './components/RelationshipEditor';
+import { TeamBilling } from './components/TeamBilling';
+import { AiSettings } from './components/AiSettings';
+import { StrategyConsole } from './components/StrategyConsole';
+import { SuggestionPanel } from './components/SuggestionPanel';
+
+export default function App() {
+  const [state, dispatch] = useReducer(reducer, { accounts: [] });
+  const [auth, setAuth] = useState<AuthResult | null>(null);
+  const [booting, setBooting] = useState(true);
+  const [syncErr, setSyncErr] = useState('');
+
+  const [accId, setAccId] = useState<string | null>(null);
+  const [oppId, setOppId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [layer, setLayer] = useState<Layer>('L1');
+  const [oppFormOpen, setOppFormOpen] = useState(false);
+  const [personFormOpen, setPersonFormOpen] = useState(false);
+  const [relEditorOpen, setRelEditorOpen] = useState(false);
+  const [teamOpen, setTeamOpen] = useState(false);
+  const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
+  const [consoleOpen, setConsoleOpen] = useState(false);
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [generating, setGenerating] = useState(false);
+
+  // 启动：有 token 则恢复会话 + 拉取云端数据
+  useEffect(() => {
+    (async () => {
+      if (!api.getToken()) { setBooting(false); return; }
+      try {
+        const me = await api.me();
+        const st = await api.getState();
+        dispatch({ type: 'HYDRATE', accounts: st.accounts });
+        setAuth({ token: api.getToken()!, user: me.user, tenant: me.tenant });
+      } catch { api.setToken(null); } finally { setBooting(false); }
+    })();
+  }, []);
+
+  const onAuthed = async (res: AuthResult) => {
+    const st = await api.getState();
+    dispatch({ type: 'HYDRATE', accounts: st.accounts });
+    setAuth(res);
+  };
+  const logout = () => { api.setToken(null); setAuth(null); setAccId(null); setSelectedId(null); dispatch({ type: 'HYDRATE', accounts: [] }); };
+
+  // 乐观本地更新 + 云端持久化
+  const act = useCallback(async (action: Action) => {
+    dispatch(action);
+    try { await api.mutate(action); setSyncErr(''); }
+    catch (e: any) { setSyncErr('云端保存失败：' + e.message); }
+  }, []);
+
+  const account = state.accounts.find((a) => a.id === accId) ?? null;
+  const opp = account?.opportunities.find((o) => o.id === oppId) ?? null;
+  const breakdown = useMemo(() => (account && opp ? scoreFromDomain(account, opp) : null), [account, opp]);
+  const roleByPerson = useMemo(() => {
+    const m = new Map<string, Role>();
+    if (opp) for (const r of opp.roles) m.set(r.personId, r.role);
+    return m;
+  }, [opp]);
+
+  // 进入某商机时加载已有的 AI 候选关系（pending）
+  useEffect(() => {
+    if (!opp) { setSuggestions([]); return; }
+    api.suggestList(opp.id).then((r) => setSuggestions(r.suggestions)).catch(() => setSuggestions([]));
+  }, [opp?.id]);
+
+  const openAccount = (id: string) => {
+    const a = state.accounts.find((x) => x.id === id);
+    setAccId(id); setOppId(a?.opportunities[0]?.id ?? null); setSelectedId(null); setLayer('L1');
+  };
+  const createAccount = (name: string, ctype: CustomerType) => {
+    const a = newAccount(name, ctype);
+    act({ type: 'ADD_ACCOUNT', account: a });
+    setAccId(a.id); setOppId(null); setSelectedId(null); setLayer('L1');
+  };
+  const loadDemo = async () => {
+    setSyncErr('');
+    const prev = new Set(state.accounts.map((a) => a.id));
+    try {
+      await api.demo();
+      const st = await api.getState();
+      dispatch({ type: 'HYDRATE', accounts: st.accounts });
+      const added = st.accounts.find((a) => !prev.has(a.id)) ?? st.accounts[st.accounts.length - 1];
+      if (added) { setAccId(added.id); setOppId(added.opportunities[0]?.id ?? null); setSelectedId(null); setLayer('L1'); }
+    } catch (e: any) { setSyncErr('载入示例失败：' + e.message); }
+  };
+  const addOpp = () => {
+    if (!account) return;
+    const o = newOpportunity(account.id, '新商机', account.customerType);
+    act({ type: 'ADD_OPP', accId: account.id, opp: o });
+    setOppId(o.id); setSelectedId(null); setOppFormOpen(true);
+  };
+  const deleteOpp = (id: string) => {
+    if (!account) return;
+    act({ type: 'DELETE_OPP', accId: account.id, oppId: id });
+    if (oppId === id) setOppId(account.opportunities.find((o) => o.id !== id)?.id ?? null);
+  };
+  const addPerson = (name: string, title: string, isCompetitor: boolean) => {
+    if (!account) return;
+    const n = account.persons.filter((p) => !p.isCompetitor).length;
+    const x = isCompetitor ? 90 : 220 + (n % 4) * 150;
+    const y = isCompetitor ? 440 : 150 + Math.floor(n / 4) * 135;
+    const p = newPerson(name, title, x, y, isCompetitor);
+    act({ type: 'ADD_PERSON', accId: account.id, person: p });
+    setSelectedId(p.id);
+  };
+
+  // ── AI 关系推断 ──
+  const generateSuggestions = async () => {
+    if (!opp) return;
+    setGenerating(true);
+    try { const r = await api.suggestGenerate(opp.id); setSuggestions(r.suggestions); }
+    catch (e: any) { setSyncErr('关系推断失败：' + e.message); }
+    finally { setGenerating(false); }
+  };
+  const acceptSuggestion = async (id: string) => {
+    if (!account || !opp) return;
+    try {
+      const { edge } = await api.suggestAccept(id);
+      dispatch({ type: 'ADD_EDGE', accId: account.id, oppId: opp.id, edge }); // 服务端已建，本地直接加避免重复写
+      setSuggestions((s) => s.filter((x) => x.id !== id));
+    } catch (e: any) { setSyncErr('采纳失败：' + e.message); }
+  };
+  const rejectSuggestion = async (id: string) => {
+    try { await api.suggestReject(id); setSuggestions((s) => s.filter((x) => x.id !== id)); }
+    catch (e: any) { setSyncErr('忽略失败：' + e.message); }
+  };
+
+  if (booting) return <div className="boot">加载中…</div>;
+  if (!auth) return <Auth onAuthed={onAuthed} />;
+
+  // ── Hub ──
+  if (!account) {
+    return (
+      <>
+        <CustomerHub
+          accounts={state.accounts} onOpen={openAccount} onCreate={createAccount} onLoadDemo={loadDemo}
+          onDeleteAccount={(id) => act({ type: 'DELETE_ACCOUNT', accId: id })}
+          tenantName={auth.tenant.name} userName={auth.user.name} plan={auth.tenant.plan}
+          onOpenTeam={() => setTeamOpen(true)} onLogout={logout} onOpenAiSettings={() => setAiSettingsOpen(true)}
+        />
+        {syncErr && <div className="sync-toast">{syncErr}</div>}
+        {teamOpen && <TeamBilling role={auth.user.role} onClose={() => setTeamOpen(false)} />}
+        {aiSettingsOpen && <AiSettings role={auth.user.role} onClose={() => setAiSettingsOpen(false)} />}
+      </>
+    );
+  }
+
+  const selectedPerson = account.persons.find((p) => p.id === selectedId) ?? null;
+  const selectedRole = opp?.roles.find((r) => r.personId === selectedId);
+  const selectedBis = opp?.bis.filter((b) => b.personId === selectedId) ?? [];
+  const selectedUcvs = (opp?.ucvs ?? []).filter((u) => selectedBis.some((b) => b.id === u.targetBiId));
+
+  return (
+    <div className="app-shell">
+      <Sidebar
+        account={account} currentOppId={oppId} onSelectOpp={(id) => { setOppId(id); setSelectedId(null); }}
+        selectedPersonId={selectedId} onSelectPerson={setSelectedId}
+        onBack={() => { setAccId(null); setSelectedId(null); }} onAddOpp={addOpp} onDeleteOpp={deleteOpp}
+        onAddPerson={() => setPersonFormOpen(true)} roleByPerson={roleByPerson}
+      />
+
+      <main className="main">
+        {opp ? (
+          <>
+            <div className="maintoolbar">
+              <span className="mt-name">{opp.name}</span>
+              <button className="btn ghost xs" onClick={() => setOppFormOpen(true)}>编辑商机</button>
+              <button className="btn ghost xs" onClick={() => setRelEditorOpen(true)}>＋ 关系</button>
+              <button className="btn ghost xs" onClick={() => setSuggestOpen(true)}>🔮 荐关系{suggestions.length > 0 ? ` (${suggestions.length})` : ''}</button>
+              <button className="btn primary xs" onClick={() => setConsoleOpen(true)}>🧠 AI 推演</button>
+            </div>
+            <LayerTabs layer={layer} onChange={setLayer} />
+            <Canvas account={account} opp={opp} layer={layer} selectedId={selectedId}
+              onSelectPerson={setSelectedId} suggestions={suggestions}
+              onMovePerson={(id, x, y) => act({ type: 'MOVE_PERSON', accId: account.id, personId: id, x, y })} />
+            {breakdown && <WinTendencyPanel breakdown={breakdown} />}
+          </>
+        ) : (
+          <div className="no-opp">
+            <div className="no-opp-emoji">🎯</div>
+            <div className="no-opp-t">这个客户还没有商机</div>
+            <button className="btn primary" onClick={addOpp}>＋ 新建商机</button>
+          </div>
+        )}
+      </main>
+
+      {selectedPerson && opp && (
+        <DetailDrawer accId={account.id} oppId={opp.id} person={selectedPerson} oppRole={selectedRole}
+          bis={selectedBis} ucvs={selectedUcvs} dispatch={act} onClose={() => setSelectedId(null)} />
+      )}
+
+      {oppFormOpen && opp && (
+        <OpportunityForm opp={opp} onClose={() => setOppFormOpen(false)}
+          onSave={(patch) => act({ type: 'UPDATE_OPP', accId: account.id, oppId: opp.id, patch })} />
+      )}
+      {personFormOpen && <PersonForm onCreate={addPerson} onClose={() => setPersonFormOpen(false)} />}
+      {relEditorOpen && opp && (
+        <RelationshipEditor account={account} opp={opp} layer={layer}
+          onAddEdge={(e: Edge) => act({ type: 'ADD_EDGE', accId: account.id, oppId: opp.id, edge: e })}
+          onDeleteEdge={(id) => act({ type: 'DELETE_EDGE', accId: account.id, oppId: opp.id, edgeId: id })}
+          onClose={() => setRelEditorOpen(false)} />
+      )}
+      {teamOpen && <TeamBilling role={auth.user.role} onClose={() => setTeamOpen(false)} />}
+      {consoleOpen && opp && breakdown && (
+        <StrategyConsole account={account} opp={opp} breakdown={breakdown}
+          onClose={() => setConsoleOpen(false)} onOpenSettings={() => setAiSettingsOpen(true)} />
+      )}
+      {aiSettingsOpen && <AiSettings role={auth.user.role} onClose={() => setAiSettingsOpen(false)} />}
+      {suggestOpen && (
+        <SuggestionPanel suggestions={suggestions} generating={generating}
+          onRegenerate={generateSuggestions} onAccept={acceptSuggestion} onReject={rejectSuggestion}
+          onClose={() => setSuggestOpen(false)} />
+      )}
+      {syncErr && <div className="sync-toast">{syncErr}</div>}
+    </div>
+  );
+}
