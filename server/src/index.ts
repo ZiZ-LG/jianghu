@@ -14,6 +14,7 @@ import { createDemoForTenant } from './seed-demo.js';
 import { aiRoutes } from './ai.js';
 import { suggestRoutes } from './suggest.js';
 import { enrichRoutes } from './enrich.js';
+import { handleMcpBody } from './mcpServer.js';
 
 // 加载本地 .env（生产环境用真实环境变量，文件不存在则忽略）
 try { process.loadEnvFile(); } catch { /* no .env in prod */ }
@@ -84,6 +85,15 @@ app.post('/api/demo', { preHandler: [app.authenticate] }, async (req) => {
 app.post('/api/reset', { preHandler: [app.authenticate] }, async (req) => {
   await prisma.account.deleteMany({ where: { tenantId: req.user.tenantId } });
   return { ok: true };
+});
+
+// ── 只读 MCP Server（streamable-HTTP）：让 AI 客户端查询本平台数据 ──
+// 复用现有 JWT（Authorization Bearer）：authenticate 解出 tenantId，所有工具按租户隔离（铁律）。
+// 协议处理见 mcpServer.ts（initialize / tools/list / tools/call）。
+app.post('/api/mcp', { preHandler: [app.authenticate] }, async (req, reply) => {
+  const out = await handleMcpBody(req.user.tenantId, req.body);
+  if (out === null) return reply.code(204).send(); // 纯通知，无响应体
+  return out;
 });
 
 // ── 计费 / 席位 ──
