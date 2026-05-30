@@ -64,9 +64,15 @@ export const api = {
   qccSaveConfig: (b: { mcpJson: string }): Promise<{ ok: true; endpoint: string }> => req('/api/qcc/config', { method: 'PUT', body: JSON.stringify(b) }),
   qccClearConfig: (): Promise<{ ok: true }> => req('/api/qcc/config', { method: 'DELETE' }),
   qccTest: (): Promise<{ ok: boolean; message?: string }> => req('/api/qcc/test', { method: 'POST' }),
+  qccResolve: (query: string): Promise<{ exact: boolean; candidates: CompanyCandidate[] }> =>
+    req('/api/qcc/resolve', { method: 'POST', body: JSON.stringify({ query }) }),
   enrichCompany: (name: string): Promise<{ source: string; company: string; persons: { name: string; title: string }[]; note: string }> =>
     req('/api/enrich/company', { method: 'POST', body: JSON.stringify({ name }) }),
 };
+
+export interface CompanyCandidate {
+  name: string; creditCode: string; legalPerson: string; status: string; establishDate: string;
+}
 
 export interface Suggestion {
   id: string; source: string; target: string; sourceName: string; targetName: string;

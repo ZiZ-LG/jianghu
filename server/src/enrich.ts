@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
 import { enc, dec, loadAiConfig, callLLM } from './ai.js';
-import { qccMcpFetch, parseQccMcpConfig } from './qccMcp.js';
+import { qccMcpFetch, qccMcpResolve, parseQccMcpConfig } from './qccMcp.js';
 
 interface DiscoveredPerson { name: string; title: string; }
 
@@ -68,6 +68,18 @@ export function enrichRoutes(app: FastifyInstance) {
       const persons = await qccMcpFetch({ url: c.baseUrl, token: dec(c.secretKeyEnc) }, '华为技术有限公司');
       return { ok: true, message: `连通正常，示例公司返回 ${persons.length} 位关键人` };
     } catch (e: any) { return reply.code(400).send({ error: e?.message || '连接失败' }); }
+  });
+
+  // 企业名锚定：输入简称/关键词 → 返回候选企业列表（用户人审选择，符合企查查"多候选不可自动锁定"规则）
+  app.post('/api/qcc/resolve', { preHandler: [app.authenticate] }, async (req, reply) => {
+    const p = z.object({ query: z.string().min(1) }).safeParse(req.body);
+    if (!p.success) return reply.code(400).send({ error: '请输入企业名称或关键词' });
+    const c = await prisma.qccConfig.findUnique({ where: { tenantId: req.user.tenantId } });
+    if (c?.appKey !== 'mcp' || !c?.secretKeyEnc) return reply.code(400).send({ error: '尚未配置企查查 MCP' });
+    try {
+      const r = await qccMcpResolve({ url: c.baseUrl, token: dec(c.secretKeyEnc) }, p.data.query.trim());
+      return r;
+    } catch (e: any) { return reply.code(400).send({ error: e?.message || '企业检索失败' }); }
   });
 
   // 自动建图：返回某公司的关键人（企查查 MCP → AI 回退 → 演示），供前端预览后导入

@@ -69,21 +69,14 @@ function extractJsonRpc(text: string): any {
   throw new Error('无法解析 MCP 响应');
 }
 
-/** 用 MCP 查询某公司的关键人员（initialize → 调用关键人工具 → 解析）。 */
-export async function qccMcpFetch(cfg: QccMcpConfig, company: string): Promise<DiscoveredPerson[]> {
-  // 1) initialize
+// MCP 握手：initialize + initialized 通知，返回 sessionId。
+async function mcpSession(cfg: QccMcpConfig): Promise<string | undefined> {
   const init = await rpc(cfg, {
     jsonrpc: '2.0', id: 1, method: 'initialize',
-    params: {
-      protocolVersion: '2024-11-05',
-      capabilities: {},
-      clientInfo: { name: 'jianghu', version: '0.1.0' },
-    },
+    params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'jianghu', version: '0.1.0' } },
   });
   const sessionId = init.sessionId;
   if (init.json?.error) throw new Error(init.json.error?.message || 'MCP 初始化失败（Token 可能无效）');
-
-  // 2) initialized 通知（streamable-HTTP 下尽力而为，失败忽略）
   try {
     await fetch(cfg.url, {
       method: 'POST',
@@ -94,9 +87,63 @@ export async function qccMcpFetch(cfg: QccMcpConfig, company: string): Promise<D
       body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
     });
   } catch { /* 通知失败不影响后续调用 */ }
+  return sessionId;
+}
 
-  // 3) 调用关键人员工具。企查查 company 服务器的真实工具名 = get_key_personnel，入参仅 searchKey。
-  //    （保留少量候选以兼容不同账号/未来变更；真实账号实测以 get_key_personnel 命中。）
+// 取 tools/call 结果里第一段 text（多为 JSON 字符串）。
+function toolResultText(result: any): string | null {
+  if (Array.isArray(result?.content)) {
+    const c = result.content.find((x: any) => x?.type === 'text' && typeof x.text === 'string');
+    if (c) return c.text;
+  }
+  if (result?.structuredContent) return JSON.stringify(result.structuredContent);
+  return null;
+}
+
+export interface CompanyCandidate {
+  name: string;            // 企业完整登记名
+  creditCode: string;      // 统一社会信用代码
+  legalPerson: string;     // 法定代表人
+  status: string;          // 经营状态
+  establishDate: string;   // 成立日期
+}
+
+/**
+ * 企业名锚定：输入简称/关键词，调 get_company_by_query 返回候选企业列表。
+ * 企查查规则：多候选时必须让用户人审选择，禁止自动锁定。故这里只负责返回候选，由前端点选。
+ */
+export async function qccMcpResolve(cfg: QccMcpConfig, query: string): Promise<{ exact: boolean; candidates: CompanyCandidate[] }> {
+  const sessionId = await mcpSession(cfg);
+  const r = await rpc(cfg, {
+    jsonrpc: '2.0', id: 2, method: 'tools/call',
+    params: { name: 'get_company_by_query', arguments: { searchKey: query } },
+  }, sessionId);
+  if (r.json?.error) throw new Error(r.json.error?.message || '企业检索失败');
+  const text = toolResultText(r.json?.result);
+  if (!text) return { exact: false, candidates: [] };
+  let data: any;
+  try { data = JSON.parse(text); } catch { return { exact: false, candidates: [] }; }
+
+  // 单一精确匹配：返回结构里可能直接给企业信息对象；多候选则给「企业信息」数组。
+  const list: any[] = Array.isArray(data?.企业信息) ? data.企业信息
+    : Array.isArray(data?.candidates) ? data.candidates
+    : (data?.企业名称 ? [data] : []);
+  const candidates: CompanyCandidate[] = list.map((x: any) => ({
+    name: x?.企业名称 || x?.name || '',
+    creditCode: x?.统一社会信用代码 || x?.creditCode || '',
+    legalPerson: Array.isArray(x?.法定代表人名称) ? x.法定代表人名称.join('、') : (x?.法定代表人 || x?.法定代表人名称 || ''),
+    status: x?.状态 || x?.登记状态 || '',
+    establishDate: x?.成立日期 || '',
+  })).filter((c) => c.name);
+
+  const exact = String(data?.匹配结果 || '').includes('唯一') || String(data?.匹配结果 || '').includes('精确') || candidates.length === 1;
+  return { exact, candidates: candidates.slice(0, 15) };
+}
+
+/** 用 MCP 查询某公司的关键人员（应传完整登记名；建议先经 qccMcpResolve 锚定）。 */
+export async function qccMcpFetch(cfg: QccMcpConfig, company: string): Promise<DiscoveredPerson[]> {
+  const sessionId = await mcpSession(cfg);
+  // 企查查 company 服务器的真实工具名 = get_key_personnel，入参仅 searchKey。
   const candidates = ['get_key_personnel', 'get_company_key_personnel', 'get_main_staff'];
   let lastErr = '';
   for (const tool of candidates) {

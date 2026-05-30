@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api } from '../api';
+import { api, type CompanyCandidate } from '../api';
 import { Modal } from './Modal';
 
 const SOURCE_LABEL: Record<string, { t: string; c: string }> = {
@@ -25,6 +25,9 @@ export function EnrichPanel({
   const [note, setNote] = useState('');
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
+  // 全称锚定：候选企业列表（多候选时让用户点选，符合企查查"不可自动锁定"规则）
+  const [candidates, setCandidates] = useState<CompanyCandidate[] | null>(null);
+  const [resolvedName, setResolvedName] = useState('');
 
   // 企查查 MCP 配置（粘贴 JSON）
   const [cfg, setCfg] = useState({ configured: false, mode: 'mcp', endpoint: '', hasToken: false });
@@ -35,14 +38,32 @@ export function EnrichPanel({
 
   useEffect(() => { api.qccConfig().then(setCfg).catch(() => {}); }, []);
 
+  // 按完整登记名查关键人并填充预览
+  const fetchPersons = async (fullName: string) => {
+    setErr(''); setLoading(true); setRows([]); setCandidates(null);
+    try {
+      const r = await api.enrichCompany(fullName);
+      setRows(r.persons.map((p) => ({ ...p, selected: true })));
+      setSource(r.source); setNote(r.note); setResolvedName(fullName);
+    } catch (e: any) { setErr(e.message); } finally { setLoading(false); }
+  };
+
   const search = async () => {
     if (!name.trim()) return;
-    setErr(''); setLoading(true); setRows([]);
+    setErr(''); setRows([]); setCandidates(null); setNote('');
+    // 未配企查查 MCP：保持原逻辑（直接 AI/mock 兜底，无需锚定）
+    if (!cfg.configured) { await fetchPersons(name.trim()); return; }
+    // 已配 MCP：先锚定全称（企查查要求 searchKey 为完整登记名；简称会命中多候选）
+    setLoading(true);
     try {
-      const r = await api.enrichCompany(name.trim());
-      setRows(r.persons.map((p) => ({ ...p, selected: true })));
-      setSource(r.source); setNote(r.note);
-    } catch (e: any) { setErr(e.message); } finally { setLoading(false); }
+      const r = await api.qccResolve(name.trim());
+      if (!r.candidates.length) { setErr('未检索到匹配企业，请检查名称'); return; }
+      if (r.exact || r.candidates.length === 1) { await fetchPersons(r.candidates[0].name); return; }
+      setCandidates(r.candidates); // 多候选 → 让用户人审点选
+    } catch (e: any) {
+      // resolve 失败时，退回直接查（可能是工具差异），不阻断用户
+      setErr(e.message + '（已尝试直接查询）'); await fetchPersons(name.trim());
+    } finally { setLoading(false); }
   };
   const saveCfg = async (test: boolean) => {
     setCfgMsg(''); setErr(''); setCfgBusy(true);
@@ -107,12 +128,37 @@ export function EnrichPanel({
 
       {/* 查询 */}
       <div className="enrich-search">
-        <input value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && search()} placeholder="输入公司完整名称" />
+        <input value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && search()}
+          placeholder={cfg.configured ? '输入公司名或简称（如「华为」），将先锚定全称' : '输入公司完整名称'} />
         <button className="btn primary" onClick={search} disabled={loading}>{loading ? '查询中…' : '🔍 查询关键人'}</button>
       </div>
 
+      {/* 多候选 → 人审点选正确主体（企查查规则：不可自动锁定） */}
+      {candidates && candidates.length > 0 && (
+        <div className="enrich-candidates">
+          <div className="enrich-toolbar" style={{ margin: '12px 0 6px' }}>
+            <span>「{name}」命中 {candidates.length} 个主体，请选择目标企业：</span>
+            <button className="link-btn" onClick={() => setCandidates(null)}>取消</button>
+          </div>
+          <div className="enrich-list">
+            {candidates.map((c, i) => (
+              <button key={i} className="cand-row" onClick={() => fetchPersons(c.name)} disabled={loading}>
+                <span className="er-name">{c.name}</span>
+                <span className="cand-meta">
+                  {c.legalPerson && <span>法人：{c.legalPerson}</span>}
+                  {c.status && <span className="cand-status">{c.status}</span>}
+                  {c.establishDate && <span>{c.establishDate}</span>}
+                </span>
+                <span className="cand-code">{c.creditCode}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {note && <div className="enrich-note" style={{ borderColor: SOURCE_LABEL[source]?.c }}>
-        <b style={{ color: SOURCE_LABEL[source]?.c }}>{SOURCE_LABEL[source]?.t || source}</b> · {note}
+        <b style={{ color: SOURCE_LABEL[source]?.c }}>{SOURCE_LABEL[source]?.t || source}</b>
+        {resolvedName && resolvedName !== name && <> · 主体：<b>{resolvedName}</b></>} · {note}
       </div>}
       {err && <div className="auth-err">{err}</div>}
 
