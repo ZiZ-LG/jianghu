@@ -1,29 +1,10 @@
 import type { FastifyInstance } from 'fastify';
-import crypto from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
 import { enc, dec, loadAiConfig, callLLM } from './ai.js';
+import { qccMcpFetch, parseQccMcpConfig } from './qccMcp.js';
 
 interface DiscoveredPerson { name: string; title: string; }
-
-// ── 企查查 OpenAPI（best-effort）：标准签名 Token=md5(appKey+Timespan+secretKey) ──
-async function qccFetch(cfg: { baseUrl: string; appKey: string; secretKey: string }, keyword: string): Promise<DiscoveredPerson[]> {
-  const timespan = Math.floor(Date.now() / 1000).toString();
-  const token = crypto.createHash('md5').update(cfg.appKey + timespan + cfg.secretKey).digest('hex').toUpperCase();
-  // 企查查「企业主要人员」类接口（不同套餐 endpoint 可能不同，可按需调整）
-  const url = `${cfg.baseUrl.replace(/\/+$/, '')}/ECIV4/GetMainStaff?key=${encodeURIComponent(cfg.appKey)}&keyword=${encodeURIComponent(keyword)}`;
-  const res = await fetch(url, { headers: { Token: token, Timespan: timespan } });
-  const data: any = await res.json().catch(() => ({}));
-  if (data?.Status && data.Status !== '200') throw new Error(data?.Message || `企查查返回 ${data.Status}`);
-  // 防御式解析：在结果里找含 姓名/职务 的数组
-  const result = data?.Result ?? data?.result ?? data;
-  const arr: any[] = Array.isArray(result) ? result : (result?.Staffs || result?.Employees || result?.KeyPersonnel || []);
-  const persons = (arr || [])
-    .map((x: any) => ({ name: x?.Name || x?.name || '', title: x?.Job || x?.Position || x?.position || x?.title || '关键人员' }))
-    .filter((p: DiscoveredPerson) => p.name);
-  if (!persons.length) throw new Error('企查查响应未能解析出人员（套餐/接口可能不同）');
-  return persons.slice(0, 12);
-}
 
 // ── AI 联想（无企查查 Key 时回退；用用户自配模型）──
 async function llmProfile(ai: { baseUrl: string; model: string; apiKey: string }, name: string): Promise<DiscoveredPerson[]> {
@@ -50,35 +31,46 @@ function mockProfile(): DiscoveredPerson[] {
   ];
 }
 
+// QccConfig 复用约定（避免改 schema）：appKey='mcp' 标记 MCP 模式；
+//   baseUrl = company-stream 端点；secretKeyEnc = 加密后的 Bearer Token。
 export function enrichRoutes(app: FastifyInstance) {
   const canManage = (req: any) => ['owner', 'admin'].includes(req.user.role);
 
   app.get('/api/qcc/config', { preHandler: [app.authenticate] }, async (req) => {
     const c = await prisma.qccConfig.findUnique({ where: { tenantId: req.user.tenantId } });
-    return { configured: !!(c?.appKey && c?.secretKeyEnc), baseUrl: c?.baseUrl || 'https://api.qichacha.com', appKey: c?.appKey || '', hasSecret: !!c?.secretKeyEnc };
+    const configured = !!(c?.appKey === 'mcp' && c?.secretKeyEnc);
+    return { configured, mode: 'mcp', endpoint: configured ? c!.baseUrl : '', hasToken: !!c?.secretKeyEnc };
   });
 
+  // 配置：用户粘贴企查查 MCP 配置 JSON（agent.qcc.com/guide）
   app.put('/api/qcc/config', { preHandler: [app.authenticate] }, async (req, reply) => {
     if (!canManage(req)) return reply.code(403).send({ error: '仅管理员可配置' });
-    const p = z.object({ baseUrl: z.string().optional(), appKey: z.string().optional(), secretKey: z.string().optional() }).safeParse(req.body);
-    if (!p.success) return reply.code(400).send({ error: '参数无效' });
-    const existing = await prisma.qccConfig.findUnique({ where: { tenantId: req.user.tenantId } });
-    const secretKeyEnc = p.data.secretKey === undefined ? (existing?.secretKeyEnc ?? '') : (p.data.secretKey ? enc(p.data.secretKey) : '');
-    const data = { baseUrl: p.data.baseUrl || existing?.baseUrl || 'https://api.qichacha.com', appKey: p.data.appKey ?? existing?.appKey ?? '', secretKeyEnc };
+    const p = z.object({ mcpJson: z.string().min(1) }).safeParse(req.body);
+    if (!p.success) return reply.code(400).send({ error: '请粘贴企查查 MCP 配置 JSON' });
+    let cfg;
+    try { cfg = parseQccMcpConfig(p.data.mcpJson); }
+    catch (e: any) { return reply.code(400).send({ error: e?.message || '配置解析失败' }); }
+    const data = { baseUrl: cfg.url, appKey: 'mcp', secretKeyEnc: enc(cfg.token) };
     await prisma.qccConfig.upsert({ where: { tenantId: req.user.tenantId }, create: { tenantId: req.user.tenantId, ...data }, update: data });
+    return { ok: true, endpoint: cfg.url };
+  });
+
+  app.delete('/api/qcc/config', { preHandler: [app.authenticate] }, async (req, reply) => {
+    if (!canManage(req)) return reply.code(403).send({ error: '仅管理员可配置' });
+    await prisma.qccConfig.deleteMany({ where: { tenantId: req.user.tenantId } });
     return { ok: true };
   });
 
   app.post('/api/qcc/test', { preHandler: [app.authenticate] }, async (req, reply) => {
     const c = await prisma.qccConfig.findUnique({ where: { tenantId: req.user.tenantId } });
-    if (!c?.appKey || !c?.secretKeyEnc) return reply.code(400).send({ error: '尚未配置企查查 Key' });
+    if (c?.appKey !== 'mcp' || !c?.secretKeyEnc) return reply.code(400).send({ error: '尚未配置企查查 MCP' });
     try {
-      const persons = await qccFetch({ baseUrl: c.baseUrl, appKey: c.appKey, secretKey: dec(c.secretKeyEnc) }, '华为技术有限公司');
-      return { ok: true, message: `连通正常，示例返回 ${persons.length} 人` };
+      const persons = await qccMcpFetch({ url: c.baseUrl, token: dec(c.secretKeyEnc) }, '华为技术有限公司');
+      return { ok: true, message: `连通正常，示例公司返回 ${persons.length} 位关键人` };
     } catch (e: any) { return reply.code(400).send({ error: e?.message || '连接失败' }); }
   });
 
-  // 自动建图：返回某公司的关键人（企查查 → AI 回退 → 演示），供前端预览后导入
+  // 自动建图：返回某公司的关键人（企查查 MCP → AI 回退 → 演示），供前端预览后导入
   app.post('/api/enrich/company', { preHandler: [app.authenticate] }, async (req, reply) => {
     const p = z.object({ name: z.string().min(1) }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '请输入公司名称' });
@@ -89,14 +81,14 @@ export function enrichRoutes(app: FastifyInstance) {
     let source = '', note = '';
 
     const qcc = await prisma.qccConfig.findUnique({ where: { tenantId } });
-    if (qcc?.appKey && qcc?.secretKeyEnc) {
-      try { persons = await qccFetch({ baseUrl: qcc.baseUrl, appKey: qcc.appKey, secretKey: dec(qcc.secretKeyEnc) }, name); source = 'qcc'; }
-      catch (e: any) { note = `企查查调用失败（${e.message}），已回退 AI 推测`; }
+    if (qcc?.appKey === 'mcp' && qcc?.secretKeyEnc) {
+      try { persons = await qccMcpFetch({ url: qcc.baseUrl, token: dec(qcc.secretKeyEnc) }, name); source = 'qcc'; }
+      catch (e: any) { note = `企查查 MCP 调用失败（${e.message}），已回退 AI 推测`; }
     }
     if (!persons.length) {
       const ai = await loadAiConfig(tenantId);
       if (ai && ai.provider !== 'mock' && ai.baseUrl && ai.model) { persons = await llmProfile(ai, name); source = 'ai'; note = note || 'AI 联想·质量有限，请后续核实'; }
-      if (!persons.length) { persons = mockProfile(); source = 'mock'; note = note || (ai ? 'AI 未给出结果，已用角色清单兜底' : '未配置企查查 Key 与 AI 模型，先给 G64111 典型角色清单'); }
+      if (!persons.length) { persons = mockProfile(); source = 'mock'; note = note || (ai ? 'AI 未给出结果，已用角色清单兜底' : '未配置企查查 MCP 与 AI 模型，先给 G64111 典型角色清单'); }
     }
     return { source, company: name, persons, note };
   });

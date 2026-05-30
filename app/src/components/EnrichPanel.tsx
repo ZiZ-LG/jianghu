@@ -26,11 +26,12 @@ export function EnrichPanel({
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
 
-  // 企查查配置（内联）
-  const [cfg, setCfg] = useState({ configured: false, baseUrl: 'https://api.qichacha.com', appKey: '', hasSecret: false });
-  const [secretKey, setSecretKey] = useState('');
+  // 企查查 MCP 配置（粘贴 JSON）
+  const [cfg, setCfg] = useState({ configured: false, mode: 'mcp', endpoint: '', hasToken: false });
+  const [mcpJson, setMcpJson] = useState('');
   const [showConfig, setShowConfig] = useState(false);
   const [cfgMsg, setCfgMsg] = useState('');
+  const [cfgBusy, setCfgBusy] = useState(false);
 
   useEffect(() => { api.qccConfig().then(setCfg).catch(() => {}); }, []);
 
@@ -44,14 +45,19 @@ export function EnrichPanel({
     } catch (e: any) { setErr(e.message); } finally { setLoading(false); }
   };
   const saveCfg = async (test: boolean) => {
-    setCfgMsg(''); setErr('');
+    setCfgMsg(''); setErr(''); setCfgBusy(true);
     try {
-      await api.qccSaveConfig({ baseUrl: cfg.baseUrl, appKey: cfg.appKey, ...(secretKey ? { secretKey } : {}) });
-      setSecretKey('');
+      if (mcpJson.trim()) { await api.qccSaveConfig({ mcpJson: mcpJson.trim() }); setMcpJson(''); }
+      else if (!cfg.configured) { setCfgMsg('请先粘贴企查查 MCP 配置 JSON'); setCfgBusy(false); return; }
       if (test) { const r = await api.qccTest(); setCfgMsg('✓ ' + (r.message || '连通正常')); }
-      else setCfgMsg('已保存');
+      else setCfgMsg('✓ 已保存');
       api.qccConfig().then(setCfg);
-    } catch (e: any) { setCfgMsg('✗ ' + e.message); }
+    } catch (e: any) { setCfgMsg('✗ ' + e.message); } finally { setCfgBusy(false); }
+  };
+  const clearCfg = async () => {
+    setCfgMsg(''); setCfgBusy(true);
+    try { await api.qccClearConfig(); setCfg({ configured: false, mode: 'mcp', endpoint: '', hasToken: false }); setCfgMsg('已清除'); }
+    catch (e: any) { setCfgMsg('✗ ' + e.message); } finally { setCfgBusy(false); }
   };
   const toggle = (i: number) => setRows((rs) => rs.map((r, k) => (k === i ? { ...r, selected: !r.selected } : r)));
   const selected = rows.filter((r) => r.selected);
@@ -68,23 +74,32 @@ export function EnrichPanel({
       {/* 数据源状态 */}
       <div className="enrich-status">
         {cfg.configured
-          ? <span>数据源：<b style={{ color: '#16a34a' }}>企查查（已配置 Key）</b></span>
-          : <span>数据源：<b style={{ color: '#f59e0b' }}>AI 联想（未配企查查 Key，质量有限）</b></span>}
-        <button className="link-btn" onClick={() => setShowConfig((s) => !s)}>{showConfig ? '收起配置' : '配置企查查 Key ▸'}</button>
+          ? <span>数据源：<b style={{ color: '#16a34a' }}>企查查 MCP（已连接）</b></span>
+          : <span>数据源：<b style={{ color: '#f59e0b' }}>AI 联想（未配企查查 MCP，质量有限）</b></span>}
+        <button className="link-btn" onClick={() => setShowConfig((s) => !s)}>{showConfig ? '收起配置' : '配置企查查 MCP ▸'}</button>
       </div>
 
       {showConfig && (
         <div className="enrich-cfg">
           {!canManage && <div className="hint-text" style={{ marginTop: 0 }}>仅管理员可配置。</div>}
-          <div className="hint-text" style={{ marginTop: 0 }}>到 企查查开放平台 openapi.qcc.com 申请，填 appKey 与 secretKey 即可获权威工商数据。</div>
-          <div className="fld-row">
-            <label className="fld"><span>appKey</span><input disabled={!canManage} value={cfg.appKey} onChange={(e) => setCfg({ ...cfg, appKey: e.target.value })} /></label>
-            <label className="fld"><span>secretKey {cfg.hasSecret && <span style={{ color: '#16a34a' }}>（已存，留空不变）</span>}</span>
-              <input disabled={!canManage} type="password" value={secretKey} onChange={(e) => setSecretKey(e.target.value)} placeholder={cfg.hasSecret ? '••••••' : ''} /></label>
+          <div className="hint-text" style={{ marginTop: 0 }}>
+            打开 <b>agent.qcc.com/guide</b>，把页面给出的 MCP 配置 JSON 整段复制，粘贴到下面即可（含 Bearer Token，将加密存储）。
           </div>
-          {canManage && <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn ghost sm" onClick={() => saveCfg(true)}>保存并测试</button>
-            <button className="btn primary sm" onClick={() => saveCfg(false)}>保存</button>
+          {cfg.configured && (
+            <div className="ok-msg" style={{ marginTop: 0, marginBottom: 8 }}>
+              ✓ 已连接：<code style={{ fontSize: 11 }}>{cfg.endpoint}</code>（重新粘贴可覆盖）
+            </div>
+          )}
+          <label className="fld sm">
+            <span>企查查 MCP 配置 JSON</span>
+            <textarea disabled={!canManage} value={mcpJson} onChange={(e) => setMcpJson(e.target.value)} rows={6}
+              style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 11.5, minHeight: 120 }}
+              placeholder={'{\n  "mcpServers": {\n    "qcc-company": {\n      "url": "https://agent.qcc.com/mcp/company/stream",\n      "headers": { "Authorization": "Bearer xxxxxxxx" }\n    }\n  }\n}'} />
+          </label>
+          {canManage && <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button className="btn ghost sm" onClick={() => saveCfg(true)} disabled={cfgBusy}>{cfgBusy ? '处理中…' : '保存并测试连通'}</button>
+            <button className="btn primary sm" onClick={() => saveCfg(false)} disabled={cfgBusy}>保存</button>
+            {cfg.configured && <button className="btn ghost sm" onClick={clearCfg} disabled={cfgBusy}>清除</button>}
             {cfgMsg && <span className="hint-text" style={{ margin: 0, alignSelf: 'center' }}>{cfgMsg}</span>}
           </div>}
         </div>

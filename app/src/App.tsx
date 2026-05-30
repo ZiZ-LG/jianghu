@@ -3,6 +3,7 @@ import type { Layer, Role, CustomerType, Edge } from './types';
 import { reducer, newAccount, newOpportunity, newPerson, type Action } from './store';
 import { api, type AuthResult, type Suggestion } from './api';
 import { scoreFromDomain } from './lib/g64111';
+import { usePersistentState, useTheme } from './ui';
 import { Auth } from './components/Auth';
 import { CustomerHub } from './components/CustomerHub';
 import { Sidebar } from './components/Sidebar';
@@ -18,6 +19,7 @@ import { AiSettings } from './components/AiSettings';
 import { StrategyConsole } from './components/StrategyConsole';
 import { SuggestionPanel } from './components/SuggestionPanel';
 import { EnrichPanel } from './components/EnrichPanel';
+import { ReportPanel } from './components/ReportPanel';
 import { Footer } from './components/Footer';
 
 export default function App() {
@@ -40,6 +42,10 @@ export default function App() {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [generating, setGenerating] = useState(false);
   const [enrichOpen, setEnrichOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = usePersistentState('jianghu.sidebarCollapsed', false);
+  const [winCollapsed, setWinCollapsed] = usePersistentState('jianghu.winCollapsed', false);
+  const [theme, toggleTheme] = useTheme();
 
   // 启动：有 token 则恢复会话 + 拉取云端数据
   useEffect(() => {
@@ -171,6 +177,7 @@ export default function App() {
           onDeleteAccount={(id) => act({ type: 'DELETE_ACCOUNT', accId: id })}
           tenantName={auth.tenant.name} userName={auth.user.name} plan={auth.tenant.plan}
           onOpenTeam={() => setTeamOpen(true)} onLogout={logout} onOpenAiSettings={() => setAiSettingsOpen(true)}
+          theme={theme} onToggleTheme={toggleTheme}
         />
         {syncErr && <div className="sync-toast">{syncErr}</div>}
         {teamOpen && <TeamBilling role={auth.user.role} onClose={() => setTeamOpen(false)} />}
@@ -187,29 +194,44 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <Sidebar
-        account={account} currentOppId={oppId} onSelectOpp={(id) => { setOppId(id); setSelectedId(null); }}
-        selectedPersonId={selectedId} onSelectPerson={setSelectedId}
-        onBack={() => { setAccId(null); setSelectedId(null); }} onAddOpp={addOpp} onDeleteOpp={deleteOpp}
-        onAddPerson={() => setPersonFormOpen(true)} roleByPerson={roleByPerson}
-      />
+      {sidebarCollapsed ? (
+        <button className="sidebar-rail" onClick={() => setSidebarCollapsed(false)} title="展开侧边栏">
+          <span className="rail-icon">›</span>
+          <span className="rail-label">{account.name}</span>
+        </button>
+      ) : (
+        <Sidebar
+          account={account} currentOppId={oppId} onSelectOpp={(id) => { setOppId(id); setSelectedId(null); }}
+          selectedPersonId={selectedId} onSelectPerson={setSelectedId}
+          onBack={() => { setAccId(null); setSelectedId(null); }} onAddOpp={addOpp} onDeleteOpp={deleteOpp}
+          onAddPerson={() => setPersonFormOpen(true)} roleByPerson={roleByPerson}
+          onCollapse={() => setSidebarCollapsed(true)}
+          theme={theme} onToggleTheme={toggleTheme}
+        />
+      )}
 
       <main className="main">
         {opp ? (
           <>
-            <div className="maintoolbar">
-              <span className="mt-name">{opp.name}</span>
-              <button className="btn ghost xs" onClick={() => setOppFormOpen(true)}>编辑商机</button>
-              <button className="btn ghost xs" onClick={() => setRelEditorOpen(true)}>＋ 关系</button>
-              <button className="btn ghost xs" onClick={() => setEnrichOpen(true)}>🏢 建图</button>
-              <button className="btn ghost xs" onClick={() => setSuggestOpen(true)}>🔮 荐关系{suggestions.length > 0 ? ` (${suggestions.length})` : ''}</button>
-              <button className="btn primary xs" onClick={() => setConsoleOpen(true)}>🧠 AI 推演</button>
+            <div className="canvas-top">
+              <LayerTabs layer={layer} onChange={setLayer} />
+              <div className="maintoolbar">
+                <span className="mt-name">{opp.name}</span>
+                <button className="btn ghost xs" onClick={() => setOppFormOpen(true)}>编辑商机</button>
+                <button className="btn ghost xs" onClick={() => setRelEditorOpen(true)}>＋ 关系</button>
+                <button className="btn ghost xs" onClick={() => setEnrichOpen(true)}>🏢 建图</button>
+                <button className="btn ghost xs" onClick={() => setSuggestOpen(true)}>🔮 荐关系{suggestions.length > 0 ? ` (${suggestions.length})` : ''}</button>
+                <button className="btn ghost xs" onClick={() => setReportOpen(true)}>📊 报表</button>
+                <button className="btn primary xs" onClick={() => setConsoleOpen(true)}>🧠 AI 推演</button>
+              </div>
             </div>
-            <LayerTabs layer={layer} onChange={setLayer} />
             <Canvas account={account} opp={opp} layer={layer} selectedId={selectedId}
               onSelectPerson={setSelectedId} suggestions={suggestions}
               onMovePerson={(id, x, y) => act({ type: 'MOVE_PERSON', accId: account.id, personId: id, x, y })} />
-            {breakdown && <WinTendencyPanel breakdown={breakdown} />}
+            {breakdown && (
+              <WinTendencyPanel breakdown={breakdown} collapsed={winCollapsed}
+                onToggle={() => setWinCollapsed((c) => !c)} />
+            )}
           </>
         ) : (
           <div className="no-opp">
@@ -244,6 +266,9 @@ export default function App() {
       {aiSettingsOpen && <AiSettings role={auth.user.role} onClose={() => setAiSettingsOpen(false)} />}
       {enrichOpen && account && (
         <EnrichPanel accountName={account.name} role={auth.user.role} onImport={importPersons} onClose={() => setEnrichOpen(false)} />
+      )}
+      {reportOpen && opp && (
+        <ReportPanel account={account} opp={opp} onClose={() => setReportOpen(false)} />
       )}
       {suggestOpen && (
         <SuggestionPanel suggestions={suggestions} generating={generating}

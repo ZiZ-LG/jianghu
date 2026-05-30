@@ -111,7 +111,7 @@ export function Canvas({
                 <path d={d} fill="none" stroke={color} strokeWidth={e.width || 1.5} strokeDasharray={e.style === 'dashed' ? '5,5' : undefined} markerEnd={marker} />
                 {e.label && (
                   <text className="edge-label" x={mid.x} y={mid.y - 4} textAnchor="middle" fill={color}
-                    stroke="#fff" strokeWidth={3} style={{ paintOrder: 'stroke' } as React.CSSProperties}>{e.label}</text>
+                    stroke="var(--node-halo)" strokeWidth={3} style={{ paintOrder: 'stroke' } as React.CSSProperties}>{e.label}</text>
                 )}
               </g>
             );
@@ -128,7 +128,7 @@ export function Canvas({
               <g key={`sug${i}`} opacity={0.75}>
                 <path d={`M ${a.x + (dx / len) * NODE_R} ${a.y + (dy / len) * NODE_R} L ${b.x - (dx / len) * NODE_R} ${b.y - (dy / len) * NODE_R}`}
                   fill="none" stroke="#94a3b8" strokeWidth={1.5} strokeDasharray="2,4" />
-                <circle cx={mid.x} cy={mid.y} r={8} fill="#fff" stroke="#94a3b8" strokeWidth={1.5} />
+                <circle cx={mid.x} cy={mid.y} r={8} fill="var(--node-fill)" stroke="#94a3b8" strokeWidth={1.5} />
                 <text x={mid.x} y={mid.y + 3.5} textAnchor="middle" fontSize={11} fontWeight={800} fill="#64748b">?</text>
               </g>
             );
@@ -140,8 +140,8 @@ export function Canvas({
             const selected = selectedId === p.id;
             return (
               <g key={p.id} data-pid={p.id} transform={`translate(${pt.x},${pt.y})`} style={{ cursor: 'pointer' }} onMouseDown={(e) => onDownNode(e, p)}>
-                <circle r={NODE_R} fill={p.isCompetitor ? '#1f2937' : '#fff'} stroke={selected ? '#2563eb' : '#cbd5e1'} strokeWidth={selected ? 3 : 2} />
-                <text textAnchor="middle" y={4} className="node-name" fill={p.isCompetitor ? '#fff' : '#1e293b'} fontSize={p.isCompetitor ? 11 : 12}>
+                <circle r={NODE_R} fill={p.isCompetitor ? '#1f2937' : 'var(--node-fill)'} stroke={selected ? 'var(--accent)' : 'var(--node-stroke)'} strokeWidth={selected ? 3 : 2} />
+                <text textAnchor="middle" y={4} className="node-name" fill={p.isCompetitor ? '#fff' : 'var(--node-text)'} fontSize={p.isCompetitor ? 11 : 12}>
                   {p.isCompetitor ? '友商' : p.name}
                 </text>
                 {role && !p.isCompetitor && (
@@ -158,11 +158,11 @@ export function Canvas({
                 )}
                 {!p.isCompetitor && (
                   <g transform={`translate(${-22},${NODE_R + 4})`}>
-                    <rect width={44} height={4} rx={2} fill="#e2e8f0" />
-                    <rect width={(44 * completeness(p)) / 100} height={4} rx={2} fill="#2563eb" />
+                    <rect width={44} height={4} rx={2} fill="var(--node-stroke)" />
+                    <rect width={(44 * completeness(p)) / 100} height={4} rx={2} fill="var(--accent)" />
                   </g>
                 )}
-                <text textAnchor="middle" y={NODE_R + 22} className="node-title" stroke="#f1f5f9" strokeWidth={3} style={{ paintOrder: 'stroke' } as React.CSSProperties}>{p.title}</text>
+                <text textAnchor="middle" y={NODE_R + 22} className="node-title" stroke="var(--node-halo)" strokeWidth={3} style={{ paintOrder: 'stroke' } as React.CSSProperties}>{p.title}</text>
               </g>
             );
           })}

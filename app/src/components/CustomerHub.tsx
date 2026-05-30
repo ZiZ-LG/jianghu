@@ -5,7 +5,7 @@ import { Modal } from './Modal';
 
 export function CustomerHub({
   accounts, onOpen, onCreate, onLoadDemo, onDeleteAccount,
-  tenantName, userName, plan, onOpenTeam, onLogout, onOpenAiSettings,
+  tenantName, userName, plan, onOpenTeam, onLogout, onOpenAiSettings, theme, onToggleTheme,
 }: {
   accounts: Account[];
   onOpen: (accId: string) => void;
@@ -18,6 +18,8 @@ export function CustomerHub({
   onOpenTeam: () => void;
   onLogout: () => void;
   onOpenAiSettings: () => void;
+  theme: 'light' | 'dark';
+  onToggleTheme: () => void;
 }) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
@@ -38,6 +40,7 @@ export function CustomerHub({
           <div className="hub-sub">江湖 · 销售干系人作战地图 · 客户工作台</div>
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center' }}>
+          <button className="theme-toggle" onClick={onToggleTheme} title={theme === 'dark' ? '切换到白天模式' : '切换到黑夜模式'}>{theme === 'dark' ? '☀️' : '🌙'}</button>
           <button className="team-chip" onClick={onOpenAiSettings}>🧠 AI 模型</button>
           <button className="team-chip" onClick={onOpenTeam}>👥 团队 · ❤️ 支持</button>
           <span className="who">{userName}</span>

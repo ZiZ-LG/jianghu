@@ -5,7 +5,7 @@ const ROLES: Role[] = ['A', 'D', 'U', 'TB', 'R'];
 
 export function Sidebar({
   account, currentOppId, onSelectOpp, selectedPersonId, onSelectPerson,
-  onBack, onAddOpp, onDeleteOpp, onAddPerson, roleByPerson,
+  onBack, onAddOpp, onDeleteOpp, onAddPerson, roleByPerson, onCollapse, theme, onToggleTheme,
 }: {
   account: Account;
   currentOppId: string | null;
@@ -17,6 +17,9 @@ export function Sidebar({
   onDeleteOpp: (id: string) => void;
   onAddPerson: () => void;
   roleByPerson: Map<string, Role>;
+  onCollapse: () => void;
+  theme: 'light' | 'dark';
+  onToggleTheme: () => void;
 }) {
   return (
     <aside className="sidebar">
@@ -24,6 +27,8 @@ export function Sidebar({
         <button className="back-btn" onClick={onBack} title="返回客户列表">‹</button>
         <div className="logo">江</div>
         <div className="sidebar-title">{account.name}<small>{account.persons.length} 干系人 · {account.opportunities.length} 商机</small></div>
+        <button className="theme-toggle" onClick={onToggleTheme} title={theme === 'dark' ? '切换到白天模式' : '切换到黑夜模式'}>{theme === 'dark' ? '☀️' : '🌙'}</button>
+        <button className="collapse-btn" onClick={onCollapse} title="折叠侧边栏">«</button>
       </div>
 
       <div className="sidebar-body">
