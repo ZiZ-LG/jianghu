@@ -383,6 +383,15 @@ select { font-family: inherit; }
 .cand-meta { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
 .cand-status { color: #16a34a; font-weight: 600; }
 .cand-code { margin-left: auto; font-size: 11px; color: var(--faint); font-family: ui-monospace, Menlo, monospace; }
+/* 股权 / 对外投资（只读·仅供参考）*/
+.enrich-equity { margin-top: 4px; border-top: 1px solid var(--line); }
+.equity-cols { display: flex; gap: 12px; align-items: flex-start; }
+.equity-col { flex: 1; min-width: 0; }
+.equity-h { font-size: 12px; font-weight: 700; color: var(--ink); margin: 8px 0 6px; }
+.equity-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 9px; font-size: 12.5px; background: var(--panel); }
+.equity-meta { display: flex; align-items: center; gap: 8px; margin-left: auto; font-size: 11px; color: var(--muted); flex-shrink: 0; }
+.equity-ratio { color: #2563eb; font-weight: 600; }
+@media (max-width: 560px) { .equity-cols { flex-direction: column; } }
 
 /* ───────── Hub header additions ───────── */
 .team-chip { font-size: 12px; color: #334155; background: #f1f5f9; border: 1px solid var(--line); padding: 6px 12px; border-radius: 999px; }
@@ -543,6 +552,8 @@ html[data-theme="dark"] .sc-bubble-ai { background: var(--panel-2); }
 html[data-theme="dark"] .sug-conf { background: var(--panel-2); color: var(--ink); }
 html[data-theme="dark"] .enrich-note { background: var(--panel-2); color: var(--ink-2); }
 html[data-theme="dark"] .enrich-row.on { background: var(--accent-soft); border-color: var(--accent); }
+html[data-theme="dark"] .equity-row { background: var(--panel-2); }
+html[data-theme="dark"] .equity-ratio { color: var(--accent); }
 html[data-theme="dark"] .team-chip { background: var(--panel-2); color: var(--ink-2); }
 html[data-theme="dark"] .team-chip:hover { background: var(--hover); }
 html[data-theme="dark"] .role-tag { background: var(--hover); color: var(--ink-2); }

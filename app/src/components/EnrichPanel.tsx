@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, type CompanyCandidate } from '../api';
+import { api, type CompanyCandidate, type CompanyEquityData } from '../api';
 import { Modal } from './Modal';
 
 const SOURCE_LABEL: Record<string, { t: string; c: string }> = {
@@ -28,6 +28,10 @@ export function EnrichPanel({
   // 全称锚定：候选企业列表（多候选时让用户点选，符合企查查"不可自动锁定"规则）
   const [candidates, setCandidates] = useState<CompanyCandidate[] | null>(null);
   const [resolvedName, setResolvedName] = useState('');
+  // 股权/对外投资（只读·仅供参考，不写库）；按需加载，避免每次查人都拉。
+  const [equity, setEquity] = useState<CompanyEquityData | null>(null);
+  const [equityErr, setEquityErr] = useState('');
+  const [equityLoading, setEquityLoading] = useState(false);
 
   // 企查查 MCP 配置（粘贴 JSON）
   const [cfg, setCfg] = useState({ configured: false, mode: 'mcp', endpoint: '', hasToken: false });
@@ -41,11 +45,20 @@ export function EnrichPanel({
   // 按完整登记名查关键人并填充预览
   const fetchPersons = async (fullName: string) => {
     setErr(''); setLoading(true); setRows([]); setCandidates(null);
+    setEquity(null); setEquityErr(''); // 切换主体时清空股权/投资旧数据
     try {
       const r = await api.enrichCompany(fullName);
       setRows(r.persons.map((p) => ({ ...p, selected: true })));
       setSource(r.source); setNote(r.note); setResolvedName(fullName);
     } catch (e: any) { setErr(e.message); } finally { setLoading(false); }
+  };
+
+  // 按需拉取股权/对外投资（只展示，不导入）。需已配企查查 MCP + 已锚定全称。
+  const loadEquity = async () => {
+    if (!resolvedName) return;
+    setEquityErr(''); setEquityLoading(true);
+    try { setEquity(await api.qccCompanyData(resolvedName)); }
+    catch (e: any) { setEquityErr(e.message); } finally { setEquityLoading(false); }
   };
 
   const search = async () => {
@@ -179,6 +192,56 @@ export function EnrichPanel({
             ))}
           </div>
         </>
+      )}
+
+      {/* 股权 / 对外投资（仅企查查 MCP；只展示·不导入·不写库，纯参考信息） */}
+      {cfg.configured && resolvedName && (
+        <div className="enrich-equity">
+          <div className="enrich-toolbar" style={{ marginTop: 16 }}>
+            <span>股权 / 对外投资 <span className="hint-text" style={{ margin: 0 }}>· 仅供参考，不导入建图</span></span>
+            {!equity
+              ? <button className="link-btn" onClick={loadEquity} disabled={equityLoading}>{equityLoading ? '加载中…' : '查看股权/投资 ▸'}</button>
+              : <button className="link-btn" onClick={loadEquity} disabled={equityLoading}>{equityLoading ? '刷新中…' : '刷新'}</button>}
+          </div>
+          {equityErr && <div className="auth-err">{equityErr}</div>}
+          {equity && (
+            <div className="equity-cols">
+              <div className="equity-col">
+                <div className="equity-h">股东（{equity.shareholders.length}）</div>
+                {equity.shareholders.length === 0
+                  ? <div className="hint-text" style={{ margin: 0 }}>无股东数据</div>
+                  : <div className="enrich-list">
+                      {equity.shareholders.map((s, i) => (
+                        <div key={i} className="equity-row">
+                          <span className="er-name">{s.name}</span>
+                          <span className="equity-meta">
+                            {s.ratio && <span className="equity-ratio">{s.ratio}</span>}
+                            {s.amount && <span>{s.amount}</span>}
+                          </span>
+                        </div>
+                      ))}
+                    </div>}
+              </div>
+              <div className="equity-col">
+                <div className="equity-h">对外投资（{equity.investments.length}）</div>
+                {equity.investments.length === 0
+                  ? <div className="hint-text" style={{ margin: 0 }}>无对外投资数据</div>
+                  : <div className="enrich-list">
+                      {equity.investments.map((v, i) => (
+                        <div key={i} className="equity-row">
+                          <span className="er-name">{v.name}</span>
+                          <span className="equity-meta">
+                            {v.ratio && <span className="equity-ratio">{v.ratio}</span>}
+                            {v.status && <span className="cand-status">{v.status}</span>}
+                            {v.establishDate && <span>{v.establishDate}</span>}
+                          </span>
+                        </div>
+                      ))}
+                    </div>}
+              </div>
+            </div>
+          )}
+        </div>
       )}
     </Modal>
   );
