@@ -6,6 +6,10 @@ RUN apt-get update -y \
   && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
+# 国内构建加速：npm 用 npmmirror；Prisma 引擎走 npmmirror 镜像（否则从 binaries.prisma.sh 拉取易超时）
+ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
+ENV PRISMA_ENGINES_MIRROR=https://registry.npmmirror.com/-/binary/prisma
+
 # 1) 依赖层（含 devDeps：运行期需要 tsx 跑 TS、prisma CLI 做 db push）
 COPY package.json package-lock.json ./
 RUN npm ci

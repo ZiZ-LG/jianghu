@@ -2,6 +2,8 @@
 # ---- 构建阶段 ----
 FROM node:22-slim AS build
 WORKDIR /app
+# 国内构建加速：npm 用 npmmirror
+ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
