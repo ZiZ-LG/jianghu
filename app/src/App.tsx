@@ -18,6 +18,7 @@ import { AiSettings } from './components/AiSettings';
 import { StrategyConsole } from './components/StrategyConsole';
 import { SuggestionPanel } from './components/SuggestionPanel';
 import { EnrichPanel } from './components/EnrichPanel';
+import { Footer } from './components/Footer';
 
 export default function App() {
   const [state, dispatch] = useReducer(reducer, { accounts: [] });
@@ -174,6 +175,7 @@ export default function App() {
         {syncErr && <div className="sync-toast">{syncErr}</div>}
         {teamOpen && <TeamBilling role={auth.user.role} onClose={() => setTeamOpen(false)} />}
         {aiSettingsOpen && <AiSettings role={auth.user.role} onClose={() => setAiSettingsOpen(false)} />}
+        <Footer />
       </>
     );
   }

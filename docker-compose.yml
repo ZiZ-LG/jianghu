@@ -42,6 +42,12 @@ services:
       context: ./app
       args:
         VITE_API_URL: ${VITE_API_URL:-}
+        # 备案审核期=1 只展示中性介绍页；备案过后置空重建恢复完整应用
+        VITE_BEIAN_MODE: ${VITE_BEIAN_MODE:-}
+        # 备案号下来后填入，页脚自动显示
+        VITE_ICP_BEIAN: ${VITE_ICP_BEIAN:-}
+        VITE_POLICE_BEIAN: ${VITE_POLICE_BEIAN:-}
+        VITE_POLICE_BEIAN_URL: ${VITE_POLICE_BEIAN_URL:-}
     restart: unless-stopped
     depends_on:
       - server

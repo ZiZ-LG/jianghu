@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api, type AuthResult } from '../api';
+import { Footer } from './Footer';
 
 export function Auth({ onAuthed }: { onAuthed: (r: AuthResult) => void }) {
   const [mode, setMode] = useState<'login' | 'register'>('register');
@@ -81,6 +82,7 @@ export function Auth({ onAuthed }: { onAuthed: (r: AuthResult) => void }) {
         </div>
         <div className="auth-tip">手机号即可注册使用，无需企业资质。微信登录需企业认证，暂未开放。</div>
       </div>
+      <Footer />
     </div>
   );
 }

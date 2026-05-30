@@ -344,3 +344,24 @@ select { font-family: inherit; }
 /* ───────── Sync toast ───────── */
 .sync-toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); z-index: 200;
   background: #b91c1c; color: #fff; font-size: 13px; padding: 10px 18px; border-radius: 10px; box-shadow: 0 8px 24px rgba(185,28,28,.3); }
+
+/* ───────── 备案号页脚（env 驱动；未配置则组件返回 null）───────── */
+.beian-footer { position: fixed; bottom: 0; left: 0; right: 0; z-index: 50;
+  display: flex; justify-content: center; align-items: center; gap: 18px; flex-wrap: wrap;
+  padding: 8px 12px; font-size: 12px; color: #94a3b8;
+  background: rgba(255,255,255,.78); border-top: 1px solid var(--line); backdrop-filter: blur(4px); }
+.beian-footer a { color: #94a3b8; text-decoration: none; }
+.beian-footer a:hover { color: #475569; text-decoration: underline; }
+
+/* ───────── 备案审核期·中性介绍页 ───────── */
+.landing { min-height: 100vh; width: 100vw; display: flex; flex-direction: column;
+  background: radial-gradient(circle at 50% 0%, #f8fafc, #eef2f7); overflow-y: auto; }
+.landing-main { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; padding: 48px 24px 80px; }
+.landing-logo { width: 72px; height: 72px; border-radius: 18px; background: #0f172a; color: #fff;
+  display: grid; place-items: center; font-weight: 800; font-size: 38px; box-shadow: 0 10px 30px rgba(15,23,42,.18); }
+.landing-title { margin-top: 22px; font-size: 34px; font-weight: 800; letter-spacing: 2px; color: #0f172a; }
+.landing-sub { margin-top: 8px; font-size: 15px; font-weight: 600; color: #475569; letter-spacing: .5px; }
+.landing-desc { margin-top: 18px; max-width: 440px; font-size: 14px; line-height: 1.9; color: #64748b; }
+.landing-tag { margin-top: 26px; font-size: 12px; color: #64748b; background: #fff; border: 1px solid var(--line);
+  padding: 7px 16px; border-radius: 999px; box-shadow: 0 2px 8px rgba(15,23,42,.05); }
