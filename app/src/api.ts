@@ -1,7 +1,9 @@
 import type { Action } from './store';
 import type { Account } from './types';
 
-const BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3001';
+// 生产构建把 VITE_API_URL 设为空串 "" → 走同源相对路径 /api（由 Nginx 反代到后端）。
+// 开发未设(undefined) → 回退本地后端。用 ?? 而非 ||，确保空串不被误回退。
+const BASE = (import.meta as any).env?.VITE_API_URL ?? 'http://localhost:3001';
 const TOKEN_KEY = 'jianghu.token';
 let token: string | null = localStorage.getItem(TOKEN_KEY);
 

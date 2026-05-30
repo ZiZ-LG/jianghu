@@ -30,7 +30,7 @@ function userView(u: { id: string; phone: string | null; email: string | null; n
 }
 
 export function authRoutes(app: FastifyInstance) {
-  app.post('/api/auth/register', async (req, reply) => {
+  app.post('/api/auth/register', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
     const p = registerSchema.safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: p.error.issues[0]?.message || '参数无效' });
     const { phone: ph, email: em, password, name, tenantName } = p.data;
@@ -46,7 +46,7 @@ export function authRoutes(app: FastifyInstance) {
     return { token, user: userView(user), tenant: tenantView(tenant) };
   });
 
-  app.post('/api/auth/login', async (req, reply) => {
+  app.post('/api/auth/login', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
     const p = loginSchema.safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: p.error.issues[0]?.message || '参数无效' });
     const { phone: ph, email: em, password } = p.data;

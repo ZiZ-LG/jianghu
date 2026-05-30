@@ -2,6 +2,8 @@ import './types.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
+import helmet from '@fastify/helmet';
+import rateLimit from '@fastify/rate-limit';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
@@ -16,10 +18,32 @@ import { enrichRoutes } from './enrich.js';
 // 加载本地 .env（生产环境用真实环境变量，文件不存在则忽略）
 try { process.loadEnvFile(); } catch { /* no .env in prod */ }
 
-const app = Fastify({ logger: { level: 'warn' } });
+const IS_PROD = process.env.NODE_ENV === 'production';
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-production';
+// 生产环境拒绝以默认开发密钥启动（默认密钥 = 任何人可伪造登录态）
+if (IS_PROD && JWT_SECRET === 'dev-secret-change-in-production') {
+  console.error('[安全] 生产环境必须设置强随机 JWT_SECRET（openssl rand -hex 32），已拒绝启动');
+  process.exit(1);
+}
 
-await app.register(cors, { origin: true });
-await app.register(jwt, { secret: process.env.JWT_SECRET || 'dev-secret-change-in-production' });
+// trustProxy：部署在 Nginx 反代之后，据此识别真实客户端 IP（限流/日志才准确）
+const app = Fastify({ logger: { level: 'warn' }, trustProxy: true });
+
+// 安全响应头（API 为 JSON 接口；CSP 交由前端 Nginx 对静态站点统一处理）
+await app.register(helmet, { contentSecurityPolicy: false });
+
+// CORS：生产默认同源（前端经 Nginx 反代到本服务），无需跨域。
+// 如确需跨域，用环境变量 CORS_ORIGIN 指定允许来源（逗号分隔）。
+const corsOrigin = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(',').map((s) => s.trim())
+  : IS_PROD
+    ? false
+    : true;
+await app.register(cors, { origin: corsOrigin, credentials: true });
+await app.register(jwt, { secret: JWT_SECRET });
+
+// 全局限流：每 IP 每分钟 300 次（兜底防滥用；认证接口在 auth.ts 内单独收紧）
+await app.register(rateLimit, { max: 300, timeWindow: '1 minute' });
 
 app.decorate('authenticate', async (req: any, reply: any) => {
   try { await req.jwtVerify(); } catch { reply.code(401).send({ error: 'unauthorized' }); }
