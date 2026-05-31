@@ -9,8 +9,35 @@ function mcpUrl(): string {
   return o.replace(/\/$/, '') + '/api/mcp';
 }
 
-function copy(text: string, onOk: () => void) {
-  navigator.clipboard?.writeText(text).then(onOk, () => {});
+// 复制到剪贴板。navigator.clipboard 仅在安全上下文(HTTPS/localhost)可用；
+// 团队多经 http://主机.local 或 Tailscale IP（非安全上下文）访问，故必须有 execCommand 回退。
+function copyToClipboard(text: string): Promise<boolean> {
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text).then(() => true, () => legacyCopy(text));
+  }
+  return Promise.resolve(legacyCopy(text));
+}
+function legacyCopy(text: string): boolean {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.top = '0';
+    ta.style.left = '0';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+function copy(text: string, onOk: () => void, onFail?: () => void) {
+  copyToClipboard(text).then((ok) => (ok ? onOk() : onFail?.()));
 }
 
 export function McpAccess({ onClose }: { onClose: () => void }) {
@@ -26,6 +53,8 @@ export function McpAccess({ onClose }: { onClose: () => void }) {
   useEffect(() => { load(); }, []);
 
   const flash = (k: string) => { setCopied(k); setTimeout(() => setCopied(''), 1500); };
+  // 复制并给反馈：成功闪「✓ 已复制」，失败闪「✗ 复制失败」（提示手动选择）。
+  const doCopy = (text: string, k: string) => copy(text, () => flash(k), () => flash(k + '_fail'));
 
   const create = async () => {
     setErr(''); setBusy(true);
@@ -55,8 +84,8 @@ export function McpAccess({ onClose }: { onClose: () => void }) {
       {/* 接入地址 */}
       <label className="fld sm"><span>接入地址</span>
         <div style={{ display: 'flex', gap: 8 }}>
-          <input readOnly value={url} style={{ flex: 1 }} />
-          <button className="btn ghost sm" onClick={() => copy(url, () => flash('url'))}>{copied === 'url' ? '✓ 已复制' : '复制'}</button>
+          <input readOnly value={url} style={{ flex: 1 }} onFocus={(e) => e.target.select()} />
+          <button className="btn ghost sm" onClick={() => doCopy(url, 'url')}>{copied === 'url' ? '✓ 已复制' : copied === 'url_fail' ? '✗ 失败' : '复制'}</button>
         </div>
       </label>
 
@@ -64,13 +93,14 @@ export function McpAccess({ onClose }: { onClose: () => void }) {
       {fresh && (
         <div className="ok-msg" style={{ marginTop: 4 }}>
           <div style={{ fontWeight: 700, marginBottom: 6 }}>✅ 令牌「{fresh.name}」已生成 —— 只显示这一次，请立即复制保存</div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <code style={{ flex: 1, fontSize: 11, wordBreak: 'break-all', background: 'var(--panel-2)', padding: '6px 8px', borderRadius: 6 }}>{fresh.token}</code>
+          {/* 完整配置：可直接粘进 AI 助手。点击可全选，复制不成时可手动复制 */}
+          <textarea readOnly value={configJson(fresh.token)} onFocus={(e) => e.target.select()}
+            style={{ width: '100%', minHeight: 120, fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 11, lineHeight: 1.5, background: 'var(--panel-2)', color: 'var(--ink)', border: '1px solid var(--line)', borderRadius: 8, padding: '8px 10px', resize: 'vertical' }} />
+          <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+            <button className="btn primary sm" onClick={() => doCopy(configJson(fresh.token), 'cfg')}>{copied === 'cfg' ? '✓ 已复制配置' : copied === 'cfg_fail' ? '✗ 复制失败，请点上方框手动复制' : '📋 复制完整 MCP 配置'}</button>
+            <button className="btn ghost sm" onClick={() => doCopy(fresh.token, 'tok')}>{copied === 'tok' ? '✓ 已复制令牌' : copied === 'tok_fail' ? '✗ 失败' : '只复制令牌'}</button>
           </div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-            <button className="btn ghost sm" onClick={() => copy(fresh.token, () => flash('tok'))}>{copied === 'tok' ? '✓ 已复制令牌' : '复制令牌'}</button>
-            <button className="btn primary sm" onClick={() => copy(configJson(fresh.token), () => flash('cfg'))}>{copied === 'cfg' ? '✓ 已复制配置' : '📋 复制完整 MCP 配置'}</button>
-          </div>
+          <div className="hint-text" style={{ margin: '8px 0 0' }}>提示：若"复制"无效（部分浏览器在非 HTTPS 下限制），请点上方文本框 → 全选(Ctrl/⌘+A) → 复制(Ctrl/⌘+C)。</div>
         </div>
       )}
 
