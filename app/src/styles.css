@@ -349,6 +349,7 @@ select { font-family: inherit; }
 .md-quote { border-left: 3px solid #bfdbfe; background: #eff6ff; color: #1e40af; padding: 6px 10px; border-radius: 0 6px 6px 0; margin: 6px 0; font-size: 12px; }
 
 /* ───────── AI 关系推断面板 ───────── */
+.sug-section-t { font-size: 12px; font-weight: 800; color: var(--ink-2); margin: 4px 0 8px; }
 .sug-list { display: flex; flex-direction: column; gap: 8px; max-height: 56vh; overflow-y: auto; }
 .sug-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
 .sug-row:hover { background: #f8fafc; }

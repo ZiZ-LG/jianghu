@@ -121,16 +121,43 @@ model RelSuggestion {
   tenantId        String
   opportunityId   String
   opportunity     Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
-  sourcePersonId  String
-  targetPersonId  String
+  sourcePersonId  String      // 存 Person.id 或 PersonSuggestion.id（由 sourceKind 区分）
+  targetPersonId  String      // 同上
+  // 端点类型：person=正式干系人 / suggestion=尚未采纳的候选人物。默认 person（存量数据零迁移）。
+  sourceKind      String      @default("person") // person | suggestion
+  targetKind      String      @default("person") // person | suggestion
   layer           String
   label           String
   confidence      Float       @default(0.5)
-  origin          String      @default("graph") // graph | llm | qcc
+  origin          String      @default("graph") // graph | llm | qcc | mcp
   evidence        String      @default("")
   status          String      @default("pending") // pending | accepted | rejected
   createdAt       DateTime    @default(now())
 
+  @@index([opportunityId])
+}
+
+// AI/外部 agent 提议的「候选干系人」（待人审）。绝不自动写库，accept 后才生成正式 Person。
+// 独立表存放：候选数据天然不在任何 Person 查询路径上，不会泄漏进侦探墙/趋赢力/只读 MCP（PIPL 红线）。
+// 不存 form/family7/籍贯等敏感项；evidence 仅自由文本摘要，采纳后由用户补 FORM。
+model PersonSuggestion {
+  id               String   @id
+  tenantId         String
+  accountId        String   // 候选人物归属的客户（采纳时据此建正式 Person）
+  opportunityId    String?  // 可选：提议时关联的商机
+  name             String
+  title            String   @default("")
+  orgLevel         Int      @default(3)
+  origin           String   @default("mcp") // mcp | ai | qcc
+  evidence         String   @default("") // 自由文本（来源/依据摘要）
+  sourceUrl        String?  // 调研来源链接（外部 agent 联网调研时带上）
+  confidence       Float    @default(0.5)
+  status           String   @default("pending") // pending | accepted | rejected
+  proposedBy       String   @default("") // 提议者 userId（审计）
+  resolvedPersonId String?  // 采纳后指向真实 Person.id（保证级联采纳幂等、去重）
+  createdAt        DateTime @default(now())
+
+  @@index([accountId])
   @@index([opportunityId])
 }
 

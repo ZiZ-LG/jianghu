@@ -8,6 +8,39 @@ const pairKey = (a: string, b: string) => [a, b].sort().join('|');
 const LAYER_COLOR: Record<string, string> = { L1: '#2563eb', L2: '#9333ea', L3: '#16a34a', L4: '#ef4444' };
 const parseForm = (s: string) => { try { return JSON.parse(s || '{}'); } catch { return {}; } };
 
+// 候选关系端点的规范化键（含 kind，避免候选/正式同 id 混淆）
+const endKey = (kind: string, id: string) => `${kind}:${id}`;
+const ORIGIN_LABEL: Record<string, string> = { mcp: 'AI 调研·待核实', ai: 'AI 推测·待核实', qcc: '企查查导入' };
+
+// 给新干系人选画布空位：按既有非竞品人数错开排布（与 App.tsx importPersons 同口径）
+function placeAt(n: number) {
+  return { x: 220 + (n % 4) * 150, y: 150 + Math.floor(n / 4) * 135 };
+}
+
+/**
+ * 从候选人物落一个正式 Person（在传入的事务客户端内执行）。幂等：若候选已 accepted 且有 resolvedPersonId 则直接复用。
+ * 返回 { personId, createdPerson? }，createdPerson 用于前端 dispatch ADD_PERSON。
+ */
+async function materializePerson(tx: any, tenantId: string, suggId: string): Promise<{ personId: string; createdPerson?: any }> {
+  const ps = await tx.personSuggestion.findFirst({ where: { id: suggId, tenantId } });
+  if (!ps) throw new Error('候选干系人不存在');
+  if (ps.status === 'rejected') throw new Error(`候选干系人「${ps.name}」已被否决，无法作为关系端点`);
+  if (ps.status === 'accepted' && ps.resolvedPersonId) return { personId: ps.resolvedPersonId };
+
+  const n = await tx.person.count({ where: { tenantId, accountId: ps.accountId, isCompetitor: false } });
+  const { x, y } = placeAt(n);
+  const today = new Date().toISOString().slice(0, 10);
+  const logs = [{ date: today, content: `📥 ${ORIGIN_LABEL[ps.origin] || '外部导入'}（${ps.evidence || '无备注'}）${ps.sourceUrl ? ' · ' + ps.sourceUrl : ''}`, visibility: 'team' }];
+  const personId = 'p_' + randomUUID().slice(0, 12);
+  await tx.person.create({ data: { id: personId, tenantId, accountId: ps.accountId, name: ps.name, title: ps.title, orgLevel: ps.orgLevel, isCompetitor: false, x, y, form: '{}', logs: JSON.stringify(logs) } });
+  await tx.personSuggestion.update({ where: { id: ps.id }, data: { status: 'accepted', resolvedPersonId: personId } });
+  // key 收敛：把仍 pending、引用该候选的其它关系端点改写为 person/resolvedPersonId（防重复边）
+  await tx.relSuggestion.updateMany({ where: { tenantId, status: 'pending', sourceKind: 'suggestion', sourcePersonId: suggId }, data: { sourceKind: 'person', sourcePersonId: personId } });
+  await tx.relSuggestion.updateMany({ where: { tenantId, status: 'pending', targetKind: 'suggestion', targetPersonId: suggId }, data: { targetKind: 'person', targetPersonId: personId } });
+  const createdPerson = { id: personId, name: ps.name, title: ps.title, orgLevel: ps.orgLevel, isCompetitor: false, x, y, form: { family: '', occupation: '', recreation: '', moneyMotivation: '', family7: {} }, logs };
+  return { personId, createdPerson };
+}
+
 interface Cand { source: string; target: string; layer: string; label: string; confidence: number; origin: string; evidence: string; }
 
 // ── 图算法：共同邻居 → 疑似关联 ──
@@ -87,9 +120,19 @@ export function suggestRoutes(app: FastifyInstance) {
     const edges = await prisma.edge.findMany({ where: { tenantId, accountId: opp.accountId, OR: [{ opportunityId: null }, { opportunityId: oppId }] } });
     return { opp, persons, edges };
   }
-  const withNames = (rows: any[], persons: any[]) => {
+  // 解析候选关系端点名（正式人从 persons 取，候选人从 PersonSuggestion 取），并带上 kind 供前端区分。
+  const withNames = async (tenantId: string, rows: any[], persons: any[]) => {
     const nm = new Map(persons.map((p) => [p.id, p.name]));
-    return rows.map((r) => ({ id: r.id, source: r.sourcePersonId, target: r.targetPersonId, sourceName: nm.get(r.sourcePersonId) || '?', targetName: nm.get(r.targetPersonId) || '?', layer: r.layer, label: r.label, confidence: r.confidence, origin: r.origin, evidence: r.evidence }));
+    const suggIds = new Set<string>();
+    for (const r of rows) {
+      if (r.sourceKind === 'suggestion') suggIds.add(r.sourcePersonId);
+      if (r.targetKind === 'suggestion') suggIds.add(r.targetPersonId);
+    }
+    if (suggIds.size) {
+      const ss = await prisma.personSuggestion.findMany({ where: { tenantId, id: { in: [...suggIds] } }, select: { id: true, name: true } });
+      for (const s of ss) nm.set(s.id, s.name + '（候选）');
+    }
+    return rows.map((r) => ({ id: r.id, source: r.sourcePersonId, target: r.targetPersonId, sourceKind: r.sourceKind, targetKind: r.targetKind, sourceName: nm.get(r.sourcePersonId) || '?', targetName: nm.get(r.targetPersonId) || '?', layer: r.layer, label: r.label, confidence: r.confidence, origin: r.origin, evidence: r.evidence }));
   };
 
   app.get('/api/suggest', { preHandler: [app.authenticate] }, async (req: any, reply) => {
@@ -98,7 +141,7 @@ export function suggestRoutes(app: FastifyInstance) {
     const g = await loadGraph(req.user.tenantId, oppId);
     if (!g) return reply.code(404).send({ error: '商机不存在' });
     const rows = await prisma.relSuggestion.findMany({ where: { opportunityId: oppId, tenantId: req.user.tenantId, status: 'pending' }, orderBy: { confidence: 'desc' } });
-    return { suggestions: withNames(rows, g.persons) };
+    return { suggestions: await withNames(req.user.tenantId, rows, g.persons) };
   });
 
   app.post('/api/suggest/generate', { preHandler: [app.authenticate] }, async (req, reply) => {
@@ -123,23 +166,85 @@ export function suggestRoutes(app: FastifyInstance) {
       await prisma.relSuggestion.createMany({ data: fresh.map((c) => ({ id: 'rs_' + randomUUID().slice(0, 12), tenantId, opportunityId: p.data.opportunityId, sourcePersonId: c.source, targetPersonId: c.target, layer: c.layer, label: c.label, confidence: c.confidence, origin: c.origin, evidence: c.evidence })) });
     }
     const all = await prisma.relSuggestion.findMany({ where: { opportunityId: p.data.opportunityId, tenantId, status: 'pending' }, orderBy: { confidence: 'desc' } });
-    return { added: fresh.length, suggestions: withNames(all, g.persons) };
+    return { added: fresh.length, suggestions: await withNames(req.user.tenantId, all, g.persons) };
   });
 
+  // 采纳候选关系：级联事务——若端点是候选人物先落正式 Person，再建 Edge。
+  // 返回 { edge, createdPersons }：前端须先 dispatch 这些 ADD_PERSON 再 ADD_EDGE，否则画布找不到端点。
   app.post('/api/suggest/:id/accept', { preHandler: [app.authenticate] }, async (req: any, reply) => {
-    const s = await prisma.relSuggestion.findFirst({ where: { id: req.params.id, tenantId: req.user.tenantId } });
+    const tenantId = req.user.tenantId;
+    const s = await prisma.relSuggestion.findFirst({ where: { id: req.params.id, tenantId } });
     if (!s) return reply.code(404).send({ error: '候选不存在' });
-    const opp = await prisma.opportunity.findFirst({ where: { id: s.opportunityId, tenantId: req.user.tenantId } });
+    if (s.status !== 'pending') return reply.code(400).send({ error: '该候选已处理' });
+    const opp = await prisma.opportunity.findFirst({ where: { id: s.opportunityId, tenantId } });
     if (!opp) return reply.code(404).send({ error: '商机不存在' });
-    const id = 'e_' + randomUUID().slice(0, 12);
-    await prisma.edge.create({ data: { id, tenantId: req.user.tenantId, accountId: opp.accountId, opportunityId: s.opportunityId, source: s.sourcePersonId, target: s.targetPersonId, layer: s.layer, label: s.label, color: LAYER_COLOR[s.layer] || '#16a34a', style: 'solid', width: null, directed: false, origin: 'ai' } });
-    await prisma.relSuggestion.update({ where: { id: s.id }, data: { status: 'accepted' } });
-    return { edge: { id, source: s.sourcePersonId, target: s.targetPersonId, layer: s.layer, label: s.label, color: LAYER_COLOR[s.layer] || '#16a34a', style: 'solid', directed: false, origin: 'ai' } };
+
+    try {
+      const result = await prisma.$transaction(async (tx) => {
+        const createdPersons: any[] = [];
+        // 解析两端点为真实 Person.id（候选则级联落库）
+        const resolveEnd = async (kind: string, id: string, role: string) => {
+          if (kind === 'suggestion') {
+            const r = await materializePerson(tx, tenantId, id);
+            if (r.createdPerson) createdPersons.push(r.createdPerson);
+            return r.personId;
+          }
+          const p = await tx.person.findFirst({ where: { id, tenantId } });
+          if (!p) throw new Error(`${role}端点（正式干系人）不存在`);
+          return id;
+        };
+        const sourceId = await resolveEnd(s.sourceKind, s.sourcePersonId, 'source');
+        const targetId = await resolveEnd(s.targetKind, s.targetPersonId, 'target');
+
+        const edgeId = 'e_' + randomUUID().slice(0, 12);
+        const color = LAYER_COLOR[s.layer] || '#16a34a';
+        await tx.edge.create({ data: { id: edgeId, tenantId, accountId: opp.accountId, opportunityId: s.opportunityId, source: sourceId, target: targetId, layer: s.layer, label: s.label, color, style: 'solid', width: null, directed: false, origin: 'ai' } });
+        await tx.relSuggestion.update({ where: { id: s.id }, data: { status: 'accepted', sourceKind: 'person', sourcePersonId: sourceId, targetKind: 'person', targetPersonId: targetId } });
+        return { edge: { id: edgeId, source: sourceId, target: targetId, layer: s.layer, label: s.label, color, style: 'solid', directed: false, origin: 'ai' }, createdPersons };
+      });
+      return result;
+    } catch (e: any) {
+      return reply.code(400).send({ error: e?.message || '采纳失败' });
+    }
   });
 
   app.post('/api/suggest/:id/reject', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     const r = await prisma.relSuggestion.updateMany({ where: { id: req.params.id, tenantId: req.user.tenantId }, data: { status: 'rejected' } });
     if (!r.count) return reply.code(404).send({ error: '候选不存在' });
+    return { ok: true };
+  });
+
+  // ── 候选干系人（PersonSuggestion）评审 ──
+  app.get('/api/suggest/persons', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    const accountId = String(req.query?.accountId || '');
+    if (!accountId) return reply.code(400).send({ error: '缺少 accountId' });
+    const acc = await prisma.account.findFirst({ where: { id: accountId, tenantId: req.user.tenantId } });
+    if (!acc) return reply.code(404).send({ error: '客户不存在' });
+    const rows = await prisma.personSuggestion.findMany({ where: { accountId, tenantId: req.user.tenantId, status: 'pending' }, orderBy: { confidence: 'desc' } });
+    // 标注是否已有同名正式干系人（供前端给"合并/新建"选择）
+    const persons = await prisma.person.findMany({ where: { tenantId: req.user.tenantId, accountId }, select: { id: true, name: true } });
+    const nameToId = new Map(persons.map((p) => [p.name, p.id]));
+    return { suggestions: rows.map((r) => ({ id: r.id, accountId: r.accountId, name: r.name, title: r.title, orgLevel: r.orgLevel, origin: r.origin, evidence: r.evidence, sourceUrl: r.sourceUrl ?? undefined, confidence: r.confidence, existingPersonId: nameToId.get(r.name) ?? undefined })) };
+  });
+
+  // 采纳候选干系人 → 建正式 Person（带溯源日志）。返回 { person } 供前端 dispatch ADD_PERSON。
+  app.post('/api/suggest/persons/:id/accept', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    const tenantId = req.user.tenantId;
+    const ps = await prisma.personSuggestion.findFirst({ where: { id: req.params.id, tenantId } });
+    if (!ps) return reply.code(404).send({ error: '候选不存在' });
+    if (ps.status !== 'pending') return reply.code(400).send({ error: '该候选已处理' });
+    try {
+      const r = await prisma.$transaction((tx) => materializePerson(tx, tenantId, ps.id));
+      const acc = await prisma.account.findFirst({ where: { id: ps.accountId, tenantId } });
+      return { person: r.createdPerson, accId: ps.accountId, accountId: ps.accountId, account: acc ? { id: acc.id } : undefined };
+    } catch (e: any) {
+      return reply.code(400).send({ error: e?.message || '采纳失败' });
+    }
+  });
+
+  app.post('/api/suggest/persons/:id/reject', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    const r = await prisma.personSuggestion.updateMany({ where: { id: req.params.id, tenantId: req.user.tenantId, status: 'pending' }, data: { status: 'rejected' } });
+    if (!r.count) return reply.code(404).send({ error: '候选不存在或已处理' });
     return { ok: true };
   });
 }

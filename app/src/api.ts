@@ -57,8 +57,13 @@ export const api = {
   // AI 关系推断（待确认候选）
   suggestList: (opportunityId: string): Promise<{ suggestions: Suggestion[] }> => req(`/api/suggest?opportunityId=${encodeURIComponent(opportunityId)}`),
   suggestGenerate: (opportunityId: string): Promise<{ added: number; suggestions: Suggestion[] }> => req('/api/suggest/generate', { method: 'POST', body: JSON.stringify({ opportunityId }) }),
-  suggestAccept: (id: string): Promise<{ edge: any }> => req(`/api/suggest/${id}/accept`, { method: 'POST' }),
+  // 采纳关系：可能级联建新 Person（端点是候选人物时），返回 createdPersons 供前端先 ADD_PERSON 再 ADD_EDGE
+  suggestAccept: (id: string): Promise<{ edge: any; createdPersons?: any[] }> => req(`/api/suggest/${id}/accept`, { method: 'POST' }),
   suggestReject: (id: string): Promise<{ ok: true }> => req(`/api/suggest/${id}/reject`, { method: 'POST' }),
+  // 候选干系人（外部 agent 经 MCP propose_person 写入，待人审）
+  personSuggestList: (accountId: string): Promise<{ suggestions: PersonSuggestion[] }> => req(`/api/suggest/persons?accountId=${encodeURIComponent(accountId)}`),
+  personSuggestAccept: (id: string): Promise<{ person: any; accId: string }> => req(`/api/suggest/persons/${id}/accept`, { method: 'POST' }),
+  personSuggestReject: (id: string): Promise<{ ok: true }> => req(`/api/suggest/persons/${id}/reject`, { method: 'POST' }),
   // 企查查 MCP / 自动建图
   qccConfig: (): Promise<{ configured: boolean; mode: string; endpoint: string; hasToken: boolean }> => req('/api/qcc/config'),
   qccSaveConfig: (b: { mcpJson: string }): Promise<{ ok: true; endpoint: string }> => req('/api/qcc/config', { method: 'PUT', body: JSON.stringify(b) }),
@@ -83,5 +88,13 @@ export interface CompanyCandidate {
 
 export interface Suggestion {
   id: string; source: string; target: string; sourceName: string; targetName: string;
+  sourceKind?: string; targetKind?: string; // person | suggestion（端点是否为候选人物）
   layer: string; label: string; confidence: number; origin: string; evidence: string;
+}
+
+// 候选干系人（外部 agent 经 MCP 提议，待人审采纳才建正式 Person）
+export interface PersonSuggestion {
+  id: string; accountId: string; name: string; title: string; orgLevel: number;
+  origin: string; evidence: string; sourceUrl?: string; confidence: number;
+  existingPersonId?: string; // 该客户下已有同名正式干系人时给出，供"合并/新建"提示
 }

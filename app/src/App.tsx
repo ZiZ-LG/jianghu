@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
 import type { Layer, Role, CustomerType, Edge } from './types';
 import { reducer, newAccount, newOpportunity, newPerson, type Action } from './store';
-import { api, type AuthResult, type Suggestion } from './api';
+import { api, type AuthResult, type Suggestion, type PersonSuggestion } from './api';
 import { scoreFromDomain } from './lib/g64111';
 import { usePersistentState, useTheme } from './ui';
 import { Auth } from './components/Auth';
@@ -40,6 +40,7 @@ export default function App() {
   const [consoleOpen, setConsoleOpen] = useState(false);
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [personSuggs, setPersonSuggs] = useState<PersonSuggestion[]>([]);
   const [generating, setGenerating] = useState(false);
   const [enrichOpen, setEnrichOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
@@ -88,6 +89,12 @@ export default function App() {
     if (!opp) { setSuggestions([]); return; }
     api.suggestList(opp.id).then((r) => setSuggestions(r.suggestions)).catch(() => setSuggestions([]));
   }, [opp?.id]);
+
+  // 进入某客户时加载候选干系人（外部 agent 经 MCP 提议，pending）
+  useEffect(() => {
+    if (!accId) { setPersonSuggs([]); return; }
+    api.personSuggestList(accId).then((r) => setPersonSuggs(r.suggestions)).catch(() => setPersonSuggs([]));
+  }, [accId]);
 
   const openAccount = (id: string) => {
     const a = state.accounts.find((x) => x.id === id);
@@ -141,10 +148,30 @@ export default function App() {
   const acceptSuggestion = async (id: string) => {
     if (!account || !opp) return;
     try {
-      const { edge } = await api.suggestAccept(id);
+      const { edge, createdPersons } = await api.suggestAccept(id);
+      // 级联：若端点是候选人物，服务端已建正式 Person，本地须先 ADD_PERSON 再 ADD_EDGE（否则画布找不到端点）
+      for (const p of createdPersons ?? []) dispatch({ type: 'ADD_PERSON', accId: account.id, person: p });
       dispatch({ type: 'ADD_EDGE', accId: account.id, oppId: opp.id, edge }); // 服务端已建，本地直接加避免重复写
       setSuggestions((s) => s.filter((x) => x.id !== id));
     } catch (e: any) { setSyncErr('采纳失败：' + e.message); }
+  };
+
+  // ── 候选干系人（外部 agent 经 MCP 提议，待人审）──
+  const loadPersonSuggestions = async (accId: string) => {
+    try { const r = await api.personSuggestList(accId); setPersonSuggs(r.suggestions); }
+    catch { setPersonSuggs([]); }
+  };
+  const acceptPersonSugg = async (id: string) => {
+    if (!account) return;
+    try {
+      const { person } = await api.personSuggestAccept(id);
+      if (person) dispatch({ type: 'ADD_PERSON', accId: account.id, person });
+      setPersonSuggs((s) => s.filter((x) => x.id !== id));
+    } catch (e: any) { setSyncErr('采纳干系人失败：' + e.message); }
+  };
+  const rejectPersonSugg = async (id: string) => {
+    try { await api.personSuggestReject(id); setPersonSuggs((s) => s.filter((x) => x.id !== id)); }
+    catch (e: any) { setSyncErr('忽略失败：' + e.message); }
   };
   const rejectSuggestion = async (id: string) => {
     try { await api.suggestReject(id); setSuggestions((s) => s.filter((x) => x.id !== id)); }
@@ -220,7 +247,7 @@ export default function App() {
                 <button className="btn ghost xs" onClick={() => setOppFormOpen(true)}>编辑商机</button>
                 <button className="btn ghost xs" onClick={() => setRelEditorOpen(true)}>＋ 关系</button>
                 <button className="btn ghost xs" onClick={() => setEnrichOpen(true)}>🏢 建图</button>
-                <button className="btn ghost xs" onClick={() => setSuggestOpen(true)}>🔮 荐关系{suggestions.length > 0 ? ` (${suggestions.length})` : ''}</button>
+                <button className="btn ghost xs" onClick={() => setSuggestOpen(true)}>🔮 荐关系{suggestions.length + personSuggs.length > 0 ? ` (${suggestions.length + personSuggs.length})` : ''}</button>
                 <button className="btn ghost xs" onClick={() => setReportOpen(true)}>📊 报表</button>
                 <button className="btn primary xs" onClick={() => setConsoleOpen(true)}>🧠 AI 推演</button>
               </div>
@@ -273,6 +300,7 @@ export default function App() {
       {suggestOpen && (
         <SuggestionPanel suggestions={suggestions} generating={generating}
           onRegenerate={generateSuggestions} onAccept={acceptSuggestion} onReject={rejectSuggestion}
+          personSuggs={personSuggs} onAcceptPerson={acceptPersonSugg} onRejectPerson={rejectPersonSugg}
           onClose={() => setSuggestOpen(false)} />
       )}
       {syncErr && <div className="sync-toast">{syncErr}</div>}

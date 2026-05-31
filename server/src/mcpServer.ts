@@ -1,14 +1,22 @@
-// 江湖 只读 MCP Server —— 让 AI 客户端（Claude Desktop 等）查询本平台数据。
+// 江湖 MCP Server —— 让 AI 客户端（Claude Desktop / Workbuddy 等）查询 + 提议本平台数据。
 //
 // 设计：手写 JSON-RPC（不引入 @modelcontextprotocol/sdk，与 qccMcp.ts 风格一致、少依赖），
 // 以 streamable-HTTP 方式挂在 Fastify 的 POST /api/mcp 下（无状态：每个请求自带 JWT，不维护 session）。
 //
 // 协议：实现 MCP 必需的 initialize / tools/list / tools/call，并接受 notifications/initialized 通知。
-// 鉴权：路由层用 app.jwt.verify 解出 tenantId（铁律：所有查询 where { tenantId }，绝不跨租户）。
-// 只读：本批工具仅 prisma.*.findMany / findFirst，绝不写库。
+// 鉴权：路由层用 app.jwt.verify 解出 tenantId/userId（铁律：所有读写 where { tenantId }，绝不跨租户）。
+// 工具分两类：
+//   · 读工具（list_accounts/get_account_detail/get_win_tendency）：仅 findMany/findFirst，绝不写库。
+//   · 写工具（propose_person/propose_relationship）：只写【候选层】(PersonSuggestion/RelSuggestion，status=pending)，
+//     绝不直接写正式 Person/Edge。候选须经用户在前端人审采纳才上墙（PIPL 红线）。
 
+import { randomUUID } from 'node:crypto';
 import { prisma } from './prisma.js';
 import { scoreFromState, ITEM_LABEL, ITEM_MAX, type ItemKey } from './g64111.js';
+
+// 每租户 pending 候选容量上限（防外部 agent 刷爆）
+const MAX_PENDING_PERSON_SUGG = 200;
+const MAX_PENDING_REL_SUGG = 200;
 
 const PROTOCOL_VERSION = '2024-11-05';
 const SERVER_INFO = { name: 'jianghu', version: '0.1.0' };
@@ -69,6 +77,66 @@ const TOOL_DEFS = [
       type: 'object',
       properties: { opportunityId: { type: 'string', description: '商机 ID（来自 get_account_detail）' } },
       required: ['opportunityId'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'propose_person',
+    description:
+      '【提议·写候选】把你调研到的一个新干系人提交为「候选干系人」，进入待人审队列——不会立即出现在侦探墙上，需用户在江湖里人工采纳后才上墙。用于外部联网调研发现的、墙上还没有的人。返回候选 ID（可用于 propose_relationship 的端点）。请在 evidence 写明依据、sourceUrl 给来源链接。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        accountId: { type: 'string', description: '该干系人所属客户 ID（来自 list_accounts）' },
+        name: { type: 'string', description: '姓名' },
+        title: { type: 'string', description: '职务（可空）' },
+        orgLevel: { type: 'number', description: '组织层级 1-4（1=高层，默认3）' },
+        opportunityId: { type: 'string', description: '可选：关联的商机 ID' },
+        evidence: { type: 'string', description: '依据/来源摘要（建议填写，便于人审）' },
+        sourceUrl: { type: 'string', description: '可选：调研来源链接' },
+        confidence: { type: 'number', description: '可选：置信度 0-1' },
+      },
+      required: ['accountId', 'name'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'propose_relationship',
+    description:
+      '【提议·写候选】把两个干系人之间的一条关系提交为「候选关系」，进入待人审队列——不会立即画线，需用户采纳后才上墙。端点可以是已存在的干系人（kind=person，id 来自 get_account_detail）或你刚用 propose_person 提交的候选人物（kind=suggestion，id 为其返回的候选 ID）。layer：L1组织架构/L2决策权力/L3情感阵营/L4战略本质。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        opportunityId: { type: 'string', description: '该关系所属商机 ID（来自 get_account_detail）' },
+        source: {
+          type: 'object',
+          description: '关系源端点',
+          properties: { kind: { type: 'string', enum: ['person', 'suggestion'] }, id: { type: 'string' } },
+          required: ['kind', 'id'],
+          additionalProperties: false,
+        },
+        target: {
+          type: 'object',
+          description: '关系目标端点',
+          properties: { kind: { type: 'string', enum: ['person', 'suggestion'] }, id: { type: 'string' } },
+          required: ['kind', 'id'],
+          additionalProperties: false,
+        },
+        layer: { type: 'string', enum: ['L1', 'L2', 'L3', 'L4'], description: '关系分层' },
+        label: { type: 'string', description: '关系描述（如：校友/老乡/直属上级/利益关联）' },
+        evidence: { type: 'string', description: '依据/来源摘要' },
+        confidence: { type: 'number', description: '可选：置信度 0-1' },
+      },
+      required: ['opportunityId', 'source', 'target', 'label'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'list_pending',
+    description: '列出本工作区当前待人审的候选（候选干系人 + 候选关系），便于你了解已提议过什么、避免重复提交。只读。',
+    inputSchema: {
+      type: 'object',
+      properties: { accountId: { type: 'string', description: '可选：只看某客户的候选' } },
       additionalProperties: false,
     },
   },
@@ -227,9 +295,136 @@ async function getWinTendency(tenantId: string, opportunityId: string) {
   };
 }
 
+// ───────────────────────── 写工具实现（只写候选层 · tenantId 隔离 · 待人审） ─────────────────────────
+
+const str = (v: unknown, max = 200): string => (typeof v === 'string' ? v.slice(0, max) : '');
+const num = (v: unknown): number | undefined => (typeof v === 'number' && isFinite(v) ? v : undefined);
+
+/** propose_person：提议候选干系人 → 落 PersonSuggestion（不建正式 Person）。 */
+async function proposePerson(tenantId: string, userId: string, args: Record<string, unknown>) {
+  const accountId = str(args.accountId);
+  const name = str(args.name, 40).trim();
+  if (!accountId) throw new Error('缺少参数 accountId');
+  if (!name) throw new Error('缺少参数 name');
+
+  // tenantId 隔离：客户必须属于本租户
+  const account = await prisma.account.findFirst({ where: { id: accountId, tenantId } });
+  if (!account) throw new Error('客户不存在或不属于当前工作区');
+
+  const title = str(args.title, 60);
+  const orgLevel = Math.min(4, Math.max(1, Math.round(num(args.orgLevel) ?? 3)));
+  const opportunityId = str(args.opportunityId) || null;
+  const evidence = str(args.evidence, 500);
+  const sourceUrl = str(args.sourceUrl, 500) || null;
+  const confidence = Math.max(0, Math.min(1, num(args.confidence) ?? 0.5));
+
+  // 容量上限（防滥用）
+  const pendingCount = await prisma.personSuggestion.count({ where: { tenantId, status: 'pending' } });
+  if (pendingCount >= MAX_PENDING_PERSON_SUGG) throw new Error(`候选干系人已达上限（${MAX_PENDING_PERSON_SUGG}），请先在江湖里处理现有候选`);
+
+  // 应用层去重：同租户+同客户+同名+pending → 更新（取高 confidence、补 evidence），不新增
+  const dup = await prisma.personSuggestion.findFirst({ where: { tenantId, accountId, name, status: 'pending' } });
+  if (dup) {
+    await prisma.personSuggestion.update({
+      where: { id: dup.id },
+      data: { title: title || dup.title, evidence: evidence || dup.evidence, sourceUrl: sourceUrl ?? dup.sourceUrl, confidence: Math.max(dup.confidence, confidence) },
+    });
+    return { suggestionId: dup.id, deduped: true, note: '已存在同名候选干系人（pending），已更新其依据而非新增。' };
+  }
+
+  // 提示：是否已有同名正式干系人（由人审决定合并，AI 不替判）
+  const existingPerson = await prisma.person.findFirst({ where: { tenantId, accountId, name } });
+
+  const id = 'ps_' + randomUUID().slice(0, 12);
+  await prisma.personSuggestion.create({
+    data: { id, tenantId, accountId, opportunityId, name, title, orgLevel, origin: 'mcp', evidence, sourceUrl, confidence, status: 'pending', proposedBy: userId },
+  });
+  return {
+    suggestionId: id,
+    note: existingPerson
+      ? `⚠️ 该客户下已存在同名正式干系人（id=${existingPerson.id}）。候选已提交，请人审时判断是合并到现有还是新建，AI 不自动合并。`
+      : '候选干系人已提交，等待用户人审采纳后才会出现在侦探墙上。',
+  };
+}
+
+/** propose_relationship：提议候选关系 → 落 RelSuggestion（端点可为 person 或 suggestion）。 */
+async function proposeRelationship(tenantId: string, _userId: string, args: Record<string, unknown>) {
+  const opportunityId = str(args.opportunityId);
+  if (!opportunityId) throw new Error('缺少参数 opportunityId');
+  const ep = (v: unknown): { kind: string; id: string } => {
+    const o = (v ?? {}) as Record<string, unknown>;
+    const kind = o.kind === 'suggestion' ? 'suggestion' : 'person';
+    const id = str(o.id, 40);
+    return { kind, id };
+  };
+  const source = ep(args.source);
+  const target = ep(args.target);
+  const layer = ['L1', 'L2', 'L3', 'L4'].includes(str(args.layer)) ? str(args.layer) : 'L3';
+  const label = str(args.label, 40).trim() || '疑似关联';
+  const evidence = str(args.evidence, 500);
+  const confidence = Math.max(0, Math.min(1, num(args.confidence) ?? 0.5));
+  if (!source.id || !target.id) throw new Error('缺少 source/target 端点 id');
+  if (source.kind === target.kind && source.id === target.id) throw new Error('source 与 target 不能相同');
+
+  // tenantId 隔离：商机必须属于本租户
+  const opp = await prisma.opportunity.findFirst({ where: { id: opportunityId, tenantId } });
+  if (!opp) throw new Error('商机不存在或不属于当前工作区');
+
+  // 校验两端点存在且属于本租户（person → Person 表；suggestion → PersonSuggestion 表）
+  const checkEndpoint = async (e: { kind: string; id: string }, role: string) => {
+    if (e.kind === 'person') {
+      const p = await prisma.person.findFirst({ where: { id: e.id, tenantId } });
+      if (!p) throw new Error(`${role}端点（正式干系人 ${e.id}）不存在或不属于当前工作区`);
+    } else {
+      const s = await prisma.personSuggestion.findFirst({ where: { id: e.id, tenantId } });
+      if (!s) throw new Error(`${role}端点（候选干系人 ${e.id}）不存在或不属于当前工作区`);
+    }
+  };
+  await checkEndpoint(source, 'source');
+  await checkEndpoint(target, 'target');
+
+  // 容量上限
+  const pendingCount = await prisma.relSuggestion.count({ where: { tenantId, opportunityId, status: 'pending' } });
+  if (pendingCount >= MAX_PENDING_REL_SUGG) throw new Error(`候选关系已达上限（${MAX_PENDING_REL_SUGG}），请先处理现有候选`);
+
+  // 去重：同商机下，相同端点对（含 kind）+ pending
+  const tag = (e: { kind: string; id: string }) => `${e.kind}:${e.id}`;
+  const key = [tag(source), tag(target)].sort().join('|');
+  const existing = await prisma.relSuggestion.findMany({ where: { tenantId, opportunityId, status: 'pending' } });
+  for (const r of existing) {
+    const k = [`${r.sourceKind}:${r.sourcePersonId}`, `${r.targetKind}:${r.targetPersonId}`].sort().join('|');
+    if (k === key) return { suggestionId: r.id, deduped: true, note: '该端点对已有 pending 候选关系，未重复创建。' };
+  }
+
+  const id = 'rs_' + randomUUID().slice(0, 12);
+  await prisma.relSuggestion.create({
+    data: { id, tenantId, opportunityId, sourcePersonId: source.id, sourceKind: source.kind, targetPersonId: target.id, targetKind: target.kind, layer, label, confidence, origin: 'mcp', evidence, status: 'pending' },
+  });
+  return { suggestionId: id, note: '候选关系已提交，等待用户人审采纳后才会画到侦探墙上。' };
+}
+
+/** list_pending：列本租户待人审候选（只读）。 */
+async function listPending(tenantId: string, accountId: string) {
+  const personWhere: any = { tenantId, status: 'pending' };
+  if (accountId) personWhere.accountId = accountId;
+  const persons = await prisma.personSuggestion.findMany({ where: personWhere, orderBy: { createdAt: 'desc' }, take: 100 });
+
+  const relWhere: any = { tenantId, status: 'pending' };
+  if (accountId) {
+    const opps = await prisma.opportunity.findMany({ where: { tenantId, accountId }, select: { id: true } });
+    relWhere.opportunityId = { in: opps.map((o) => o.id) };
+  }
+  const rels = await prisma.relSuggestion.findMany({ where: relWhere, orderBy: { createdAt: 'desc' }, take: 100 });
+
+  return {
+    pendingPersons: persons.map((p) => ({ id: p.id, accountId: p.accountId, name: p.name, title: p.title, orgLevel: p.orgLevel, evidence: p.evidence, sourceUrl: p.sourceUrl ?? undefined, confidence: p.confidence })),
+    pendingRelationships: rels.map((r) => ({ id: r.id, opportunityId: r.opportunityId, source: { kind: r.sourceKind, id: r.sourcePersonId }, target: { kind: r.targetKind, id: r.targetPersonId }, layer: r.layer, label: r.label, evidence: r.evidence, confidence: r.confidence })),
+  };
+}
+
 // ───────────────────────── 工具分发 ─────────────────────────
 
-async function callTool(tenantId: string, name: string, args: Record<string, unknown>) {
+async function callTool(tenantId: string, userId: string, name: string, args: Record<string, unknown>) {
   switch (name) {
     case 'list_accounts':
       return listAccounts(tenantId);
@@ -243,6 +438,12 @@ async function callTool(tenantId: string, name: string, args: Record<string, unk
       if (!opportunityId) throw new Error('缺少参数 opportunityId');
       return getWinTendency(tenantId, opportunityId);
     }
+    case 'propose_person':
+      return proposePerson(tenantId, userId, args);
+    case 'propose_relationship':
+      return proposeRelationship(tenantId, userId, args);
+    case 'list_pending':
+      return listPending(tenantId, typeof args.accountId === 'string' ? args.accountId : '');
     default:
       throw new Error(`未知工具：${name}`);
   }
@@ -254,9 +455,9 @@ async function callTool(tenantId: string, name: string, args: Record<string, unk
  * 处理一条 MCP JSON-RPC 消息。
  * - 通知（无 id，如 notifications/initialized）返回 null（不应有响应体）。
  * - 其余返回 JsonRpcResponse。
- * 所有数据查询通过 tenantId 隔离（铁律）。
+ * 所有数据读写通过 tenantId 隔离（铁律）；写工具用 userId 记 proposedBy。
  */
-export async function handleMcpMessage(tenantId: string, msg: JsonRpcRequest): Promise<JsonRpcResponse | null> {
+export async function handleMcpMessage(tenantId: string, userId: string, msg: JsonRpcRequest): Promise<JsonRpcResponse | null> {
   const id = msg.id ?? null;
   const method = msg.method ?? '';
 
@@ -272,7 +473,7 @@ export async function handleMcpMessage(tenantId: string, msg: JsonRpcRequest): P
           protocolVersion: PROTOCOL_VERSION,
           capabilities: { tools: {} },
           serverInfo: SERVER_INFO,
-          instructions: '江湖 只读 MCP：用 list_accounts 看客户，get_account_detail 看某客户干系人与关系，get_win_tendency 看某商机的 G64111 趋赢力评分。所有数据按你的工作区隔离。',
+          instructions: '江湖 MCP：读——list_accounts 看客户、get_account_detail 看某客户干系人与关系、get_win_tendency 看商机 G64111 趋赢力评分；提议（写候选，须用户人审采纳才上墙）——propose_person 提议新干系人、propose_relationship 提议关系、list_pending 看待审候选。所有数据按你的工作区隔离。绝不会自动写入正式数据。',
         });
 
       case 'ping':
@@ -286,7 +487,7 @@ export async function handleMcpMessage(tenantId: string, msg: JsonRpcRequest): P
         const args: Record<string, unknown> = msg.params?.arguments ?? {};
         if (!name) return err(id, -32602, '缺少 tool name');
         try {
-          const result = await callTool(tenantId, name, args);
+          const result = await callTool(tenantId, userId, name, args);
           return ok(id, toolText(result));
         } catch (e: any) {
           // 工具级错误用 isError content 返回（MCP 约定：工具失败不是协议错误）
@@ -306,17 +507,17 @@ export async function handleMcpMessage(tenantId: string, msg: JsonRpcRequest): P
  * 处理一个请求体（可能是单条消息，也可能是 JSON-RPC 批量数组）。
  * 返回值：要发回客户端的 JSON（单对象 / 数组 / null）。null 表示纯通知、无响应体（HTTP 204）。
  */
-export async function handleMcpBody(tenantId: string, body: unknown): Promise<JsonRpcResponse | JsonRpcResponse[] | null> {
+export async function handleMcpBody(tenantId: string, userId: string, body: unknown): Promise<JsonRpcResponse | JsonRpcResponse[] | null> {
   if (Array.isArray(body)) {
     const responses: JsonRpcResponse[] = [];
     for (const m of body) {
-      const r = await handleMcpMessage(tenantId, m as JsonRpcRequest);
+      const r = await handleMcpMessage(tenantId, userId, m as JsonRpcRequest);
       if (r) responses.push(r);
     }
     return responses.length ? responses : null;
   }
   if (body && typeof body === 'object') {
-    return handleMcpMessage(tenantId, body as JsonRpcRequest);
+    return handleMcpMessage(tenantId, userId, body as JsonRpcRequest);
   }
   // 非法请求体
   return err(null, -32600, '无效的 JSON-RPC 请求');
