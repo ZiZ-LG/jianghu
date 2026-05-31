@@ -196,3 +196,133 @@ function collectPersons(node: any, out: DiscoveredPerson[], depth = 0): void {
     for (const v of Object.values(node)) { if (v && typeof v === 'object') collectPersons(v, out, depth + 1); }
   }
 }
+
+// ── 股权 / 对外投资（只读，仅供参考，绝不自动写库）──────────────────────────
+// 这两个工具的返回结构已用真实企查查 MCP 实测核实（华为投资控股 / 华为技术），字段名如下；
+// 仍保留对常见同义键的兼容，以防企查查后续微调字段命名。
+//   get_shareholder_info  → { "企业名称", "摘要", "股东信息": [{ "股东名称","持股比例","认缴出资额","认缴出资日期","实缴出资额","实缴出资日期" }] }
+//   get_external_investments → { "企业名称", "摘要", "对外投资信息": [{ "被投资企业名称","状态","成立日期","持股比例","认缴出资额/持股数" }] }
+
+export interface Shareholder {
+  name: string;       // 股东名称
+  ratio: string;      // 持股比例（原样字符串，如 "99.4753%"）
+  amount: string;     // 认缴出资额（原样字符串，可能含单位）
+}
+
+export interface Investment {
+  name: string;       // 被投资企业名称
+  ratio: string;      // 持股比例
+  status: string;     // 状态（存续/注销/吊销…）
+  establishDate: string; // 成立日期
+}
+
+export interface CompanyEquityData {
+  shareholders: Shareholder[];
+  investments: Investment[];
+}
+
+// 取首个非空字符串字段（兼容多组同义键），统一裁剪长度防御异常超长返回。
+function firstStr(node: any, keys: string[], max = 80): string {
+  for (const k of keys) {
+    const v = node?.[k];
+    if (typeof v === 'string' && v.trim()) return v.trim().slice(0, max);
+    if (typeof v === 'number') return String(v);
+  }
+  return '';
+}
+
+const SHAREHOLDER_NAME_KEYS = ['股东名称', '股东', '投资人', '投资人名称', 'shareholderName', 'name'];
+const SHAREHOLDER_LIST_KEYS = ['股东信息', '股东列表', '股东', 'shareholders', 'list'];
+const INVEST_NAME_KEYS = ['被投资企业名称', '被投资企业', '企业名称', '投资企业名称', 'investedCompany', 'name'];
+const INVEST_LIST_KEYS = ['对外投资信息', '对外投资', '投资信息', 'investments', 'list'];
+const RATIO_KEYS = ['持股比例', '出资比例', '占比', 'ratio', 'percent'];
+const AMOUNT_KEYS = ['认缴出资额/持股数', '认缴出资额', '出资额', '认缴金额', 'amount'];
+const STATUS_KEYS = ['状态', '登记状态', '经营状态', 'status'];
+const ESTABLISH_KEYS = ['成立日期', '注册日期', 'establishDate', 'date'];
+
+// 从 tools/call 结果里取数组：先按已知列表键找，找不到则深度搜第一个「对象数组」。
+function pickArray(result: any, listKeys: string[]): any[] {
+  const text = toolResultText(result);
+  if (!text) return [];
+  let data: any;
+  try { data = JSON.parse(text); } catch { return []; }
+  for (const k of listKeys) { if (Array.isArray(data?.[k])) return data[k]; }
+  if (Array.isArray(data)) return data;
+  // 兜底：深度优先找第一个「元素为对象」的数组
+  const found = findObjectArray(data);
+  return found ?? [];
+}
+
+function findObjectArray(node: any, depth = 0): any[] | null {
+  if (!node || depth > 5 || typeof node !== 'object') return null;
+  for (const v of Object.values(node)) {
+    if (Array.isArray(v) && v.some((x) => x && typeof x === 'object' && !Array.isArray(x))) return v as any[];
+  }
+  for (const v of Object.values(node)) {
+    if (v && typeof v === 'object') { const r = findObjectArray(v, depth + 1); if (r) return r; }
+  }
+  return null;
+}
+
+function parseShareholders(result: any): Shareholder[] {
+  const arr = pickArray(result, SHAREHOLDER_LIST_KEYS);
+  const out: Shareholder[] = [];
+  for (const x of arr) {
+    if (!x || typeof x !== 'object') continue;
+    const name = firstStr(x, SHAREHOLDER_NAME_KEYS, 60);
+    if (!name) continue;
+    out.push({ name, ratio: firstStr(x, RATIO_KEYS, 20), amount: firstStr(x, AMOUNT_KEYS, 40) });
+  }
+  return dedupeBy(out, (s) => s.name).slice(0, 30);
+}
+
+function parseInvestments(result: any): Investment[] {
+  const arr = pickArray(result, INVEST_LIST_KEYS);
+  const out: Investment[] = [];
+  for (const x of arr) {
+    if (!x || typeof x !== 'object') continue;
+    const name = firstStr(x, INVEST_NAME_KEYS, 60);
+    if (!name) continue;
+    out.push({
+      name,
+      ratio: firstStr(x, RATIO_KEYS, 20),
+      status: firstStr(x, STATUS_KEYS, 20),
+      establishDate: firstStr(x, ESTABLISH_KEYS, 20),
+    });
+  }
+  return dedupeBy(out, (i) => i.name).slice(0, 50);
+}
+
+function dedupeBy<T>(arr: T[], key: (x: T) => string): T[] {
+  const seen = new Set<string>();
+  return arr.filter((x) => { const k = key(x); if (!k || seen.has(k)) return false; seen.add(k); return true; });
+}
+
+/**
+ * 查询某公司的股权（股东）+ 对外投资数据（应传完整登记名；建议先经 qccMcpResolve 锚定）。
+ * 复用同一 MCP 会话连发两个工具调用；任一工具失败不影响另一个（各自降级为空数组）。
+ * 仅供参考展示，绝不自动写库/建节点。
+ */
+export async function qccMcpCompanyData(cfg: QccMcpConfig, company: string): Promise<CompanyEquityData> {
+  const sessionId = await mcpSession(cfg);
+  let shareholders: Shareholder[] = [];
+  let investments: Investment[] = [];
+
+  try {
+    const r = await rpc(cfg, {
+      jsonrpc: '2.0', id: 3, method: 'tools/call',
+      params: { name: 'get_shareholder_info', arguments: { searchKey: company } },
+    }, sessionId);
+    if (!r.json?.error) shareholders = parseShareholders(r.json?.result);
+  } catch { /* 单项失败降级为空 */ }
+
+  try {
+    const r = await rpc(cfg, {
+      jsonrpc: '2.0', id: 4, method: 'tools/call',
+      params: { name: 'get_external_investments', arguments: { searchKey: company } },
+    }, sessionId);
+    if (!r.json?.error) investments = parseInvestments(r.json?.result);
+  } catch { /* 单项失败降级为空 */ }
+
+  return { shareholders, investments };
+}

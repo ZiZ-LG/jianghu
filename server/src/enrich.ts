@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
 import { enc, dec, loadAiConfig, callLLM } from './ai.js';
-import { qccMcpFetch, qccMcpResolve, parseQccMcpConfig } from './qccMcp.js';
+import { qccMcpFetch, qccMcpResolve, qccMcpCompanyData, parseQccMcpConfig } from './qccMcp.js';
 
 interface DiscoveredPerson { name: string; title: string; }
 
@@ -80,6 +80,19 @@ export function enrichRoutes(app: FastifyInstance) {
       const r = await qccMcpResolve({ url: c.baseUrl, token: dec(c.secretKeyEnc) }, p.data.query.trim());
       return r;
     } catch (e: any) { return reply.code(400).send({ error: e?.message || '企业检索失败' }); }
+  });
+
+  // 股权/对外投资（只读，仅供参考）：需已配企查查 MCP；按 tenantId 隔离取配置 + 解密 token。
+  // 红线：这些企业数据仅展示，绝不自动建节点/写库（外部数据需人审）。
+  app.post('/api/qcc/company-data', { preHandler: [app.authenticate] }, async (req, reply) => {
+    const p = z.object({ name: z.string().min(1) }).safeParse(req.body);
+    if (!p.success) return reply.code(400).send({ error: '请输入公司完整名称' });
+    const c = await prisma.qccConfig.findUnique({ where: { tenantId: req.user.tenantId } });
+    if (c?.appKey !== 'mcp' || !c?.secretKeyEnc) return reply.code(400).send({ error: '尚未配置企查查 MCP' });
+    try {
+      const data = await qccMcpCompanyData({ url: c.baseUrl, token: dec(c.secretKeyEnc) }, p.data.name.trim());
+      return data; // { shareholders, investments }
+    } catch (e: any) { return reply.code(400).send({ error: e?.message || '股权/投资数据查询失败' }); }
   });
 
   // 自动建图：返回某公司的关键人（企查查 MCP → AI 回退 → 演示），供前端预览后导入

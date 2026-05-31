@@ -68,7 +68,14 @@ export const api = {
     req('/api/qcc/resolve', { method: 'POST', body: JSON.stringify({ query }) }),
   enrichCompany: (name: string): Promise<{ source: string; company: string; persons: { name: string; title: string }[]; note: string }> =>
     req('/api/enrich/company', { method: 'POST', body: JSON.stringify({ name }) }),
+  // 企查查 股权/对外投资（只读·仅供参考，不写库）。name 须为完整登记名（先经 qccResolve 锚定）。
+  qccCompanyData: (name: string): Promise<CompanyEquityData> =>
+    req('/api/qcc/company-data', { method: 'POST', body: JSON.stringify({ name }) }),
 };
+
+export interface Shareholder { name: string; ratio: string; amount: string }
+export interface Investment { name: string; ratio: string; status: string; establishDate: string }
+export interface CompanyEquityData { shareholders: Shareholder[]; investments: Investment[] }
 
 export interface CompanyCandidate {
   name: string; creditCode: string; legalPerson: string; status: string; establishDate: string;
