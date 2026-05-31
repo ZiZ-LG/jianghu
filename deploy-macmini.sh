@@ -82,6 +82,9 @@ if [ "$ok" = "1" ]; then
   [ -n "$LANIP" ] && echo "  · 局域网 IP：   http://${LANIP}$([ "$PORT" = 80 ] && echo '' || echo ":$PORT")"
   TSIP=$(tailscale ip -4 2>/dev/null || /Applications/Tailscale.app/Contents/MacOS/Tailscale ip -4 2>/dev/null || true)
   [ -n "$TSIP" ] && echo "  · Tailscale：   http://${TSIP}$([ "$PORT" = 80 ] && echo '' || echo ":$PORT")  （远程成员用）"
+  echo ""
+  echo "🔒 想让团队走 HTTPS（修复复制按钮失效 / 登录密码明文传输等「非安全上下文」问题）："
+  echo "   bash setup-tailscale-https.sh   （Tailscale 自带证书，仅 tailnet 内，零成本零端口）"
 else
   echo "✗ 健康检查超时。查看日志：docker compose logs server | tail -40"
 fi

@@ -53,6 +53,36 @@ bash deploy-macmini.sh
 
 ---
 
+## 三·五、让团队走 HTTPS（强烈推荐）
+
+纯 HTTP（`http://Leons-Mac-mini.local` / Tailscale IP）被浏览器判定为**非安全上下文**，会带来两个真实问题：
+- 复制按钮（如「🔌 接入 AI」里的令牌/配置复制）**静默失败**——`navigator.clipboard` 仅在 HTTPS/localhost 可用；
+- 登录**密码明文传输**（同 tailnet 内已加密，但浏览器仍会标记不安全、且不利于将来搬公网）。
+
+用 **Tailscale 自带 HTTPS** 一键解决（证书由 Tailscale 自动签发，`*.ts.net`，**零成本、不开端口、不上公网，仅 tailnet 内可达**）：
+
+```bash
+cd /Volumes/PowerData/江湖APP
+bash setup-tailscale-https.sh
+```
+
+> **唯一手动前置（owner 在网页后台点一次，整个 tailnet 只需开这一次）**：
+> 登录 [https://login.tailscale.com/admin/dns](https://login.tailscale.com/admin/dns) →
+> 找到 **HTTPS Certificates** → 点 **Enable HTTPS**（MagicDNS 也要是开的）。
+> 没开时脚本会即时检测到并打印这段指引；开了之后脚本全自动（签证 → `tailscale serve` 反代到 web 容器 → 自检）。
+
+完成后团队改走：
+
+```
+https://leons-mac-mini.tail7ac96b.ts.net
+```
+
+- 原 HTTP 入口（局域网 `http://Leons-Mac-mini.local`、未装 Tailscale 时）**仍然可用**，二者并存。
+- 撤销 HTTPS、回到纯 HTTP：`bash setup-tailscale-https.sh reset`
+- 原理：`tailscale serve` 把 `https://<本机>.<tailnet>.ts.net`(:443) 反向代理到本机 `:80` 的 web 容器，应用用同源相对 `/api`，全程透明、无需改代码或重建镜像。
+
+---
+
 ## 四、日常运维
 
 ```bash
