@@ -28,7 +28,9 @@ curl -s -X POST http://localhost:3001/api/auth/login \
   -d '{"email":"you@example.com","password":"yourpassword"}'
 ```
 
-返回 JSON 里的 `token` 字段即平台 token。把它填到下面客户端配置的 `Authorization` 头里。
+返回 JSON 里的 `token` 字段即平台 token（登录 JWT）。把它填到下面客户端配置的 `Authorization` 头里。
+
+> **推荐：用产品内「🔌 接入 AI」面板生成长效令牌**（形如 `jh_...`），而不是用登录 JWT。长效令牌独立于登录态、可命名、可单独吊销、长期有效，更适合给外部 agent。`/api/mcp` 同时接受登录 JWT（向后兼容）和长效令牌。
 
 > 生产环境把 `http://localhost:3001` 换成你的域名（如 `https://你的域名`，经 Nginx 反代到 `/api`）。
 

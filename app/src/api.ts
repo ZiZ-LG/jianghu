@@ -76,7 +76,14 @@ export const api = {
   // 企查查 股权/对外投资（只读·仅供参考，不写库）。name 须为完整登记名（先经 qccResolve 锚定）。
   qccCompanyData: (name: string): Promise<CompanyEquityData> =>
     req('/api/qcc/company-data', { method: 'POST', body: JSON.stringify({ name }) }),
+  // AI 助手接入令牌（长效，给外部 agent 连 MCP 用）
+  accessTokenList: (): Promise<{ tokens: AccessTokenInfo[] }> => req('/api/access-tokens'),
+  accessTokenCreate: (name: string): Promise<{ id: string; name: string; token: string; lastFour: string }> =>
+    req('/api/access-tokens', { method: 'POST', body: JSON.stringify({ name }) }),
+  accessTokenRevoke: (id: string): Promise<{ ok: true }> => req(`/api/access-tokens/${id}`, { method: 'DELETE' }),
 };
+
+export interface AccessTokenInfo { id: string; name: string; lastFour: string; createdAt: string; lastUsedAt: string | null }
 
 export interface Shareholder { name: string; ratio: string; amount: string }
 export interface Investment { name: string; ratio: string; status: string; establishDate: string }

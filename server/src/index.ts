@@ -15,6 +15,7 @@ import { aiRoutes } from './ai.js';
 import { suggestRoutes } from './suggest.js';
 import { enrichRoutes } from './enrich.js';
 import { handleMcpBody } from './mcpServer.js';
+import { accessTokenRoutes, mcpAuthenticate } from './accessToken.js';
 
 // 加载本地 .env（生产环境用真实环境变量，文件不存在则忽略）
 try { process.loadEnvFile(); } catch { /* no .env in prod */ }
@@ -61,6 +62,7 @@ authRoutes(app);
 aiRoutes(app);
 suggestRoutes(app);
 enrichRoutes(app);
+accessTokenRoutes(app);
 
 // ── 数据：拉取整树 / 应用变更 ──
 app.get('/api/state', { preHandler: [app.authenticate] }, async (req) => assembleState(req.user.tenantId));
@@ -90,7 +92,7 @@ app.post('/api/reset', { preHandler: [app.authenticate] }, async (req) => {
 // ── MCP Server（streamable-HTTP）：让 AI 客户端查询 + 提议（写候选）本平台数据 ──
 // 复用现有 JWT（Authorization Bearer）：authenticate 解出 tenantId/userId，所有工具按租户隔离（铁律）。
 // 读工具只读；写工具（propose_*）只写候选层（待人审），绝不直接写正式表。协议处理见 mcpServer.ts。
-app.post('/api/mcp', { preHandler: [app.authenticate] }, async (req, reply) => {
+app.post('/api/mcp', { preHandler: [mcpAuthenticate] }, async (req, reply) => {
   const out = await handleMcpBody(req.user.tenantId, req.user.userId, req.body);
   if (out === null) return reply.code(204).send(); // 纯通知，无响应体
   return out;

@@ -57,6 +57,23 @@ model User {
   @@index([tenantId])
 }
 
+// AI 助手接入令牌（长效、可命名、可单独吊销，独立于登录态）。
+// 库里只存哈希(sha256)，明文 jh_xxx 仅在生成时返回一次；用于外部 agent 调 /api/mcp。
+model AccessToken {
+  id         String    @id
+  tenantId   String
+  userId     String    // 归属用户（创建者）
+  name       String    @default("") // 用户起的备注名（如"我的Workbuddy"）
+  tokenHash  String    @unique // sha256(明文)，不可逆
+  lastFour   String    @default("") // 明文后4位，仅供列表展示辨认
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime? // 最近一次用于鉴权的时间
+  revokedAt  DateTime? // 非空=已吊销
+
+  @@index([tenantId])
+  @@index([userId])
+}
+
 model Account {
   id                String        @id
   tenantId          String
