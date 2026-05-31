@@ -20,6 +20,7 @@ import { StrategyConsole } from './components/StrategyConsole';
 import { SuggestionPanel } from './components/SuggestionPanel';
 import { EnrichPanel } from './components/EnrichPanel';
 import { ReportPanel } from './components/ReportPanel';
+import { HelpManual } from './components/HelpManual';
 import { Footer } from './components/Footer';
 
 export default function App() {
@@ -44,6 +45,7 @@ export default function App() {
   const [generating, setGenerating] = useState(false);
   const [enrichOpen, setEnrichOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistentState('jianghu.sidebarCollapsed', false);
   const [winCollapsed, setWinCollapsed] = usePersistentState('jianghu.winCollapsed', false);
   const [theme, toggleTheme] = useTheme();
@@ -204,11 +206,12 @@ export default function App() {
           onDeleteAccount={(id) => act({ type: 'DELETE_ACCOUNT', accId: id })}
           tenantName={auth.tenant.name} userName={auth.user.name} plan={auth.tenant.plan}
           onOpenTeam={() => setTeamOpen(true)} onLogout={logout} onOpenAiSettings={() => setAiSettingsOpen(true)}
-          theme={theme} onToggleTheme={toggleTheme}
+          theme={theme} onToggleTheme={toggleTheme} onOpenHelp={() => setHelpOpen(true)}
         />
         {syncErr && <div className="sync-toast">{syncErr}</div>}
         {teamOpen && <TeamBilling role={auth.user.role} onClose={() => setTeamOpen(false)} />}
         {aiSettingsOpen && <AiSettings role={auth.user.role} onClose={() => setAiSettingsOpen(false)} />}
+        {helpOpen && <HelpManual onClose={() => setHelpOpen(false)} />}
         <Footer />
       </>
     );
@@ -249,6 +252,7 @@ export default function App() {
                 <button className="btn ghost xs" onClick={() => setEnrichOpen(true)}>🏢 建图</button>
                 <button className="btn ghost xs" onClick={() => setSuggestOpen(true)}>🔮 荐关系{suggestions.length + personSuggs.length > 0 ? ` (${suggestions.length + personSuggs.length})` : ''}</button>
                 <button className="btn ghost xs" onClick={() => setReportOpen(true)}>📊 报表</button>
+                <button className="btn ghost xs" onClick={() => setHelpOpen(true)}>❓ 帮助</button>
                 <button className="btn primary xs" onClick={() => setConsoleOpen(true)}>🧠 AI 推演</button>
               </div>
             </div>
@@ -297,6 +301,7 @@ export default function App() {
       {reportOpen && opp && (
         <ReportPanel account={account} opp={opp} onClose={() => setReportOpen(false)} />
       )}
+      {helpOpen && <HelpManual onClose={() => setHelpOpen(false)} />}
       {suggestOpen && (
         <SuggestionPanel suggestions={suggestions} generating={generating}
           onRegenerate={generateSuggestions} onAccept={acceptSuggestion} onReject={rejectSuggestion}
