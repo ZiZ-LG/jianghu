@@ -25,13 +25,15 @@ function completeness(p: Person): number {
 
 interface Pt { x: number; y: number; }
 const resolveShape = (e: Edge): EdgeShape => e.shape ?? (e.layer === 'L1' ? 'orthogonal' : 'straight');
+// bend 含义随形状不同：折线=中段横线的 y 偏移(默认0)；曲线=控制点垂直偏移(默认40)；直线不用
+const resolveBend = (e: Edge): number => e.bend ?? (resolveShape(e) === 'curved' ? 40 : 0);
 
 /** 计算一条连线的路径 d + 两端可拖拽点 a/b + 中间控制点 mid（屏幕用 world 坐标） */
 function edgeGeom(s: Pt, t: Pt, shape: EdgeShape, bend: number) {
   const dx = t.x - s.x, dy = t.y - s.y, len = Math.hypot(dx, dy) || 1;
   const ux = dx / len, uy = dy / len;
   if (shape === 'orthogonal') {
-    const midY = (s.y + t.y) / 2;
+    const midY = (s.y + t.y) / 2 + bend;   // bend = 中段横线的 y 偏移 → 折线可上下调中段位置
     const sy = s.y + Math.sign(midY - s.y || 1) * NODE_R;
     const ty = t.y - Math.sign(t.y - midY || 1) * (NODE_R + ARROW_GAP);
     return { d: `M ${s.x} ${sy} V ${midY} H ${t.x} V ${ty}`, a: { x: s.x, y: sy }, b: { x: t.x, y: ty }, mid: { x: (s.x + t.x) / 2, y: midY } };
@@ -241,15 +243,20 @@ export function Canvas({
       const edge = edges.find((x) => x.id === g.edgeId);
       setHoverNode(nodeAt(w, g.end === 'source' ? edge?.target : edge?.source));
     } else if (g.kind === 'bend') {
-      if (!moved) return; // 仅在真正拖动后才弯曲，避免「点击带抖动」误转曲线
+      if (!moved) return; // 仅在真正拖动后才生效，避免点击抖动误改
       const edge = edges.find((x) => x.id === g.edgeId);
       if (!edge) return;
       const s = posOf(personById.get(edge.source)!), t = posOf(personById.get(edge.target)!);
-      const dx = t.x - s.x, dy = t.y - s.y, len = Math.hypot(dx, dy) || 1;
-      const px = -dy / len, py = dx / len;
       const w = toWorld(e.clientX, e.clientY);
-      const mx = (s.x + t.x) / 2, my = (s.y + t.y) / 2;
-      const bend = ((w.x - mx) * px + (w.y - my) * py) * 2;
+      let bend: number;
+      if (resolveShape(edge) === 'orthogonal') {
+        bend = w.y - (s.y + t.y) / 2;                   // 折线：上下拖动中段横线（不改形状）
+      } else {
+        const dx = t.x - s.x, dy = t.y - s.y, len = Math.hypot(dx, dy) || 1;
+        const px = -dy / len, py = dx / len;
+        const mx = (s.x + t.x) / 2, my = (s.y + t.y) / 2;
+        bend = ((w.x - mx) * px + (w.y - my) * py) * 2;  // 曲线：调曲率
+      }
       setBendPreview({ edgeId: g.edgeId, bend: Math.round(bend) });
     }
   };
@@ -289,7 +296,8 @@ export function Canvas({
       if (moved && target && target !== other) onUpdateEdge(g.edgeId, { [g.end]: target } as Partial<Edge>);
       setEndpointPt(null); setHoverNode(null);
     } else if (g.kind === 'bend') {
-      if (moved && bendPreview) onUpdateEdge(g.edgeId, { shape: 'curved', bend: bendPreview.bend });
+      // 只更新 bend（折线=中段位置 / 曲线=曲率），不改形状——拖中点不会把折线变成曲线
+      if (moved && bendPreview) onUpdateEdge(g.edgeId, { bend: bendPreview.bend });
       setBendPreview(null);
     }
   };
@@ -344,7 +352,7 @@ export function Canvas({
             // 端点改接预览
             if (endpointPt && endpointPt.edgeId === e.id) { if (endpointPt.end === 'source') s = endpointPt; else t = endpointPt; }
             const shape = resolveShape(e);
-            const bend = bendPreview && bendPreview.edgeId === e.id ? bendPreview.bend : (e.bend ?? 40);
+            const bend = bendPreview && bendPreview.edgeId === e.id ? bendPreview.bend : resolveBend(e);
             const geom = edgeGeom(s, t, shape, bend);
             const color = e.color || '#94a3b8';
             const useColor = ARROW_COLORS.includes(color) ? color : '#94a3b8';
@@ -441,7 +449,7 @@ export function Canvas({
             let s = posOf(sp), t = posOf(tp);
             if (endpointPt && endpointPt.edgeId === selEdge.id) { if (endpointPt.end === 'source') s = endpointPt; else t = endpointPt; }
             const shp = resolveShape(selEdge);
-            const bnd = bendPreview && bendPreview.edgeId === selEdge.id ? bendPreview.bend : (selEdge.bend ?? 40);
+            const bnd = bendPreview && bendPreview.edgeId === selEdge.id ? bendPreview.bend : resolveBend(selEdge);
             const gm = edgeGeom(s, t, shp, bnd);
             return (
               <g>
@@ -449,10 +457,11 @@ export function Canvas({
                   fill="var(--node-fill)" stroke="var(--accent)" strokeWidth={2.5} style={{ cursor: 'grab' }} />
                 <circle data-edge-h={selEdge.id} data-endpoint="target" cx={gm.b.x} cy={gm.b.y} r={7}
                   fill="var(--node-fill)" stroke="var(--accent)" strokeWidth={2.5} style={{ cursor: 'grab' }} />
-                {/* 中间控制点只在「曲线」时出现：直线/折线无中点锚点 → 不会被误触而自动转曲线（要变曲线用工具条「曲线」） */}
-                {shp === 'curved' && (
+                {/* 中间控制点：折线=拖动调中段横线位置；曲线=拖动调曲率。直线无中点(无中段可调，也不会被误触转曲线) */}
+                {(shp === 'curved' || shp === 'orthogonal') && (
                   <circle data-bend={selEdge.id} cx={gm.mid.x} cy={gm.mid.y} r={7}
-                    fill="var(--accent)" stroke="#fff" strokeWidth={2.5} style={{ cursor: 'move' }} />
+                    fill="var(--accent)" stroke="#fff" strokeWidth={2.5}
+                    style={{ cursor: shp === 'orthogonal' ? 'ns-resize' : 'move' }} />
                 )}
               </g>
             );
@@ -477,12 +486,12 @@ export function Canvas({
       {selEdge && (() => {
         const sp = personById.get(selEdge.source), tp = personById.get(selEdge.target);
         if (!sp || !tp) return null;
-        const g = edgeGeom(posOf(sp), posOf(tp), resolveShape(selEdge), selEdge.bend ?? 40);
+        const g = edgeGeom(posOf(sp), posOf(tp), resolveShape(selEdge), resolveBend(selEdge));
         const sc = toScreen(g.mid.x, g.mid.y);
         const cur = resolveShape(selEdge);
         const SB = ({ s, label }: { s: EdgeShape; label: string }) => (
           <button className={`shape-btn${cur === s ? ' on' : ''}`} onPointerDown={stop}
-            onClick={() => onUpdateEdge(selEdge.id, { shape: s })}>{label}</button>
+            onClick={() => { if (cur !== s) onUpdateEdge(selEdge.id, { shape: s, bend: s === 'curved' ? 40 : 0 }); }}>{label}</button>
         );
         return (
           <div className="edge-toolbar" onPointerDown={stop} style={{ left: sc.x, top: sc.y - 40, transform: 'translate(-50%,-100%)' }}>
