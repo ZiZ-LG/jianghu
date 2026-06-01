@@ -615,9 +615,9 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 }
 
 /* ───────── 画布交互：锚点 / 内联命名 / 连线工具条 ───────── */
-.node-anchor { opacity: .9; transition: r .1s, opacity .1s; }
-.node-anchor:hover { opacity: 1; }
-.canvas-wrap svg g[data-node]:hover .node-anchor { opacity: 1; }
+/* 锚点：不用 CSS opacity（opacity<1 会把元素提升为半透明合成子层 → 平移时该子层残影，
+   还会波及同区域的进度条/职位文字）。保持满不透明、无过渡。 */
+.node-anchor { cursor: crosshair; }
 /* 内联命名输入：浮在节点中心，建点后立即可输入 */
 .node-edit-input { position: absolute; z-index: 25; width: 96px; padding: 4px 6px; text-align: center;
   font-size: 13px; font-weight: 700; color: var(--ink); background: var(--panel); border: 2px solid var(--accent);
