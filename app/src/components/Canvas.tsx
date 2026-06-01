@@ -344,7 +344,7 @@ export function Canvas({
             </marker>
           ))}
         </defs>
-        <g transform={`translate(${view.tx},${view.ty}) scale(${view.scale})`}>
+        <g style={{ transform: `translate(${view.tx}px, ${view.ty}px) scale(${view.scale})`, transformOrigin: '0 0', willChange: 'transform' }}>
           {edges.map((e) => {
             const sp = personById.get(e.source), tp = personById.get(e.target);
             if (!sp || !tp) return null;

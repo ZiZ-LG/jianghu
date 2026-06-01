@@ -104,9 +104,7 @@ select { font-family: inherit; }
 .canvas-wrap { flex: 1; position: relative;
   background-color: var(--bg);  /* 实底色：移动端平移时每帧清屏，消除 SVG 文字残影/重影 */
   background-image: radial-gradient(circle, var(--canvas-dot) 1px, transparent 1px); background-size: 22px 22px;
-  overflow: hidden; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
-  /* 强制独立合成层：选中态有随平移重定位的浮框时，仍以整层不透明纹理重绘 → 不留残影 */
-  transform: translateZ(0); -webkit-transform: translateZ(0); }
+  overflow: hidden; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
 .canvas-wrap.grabbing { cursor: grabbing; }
 .canvas-wrap svg { width: 100%; height: 100%; display: block; }
 
