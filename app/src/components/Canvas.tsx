@@ -9,6 +9,7 @@ const NEW_NODE_DIST = 150;    // 点锚点(非拖拽)沿方向生成新节点的
 const TAP_MOVE = 5;           // 屏幕位移 < 此值视为「点击」而非「拖拽」
 const DOUBLE_MS = 300;        // 双击/双触时间窗
 const ARROW_COLORS = ['#94a3b8', '#ef4444', '#b91c1c', '#f97316', '#16a34a', '#9333ea', '#2563eb', '#1f2937'];
+const NODE_COLORS = ['#ef4444', '#f97316', '#16a34a', '#2563eb', '#9333ea', '#64748b']; // 节点高亮色（均配白字可读）
 const markerId = (c: string) => `arw-${(c || '#94a3b8').replace('#', '')}`;
 
 type Dir = 'top' | 'right' | 'bottom' | 'left';
@@ -60,7 +61,7 @@ export function Canvas({
   account, opp, layer, selectedId, selectedEdgeId,
   onSelectPerson, onSelectEdge, onOpenPerson, onOpenEdge,
   onMovePerson, onAddPersonAt, onAddConnectedNode, onConnect,
-  onUpdateEdge, onDeleteEdge, onRenamePerson, suggestions = [],
+  onUpdateEdge, onDeleteEdge, onUpdatePerson, onDeletePerson, suggestions = [],
 }: {
   account: Account;
   opp: Opportunity;
@@ -77,7 +78,8 @@ export function Canvas({
   onConnect: (sourceId: string, targetId: string) => void;
   onUpdateEdge: (edgeId: string, patch: Partial<Edge>) => void;
   onDeleteEdge: (edgeId: string) => void;
-  onRenamePerson: (id: string, name: string) => void;
+  onUpdatePerson: (id: string, patch: Partial<Person>) => void;
+  onDeletePerson: (id: string) => void;
   suggestions?: { source: string; target: string }[];
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -134,7 +136,7 @@ export function Canvas({
 
   const commitEdit = () => {
     if (!editing) return;
-    onRenamePerson(editing.id, editing.value.trim() || '新成员');
+    onUpdatePerson(editing.id, { name: editing.value.trim() || '新成员' });
     setEditing(null);
   };
   const beginEdit = (id: string) => {
@@ -234,6 +236,7 @@ export function Canvas({
       const edge = edges.find((x) => x.id === g.edgeId);
       setHoverNode(nodeAt(w, g.end === 'source' ? edge?.target : edge?.source));
     } else if (g.kind === 'bend') {
+      if (!moved) return; // 仅在真正拖动后才弯曲，避免「点击带抖动」误转曲线
       const edge = edges.find((x) => x.id === g.edgeId);
       if (!edge) return;
       const s = posOf(personById.get(edge.source)!), t = posOf(personById.get(edge.target)!);
@@ -278,10 +281,10 @@ export function Canvas({
       const edge = edges.find((x) => x.id === g.edgeId);
       const other = g.end === 'source' ? edge?.target : edge?.source;
       const target = nodeAt(w, other);
-      if (target && target !== other) onUpdateEdge(g.edgeId, { [g.end]: target } as Partial<Edge>);
+      if (moved && target && target !== other) onUpdateEdge(g.edgeId, { [g.end]: target } as Partial<Edge>);
       setEndpointPt(null); setHoverNode(null);
     } else if (g.kind === 'bend') {
-      if (bendPreview) onUpdateEdge(g.edgeId, { shape: 'curved', bend: bendPreview.bend });
+      if (moved && bendPreview) onUpdateEdge(g.edgeId, { shape: 'curved', bend: bendPreview.bend });
       setBendPreview(null);
     }
   };
@@ -339,16 +342,6 @@ export function Canvas({
                   <text className="edge-label" x={geom.mid.x} y={geom.mid.y - 6} textAnchor="middle" fill={color}
                     stroke="var(--node-halo)" strokeWidth={3} style={{ paintOrder: 'stroke', pointerEvents: 'none' } as React.CSSProperties}>{e.label}</text>
                 )}
-                {sel && (
-                  <g>
-                    <circle data-edge-h={e.id} data-endpoint="source" cx={geom.a.x} cy={geom.a.y} r={6}
-                      fill="var(--node-fill)" stroke="var(--accent)" strokeWidth={2} style={{ cursor: 'grab' }} />
-                    <circle data-edge-h={e.id} data-endpoint="target" cx={geom.b.x} cy={geom.b.y} r={6}
-                      fill="var(--node-fill)" stroke="var(--accent)" strokeWidth={2} style={{ cursor: 'grab' }} />
-                    <circle data-bend={e.id} cx={geom.mid.x} cy={geom.mid.y} r={6}
-                      fill="var(--accent)" stroke="#fff" strokeWidth={2} style={{ cursor: 'move' }} />
-                  </g>
-                )}
               </g>
             );
           })}
@@ -384,9 +377,9 @@ export function Canvas({
             const isHover = hoverNode === p.id;
             return (
               <g key={p.id} data-node={p.id} transform={`translate(${pt.x},${pt.y})`} style={{ cursor: dragPt?.id === p.id ? 'grabbing' : 'pointer' }}>
-                <circle r={NODE_R} fill={p.isCompetitor ? '#1f2937' : 'var(--node-fill)'}
+                <circle r={NODE_R} fill={p.isCompetitor ? '#1f2937' : (p.color || 'var(--node-fill)')}
                   stroke={isHover ? 'var(--accent)' : selected ? 'var(--accent)' : 'var(--node-stroke)'} strokeWidth={selected || isHover ? 3 : 2} />
-                <text textAnchor="middle" y={4} className="node-name" fill={p.isCompetitor ? '#fff' : 'var(--node-text)'} fontSize={p.isCompetitor ? 11 : 12}>
+                <text textAnchor="middle" y={4} className="node-name" fill={(p.isCompetitor || p.color) ? '#fff' : 'var(--node-text)'} fontSize={p.isCompetitor ? 11 : 12}>
                   {p.isCompetitor ? '友商' : p.name}
                 </text>
                 {role && !p.isCompetitor && (
@@ -421,6 +414,27 @@ export function Canvas({
               </g>
             );
           })}
+
+          {/* 选中连线的可拖拽控制点：渲染在节点之上，避免被节点遮挡而点不到 */}
+          {selEdge && (() => {
+            const sp = personById.get(selEdge.source), tp = personById.get(selEdge.target);
+            if (!sp || !tp) return null;
+            let s = posOf(sp), t = posOf(tp);
+            if (endpointPt && endpointPt.edgeId === selEdge.id) { if (endpointPt.end === 'source') s = endpointPt; else t = endpointPt; }
+            const shp = resolveShape(selEdge);
+            const bnd = bendPreview && bendPreview.edgeId === selEdge.id ? bendPreview.bend : (selEdge.bend ?? 40);
+            const gm = edgeGeom(s, t, shp, bnd);
+            return (
+              <g>
+                <circle data-edge-h={selEdge.id} data-endpoint="source" cx={gm.a.x} cy={gm.a.y} r={7}
+                  fill="var(--node-fill)" stroke="var(--accent)" strokeWidth={2.5} style={{ cursor: 'grab' }} />
+                <circle data-edge-h={selEdge.id} data-endpoint="target" cx={gm.b.x} cy={gm.b.y} r={7}
+                  fill="var(--node-fill)" stroke="var(--accent)" strokeWidth={2.5} style={{ cursor: 'grab' }} />
+                <circle data-bend={selEdge.id} cx={gm.mid.x} cy={gm.mid.y} r={7}
+                  fill="var(--accent)" stroke="#fff" strokeWidth={2.5} style={{ cursor: 'move' }} />
+              </g>
+            );
+          })()}
         </g>
       </svg>
 
@@ -453,6 +467,28 @@ export function Canvas({
             <SB s="straight" label="直线" /><SB s="orthogonal" label="折线" /><SB s="curved" label="曲线" />
             <span className="edge-tb-sep" />
             <button className="shape-btn del" onPointerDown={stop} onClick={() => { onDeleteEdge(selEdge.id); onSelectEdge(null); }} title="删除连线">🗑</button>
+          </div>
+        );
+      })()}
+
+      {/* 选中节点 → 浮出「改色 + 删除」工具框（友商=预设样式，仅给删除，不提供改色） */}
+      {selectedId && !editing && (() => {
+        const p = personById.get(selectedId); if (!p) return null;
+        const sc = toScreen(posOf(p).x, posOf(p).y);
+        return (
+          <div className="node-toolbar" onPointerDown={stop} style={{ left: sc.x, top: sc.y - 56, transform: 'translate(-50%,-100%)' }}>
+            {!p.isCompetitor && (
+              <>
+                {NODE_COLORS.map((c) => (
+                  <button key={c} className={`node-swatch${p.color === c ? ' on' : ''}`} title="高亮该节点"
+                    style={{ background: c }} onPointerDown={stop} onClick={() => onUpdatePerson(p.id, { color: c })} />
+                ))}
+                <button className={`node-swatch clear${!p.color ? ' on' : ''}`} title="默认（清除颜色）"
+                  onPointerDown={stop} onClick={() => onUpdatePerson(p.id, { color: '' })}>⊘</button>
+                <span className="edge-tb-sep" />
+              </>
+            )}
+            <button className="shape-btn del" onPointerDown={stop} onClick={() => onDeletePerson(p.id)} title="删除节点">🗑</button>
           </div>
         );
       })()}

@@ -63,7 +63,8 @@ export interface Person {
   form: Form;
   coachLevel?: number; // 仅 R：教练五级 1-5
   logs: InteractionLog[];
-  isCompetitor?: boolean; // 友商（不是角色）
+  isCompetitor?: boolean; // 友商（不是角色，样式预设=深色，不可改色）
+  color?: string; // 节点高亮色（手动样式，仅非友商可改；空=默认）
   // 画布种子坐标
   x: number;
   y: number;

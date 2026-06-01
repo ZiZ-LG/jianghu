@@ -29,7 +29,7 @@ export async function assembleState(tenantId: string) {
       unifiedCreditCode: a.unifiedCreditCode ?? undefined,
       persons: a.persons.map((p) => ({
         id: p.id, name: p.name, title: p.title, orgLevel: p.orgLevel, isCompetitor: p.isCompetitor,
-        avatarUrl: p.avatarUrl ?? undefined, coachLevel: p.coachLevel ?? undefined, x: p.x, y: p.y,
+        avatarUrl: p.avatarUrl ?? undefined, coachLevel: p.coachLevel ?? undefined, color: p.color ?? undefined, x: p.x, y: p.y,
         form: J(p.form, { family: '', occupation: '', recreation: '', moneyMotivation: '', family7: {} }),
         logs: J(p.logs, []),
       })),

@@ -100,6 +100,7 @@ model Person {
   isCompetitor Boolean @default(false)
   avatarUrl    String?
   coachLevel   Int?
+  color        String? // 节点高亮色（手动样式）
   x            Float   @default(300)
   y            Float   @default(240)
   form         String  @default("{}") // JSON

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
-import type { Layer, Role, CustomerType, Edge } from './types';
+import type { Layer, Role, CustomerType, Edge, Person } from './types';
 import { reducer, newAccount, newOpportunity, newPerson, uid, type Action } from './store';
 import { api, type AuthResult, type Suggestion, type PersonSuggestion } from './api';
 import { scoreFromDomain } from './lib/g64111';
@@ -188,9 +188,15 @@ export default function App() {
     if (!account || !opp) return;
     act({ type: 'DELETE_EDGE', accId: account.id, oppId: opp.id, edgeId });
   };
-  const renamePerson = (id: string, name: string) => {
+  const updatePerson = (id: string, patch: Partial<Person>) => {
     if (!account) return;
-    act({ type: 'UPDATE_PERSON', accId: account.id, personId: id, patch: { name } });
+    act({ type: 'UPDATE_PERSON', accId: account.id, personId: id, patch });
+  };
+  const deletePerson = (id: string) => {
+    if (!account) return;
+    act({ type: 'DELETE_PERSON', accId: account.id, personId: id });
+    setSelectedId(null);
+    setDrawerPersonId((d) => (d === id ? null : d));
   };
 
   // ── AI 关系推断 ──
@@ -329,7 +335,8 @@ export default function App() {
               onOpenPerson={openPerson} onOpenEdge={openEdge}
               onMovePerson={(id, x, y) => act({ type: 'MOVE_PERSON', accId: account.id, personId: id, x, y })}
               onAddPersonAt={addPersonAt} onAddConnectedNode={addConnectedNode} onConnect={connectNodes}
-              onUpdateEdge={updateEdge} onDeleteEdge={deleteEdgeById} onRenamePerson={renamePerson}
+              onUpdateEdge={updateEdge} onDeleteEdge={deleteEdgeById}
+              onUpdatePerson={updatePerson} onDeletePerson={deletePerson}
               suggestions={suggestions} />
             {breakdown && (
               <WinTendencyPanel breakdown={breakdown} collapsed={winCollapsed}

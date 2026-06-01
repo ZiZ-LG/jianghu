@@ -61,7 +61,7 @@ export async function applyAction(tenantId: string, action: any): Promise<void> 
       return;
     }
     case 'UPDATE_PERSON': {
-      const d = pick(action.patch, ['name', 'title', 'orgLevel', 'avatarUrl', 'coachLevel']);
+      const d = pick(action.patch, ['name', 'title', 'orgLevel', 'avatarUrl', 'coachLevel', 'color']);
       if (action.patch?.form !== undefined) d.form = S(action.patch.form);
       if (action.patch?.logs !== undefined) d.logs = S(action.patch.logs);
       await prisma.person.updateMany({ where: { id: action.personId, tenantId }, data: d });
