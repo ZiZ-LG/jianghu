@@ -27,11 +27,12 @@ function ItemCell({ k, score }: { k: ItemKey; score: number }) {
 }
 
 export function WinTendencyPanel({
-  breakdown, collapsed = false, onToggle,
+  breakdown, collapsed = false, onToggle, grabber = false,
 }: {
   breakdown: ScoreBreakdown;
   collapsed?: boolean;
   onToggle?: () => void;
+  grabber?: boolean;   // 移动端：用顶部居中 ⌄ 手柄收起（镜像底部 ⌃ 药丸），而非文字按钮
 }) {
   const pct = Math.round(breakdown.percent * 100);
   const color = BAND_COLOR[breakdown.band];
@@ -54,6 +55,9 @@ export function WinTendencyPanel({
 
   return (
     <div className="winpanel">
+      {grabber && onToggle && (
+        <button className="win-grabber" onClick={onToggle} aria-label="收起趋赢力" title="收起趋赢力">⌄</button>
+      )}
       <div className="win-score">
         <span className="cap">趋赢力 Win-Tendency</span>
         <div className="big" style={{ color: breakdown.total < 0 ? '#b91c1c' : 'var(--ink)' }}>
@@ -65,7 +69,7 @@ export function WinTendencyPanel({
       <div className="win-items">
         <div className="grp">
           6 必清（{breakdown.clears}/35） · 4 优势（{breakdown.priorities}/45） · 1 决胜（{breakdown.key}/20）→ 总分 {breakdown.total}/100
-          {onToggle && <button className="win-toggle" onClick={onToggle} title="折叠趋赢力面板">折叠 ⌄</button>}
+          {onToggle && !grabber && <button className="win-toggle" onClick={onToggle} title="折叠趋赢力面板">折叠 ⌄</button>}
         </div>
         <div className="item-grid">
           {clears.map((k) => <ItemCell key={k} k={k} score={breakdown.items[k]} />)}

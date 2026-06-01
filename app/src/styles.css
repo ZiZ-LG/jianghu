@@ -696,9 +696,25 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
   /* —— 缩放/全屏控件：避开右缘(横屏刘海) + 底部 home 指示条 —— */
   .zoom-controls { right: calc(12px + env(safe-area-inset-right)); bottom: calc(16px + env(safe-area-inset-bottom)); }
 
-  /* —— 右抽屉：全屏 + 顶部安全区；z 高于汉堡(45)/迷你条(32)，避免穿透 —— */
+  /* —— 右抽屉：全屏 + 顶部安全区；z 高于边缘箭头(45)/迷你条(32)，避免穿透 —— */
   .drawer { width: 100%; border-left: none; z-index: 50; }
   .drawer-head { min-height: 56px; padding-top: env(safe-area-inset-top); }
+  /* 两列字段在窄屏堆叠为单列：宽度贴合屏幕、无横向滚动 */
+  .drawer .edit-row, .drawer .fld-row { flex-direction: column; gap: 12px; }
+  .drawer .edit-row > label, .drawer .fld-row > .fld { width: 100%; }
+  .drawer-body { padding-bottom: calc(20px + env(safe-area-inset-bottom)); }
+
+  /* 侧栏收起箭头：贴抽屉右缘、竖直居中，镜像左缘展开 ›（同一设计语言） */
+  .mobile-drawer { overflow: visible; }
+  .edge-arrow.edge-close { position: absolute; right: -29px; top: 50%; transform: translateY(-50%);
+    width: 30px; height: 58px; border-radius: 16px 8px 8px 16px; }
+
+  /* 趋赢力底卡：顶部居中 ⌄ 收起手柄，镜像底部 ⌃ 药丸（同一设计语言） */
+  .winpanel { padding-top: 18px; }
+  .win-grabber { position: absolute; top: 5px; left: 50%; transform: translateX(-50%); z-index: 2;
+    width: 54px; height: 20px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--line);
+    color: var(--muted); font-size: 13px; font-weight: 800; line-height: 1; display: grid; place-items: center; }
+  .win-grabber:hover { background: var(--hover); color: var(--ink); }
 
   /* —— 弹窗近全屏 —— */
   .modal { max-width: 96vw; max-height: 88vh; border-radius: 16px; }

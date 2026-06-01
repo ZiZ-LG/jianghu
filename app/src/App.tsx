@@ -324,7 +324,10 @@ export default function App() {
         <>
           {!mobileNavOpen && <button className="edge-arrow edge-left" onClick={() => setMobileNavOpen(true)} title="展开侧边栏" aria-label="展开侧边栏">›</button>}
           {mobileNavOpen && <div className="mobile-backdrop" onClick={() => setMobileNavOpen(false)} />}
-          <div className={`mobile-drawer${mobileNavOpen ? ' open' : ''}`}>{sidebarEl}</div>
+          <div className={`mobile-drawer${mobileNavOpen ? ' open' : ''}`}>
+            {sidebarEl}
+            {mobileNavOpen && <button className="edge-arrow edge-close" onClick={() => setMobileNavOpen(false)} title="收起侧边栏" aria-label="收起侧边栏">‹</button>}
+          </div>
         </>
       ) : sidebarCollapsed ? (
         <button className="sidebar-rail" onClick={() => setSidebarCollapsed(false)} title="展开侧边栏">
@@ -387,7 +390,7 @@ export default function App() {
                 </button>
               ) : (
                 <WinTendencyPanel breakdown={breakdown}
-                  collapsed={isMobile ? false : winCollapsed}
+                  collapsed={isMobile ? false : winCollapsed} grabber={isMobile}
                   onToggle={() => (isMobile ? setWinMobileCollapsed(true) : setWinCollapsed((c) => !c))} />
               )
             )}

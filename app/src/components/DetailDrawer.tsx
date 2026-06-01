@@ -40,11 +40,7 @@ export function DetailDrawer({
     <div className="drawer">
       <div className="drawer-head">
         <span className="t">情报档案</span>
-        <div style={{ display: 'flex', gap: 6 }}>
-          <button className="x-btn danger" title="删除该干系人"
-            onClick={() => { if (confirm(`删除干系人「${person.name}」？将一并移除其角色/关系/BI。`)) { dispatch({ type: 'DELETE_PERSON', accId, personId: person.id }); onClose(); } }}>🗑</button>
-          <button className="x-btn" onClick={onClose}>×</button>
-        </div>
+        <button className="x-btn" onClick={onClose}>×</button>
       </div>
 
       <div className="drawer-body">
@@ -178,6 +174,12 @@ export function DetailDrawer({
             ) : <div className="empty-hint">暂无记录</div>}
           </>
         )}
+
+        {/* 删除节点：与「删除关系线」一致——放在详情页底部 */}
+        <button className="btn ghost" style={{ width: '100%', marginTop: 18, color: '#b91c1c' }}
+          onClick={() => { if (confirm(`删除干系人「${person.name}」？将一并移除其角色/关系/BI。`)) { dispatch({ type: 'DELETE_PERSON', accId, personId: person.id }); onClose(); } }}>
+          🗑 删除该干系人
+        </button>
       </div>
     </div>
   );
