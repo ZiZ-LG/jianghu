@@ -449,8 +449,11 @@ export function Canvas({
                   fill="var(--node-fill)" stroke="var(--accent)" strokeWidth={2.5} style={{ cursor: 'grab' }} />
                 <circle data-edge-h={selEdge.id} data-endpoint="target" cx={gm.b.x} cy={gm.b.y} r={7}
                   fill="var(--node-fill)" stroke="var(--accent)" strokeWidth={2.5} style={{ cursor: 'grab' }} />
-                <circle data-bend={selEdge.id} cx={gm.mid.x} cy={gm.mid.y} r={7}
-                  fill="var(--accent)" stroke="#fff" strokeWidth={2.5} style={{ cursor: 'move' }} />
+                {/* 中间控制点只在「曲线」时出现：直线/折线无中点锚点 → 不会被误触而自动转曲线（要变曲线用工具条「曲线」） */}
+                {shp === 'curved' && (
+                  <circle data-bend={selEdge.id} cx={gm.mid.x} cy={gm.mid.y} r={7}
+                    fill="var(--accent)" stroke="#fff" strokeWidth={2.5} style={{ cursor: 'move' }} />
+                )}
               </g>
             );
           })()}

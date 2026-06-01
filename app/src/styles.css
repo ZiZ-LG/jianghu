@@ -111,7 +111,7 @@ select { font-family: inherit; }
 .edge-label { font-size: 10px; font-weight: 700; }
 
 /* ───────── Win Tendency panel ───────── */
-.winpanel { height: 172px; flex-shrink: 0; background: var(--panel); border-top: 1px solid var(--line); display: flex; z-index: 12; box-shadow: 0 -4px 16px rgba(15,23,42,.05); }
+.winpanel { position: relative; height: 190px; padding-top: 18px; flex-shrink: 0; background: var(--panel); border-top: 1px solid var(--line); display: flex; z-index: 12; box-shadow: 0 -4px 16px rgba(15,23,42,.05); }
 .winpanel.collapsed { height: 40px; align-items: center; gap: 12px; padding: 0 16px; }
 .winpanel.collapsed .cap { font-size: 10px; font-weight: 700; color: var(--faint); letter-spacing: .6px; text-transform: uppercase; }
 .winpanel.collapsed .mini-score { font-size: 17px; font-weight: 800; font-variant-numeric: tabular-nums; }
@@ -254,7 +254,8 @@ select { font-family: inherit; }
 .person-row-title { color: #94a3b8; margin-left: auto; font-size: 11px; }
 
 /* ───────── Main toolbar / empty states ───────── */
-.maintoolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; max-width: min(72vw, 720px); background: rgba(255,255,255,.92); border: 1px solid var(--line); border-radius: 10px; padding: 5px 8px 5px 12px; box-shadow: 0 4px 14px rgba(15,23,42,.08); backdrop-filter: blur(6px); }
+.maintoolbar { display: flex; align-items: center; flex-wrap: nowrap; gap: 6px; max-width: min(94vw, 1100px); background: rgba(255,255,255,.92); border: 1px solid var(--line); border-radius: 10px; padding: 5px 8px 5px 12px; box-shadow: 0 4px 14px rgba(15,23,42,.08); backdrop-filter: blur(6px); }
+.maintoolbar .btn { flex-shrink: 0; }
 .mt-name { font-size: 13px; font-weight: 700; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .no-opp, .canvas-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: #94a3b8; pointer-events: none; }
 .no-opp { pointer-events: auto; }
@@ -646,6 +647,29 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 .hub-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hub-actions-desktop { margin-left: auto; display: flex; gap: 10px; align-items: center; }
 
+/* ───────── 折叠/展开胶囊 · 趋赢力药丸/手柄（Web 与移动统一设计语言）───────── */
+/* 药丸式胶囊：圆角全、浮起、软阴影。env() 在桌面=0，故桌面/移动共用一套 */
+.edge-arrow { position: fixed; z-index: 45; display: grid; place-items: center; cursor: pointer;
+  color: var(--accent); background: var(--panel); border: 1px solid var(--line); box-shadow: 0 4px 16px var(--shadow);
+  width: 32px; height: 60px; border-radius: 999px; font-size: 19px; font-weight: 800; line-height: 1; touch-action: manipulation; }
+.edge-arrow:active { transform: translateY(-50%) scale(.94); }
+.edge-arrow.edge-left { left: calc(env(safe-area-inset-left) + 8px); top: 50%; transform: translateY(-50%); padding-right: 2px; }
+.edge-arrow.edge-close { position: absolute; right: -40px; top: 50%; transform: translateY(-50%); padding-left: 2px; }
+.sidebar-dock { position: relative; flex-shrink: 0; display: flex; }   /* 桌面展开态侧栏容器，承载右缘收起胶囊 */
+.collapse-btn { display: none; }   /* 折叠改用边缘胶囊 → 不要顶部折叠按钮（Web+移动统一） */
+/* 趋赢力：折叠=底部居中 ⌃ 药丸；展开=面板顶部居中 ⌄ 手柄收起 */
+.win-fab { position: absolute; left: 50%; transform: translateX(-50%); z-index: 32;
+  bottom: calc(env(safe-area-inset-bottom) + 14px); display: inline-flex; align-items: center; gap: 7px;
+  padding: 9px 16px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line);
+  box-shadow: 0 4px 16px var(--shadow); font-size: 13px; font-weight: 700; color: var(--ink); cursor: pointer; }
+.win-fab .wf-arr { font-size: 15px; color: var(--accent); font-weight: 800; }
+.win-fab .wf-pct { font-variant-numeric: tabular-nums; }
+.win-fab .wf-label { color: var(--muted); font-weight: 600; }
+.win-grabber { position: absolute; top: 5px; left: 50%; transform: translateX(-50%); z-index: 2;
+  width: 54px; height: 20px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--line);
+  color: var(--muted); font-size: 13px; font-weight: 800; line-height: 1; display: grid; place-items: center; cursor: pointer; }
+.win-grabber:hover { background: var(--hover); color: var(--ink); }
+
 /* ───────── 移动端（竖屏 ≤768px 或 横屏矮屏 ≤500px 高）───────── */
 .hamburger-fab { display: none; }
 .hub-actions-mobile { display: none; }
@@ -658,13 +682,7 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
   .mobile-drawer .sidebar { width: min(86vw, 320px); height: 100%; }
   .mobile-backdrop { position: fixed; inset: 0; z-index: 55; background: rgba(15,23,42,.5); backdrop-filter: blur(2px); }
 
-  /* —— 左侧边栏：边缘箭头唤出（替代汉堡；居左缘竖直居中、略内缩，避开 iOS 左缘返回手势，仅点击不滑动）—— */
-  /* 药丸式胶囊（与底部 win-fab 同一设计语言：圆角全、浮起、软阴影） */
-  .edge-arrow { position: fixed; z-index: 45; display: grid; place-items: center; cursor: pointer;
-    color: var(--accent); background: var(--panel); border: 1px solid var(--line); box-shadow: 0 4px 16px var(--shadow);
-    width: 32px; height: 60px; border-radius: 999px; font-size: 19px; font-weight: 800; line-height: 1; touch-action: manipulation; }
-  .edge-arrow:active { transform: translateY(-50%) scale(.94); }
-  .edge-arrow.edge-left { left: calc(env(safe-area-inset-left) + 8px); top: 50%; transform: translateY(-50%); padding-right: 2px; }
+  /* （边缘胶囊 .edge-arrow 已提全局，Web/移动共用） */
 
   /* —— 顶部：层级下拉 + ⋯操作（单行，左上；不再有顶部汉堡）—— */
   .canvas-top { top: calc(10px + env(safe-area-inset-top)); left: 10px; right: 10px; max-width: none;
@@ -676,14 +694,7 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
   /* —— 画布占满 —— */
   .canvas-wrap { height: 100%; }
 
-  /* —— 趋赢力：折叠=底部居中迷你箭头(win-fab)；展开=底卡浮层(不挤画布) —— */
-  .win-fab { position: absolute; left: 50%; transform: translateX(-50%); z-index: 32;
-    bottom: calc(env(safe-area-inset-bottom) + 12px); display: inline-flex; align-items: center; gap: 7px;
-    padding: 9px 16px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line);
-    box-shadow: 0 4px 16px var(--shadow); font-size: 13px; font-weight: 700; color: var(--ink); }
-  .win-fab .wf-arr { font-size: 15px; color: var(--accent); font-weight: 800; }
-  .win-fab .wf-pct { font-variant-numeric: tabular-nums; }
-  .win-fab .wf-label { color: var(--muted); font-weight: 600; }
+  /* —— 趋赢力：展开=底卡浮层(不挤画布；win-fab/grabber 已全局) —— */
   .winpanel { position: absolute; left: 0; right: 0; bottom: 0; z-index: 32;
     border-top: 1px solid var(--line); box-shadow: 0 -8px 28px var(--shadow);
     padding-bottom: env(safe-area-inset-bottom); flex-direction: column; height: auto; max-height: 58vh; }
@@ -705,18 +716,7 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
   .drawer .edit-row > label, .drawer .fld-row > .fld { width: 100%; }
   .drawer-body { padding-bottom: calc(20px + env(safe-area-inset-bottom)); }
 
-  /* 侧栏收起箭头：贴抽屉右缘、竖直居中，镜像左缘展开 ›（同一设计语言） */
-  .mobile-drawer { overflow: visible; }
-  .edge-arrow.edge-close { position: absolute; right: -40px; top: 50%; transform: translateY(-50%); padding-left: 2px; }
-  /* 已有中间折叠胶囊 → 隐藏侧栏顶部的折叠按钮（避免两个折叠入口） */
-  .mobile-drawer .collapse-btn { display: none; }
-
-  /* 趋赢力底卡：顶部居中 ⌄ 收起手柄，镜像底部 ⌃ 药丸（同一设计语言） */
-  .winpanel { padding-top: 18px; }
-  .win-grabber { position: absolute; top: 5px; left: 50%; transform: translateX(-50%); z-index: 2;
-    width: 54px; height: 20px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--line);
-    color: var(--muted); font-size: 13px; font-weight: 800; line-height: 1; display: grid; place-items: center; }
-  .win-grabber:hover { background: var(--hover); color: var(--ink); }
+  .mobile-drawer { overflow: visible; }   /* 让收起胶囊(edge-close)露出抽屉右缘 */
 
   /* —— 弹窗近全屏 —— */
   .modal { max-width: 96vw; max-height: 88vh; border-radius: 16px; }

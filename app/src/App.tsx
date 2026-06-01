@@ -15,7 +15,6 @@ import { EdgeDrawer } from './components/EdgeDrawer';
 import { WinTendencyPanel } from './components/WinTendencyPanel';
 import { OpportunityForm } from './components/OpportunityForm';
 import { PersonForm } from './components/PersonForm';
-import { RelationshipEditor } from './components/RelationshipEditor';
 import { TeamBilling } from './components/TeamBilling';
 import { AiSettings } from './components/AiSettings';
 import { StrategyConsole } from './components/StrategyConsole';
@@ -39,7 +38,6 @@ export default function App() {
   const [layer, setLayer] = useState<Layer>('L1');
   const [oppFormOpen, setOppFormOpen] = useState(false);
   const [personFormOpen, setPersonFormOpen] = useState(false);
-  const [relEditorOpen, setRelEditorOpen] = useState(false);
   const [teamOpen, setTeamOpen] = useState(false);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
   const [consoleOpen, setConsoleOpen] = useState(false);
@@ -330,11 +328,13 @@ export default function App() {
           </div>
         </>
       ) : sidebarCollapsed ? (
-        <button className="sidebar-rail" onClick={() => setSidebarCollapsed(false)} title="展开侧边栏">
-          <span className="rail-icon">›</span>
-          <span className="rail-label">{account.name}</span>
-        </button>
-      ) : sidebarEl)}
+        <button className="edge-arrow edge-left" onClick={() => setSidebarCollapsed(false)} title="展开侧边栏" aria-label="展开侧边栏">›</button>
+      ) : (
+        <div className="sidebar-dock">
+          {sidebarEl}
+          <button className="edge-arrow edge-close" onClick={() => setSidebarCollapsed(true)} title="收起侧边栏" aria-label="收起侧边栏">‹</button>
+        </div>
+      ))}
 
       <main className="main">
         {opp ? (
@@ -349,7 +349,6 @@ export default function App() {
               <div className="maintoolbar">
                 <span className="mt-name">{opp.name}</span>
                 <button className="btn ghost xs" onClick={() => setOppFormOpen(true)}>编辑商机</button>
-                <button className="btn ghost xs" onClick={() => setRelEditorOpen(true)}>＋ 关系</button>
                 <button className="btn ghost xs" onClick={() => setEnrichOpen(true)}>🏢 建图</button>
                 <button className="btn ghost xs" onClick={() => setSuggestOpen(true)}>🔮 荐关系{suggestions.length + personSuggs.length > 0 ? ` (${suggestions.length + personSuggs.length})` : ''}</button>
                 <button className="btn ghost xs" onClick={() => setReportOpen(true)}>📊 报表</button>
@@ -362,7 +361,6 @@ export default function App() {
                 <OverflowMenu align="left" label="⋯ 操作" items={[
                   { label: '🧠 AI 推演', primary: true, onClick: () => setConsoleOpen(true) },
                   { label: '✏️ 编辑商机', onClick: () => setOppFormOpen(true) },
-                  { label: '＋ 关系', onClick: () => setRelEditorOpen(true) },
                   { label: '🏢 企查查建图', onClick: () => setEnrichOpen(true) },
                   { label: '🔮 荐关系', badge: suggestions.length + personSuggs.length > 0 ? String(suggestions.length + personSuggs.length) : undefined, onClick: () => setSuggestOpen(true) },
                   { label: '📊 报表', onClick: () => setReportOpen(true) },
@@ -382,16 +380,15 @@ export default function App() {
               immersive={immersive} onToggleImmersive={toggleImmersive} secondTapOpens={isMobile}
               suggestions={suggestions} />
             {!immersive && breakdown && (
-              isMobile && winMobileCollapsed ? (
-                <button className="win-fab" onClick={() => setWinMobileCollapsed(false)} title="展开趋赢力" aria-label="展开趋赢力">
+              (isMobile ? winMobileCollapsed : winCollapsed) ? (
+                <button className="win-fab" onClick={() => (isMobile ? setWinMobileCollapsed(false) : setWinCollapsed(false))} title="展开趋赢力" aria-label="展开趋赢力">
                   <span className="wf-arr">⌃</span>
                   <span className="wf-pct" style={{ color: breakdown.total < 0 ? '#f87171' : undefined }}>{Math.round(breakdown.percent * 100)}%</span>
                   <span className="wf-label">趋赢力</span>
                 </button>
               ) : (
-                <WinTendencyPanel breakdown={breakdown}
-                  collapsed={isMobile ? false : winCollapsed} grabber={isMobile}
-                  onToggle={() => (isMobile ? setWinMobileCollapsed(true) : setWinCollapsed((c) => !c))} />
+                <WinTendencyPanel breakdown={breakdown} collapsed={false} grabber
+                  onToggle={() => (isMobile ? setWinMobileCollapsed(true) : setWinCollapsed(true))} />
               )
             )}
           </>
@@ -420,12 +417,6 @@ export default function App() {
           onSave={(patch) => act({ type: 'UPDATE_OPP', accId: account.id, oppId: opp.id, patch })} />
       )}
       {personFormOpen && <PersonForm onCreate={addPerson} onClose={() => setPersonFormOpen(false)} />}
-      {relEditorOpen && opp && (
-        <RelationshipEditor account={account} opp={opp} layer={layer}
-          onAddEdge={(e: Edge) => act({ type: 'ADD_EDGE', accId: account.id, oppId: opp.id, edge: e })}
-          onDeleteEdge={(id) => act({ type: 'DELETE_EDGE', accId: account.id, oppId: opp.id, edgeId: id })}
-          onClose={() => setRelEditorOpen(false)} />
-      )}
       {teamOpen && <TeamBilling role={auth.user.role} onClose={() => setTeamOpen(false)} />}
       {consoleOpen && opp && breakdown && (
         <StrategyConsole account={account} opp={opp} breakdown={breakdown}
