@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- 江湖 · 保证 Docker Desktop 常驻：登录时 + 每5分钟在后台拉起 Docker（已运行则 no-op）。
+     Docker 引擎设了 AutoStart、容器设了 restart:unless-stopped，所以 Docker 一起来栈就自动恢复。
+     只调用 /usr/bin/open（不碰外置卷、不依赖 docker CLI 路径），规避 launchd 的 TCC/PATH 限制。
+     安装： cp 本文件 → ~/Library/LaunchAgents/ ；launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jianghu.watchdog.plist
+     卸载： launchctl bootout gui/$(id -u)/com.jianghu.watchdog -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jianghu.watchdog</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/open</string>
+        <string>-g</string>
+        <string>-a</string>
+        <string>Docker</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartInterval</key>
+    <integer>300</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/leonge/Library/Logs/jianghu-watchdog.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/leonge/Library/Logs/jianghu-watchdog.log</string>
+</dict>
+</plist>

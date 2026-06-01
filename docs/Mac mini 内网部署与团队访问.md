@@ -108,11 +108,34 @@ docker compose exec db pg_dump -U jianghu jianghu > ~/jianghu-backup-$(date +%F)
 
 ---
 
-## 五、开机自启（可选，让 Mac mini 当稳定服务器）
+## 五、稳定性 / 自愈（让 Mac mini 当稳定服务器）
 
-Docker Desktop：设置 → General → 勾选 **Start Docker Desktop when you sign in**。
-容器：compose 里已设 `restart: unless-stopped`，Docker 一起来容器就自动恢复。
-另建议：Mac mini 设为**永不睡眠**（系统设置 → 节能 / 锁屏 → 关闭自动睡眠），否则睡眠时服务不可达。
+目标：团队随时可达，掉线能自动恢复。已配好的几层：
+
+| 层 | 设置 | 状态 |
+|---|---|---|
+| 永不睡眠 | `sudo pmset -a sleep 0`（睡眠时服务不可达） | ✅ 已配 `sleep 0` |
+| 断电后自启 | `sudo pmset -a autorestart 1` | ✅ 已开 |
+| Docker 引擎自启 | Docker Desktop → Settings → General → AutoStart | ✅ 已开 |
+| **Docker 开机拉起** | 看门狗 LaunchAgent（见下） | ✅ 已装 |
+| 容器自恢复 | compose 里 `restart: unless-stopped` | ✅ 已配 |
+
+**看门狗 LaunchAgent**（登录时 + 每 5 分钟后台 `open -a Docker`，已运行则无操作；Docker 一起来引擎自启 + 容器重启策略接力把栈带回）：
+
+```bash
+cp com.jianghu.watchdog.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jianghu.watchdog.plist
+# 卸载： launchctl bootout gui/$(id -u)/com.jianghu.watchdog
+```
+
+> 为什么不做「检查栈+自动 `docker compose up`」的完整看门狗：项目在外置卷 `/Volumes/PowerData`，macOS TCC 禁止 launchd 访问外置卷（`Operation not permitted`），且 launchd 的 PATH 没有 `docker`。故只 `open -a Docker`（不碰外置卷、不依赖 docker 路径），靠引擎自启 + 容器重启策略接力。
+
+**⚠️ 唯一前提 = 自动登录**：用户级 LaunchAgent 与 Docker 都要**登录后**才跑。本机 **FileVault 已开启**（保护敏感干系人数据，PIPL 红线，建议保持）→ macOS 因此**禁止自动登录**。所以：
+- **无人值守重启后，机器会停在 FileVault 解锁/登录界面，在有人登录前栈不会起**（团队会暂时不可达）。
+- 重启很少见（已永不睡眠）。真重启了，**有人登录一次**即触发全链自愈，无需手动敲 docker 命令。
+- 不建议为图省事关掉 FileVault 换自动登录——敏感数据加密更重要。
+
+手动一键恢复（任何时候栈掉了，登录后跑）：`cd /Volumes/PowerData/江湖APP && open -a Docker && sleep 20 && docker compose up -d`
 
 ---
 
