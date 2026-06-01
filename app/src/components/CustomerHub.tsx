@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { Account, CustomerType } from '../types';
 import { CUSTOMER_TYPE_LABEL } from '../types';
 import { Modal } from './Modal';
+import { OverflowMenu } from './OverflowMenu';
 
 export function CustomerHub({
   accounts, onOpen, onCreate, onLoadDemo, onDeleteAccount,
@@ -37,11 +38,12 @@ export function CustomerHub({
     <div className="hub">
       <div className="hub-top">
         <div className="logo lg">江</div>
-        <div>
+        <div className="hub-titlewrap">
           <div className="hub-title">{tenantName}</div>
           <div className="hub-sub">江湖 · 销售干系人作战地图 · 客户工作台</div>
         </div>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center' }}>
+        {/* 桌面：整排操作 */}
+        <div className="hub-actions-desktop">
           <button className="theme-toggle" onClick={onToggleTheme} title={theme === 'dark' ? '切换到白天模式' : '切换到黑夜模式'}>{theme === 'dark' ? '☀️' : '🌙'}</button>
           <button className="team-chip" onClick={onOpenMcpAccess}>🔌 接入 AI</button>
           <button className="team-chip" onClick={onOpenHelp}>❓ 帮助</button>
@@ -51,6 +53,19 @@ export function CustomerHub({
           <button className="btn ghost" onClick={onLoadDemo}>载入示例</button>
           <button className="btn primary" onClick={() => setCreating(true)}>＋ 新建客户</button>
           <button className="btn ghost" onClick={onLogout} title="退出登录">退出</button>
+        </div>
+        {/* 移动：主题 + 新建 + ⋯ 菜单 */}
+        <div className="hub-actions-mobile">
+          <button className="theme-toggle" onClick={onToggleTheme} title="切换主题">{theme === 'dark' ? '☀️' : '🌙'}</button>
+          <button className="btn primary xs" onClick={() => setCreating(true)}>＋ 新建</button>
+          <OverflowMenu align="right" items={[
+            { label: '📋 载入示例', onClick: onLoadDemo },
+            { label: '🔌 接入 AI', onClick: onOpenMcpAccess },
+            { label: '🧠 AI 模型', onClick: onOpenAiSettings },
+            { label: '❓ 帮助', onClick: onOpenHelp },
+            { label: '👥 团队 · ❤️ 支持', onClick: onOpenTeam },
+            { label: '🚪 退出登录', onClick: onLogout },
+          ]} />
         </div>
       </div>
 

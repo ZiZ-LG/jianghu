@@ -32,18 +32,41 @@ function prefersDark(): boolean {
   try { return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false; } catch { return false; }
 }
 
-/** 是否窄屏（手机）。响应式切换布局/抽屉行为用。默认断点 768px。 */
-export function useIsMobile(maxWidth = 768): boolean {
-  const query = `(max-width: ${maxWidth}px)`;
-  const [mobile, setMobile] = useState<boolean>(() => {
-    try { return window.matchMedia?.(query).matches ?? false; } catch { return false; }
-  });
+// 手机判定：窄屏(竖屏) 或 矮屏(横屏手机)。与 styles.css 的移动端媒体查询保持一致。
+const MOBILE_Q = '(max-width: 768px), (max-height: 500px)';
+const LANDSCAPE_Q = '(orientation: landscape)';
+
+export interface Viewport { isMobile: boolean; isLandscape: boolean; }
+
+function readViewport(): Viewport {
+  try {
+    return {
+      isMobile: window.matchMedia?.(MOBILE_Q).matches ?? false,
+      isLandscape: window.matchMedia?.(LANDSCAPE_Q).matches ?? false,
+    };
+  } catch { return { isMobile: false, isLandscape: false }; }
+}
+
+/** 视口信息：是否手机 + 是否横屏。旋转/缩放即时更新（横屏手机也算 mobile）。 */
+export function useViewport(): Viewport {
+  const [vp, setVp] = useState<Viewport>(readViewport);
   useEffect(() => {
-    const mq = window.matchMedia(query);
-    const onChange = () => setMobile(mq.matches);
+    const onChange = () => setVp(readViewport());
+    const mqs = [window.matchMedia(MOBILE_Q), window.matchMedia(LANDSCAPE_Q)];
+    mqs.forEach((m) => m.addEventListener?.('change', onChange));
+    window.addEventListener('resize', onChange);
+    window.addEventListener('orientationchange', onChange);
     onChange();
-    mq.addEventListener?.('change', onChange);
-    return () => mq.removeEventListener?.('change', onChange);
-  }, [query]);
-  return mobile;
+    return () => {
+      mqs.forEach((m) => m.removeEventListener?.('change', onChange));
+      window.removeEventListener('resize', onChange);
+      window.removeEventListener('orientationchange', onChange);
+    };
+  }, []);
+  return vp;
+}
+
+/** 兼容旧用法：是否手机。 */
+export function useIsMobile(): boolean {
+  return useViewport().isMobile;
 }

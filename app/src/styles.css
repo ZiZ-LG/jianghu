@@ -626,46 +626,93 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 .rel-head-txt { font-size: 14px; font-weight: 700; color: var(--ink); margin-bottom: 14px; line-height: 1.5; }
 .edge-drawer .edit-row select { background: var(--panel); color: var(--ink); }
 
-/* ───────── 手机端适配（竖屏优先，断点 768px）───────── */
+/* ───────── 溢出菜单（移动端把一排操作收进「⋯」）───────── */
+.ovf { position: relative; display: inline-block; }
+.ovf-pop { position: absolute; top: calc(100% + 6px); z-index: 50; min-width: 184px; padding: 6px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 34px var(--shadow);
+  display: flex; flex-direction: column; gap: 2px; }
+.ovf-right { right: 0; } .ovf-left { left: 0; }
+.ovf-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%;
+  padding: 11px 12px; border-radius: 8px; font-size: 14px; font-weight: 600; color: var(--ink); text-align: left; white-space: nowrap; }
+.ovf-item:hover, .ovf-item:active { background: var(--hover); }
+.ovf-item.primary { color: #fff; background: var(--accent); }
+.ovf-badge { font-size: 11px; font-weight: 800; background: var(--accent-soft); color: var(--accent-ink); border-radius: 999px; padding: 1px 7px; }
+.ovf-item.primary .ovf-badge { background: rgba(255,255,255,.25); color: #fff; }
+
+/* 标题截断（防止窄屏被挤成竖排单字） */
+.hub-titlewrap { flex: 1; min-width: 0; overflow: hidden; }
+.hub-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hub-actions-desktop { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+
+/* ───────── 移动端（竖屏 ≤768px 或 横屏矮屏 ≤500px 高）───────── */
 .hamburger-fab { display: none; }
-@media (max-width: 768px) {
-  /* 侧栏 → 抽屉式滑出 */
+.hub-actions-mobile { display: none; }
+@media (max-width: 768px), (max-height: 500px) {
+  /* —— 侧栏：滑出抽屉 —— */
   .app-shell.mobile { position: relative; }
   .mobile-drawer { position: fixed; inset: 0 auto 0 0; z-index: 60; transform: translateX(-100%);
-    transition: transform .25s ease; box-shadow: 6px 0 24px var(--shadow); will-change: transform; }
+    transition: transform .26s cubic-bezier(.4,0,.2,1); box-shadow: 8px 0 30px var(--shadow); will-change: transform; }
   .mobile-drawer.open { transform: none; }
-  .mobile-drawer .sidebar { width: min(82vw, 300px); height: 100%; }
-  .mobile-backdrop { position: fixed; inset: 0; z-index: 55; background: rgba(15,23,42,.42); backdrop-filter: blur(1px); }
-  .hamburger-fab { display: grid; place-items: center; position: fixed; top: 10px; left: 10px; z-index: 40;
-    width: 40px; height: 40px; border-radius: 10px; font-size: 18px; color: var(--ink);
-    background: var(--panel); border: 1px solid var(--line); box-shadow: 0 2px 10px var(--shadow); }
+  .mobile-drawer .sidebar { width: min(86vw, 320px); height: 100%; }
+  .mobile-backdrop { position: fixed; inset: 0; z-index: 55; background: rgba(15,23,42,.5); backdrop-filter: blur(2px); }
 
-  /* 顶部浮层：给汉堡按钮让出左上角，工具栏单行横向滚动 */
-  .canvas-top { top: 10px; left: 58px; right: 10px; max-width: none; gap: 6px; }
-  .topbar { flex-wrap: wrap; }
-  .maintoolbar { max-width: calc(100vw - 68px); flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch;
-    scrollbar-width: none; padding: 5px 8px; }
-  .maintoolbar::-webkit-scrollbar { display: none; }
-  .maintoolbar .mt-name { display: none; }
-  .maintoolbar .btn { flex-shrink: 0; }
-  .btn.xs { padding: 7px 11px; font-size: 12px; }   /* 更大的触摸目标 */
+  /* —— 顶部：汉堡 FAB + 紧凑层级 tab + ⋯操作菜单 —— */
+  .hamburger-fab { display: grid; place-items: center; position: fixed;
+    top: calc(10px + env(safe-area-inset-top)); left: 10px; z-index: 45;
+    width: 42px; height: 42px; border-radius: 12px; font-size: 19px; color: var(--ink);
+    background: var(--panel); border: 1px solid var(--line); box-shadow: 0 2px 12px var(--shadow); }
+  .canvas-top { top: calc(10px + env(safe-area-inset-top)); left: 60px; right: 10px; max-width: none;
+    flex-direction: row; align-items: flex-start; flex-wrap: wrap; gap: 6px; }
+  .topbar { padding: 3px; flex-wrap: wrap; }
+  .tab { padding: 6px 10px; font-size: 12px; }
+  .maintoolbar { display: none; }          /* 桌面长工具栏隐藏，改用 ⋯ 菜单 */
 
-  /* 右侧抽屉 → 全屏（人物详情 / 关系编辑） */
-  .drawer { width: 100%; border-left: none; }
+  /* —— 画布占满；上下浮层不再压缩它 —— */
+  .canvas-wrap { height: 100%; }
 
-  /* 趋赢力栏：纵向堆叠 + 限高可滚 */
-  .winpanel { flex-direction: column; height: auto; max-height: 50vh; }
+  /* —— 趋赢力栏：底部浮层(脱离布局)，默认迷你条、可展开为底卡 —— */
+  .winpanel { position: absolute; left: 0; right: 0; bottom: 0; z-index: 32;
+    border-top: 1px solid var(--line); box-shadow: 0 -6px 24px var(--shadow);
+    padding-bottom: env(safe-area-inset-bottom); }
+  .winpanel:not(.collapsed) { flex-direction: column; height: auto; max-height: 58vh; }
   .winpanel .win-score { width: 100%; border-right: none; border-bottom: 1px solid var(--line);
-    flex-direction: row; align-items: baseline; gap: 10px; padding: 10px 14px; flex-wrap: wrap; }
-  .winpanel .win-score .big { font-size: 30px; margin-top: 0; }
+    flex-direction: row; align-items: baseline; gap: 10px; padding: 12px 16px; flex-wrap: wrap; }
+  .winpanel .win-score .big { font-size: 28px; margin-top: 0; }
   .winpanel .win-score .strat { width: 100%; margin-top: 4px; }
-  .winpanel .win-items { max-height: 32vh; }
+  .winpanel .win-items { max-height: 40vh; }
   .item-grid { grid-template-columns: repeat(2, 1fr); }
 
-  /* 弹窗：近全屏 */
-  .modal { max-width: 94vw; max-height: 90vh; border-radius: 14px; }
+  /* —— 缩放控件上移，避开底部迷你条 —— */
+  .zoom-controls { bottom: 60px; right: 12px; }
+
+  /* —— 右抽屉：全屏 + 顶部安全区；z 高于汉堡(45)/迷你条(32)，避免穿透 —— */
+  .drawer { width: 100%; border-left: none; z-index: 50; }
+  .drawer-head { min-height: 56px; padding-top: env(safe-area-inset-top); }
+
+  /* —— 弹窗近全屏 —— */
+  .modal { max-width: 96vw; max-height: 88vh; border-radius: 16px; }
   .modal-body { padding: 14px 16px; }
 
-  /* Hub / 登录：留出汉堡不必要（无侧栏），正常即可 */
-  .sync-toast { left: 12px; right: 12px; bottom: 12px; text-align: center; }
+  /* —— 触摸目标 —— */
+  .btn.xs { padding: 8px 12px; font-size: 12px; }
+  .sync-toast { left: 12px; right: 12px; bottom: 68px; text-align: center; }
+
+  /* —— Hub 头部：堆叠 + 操作收进菜单 —— */
+  .hub-top { flex-wrap: nowrap; padding: calc(14px + env(safe-area-inset-top)) 14px 14px; gap: 10px; }
+  .hub-top .logo.lg { width: 40px; height: 40px; font-size: 18px; flex-shrink: 0; }
+  .hub-title { font-size: 16px; line-height: 1.25; }
+  .hub-sub { display: none; }
+  .hub-actions-desktop { display: none; }
+  .hub-actions-mobile { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; flex-shrink: 0; }
+  .hub-grid { padding-left: 16px; padding-right: 16px; }
+  .hub-empty { padding-left: 20px; padding-right: 20px; }
+}
+
+/* ───────── 横屏手机微调（矮屏、宽度够）───────── */
+@media (max-height: 500px) and (orientation: landscape) {
+  .winpanel:not(.collapsed) { max-height: 82vh; }
+  .winpanel .win-items { max-height: 64vh; }
+  .item-grid { grid-template-columns: repeat(3, 1fr); }     /* 宽屏多列，少滚动 */
+  .drawer { width: min(460px, 72%); border-left: 1px solid var(--line); }  /* 横屏右抽屉不必全屏 */
+  .mobile-drawer .sidebar { width: min(58vw, 320px); }
 }

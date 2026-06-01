@@ -3,7 +3,7 @@ import type { Layer, Role, CustomerType, Edge, Person } from './types';
 import { reducer, newAccount, newOpportunity, newPerson, uid, type Action } from './store';
 import { api, type AuthResult, type Suggestion, type PersonSuggestion } from './api';
 import { scoreFromDomain } from './lib/g64111';
-import { usePersistentState, useTheme, useIsMobile } from './ui';
+import { usePersistentState, useTheme, useViewport } from './ui';
 import { Auth } from './components/Auth';
 import { CustomerHub } from './components/CustomerHub';
 import { Sidebar } from './components/Sidebar';
@@ -23,6 +23,7 @@ import { EnrichPanel } from './components/EnrichPanel';
 import { ReportPanel } from './components/ReportPanel';
 import { HelpManual } from './components/HelpManual';
 import { McpAccess } from './components/McpAccess';
+import { OverflowMenu } from './components/OverflowMenu';
 import { Footer } from './components/Footer';
 
 export default function App() {
@@ -57,7 +58,8 @@ export default function App() {
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [drawerEdgeId, setDrawerEdgeId] = useState<string | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const isMobile = useIsMobile();
+  const [winMobileCollapsed, setWinMobileCollapsed] = usePersistentState('jianghu.winMobileCollapsed', true);
+  const { isMobile } = useViewport();
 
   // 启动：有 token 则恢复会话 + 拉取云端数据
   useEffect(() => {
@@ -328,6 +330,19 @@ export default function App() {
                 <button className="btn ghost xs" onClick={() => setHelpOpen(true)}>❓ 帮助</button>
                 <button className="btn primary xs" onClick={() => setConsoleOpen(true)}>🧠 AI 推演</button>
               </div>
+              {/* 移动端：整排操作收进 ⋯ 菜单（.maintoolbar 在窄屏被 CSS 隐藏） */}
+              {isMobile && (
+                <OverflowMenu align="left" label="⋯ 操作" items={[
+                  { label: '🧠 AI 推演', primary: true, onClick: () => setConsoleOpen(true) },
+                  { label: '✏️ 编辑商机', onClick: () => setOppFormOpen(true) },
+                  { label: '＋ 关系', onClick: () => setRelEditorOpen(true) },
+                  { label: '🏢 企查查建图', onClick: () => setEnrichOpen(true) },
+                  { label: '🔮 荐关系', badge: suggestions.length + personSuggs.length > 0 ? String(suggestions.length + personSuggs.length) : undefined, onClick: () => setSuggestOpen(true) },
+                  { label: '📊 报表', onClick: () => setReportOpen(true) },
+                  { label: '🔌 接入 AI', onClick: () => setMcpAccessOpen(true) },
+                  { label: '❓ 帮助', onClick: () => setHelpOpen(true) },
+                ]} />
+              )}
             </div>
             <Canvas account={account} opp={opp} layer={layer}
               selectedId={selectedId} selectedEdgeId={selectedEdgeId}
@@ -339,8 +354,9 @@ export default function App() {
               onUpdatePerson={updatePerson} onDeletePerson={deletePerson}
               suggestions={suggestions} />
             {breakdown && (
-              <WinTendencyPanel breakdown={breakdown} collapsed={winCollapsed}
-                onToggle={() => setWinCollapsed((c) => !c)} />
+              <WinTendencyPanel breakdown={breakdown}
+                collapsed={isMobile ? winMobileCollapsed : winCollapsed}
+                onToggle={() => (isMobile ? setWinMobileCollapsed((c) => !c) : setWinCollapsed((c) => !c))} />
             )}
           </>
         ) : (
