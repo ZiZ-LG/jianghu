@@ -31,3 +31,19 @@ export function useTheme(): [Theme, () => void] {
 function prefersDark(): boolean {
   try { return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false; } catch { return false; }
 }
+
+/** 是否窄屏（手机）。响应式切换布局/抽屉行为用。默认断点 768px。 */
+export function useIsMobile(maxWidth = 768): boolean {
+  const query = `(max-width: ${maxWidth}px)`;
+  const [mobile, setMobile] = useState<boolean>(() => {
+    try { return window.matchMedia?.(query).matches ?? false; } catch { return false; }
+  });
+  useEffect(() => {
+    const mq = window.matchMedia(query);
+    const onChange = () => setMobile(mq.matches);
+    onChange();
+    mq.addEventListener?.('change', onChange);
+    return () => mq.removeEventListener?.('change', onChange);
+  }, [query]);
+  return mobile;
+}

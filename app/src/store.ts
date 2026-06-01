@@ -58,6 +58,7 @@ export type Action =
   | { type: 'SET_ROLE'; accId: string; oppId: string; personId: string; patch: Partial<OppRole> }
   | { type: 'REMOVE_ROLE'; accId: string; oppId: string; personId: string }
   | { type: 'ADD_EDGE'; accId: string; oppId: string; edge: Edge }
+  | { type: 'UPDATE_EDGE'; accId: string; oppId: string; edgeId: string; patch: Partial<Edge> }
   | { type: 'DELETE_EDGE'; accId: string; oppId: string; edgeId: string }
   | { type: 'ADD_BI'; accId: string; oppId: string; bi: BurningIssue }
   | { type: 'UPDATE_BI'; accId: string; oppId: string; biId: string; patch: Partial<BurningIssue> }
@@ -136,6 +137,15 @@ export function reducer(s: StoreState, action: Action): StoreState {
 
     case 'ADD_EDGE':
       return mapOpp(s, action.accId, action.oppId, (o) => ({ ...o, edges: [...o.edges, action.edge] }));
+    case 'UPDATE_EDGE':
+      // 连线可能在 baseEdges(L1) 或某商机 edges 里——两处都尝试 patch（按 id 命中才改）
+      return mapAcc(s, action.accId, (a) => ({
+        ...a,
+        baseEdges: a.baseEdges.map((e) => (e.id === action.edgeId ? { ...e, ...action.patch } : e)),
+        opportunities: a.opportunities.map((o) => ({
+          ...o, edges: o.edges.map((e) => (e.id === action.edgeId ? { ...e, ...action.patch } : e)),
+        })),
+      }));
     case 'DELETE_EDGE':
       return mapAcc(s, action.accId, (a) => ({
         ...a,

@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
 import type { Layer, Role, CustomerType, Edge } from './types';
-import { reducer, newAccount, newOpportunity, newPerson, type Action } from './store';
+import { reducer, newAccount, newOpportunity, newPerson, uid, type Action } from './store';
 import { api, type AuthResult, type Suggestion, type PersonSuggestion } from './api';
 import { scoreFromDomain } from './lib/g64111';
-import { usePersistentState, useTheme } from './ui';
+import { usePersistentState, useTheme, useIsMobile } from './ui';
 import { Auth } from './components/Auth';
 import { CustomerHub } from './components/CustomerHub';
 import { Sidebar } from './components/Sidebar';
 import { LayerTabs } from './components/LayerTabs';
 import { Canvas } from './components/Canvas';
 import { DetailDrawer } from './components/DetailDrawer';
+import { EdgeDrawer } from './components/EdgeDrawer';
 import { WinTendencyPanel } from './components/WinTendencyPanel';
 import { OpportunityForm } from './components/OpportunityForm';
 import { PersonForm } from './components/PersonForm';
@@ -51,6 +52,12 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistentState('jianghu.sidebarCollapsed', false);
   const [winCollapsed, setWinCollapsed] = usePersistentState('jianghu.winCollapsed', false);
   const [theme, toggleTheme] = useTheme();
+  // 画布选中模型：单击=选中(节点出锚点/连线出控制点)，双击=打开右侧栏
+  const [drawerPersonId, setDrawerPersonId] = useState<string | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [drawerEdgeId, setDrawerEdgeId] = useState<string | null>(null);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const isMobile = useIsMobile();
 
   // 启动：有 token 则恢复会话 + 拉取云端数据
   useEffect(() => {
@@ -141,6 +148,51 @@ export default function App() {
     setSelectedId(p.id);
   };
 
+  // ── 画布交互：选中 / 打开右侧栏 / 飞书式建点连线 ──
+  const selectPerson = (id: string | null) => { setSelectedId(id); setSelectedEdgeId(null); };
+  const openPerson = (id: string) => { setSelectedId(id); setSelectedEdgeId(null); setDrawerEdgeId(null); setDrawerPersonId(id); };
+  const selectEdge = (id: string | null) => { setSelectedEdgeId(id); setSelectedId(null); };
+  const openEdge = (id: string) => { setDrawerPersonId(null); setDrawerEdgeId(id); };
+  // 切客户/商机时清空一切选中
+  useEffect(() => { setSelectedId(null); setSelectedEdgeId(null); setDrawerPersonId(null); setDrawerEdgeId(null); }, [accId, oppId]);
+
+  const addPersonAt = (x: number, y: number): string => {
+    if (!account) return '';
+    const p = newPerson('新成员', '', x, y, false);
+    act({ type: 'ADD_PERSON', accId: account.id, person: p });
+    setSelectedId(p.id); setSelectedEdgeId(null);
+    return p.id;
+  };
+  const makeEdge = (source: string, target: string): Edge => ({
+    id: uid('e'), source, target, layer, label: '', color: '#94a3b8', style: 'solid', directed: true, origin: 'manual',
+  });
+  const connectNodes = (source: string, target: string) => {
+    if (!account || !opp || source === target) return;
+    const e = makeEdge(source, target);
+    act({ type: 'ADD_EDGE', accId: account.id, oppId: opp.id, edge: e });
+    setSelectedId(null); setSelectedEdgeId(e.id);
+  };
+  const addConnectedNode = (source: string, x: number, y: number): string => {
+    if (!account || !opp) return '';
+    const p = newPerson('新成员', '', x, y, false);
+    act({ type: 'ADD_PERSON', accId: account.id, person: p });
+    act({ type: 'ADD_EDGE', accId: account.id, oppId: opp.id, edge: makeEdge(source, p.id) });
+    setSelectedId(p.id); setSelectedEdgeId(null);
+    return p.id;
+  };
+  const updateEdge = (edgeId: string, patch: Partial<Edge>) => {
+    if (!account || !opp) return;
+    act({ type: 'UPDATE_EDGE', accId: account.id, oppId: opp.id, edgeId, patch });
+  };
+  const deleteEdgeById = (edgeId: string) => {
+    if (!account || !opp) return;
+    act({ type: 'DELETE_EDGE', accId: account.id, oppId: opp.id, edgeId });
+  };
+  const renamePerson = (id: string, name: string) => {
+    if (!account) return;
+    act({ type: 'UPDATE_PERSON', accId: account.id, personId: id, patch: { name } });
+  };
+
   // ── AI 关系推断 ──
   const generateSuggestions = async () => {
     if (!opp) return;
@@ -221,28 +273,38 @@ export default function App() {
     );
   }
 
-  const selectedPerson = account.persons.find((p) => p.id === selectedId) ?? null;
-  const selectedRole = opp?.roles.find((r) => r.personId === selectedId);
-  const selectedBis = opp?.bis.filter((b) => b.personId === selectedId) ?? [];
-  const selectedUcvs = (opp?.ucvs ?? []).filter((u) => selectedBis.some((b) => b.id === u.targetBiId));
+  const drawerPerson = account.persons.find((p) => p.id === drawerPersonId) ?? null;
+  const drawerRole = opp?.roles.find((r) => r.personId === drawerPersonId);
+  const drawerBis = opp?.bis.filter((b) => b.personId === drawerPersonId) ?? [];
+  const drawerUcvs = (opp?.ucvs ?? []).filter((u) => drawerBis.some((b) => b.id === u.targetBiId));
+  const drawerEdge = drawerEdgeId
+    ? [...account.baseEdges, ...account.opportunities.flatMap((o) => o.edges)].find((e) => e.id === drawerEdgeId) ?? null
+    : null;
+  const sidebarEl = (
+    <Sidebar
+      account={account} currentOppId={oppId} onSelectOpp={(id) => { setOppId(id); selectPerson(null); setMobileNavOpen(false); }}
+      selectedPersonId={selectedId} onSelectPerson={(id) => { openPerson(id); setMobileNavOpen(false); }}
+      onBack={() => { setAccId(null); selectPerson(null); }} onAddOpp={addOpp} onDeleteOpp={deleteOpp}
+      onAddPerson={() => setPersonFormOpen(true)} roleByPerson={roleByPerson}
+      onCollapse={() => (isMobile ? setMobileNavOpen(false) : setSidebarCollapsed(true))}
+      theme={theme} onToggleTheme={toggleTheme}
+    />
+  );
 
   return (
-    <div className="app-shell">
-      {sidebarCollapsed ? (
+    <div className={`app-shell${isMobile ? ' mobile' : ''}`}>
+      {isMobile ? (
+        <>
+          {!mobileNavOpen && <button className="hamburger-fab" onClick={() => setMobileNavOpen(true)} title="菜单">☰</button>}
+          {mobileNavOpen && <div className="mobile-backdrop" onClick={() => setMobileNavOpen(false)} />}
+          <div className={`mobile-drawer${mobileNavOpen ? ' open' : ''}`}>{sidebarEl}</div>
+        </>
+      ) : sidebarCollapsed ? (
         <button className="sidebar-rail" onClick={() => setSidebarCollapsed(false)} title="展开侧边栏">
           <span className="rail-icon">›</span>
           <span className="rail-label">{account.name}</span>
         </button>
-      ) : (
-        <Sidebar
-          account={account} currentOppId={oppId} onSelectOpp={(id) => { setOppId(id); setSelectedId(null); }}
-          selectedPersonId={selectedId} onSelectPerson={setSelectedId}
-          onBack={() => { setAccId(null); setSelectedId(null); }} onAddOpp={addOpp} onDeleteOpp={deleteOpp}
-          onAddPerson={() => setPersonFormOpen(true)} roleByPerson={roleByPerson}
-          onCollapse={() => setSidebarCollapsed(true)}
-          theme={theme} onToggleTheme={toggleTheme}
-        />
-      )}
+      ) : sidebarEl}
 
       <main className="main">
         {opp ? (
@@ -261,9 +323,14 @@ export default function App() {
                 <button className="btn primary xs" onClick={() => setConsoleOpen(true)}>🧠 AI 推演</button>
               </div>
             </div>
-            <Canvas account={account} opp={opp} layer={layer} selectedId={selectedId}
-              onSelectPerson={setSelectedId} suggestions={suggestions}
-              onMovePerson={(id, x, y) => act({ type: 'MOVE_PERSON', accId: account.id, personId: id, x, y })} />
+            <Canvas account={account} opp={opp} layer={layer}
+              selectedId={selectedId} selectedEdgeId={selectedEdgeId}
+              onSelectPerson={selectPerson} onSelectEdge={selectEdge}
+              onOpenPerson={openPerson} onOpenEdge={openEdge}
+              onMovePerson={(id, x, y) => act({ type: 'MOVE_PERSON', accId: account.id, personId: id, x, y })}
+              onAddPersonAt={addPersonAt} onAddConnectedNode={addConnectedNode} onConnect={connectNodes}
+              onUpdateEdge={updateEdge} onDeleteEdge={deleteEdgeById} onRenamePerson={renamePerson}
+              suggestions={suggestions} />
             {breakdown && (
               <WinTendencyPanel breakdown={breakdown} collapsed={winCollapsed}
                 onToggle={() => setWinCollapsed((c) => !c)} />
@@ -278,9 +345,15 @@ export default function App() {
         )}
       </main>
 
-      {selectedPerson && opp && (
-        <DetailDrawer accId={account.id} oppId={opp.id} person={selectedPerson} oppRole={selectedRole}
-          bis={selectedBis} ucvs={selectedUcvs} dispatch={act} onClose={() => setSelectedId(null)} />
+      {drawerPerson && opp && (
+        <DetailDrawer accId={account.id} oppId={opp.id} person={drawerPerson} oppRole={drawerRole}
+          bis={drawerBis} ucvs={drawerUcvs} dispatch={act} onClose={() => setDrawerPersonId(null)} />
+      )}
+      {drawerEdge && (
+        <EdgeDrawer edge={drawerEdge} persons={account.persons}
+          onUpdate={(patch) => updateEdge(drawerEdge.id, patch)}
+          onDelete={() => { deleteEdgeById(drawerEdge.id); setDrawerEdgeId(null); setSelectedEdgeId(null); }}
+          onClose={() => setDrawerEdgeId(null)} />
       )}
 
       {oppFormOpen && opp && (

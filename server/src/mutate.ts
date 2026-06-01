@@ -114,9 +114,17 @@ export async function applyAction(tenantId: string, action: any): Promise<void> 
         id: e.id, tenantId, accountId: action.accId, opportunityId: action.oppId ?? null,
         source: e.source, target: e.target, layer: e.layer, label: e.label,
         color: e.color ?? null, style: e.style ?? null, width: e.width ?? null, directed: !!e.directed, origin: e.origin ?? 'manual',
+        shape: e.shape ?? null, bend: e.bend ?? null,
       } });
       return;
     }
+    case 'UPDATE_EDGE':
+      // 端点改接(source/target)+外观(label/color/style/width/directed/layer)+形状(shape/bend)，全程租户隔离
+      await prisma.edge.updateMany({
+        where: { id: action.edgeId, tenantId },
+        data: pick(action.patch, ['source', 'target', 'layer', 'label', 'color', 'style', 'width', 'directed', 'shape', 'bend']),
+      });
+      return;
     case 'DELETE_EDGE':
       await prisma.edge.deleteMany({ where: { id: action.edgeId, tenantId } });
       return;

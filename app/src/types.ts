@@ -100,6 +100,9 @@ export interface OppRole {
   procurementStatus?: ProcurementStatus;
 }
 
+/** 连线外观形状（与 style 实/虚线正交）：直线 / 折线(正交) / 曲线 */
+export type EdgeShape = 'straight' | 'orthogonal' | 'curved';
+
 export interface Edge {
   id: string;
   source: string;
@@ -111,6 +114,8 @@ export interface Edge {
   width?: number;
   directed?: boolean;
   origin?: 'manual' | 'qcc' | 'ai';
+  shape?: EdgeShape; // 缺省按 layer 推断：L1=orthogonal，其余=straight
+  bend?: number;     // 曲线弯曲度：控制点相对中点的垂直偏移(px，带符号)
 }
 
 /** 项目/商机（增量根） */

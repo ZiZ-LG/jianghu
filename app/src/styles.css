@@ -92,7 +92,8 @@ select { font-family: inherit; }
 .tab small { font-weight: 500; opacity: .7; }
 
 .canvas-wrap { flex: 1; position: relative; background:
-  radial-gradient(circle, var(--canvas-dot) 1px, transparent 1px); background-size: 22px 22px; overflow: hidden; cursor: grab; }
+  radial-gradient(circle, var(--canvas-dot) 1px, transparent 1px); background-size: 22px 22px; overflow: hidden; cursor: grab;
+  touch-action: none; user-select: none; -webkit-user-select: none; }
 .canvas-wrap.grabbing { cursor: grabbing; }
 .canvas-wrap svg { width: 100%; height: 100%; display: block; }
 
@@ -595,4 +596,68 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
   .rep-table th { background: #f0f0f0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .rep-table tbody tr:nth-child(even) { background: #f8f8f8 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   @page { margin: 1.4cm; }
+}
+
+/* ───────── 画布交互：锚点 / 内联命名 / 连线工具条 ───────── */
+.node-anchor { opacity: .9; transition: r .1s, opacity .1s; }
+.node-anchor:hover { opacity: 1; }
+.canvas-wrap svg g[data-node]:hover .node-anchor { opacity: 1; }
+/* 内联命名输入：浮在节点中心，建点后立即可输入 */
+.node-edit-input { position: absolute; z-index: 25; width: 96px; padding: 4px 6px; text-align: center;
+  font-size: 13px; font-weight: 700; color: var(--ink); background: var(--panel); border: 2px solid var(--accent);
+  border-radius: 8px; box-shadow: 0 4px 14px var(--shadow); outline: none; }
+/* 选中连线 → 附近浮出形状/删除工具条（不含关系语义样式） */
+.edge-toolbar { position: absolute; z-index: 25; display: flex; align-items: center; gap: 3px; padding: 4px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 4px 14px var(--shadow); }
+.shape-btn { padding: 5px 10px; border-radius: 7px; font-size: 12px; font-weight: 700; color: var(--ink-2); background: transparent; white-space: nowrap; }
+.shape-btn:hover { background: var(--hover); }
+.shape-btn.on { background: var(--accent); color: #fff; }
+.shape-btn.del { font-size: 13px; padding: 5px 8px; }
+.shape-btn.del:hover { background: #fef2f2; color: #b91c1c; }
+.edge-tb-sep { width: 1px; align-self: stretch; background: var(--line); margin: 2px 1px; }
+.rel-head-txt { font-size: 14px; font-weight: 700; color: var(--ink); margin-bottom: 14px; line-height: 1.5; }
+.edge-drawer .edit-row select { background: var(--panel); color: var(--ink); }
+
+/* ───────── 手机端适配（竖屏优先，断点 768px）───────── */
+.hamburger-fab { display: none; }
+@media (max-width: 768px) {
+  /* 侧栏 → 抽屉式滑出 */
+  .app-shell.mobile { position: relative; }
+  .mobile-drawer { position: fixed; inset: 0 auto 0 0; z-index: 60; transform: translateX(-100%);
+    transition: transform .25s ease; box-shadow: 6px 0 24px var(--shadow); will-change: transform; }
+  .mobile-drawer.open { transform: none; }
+  .mobile-drawer .sidebar { width: min(82vw, 300px); height: 100%; }
+  .mobile-backdrop { position: fixed; inset: 0; z-index: 55; background: rgba(15,23,42,.42); backdrop-filter: blur(1px); }
+  .hamburger-fab { display: grid; place-items: center; position: fixed; top: 10px; left: 10px; z-index: 40;
+    width: 40px; height: 40px; border-radius: 10px; font-size: 18px; color: var(--ink);
+    background: var(--panel); border: 1px solid var(--line); box-shadow: 0 2px 10px var(--shadow); }
+
+  /* 顶部浮层：给汉堡按钮让出左上角，工具栏单行横向滚动 */
+  .canvas-top { top: 10px; left: 58px; right: 10px; max-width: none; gap: 6px; }
+  .topbar { flex-wrap: wrap; }
+  .maintoolbar { max-width: calc(100vw - 68px); flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch;
+    scrollbar-width: none; padding: 5px 8px; }
+  .maintoolbar::-webkit-scrollbar { display: none; }
+  .maintoolbar .mt-name { display: none; }
+  .maintoolbar .btn { flex-shrink: 0; }
+  .btn.xs { padding: 7px 11px; font-size: 12px; }   /* 更大的触摸目标 */
+
+  /* 右侧抽屉 → 全屏（人物详情 / 关系编辑） */
+  .drawer { width: 100%; border-left: none; }
+
+  /* 趋赢力栏：纵向堆叠 + 限高可滚 */
+  .winpanel { flex-direction: column; height: auto; max-height: 50vh; }
+  .winpanel .win-score { width: 100%; border-right: none; border-bottom: 1px solid var(--line);
+    flex-direction: row; align-items: baseline; gap: 10px; padding: 10px 14px; flex-wrap: wrap; }
+  .winpanel .win-score .big { font-size: 30px; margin-top: 0; }
+  .winpanel .win-score .strat { width: 100%; margin-top: 4px; }
+  .winpanel .win-items { max-height: 32vh; }
+  .item-grid { grid-template-columns: repeat(2, 1fr); }
+
+  /* 弹窗：近全屏 */
+  .modal { max-width: 94vw; max-height: 90vh; border-radius: 14px; }
+  .modal-body { padding: 14px 16px; }
+
+  /* Hub / 登录：留出汉堡不必要（无侧栏），正常即可 */
+  .sync-toast { left: 12px; right: 12px; bottom: 12px; text-align: center; }
 }

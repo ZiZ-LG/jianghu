@@ -211,6 +211,8 @@ model Edge {
   width         Float?
   directed      Boolean      @default(false)
   origin        String       @default("manual")
+  shape         String?      // 直线 straight / 折线 orthogonal / 曲线 curved（缺省按 layer 推断）
+  bend          Float?       // 曲线弯曲度：控制点相对中点的垂直偏移(px，带符号)
 
   @@index([accountId])
 }
