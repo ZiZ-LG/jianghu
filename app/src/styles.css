@@ -199,7 +199,9 @@ select { font-family: inherit; }
 .fld.sm textarea { font-size: 13px; min-height: 34px; }
 .fld-row { display: flex; gap: 10px; }
 .fld-row .fld { flex: 1; }
-.chk-line { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #475569; cursor: pointer; }
+.chk-line { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #475569; cursor: pointer; white-space: nowrap; }
+/* 复选框/单选框不吃全局 .fld input{width:100%}——否则会被撑满整行把文字挤到下一行 */
+.chk-line input[type="checkbox"], .chk-line input[type="radio"] { width: auto; flex: none; padding: 0; margin: 0; }
 .hint-text { font-size: 11px; color: #94a3b8; margin: -4px 0 12px; }
 
 .check-block { margin-top: 14px; }
