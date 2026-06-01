@@ -75,7 +75,7 @@ export function EdgeDrawer({
             </select>
           </label>
           <label className="fld sm" style={{ alignSelf: 'flex-end' }}>
-            <label className="chk-line"><input type="checkbox" checked={!!edge.directed} onChange={(e) => onUpdate({ directed: e.target.checked })} />有向（带箭头）</label>
+            <label className="chk-line"><input type="checkbox" checked={!!edge.directed} onChange={(e) => onUpdate({ directed: e.target.checked })} />有向（箭头）</label>
           </label>
         </div>
 
