@@ -75,7 +75,13 @@ select { font-family: inherit; }
 .nav-opp { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 8px; font-size: 12px; cursor: pointer; }
 .nav-opp.active { background: #2563eb; color: #fff; }
 .nav-opp .stage { font-size: 10px; opacity: .8; }
-.legend { padding: 12px 14px; border-top: 1px solid var(--line); background: rgba(255,255,255,.7); }
+.legend { padding: 0 14px 12px; border-top: 1px solid var(--line); background: rgba(255,255,255,.7); flex-shrink: 0; }
+.legend.collapsed { padding-bottom: 0; }
+/* 图例折叠条：位于分割线处，点一下收起/展开图例，给干系人列表让出空间 */
+.legend-toggle { width: 100%; display: flex; align-items: center; justify-content: space-between;
+  padding: 7px 2px; font-size: 10px; font-weight: 700; color: var(--faint); text-transform: uppercase; letter-spacing: .6px; background: none; }
+.legend-toggle:hover { color: var(--muted); }
+.legend-toggle .legend-arr { font-size: 13px; font-weight: 800; color: var(--muted); }
 .legend-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 8px; font-size: 11px; color: var(--muted); }
 .legend-grid .it { display: flex; align-items: center; gap: 5px; }
 .dot { width: 14px; height: 14px; border-radius: 4px; display: grid; place-items: center; color: #fff; font-size: 9px; font-weight: 700; flex-shrink: 0; }

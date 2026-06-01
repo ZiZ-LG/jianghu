@@ -1,5 +1,6 @@
 import type { Account, Role } from '../types';
 import { ROLE_COLOR, ROLE_LABEL, SENTIMENT_CHAR, SENTIMENT_COLOR } from '../types';
+import { usePersistentState } from '../ui';
 
 const ROLES: Role[] = ['A', 'D', 'U', 'TB', 'R'];
 
@@ -21,6 +22,7 @@ export function Sidebar({
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
 }) {
+  const [legendCollapsed, setLegendCollapsed] = usePersistentState('jianghu.legendCollapsed', false);
   return (
     <aside className="sidebar">
       <div className="sidebar-header">
@@ -63,18 +65,27 @@ export function Sidebar({
         </div>
       </div>
 
-      <div className="legend">
-        <div className="sb-label">角色</div>
-        <div className="legend-grid">
-          {ROLES.map((r) => <div className="it" key={r}><span className="dot" style={{ background: ROLE_COLOR[r] }}>{r}</span>{ROLE_LABEL[r]}</div>)}
-        </div>
-        <div className="sb-label" style={{ marginTop: 10 }}>支持度</div>
-        <div className="legend-grid">
-          {(['star', 'plus', 'neutral', 'unknown', 'minus', 'x'] as const).map((s) => (
-            <div className="it" key={s}><b style={{ color: SENTIMENT_COLOR[s], width: 12, textAlign: 'center' }}>{SENTIMENT_CHAR[s]}</b>
-              {s === 'star' ? '排他' : s === 'plus' ? '支持' : s === 'neutral' ? '中立' : s === 'unknown' ? '未知' : s === 'minus' ? '负面' : '倒戈'}</div>
-          ))}
-        </div>
+      <div className={`legend${legendCollapsed ? ' collapsed' : ''}`}>
+        <button className="legend-toggle" onClick={() => setLegendCollapsed((c) => !c)}
+          title={legendCollapsed ? '展开图例' : '收起图例（让干系人列表显示更多）'}>
+          <span>图例</span>
+          <span className="legend-arr">{legendCollapsed ? '⌃' : '⌄'}</span>
+        </button>
+        {!legendCollapsed && (
+          <div className="legend-body">
+            <div className="sb-label">角色</div>
+            <div className="legend-grid">
+              {ROLES.map((r) => <div className="it" key={r}><span className="dot" style={{ background: ROLE_COLOR[r] }}>{r}</span>{ROLE_LABEL[r]}</div>)}
+            </div>
+            <div className="sb-label" style={{ marginTop: 10 }}>支持度</div>
+            <div className="legend-grid">
+              {(['star', 'plus', 'neutral', 'unknown', 'minus', 'x'] as const).map((s) => (
+                <div className="it" key={s}><b style={{ color: SENTIMENT_COLOR[s], width: 12, textAlign: 'center' }}>{SENTIMENT_CHAR[s]}</b>
+                  {s === 'star' ? '排他' : s === 'plus' ? '支持' : s === 'neutral' ? '中立' : s === 'unknown' ? '未知' : s === 'minus' ? '负面' : '倒戈'}</div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </aside>
   );
