@@ -379,7 +379,7 @@ export default function App() {
               onAddPersonAt={addPersonAt} onAddConnectedNode={addConnectedNode} onConnect={connectNodes}
               onUpdateEdge={updateEdge} onDeleteEdge={deleteEdgeById}
               onUpdatePerson={updatePerson} onDeletePerson={deletePerson}
-              immersive={immersive} onToggleImmersive={toggleImmersive}
+              immersive={immersive} onToggleImmersive={toggleImmersive} secondTapOpens={isMobile}
               suggestions={suggestions} />
             {!immersive && breakdown && (
               isMobile && winMobileCollapsed ? (

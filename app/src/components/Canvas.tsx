@@ -62,7 +62,7 @@ export function Canvas({
   onSelectPerson, onSelectEdge, onOpenPerson, onOpenEdge,
   onMovePerson, onAddPersonAt, onAddConnectedNode, onConnect,
   onUpdateEdge, onDeleteEdge, onUpdatePerson, onDeletePerson, suggestions = [],
-  immersive = false, onToggleImmersive,
+  immersive = false, onToggleImmersive, secondTapOpens = false,
 }: {
   account: Account;
   opp: Opportunity;
@@ -84,6 +84,7 @@ export function Canvas({
   suggestions?: { source: string; target: string }[];
   immersive?: boolean;
   onToggleImmersive?: () => void;
+  secondTapOpens?: boolean;   // 手机端：已选中后再次单击即进入详情（替代双击）
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState({ tx: 40, ty: 30, scale: 1 });
@@ -148,6 +149,7 @@ export function Canvas({
   };
 
   // ── 点击/双击落点（不拖拽）→ 选中 / 打开右侧栏 / 空白双击建点 ──
+  // 手机端(secondTapOpens)：小目标难双击，改为「已选中后再次单击 → 打开详情」；桌面仍走双击。
   const handleTap = (kind: 'empty' | 'node' | 'edge', id: string, world: Pt) => {
     const now = Date.now();
     const last = lastTap.current;
@@ -157,10 +159,10 @@ export function Canvas({
       if (editing) commitEdit();
       onSelectPerson(null); onSelectEdge(null);
     } else if (kind === 'node') {
-      if (isDouble) { onOpenPerson(id); lastTap.current = null; return; }
+      if (isDouble || (secondTapOpens && selectedId === id)) { onOpenPerson(id); lastTap.current = null; return; }
       onSelectPerson(id);
     } else {
-      if (isDouble) { onOpenEdge(id); lastTap.current = null; return; }
+      if (isDouble || (secondTapOpens && selectedEdgeId === id)) { onOpenEdge(id); lastTap.current = null; return; }
       onSelectEdge(id);
     }
     lastTap.current = { t: now, kind, id };
@@ -302,6 +304,20 @@ export function Canvas({
     });
   };
   const zoomBy = (f: number) => setView((v) => ({ ...v, scale: Math.max(0.3, Math.min(2.5, v.scale * f)) }));
+  // 总览：自适应缩放 + 居中，把全部节点完整纳入视口（竖屏/横屏通用，避开顶部菜单与底部药丸）
+  const fitAll = () => {
+    const ps = account.persons;
+    const r = wrapRef.current?.getBoundingClientRect();
+    if (!ps.length || !r) { setView({ tx: 40, ty: 30, scale: 1 }); return; }
+    const xs = ps.map((p) => p.x), ys = ps.map((p) => p.y);
+    const minX = Math.min(...xs) - NODE_R, maxX = Math.max(...xs) + NODE_R;
+    const minY = Math.min(...ys) - NODE_R, maxY = Math.max(...ys) + NODE_R + 24; // 下方留出节点标题
+    const w = Math.max(1, maxX - minX), h = Math.max(1, maxY - minY);
+    const padX = 24, padTop = 64, padBottom = 76;  // 避开顶部菜单 + 底部药丸/缩放
+    const availW = Math.max(1, r.width - padX * 2), availH = Math.max(1, r.height - padTop - padBottom);
+    const scale = Math.max(0.3, Math.min(2.5, Math.min(availW / w, availH / h)));
+    setView({ scale, tx: padX + (availW - w * scale) / 2 - minX * scale, ty: padTop + (availH - h * scale) / 2 - minY * scale });
+  };
 
   const selEdge = selectedEdgeId ? edges.find((e) => e.id === selectedEdgeId) ?? null : null;
   const stop = (e: React.PointerEvent) => e.stopPropagation();
@@ -499,7 +515,7 @@ export function Canvas({
       <div className="zoom-controls" onPointerDown={stop}>
         {!immersive && <button onClick={() => zoomBy(1.15)} title="放大">+</button>}
         {!immersive && <button onClick={() => zoomBy(0.87)} title="缩小">−</button>}
-        {!immersive && <button onClick={() => setView({ tx: 40, ty: 30, scale: 1 })} style={{ fontSize: 12 }} title="复位">⤢</button>}
+        {!immersive && <button onClick={fitAll} style={{ fontSize: 13 }} title="总览 · 显示完整图谱">⤢</button>}
         {onToggleImmersive && (
           <button className="fs-btn" onClick={onToggleImmersive} style={{ fontSize: 14 }}
             title={immersive ? '退出全屏' : '全屏 · 只看白板'}>{immersive ? '✕' : '⛶'}</button>

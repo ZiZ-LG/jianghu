@@ -659,11 +659,12 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
   .mobile-backdrop { position: fixed; inset: 0; z-index: 55; background: rgba(15,23,42,.5); backdrop-filter: blur(2px); }
 
   /* —— 左侧边栏：边缘箭头唤出（替代汉堡；居左缘竖直居中、略内缩，避开 iOS 左缘返回手势，仅点击不滑动）—— */
+  /* 药丸式胶囊（与底部 win-fab 同一设计语言：圆角全、浮起、软阴影） */
   .edge-arrow { position: fixed; z-index: 45; display: grid; place-items: center; cursor: pointer;
-    color: var(--ink); background: var(--panel); border: 1px solid var(--line); box-shadow: 0 2px 12px var(--shadow);
-    font-size: 20px; font-weight: 800; line-height: 1; touch-action: manipulation; }
-  .edge-arrow.edge-left { left: calc(env(safe-area-inset-left) + 4px); top: 50%; transform: translateY(-50%);
-    width: 30px; height: 58px; border-radius: 8px 16px 16px 8px; }
+    color: var(--accent); background: var(--panel); border: 1px solid var(--line); box-shadow: 0 4px 16px var(--shadow);
+    width: 32px; height: 60px; border-radius: 999px; font-size: 19px; font-weight: 800; line-height: 1; touch-action: manipulation; }
+  .edge-arrow:active { transform: translateY(-50%) scale(.94); }
+  .edge-arrow.edge-left { left: calc(env(safe-area-inset-left) + 8px); top: 50%; transform: translateY(-50%); padding-right: 2px; }
 
   /* —— 顶部：层级下拉 + ⋯操作（单行，左上；不再有顶部汉堡）—— */
   .canvas-top { top: calc(10px + env(safe-area-inset-top)); left: 10px; right: 10px; max-width: none;
@@ -706,8 +707,9 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 
   /* 侧栏收起箭头：贴抽屉右缘、竖直居中，镜像左缘展开 ›（同一设计语言） */
   .mobile-drawer { overflow: visible; }
-  .edge-arrow.edge-close { position: absolute; right: -29px; top: 50%; transform: translateY(-50%);
-    width: 30px; height: 58px; border-radius: 16px 8px 8px 16px; }
+  .edge-arrow.edge-close { position: absolute; right: -40px; top: 50%; transform: translateY(-50%); padding-left: 2px; }
+  /* 已有中间折叠胶囊 → 隐藏侧栏顶部的折叠按钮（避免两个折叠入口） */
+  .mobile-drawer .collapse-btn { display: none; }
 
   /* 趋赢力底卡：顶部居中 ⌄ 收起手柄，镜像底部 ⌃ 药丸（同一设计语言） */
   .winpanel { padding-top: 18px; }
