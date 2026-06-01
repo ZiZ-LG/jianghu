@@ -62,6 +62,7 @@ export function Canvas({
   onSelectPerson, onSelectEdge, onOpenPerson, onOpenEdge,
   onMovePerson, onAddPersonAt, onAddConnectedNode, onConnect,
   onUpdateEdge, onDeleteEdge, onUpdatePerson, onDeletePerson, suggestions = [],
+  immersive = false, onToggleImmersive,
 }: {
   account: Account;
   opp: Opportunity;
@@ -81,6 +82,8 @@ export function Canvas({
   onUpdatePerson: (id: string, patch: Partial<Person>) => void;
   onDeletePerson: (id: string) => void;
   suggestions?: { source: string; target: string }[];
+  immersive?: boolean;
+  onToggleImmersive?: () => void;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState({ tx: 40, ty: 30, scale: 1 });
@@ -494,9 +497,13 @@ export function Canvas({
       })()}
 
       <div className="zoom-controls" onPointerDown={stop}>
-        <button onClick={() => zoomBy(1.15)}>+</button>
-        <button onClick={() => zoomBy(0.87)}>−</button>
-        <button onClick={() => setView({ tx: 40, ty: 30, scale: 1 })} style={{ fontSize: 12 }}>⤢</button>
+        {!immersive && <button onClick={() => zoomBy(1.15)} title="放大">+</button>}
+        {!immersive && <button onClick={() => zoomBy(0.87)} title="缩小">−</button>}
+        {!immersive && <button onClick={() => setView({ tx: 40, ty: 30, scale: 1 })} style={{ fontSize: 12 }} title="复位">⤢</button>}
+        {onToggleImmersive && (
+          <button className="fs-btn" onClick={onToggleImmersive} style={{ fontSize: 14 }}
+            title={immersive ? '退出全屏' : '全屏 · 只看白板'}>{immersive ? '✕' : '⛶'}</button>
+        )}
       </div>
     </div>
   );

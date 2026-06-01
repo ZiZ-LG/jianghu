@@ -638,6 +638,8 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 .ovf-item.primary { color: #fff; background: var(--accent); }
 .ovf-badge { font-size: 11px; font-weight: 800; background: var(--accent-soft); color: var(--accent-ink); border-radius: 999px; padding: 1px 7px; }
 .ovf-item.primary .ovf-badge { background: rgba(255,255,255,.25); color: #fff; }
+.ovf-item.active { color: var(--accent-ink); background: var(--accent-soft); }
+.ovf-check { color: var(--accent); font-weight: 800; }
 
 /* 标题截断（防止窄屏被挤成竖排单字） */
 .hub-titlewrap { flex: 1; min-width: 0; overflow: hidden; }
@@ -656,25 +658,34 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
   .mobile-drawer .sidebar { width: min(86vw, 320px); height: 100%; }
   .mobile-backdrop { position: fixed; inset: 0; z-index: 55; background: rgba(15,23,42,.5); backdrop-filter: blur(2px); }
 
-  /* —— 顶部：汉堡 FAB + 紧凑层级 tab + ⋯操作菜单 —— */
-  .hamburger-fab { display: grid; place-items: center; position: fixed;
-    top: calc(10px + env(safe-area-inset-top)); left: 10px; z-index: 45;
-    width: 42px; height: 42px; border-radius: 12px; font-size: 19px; color: var(--ink);
-    background: var(--panel); border: 1px solid var(--line); box-shadow: 0 2px 12px var(--shadow); }
-  .canvas-top { top: calc(10px + env(safe-area-inset-top)); left: 60px; right: 10px; max-width: none;
-    flex-direction: row; align-items: flex-start; flex-wrap: wrap; gap: 6px; }
-  .topbar { padding: 3px; flex-wrap: wrap; }
-  .tab { padding: 6px 10px; font-size: 12px; }
-  .maintoolbar { display: none; }          /* 桌面长工具栏隐藏，改用 ⋯ 菜单 */
+  /* —— 左侧边栏：边缘箭头唤出（替代汉堡；居左缘竖直居中、略内缩，避开 iOS 左缘返回手势，仅点击不滑动）—— */
+  .edge-arrow { position: fixed; z-index: 45; display: grid; place-items: center; cursor: pointer;
+    color: var(--ink); background: var(--panel); border: 1px solid var(--line); box-shadow: 0 2px 12px var(--shadow);
+    font-size: 20px; font-weight: 800; line-height: 1; touch-action: manipulation; }
+  .edge-arrow.edge-left { left: calc(env(safe-area-inset-left) + 4px); top: 50%; transform: translateY(-50%);
+    width: 30px; height: 58px; border-radius: 8px 16px 16px 8px; }
 
-  /* —— 画布占满；上下浮层不再压缩它 —— */
+  /* —— 顶部：层级下拉 + ⋯操作（单行，左上；不再有顶部汉堡）—— */
+  .canvas-top { top: calc(10px + env(safe-area-inset-top)); left: 10px; right: 10px; max-width: none;
+    flex-direction: row; align-items: flex-start; flex-wrap: wrap; gap: 6px; }
+  .topbar { display: none; }                 /* 层级 tab 改下拉菜单 */
+  .maintoolbar { display: none; }            /* 桌面长工具栏改 ⋯ 菜单 */
+  .ovf-trigger { background: var(--panel); box-shadow: 0 2px 10px var(--shadow); }
+
+  /* —— 画布占满 —— */
   .canvas-wrap { height: 100%; }
 
-  /* —— 趋赢力栏：底部浮层(脱离布局)，默认迷你条、可展开为底卡 —— */
+  /* —— 趋赢力：折叠=底部居中迷你箭头(win-fab)；展开=底卡浮层(不挤画布) —— */
+  .win-fab { position: absolute; left: 50%; transform: translateX(-50%); z-index: 32;
+    bottom: calc(env(safe-area-inset-bottom) + 12px); display: inline-flex; align-items: center; gap: 7px;
+    padding: 9px 16px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line);
+    box-shadow: 0 4px 16px var(--shadow); font-size: 13px; font-weight: 700; color: var(--ink); }
+  .win-fab .wf-arr { font-size: 15px; color: var(--accent); font-weight: 800; }
+  .win-fab .wf-pct { font-variant-numeric: tabular-nums; }
+  .win-fab .wf-label { color: var(--muted); font-weight: 600; }
   .winpanel { position: absolute; left: 0; right: 0; bottom: 0; z-index: 32;
-    border-top: 1px solid var(--line); box-shadow: 0 -6px 24px var(--shadow);
-    padding-bottom: env(safe-area-inset-bottom); }
-  .winpanel:not(.collapsed) { flex-direction: column; height: auto; max-height: 58vh; }
+    border-top: 1px solid var(--line); box-shadow: 0 -8px 28px var(--shadow);
+    padding-bottom: env(safe-area-inset-bottom); flex-direction: column; height: auto; max-height: 58vh; }
   .winpanel .win-score { width: 100%; border-right: none; border-bottom: 1px solid var(--line);
     flex-direction: row; align-items: baseline; gap: 10px; padding: 12px 16px; flex-wrap: wrap; }
   .winpanel .win-score .big { font-size: 28px; margin-top: 0; }
@@ -682,8 +693,8 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
   .winpanel .win-items { max-height: 40vh; }
   .item-grid { grid-template-columns: repeat(2, 1fr); }
 
-  /* —— 缩放控件上移，避开底部迷你条 —— */
-  .zoom-controls { bottom: 60px; right: 12px; }
+  /* —— 缩放/全屏控件：避开右缘(横屏刘海) + 底部 home 指示条 —— */
+  .zoom-controls { right: calc(12px + env(safe-area-inset-right)); bottom: calc(16px + env(safe-area-inset-bottom)); }
 
   /* —— 右抽屉：全屏 + 顶部安全区；z 高于汉堡(45)/迷你条(32)，避免穿透 —— */
   .drawer { width: 100%; border-left: none; z-index: 50; }

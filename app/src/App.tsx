@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
 import type { Layer, Role, CustomerType, Edge, Person } from './types';
+import { LAYER_LABEL } from './types';
 import { reducer, newAccount, newOpportunity, newPerson, uid, type Action } from './store';
 import { api, type AuthResult, type Suggestion, type PersonSuggestion } from './api';
 import { scoreFromDomain } from './lib/g64111';
@@ -59,7 +60,25 @@ export default function App() {
   const [drawerEdgeId, setDrawerEdgeId] = useState<string | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [winMobileCollapsed, setWinMobileCollapsed] = usePersistentState('jianghu.winMobileCollapsed', true);
+  const [immersive, setImmersive] = useState(false);
   const { isMobile } = useViewport();
+
+  // 全屏「只看白板」：隐藏所有 UI + 调用原生 Fullscreen（隐藏浏览器栏，桌面/安卓支持；iOS Safari 非视频不支持，则仅隐藏本应用 UI）
+  const toggleImmersive = useCallback(() => {
+    setImmersive((cur) => {
+      const next = !cur;
+      try {
+        if (next) document.documentElement.requestFullscreen?.();
+        else if (document.fullscreenElement) document.exitFullscreen?.();
+      } catch { /* 不支持则仅 CSS 沉浸 */ }
+      return next;
+    });
+  }, []);
+  useEffect(() => {
+    const onFs = () => { if (!document.fullscreenElement) setImmersive(false); };
+    document.addEventListener('fullscreenchange', onFs);
+    return () => document.removeEventListener('fullscreenchange', onFs);
+  }, []);
 
   // 启动：有 token 则恢复会话 + 拉取云端数据
   useEffect(() => {
@@ -300,10 +319,10 @@ export default function App() {
   );
 
   return (
-    <div className={`app-shell${isMobile ? ' mobile' : ''}`}>
-      {isMobile ? (
+    <div className={`app-shell${isMobile ? ' mobile' : ''}${immersive ? ' immersive' : ''}`}>
+      {!immersive && (isMobile ? (
         <>
-          {!mobileNavOpen && <button className="hamburger-fab" onClick={() => setMobileNavOpen(true)} title="菜单">☰</button>}
+          {!mobileNavOpen && <button className="edge-arrow edge-left" onClick={() => setMobileNavOpen(true)} title="展开侧边栏" aria-label="展开侧边栏">›</button>}
           {mobileNavOpen && <div className="mobile-backdrop" onClick={() => setMobileNavOpen(false)} />}
           <div className={`mobile-drawer${mobileNavOpen ? ' open' : ''}`}>{sidebarEl}</div>
         </>
@@ -312,13 +331,18 @@ export default function App() {
           <span className="rail-icon">›</span>
           <span className="rail-label">{account.name}</span>
         </button>
-      ) : sidebarEl}
+      ) : sidebarEl)}
 
       <main className="main">
         {opp ? (
           <>
-            <div className="canvas-top">
+            {!immersive && <div className="canvas-top">
               <LayerTabs layer={layer} onChange={setLayer} />
+              {/* 移动端：关系层级也收进下拉菜单（置于 ⋯操作 左侧、画面顶端） */}
+              {isMobile && (
+                <OverflowMenu align="left" label={`▾ ${LAYER_LABEL[layer]}`}
+                  items={(['L1', 'L2', 'L3', 'L4'] as Layer[]).map((l) => ({ label: LAYER_LABEL[l], active: l === layer, onClick: () => setLayer(l) }))} />
+              )}
               <div className="maintoolbar">
                 <span className="mt-name">{opp.name}</span>
                 <button className="btn ghost xs" onClick={() => setOppFormOpen(true)}>编辑商机</button>
@@ -343,7 +367,7 @@ export default function App() {
                   { label: '❓ 帮助', onClick: () => setHelpOpen(true) },
                 ]} />
               )}
-            </div>
+            </div>}
             <Canvas account={account} opp={opp} layer={layer}
               selectedId={selectedId} selectedEdgeId={selectedEdgeId}
               onSelectPerson={selectPerson} onSelectEdge={selectEdge}
@@ -352,11 +376,20 @@ export default function App() {
               onAddPersonAt={addPersonAt} onAddConnectedNode={addConnectedNode} onConnect={connectNodes}
               onUpdateEdge={updateEdge} onDeleteEdge={deleteEdgeById}
               onUpdatePerson={updatePerson} onDeletePerson={deletePerson}
+              immersive={immersive} onToggleImmersive={toggleImmersive}
               suggestions={suggestions} />
-            {breakdown && (
-              <WinTendencyPanel breakdown={breakdown}
-                collapsed={isMobile ? winMobileCollapsed : winCollapsed}
-                onToggle={() => (isMobile ? setWinMobileCollapsed((c) => !c) : setWinCollapsed((c) => !c))} />
+            {!immersive && breakdown && (
+              isMobile && winMobileCollapsed ? (
+                <button className="win-fab" onClick={() => setWinMobileCollapsed(false)} title="展开趋赢力" aria-label="展开趋赢力">
+                  <span className="wf-arr">⌃</span>
+                  <span className="wf-pct" style={{ color: breakdown.total < 0 ? '#f87171' : undefined }}>{Math.round(breakdown.percent * 100)}%</span>
+                  <span className="wf-label">趋赢力</span>
+                </button>
+              ) : (
+                <WinTendencyPanel breakdown={breakdown}
+                  collapsed={isMobile ? false : winCollapsed}
+                  onToggle={() => (isMobile ? setWinMobileCollapsed(true) : setWinCollapsed((c) => !c))} />
+              )
             )}
           </>
         ) : (
