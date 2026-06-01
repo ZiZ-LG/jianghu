@@ -1,3 +1,4 @@
+import { Fragment } from 'react';
 import type { Layer } from '../types';
 
 const TABS: { id: Layer; label: string; sub: string }[] = [
@@ -10,10 +11,13 @@ const TABS: { id: Layer; label: string; sub: string }[] = [
 export function LayerTabs({ layer, onChange }: { layer: Layer; onChange: (l: Layer) => void }) {
   return (
     <div className="topbar">
-      {TABS.map((t) => (
-        <button key={t.id} className={`tab${layer === t.id ? ' active' : ''}`} onClick={() => onChange(t.id)}>
-          {t.label} <small>{t.sub}</small>
-        </button>
+      {TABS.map((t, i) => (
+        <Fragment key={t.id}>
+          {i > 0 && <span className="tab-sep" aria-hidden>›</span>}
+          <button className={`tab${layer === t.id ? ' active' : ''}`} onClick={() => onChange(t.id)}>
+            {t.label} <small>{t.sub}</small>
+          </button>
+        </Fragment>
       ))}
     </div>
   );

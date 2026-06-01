@@ -85,11 +85,15 @@ select { font-family: inherit; }
 /* 画布顶部浮层：层级 tabs（上）+ 操作工具栏（下）纵向堆叠在左上角，互不重叠 */
 .canvas-top { position: absolute; top: 14px; left: 16px; z-index: 20; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; pointer-events: none; }
 .canvas-top > * { pointer-events: auto; }
-.topbar { display: inline-flex; gap: 4px; padding: 4px; background: rgba(255,255,255,.92); border: 1px solid var(--line);
-  border-radius: 10px; box-shadow: 0 4px 14px rgba(15,23,42,.08); backdrop-filter: blur(6px); }
-.tab { padding: 7px 13px; border-radius: 7px; font-size: 12px; font-weight: 700; color: #64748b; }
-.tab.active { background: #0f172a; color: #fff; }
-.tab small { font-weight: 500; opacity: .7; }
+/* 层级切换：轻量化——去外框/去深色块，文字式 + › 连接，当前层用强调色 */
+.topbar { display: inline-flex; align-items: center; gap: 1px; padding: 3px 8px;
+  background: rgba(255,255,255,.5); border-radius: 999px; backdrop-filter: blur(8px); }
+.tab { display: inline-flex; align-items: baseline; gap: 4px; padding: 4px 7px; border-radius: 7px;
+  font-size: 12px; font-weight: 600; color: var(--muted); background: none; }
+.tab:hover { color: var(--ink); }
+.tab.active { color: var(--accent); font-weight: 800; }
+.tab small { font-weight: 500; opacity: .6; }
+.tab-sep { color: var(--faint); font-size: 11px; font-weight: 700; opacity: .55; user-select: none; pointer-events: none; }
 
 .canvas-wrap { flex: 1; position: relative; background:
   radial-gradient(circle, var(--canvas-dot) 1px, transparent 1px); background-size: 22px 22px; overflow: hidden; cursor: grab;
@@ -484,10 +488,10 @@ html[data-theme="dark"] .person-row:hover { background: var(--hover); }
 html[data-theme="dark"] .person-row.active { background: var(--accent-soft); }
 
 /* 顶部浮层 / 工具栏 / tabs / 画布 */
-html[data-theme="dark"] .topbar,
+html[data-theme="dark"] .topbar { background: rgba(19,28,46,.5); }
 html[data-theme="dark"] .maintoolbar { background: rgba(19,28,46,.92); }
 html[data-theme="dark"] .tab { color: var(--muted); }
-html[data-theme="dark"] .tab.active { background: var(--accent); color: #fff; }
+html[data-theme="dark"] .tab.active { background: none; color: var(--accent-ink); }
 html[data-theme="dark"] .stage-hint { color: var(--accent-ink); background: var(--accent-soft); border-color: var(--line); }
 html[data-theme="dark"] .zoom-controls button { background: var(--panel); color: var(--ink-2); }
 html[data-theme="dark"] .zoom-controls button:hover { background: var(--hover); }

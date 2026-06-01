@@ -340,12 +340,7 @@ export default function App() {
         {opp ? (
           <>
             {!immersive && <div className="canvas-top">
-              <LayerTabs layer={layer} onChange={setLayer} />
-              {/* 移动端：关系层级也收进下拉菜单（置于 ⋯操作 左侧、画面顶端） */}
-              {isMobile && (
-                <OverflowMenu align="left" label={`▾ ${LAYER_LABEL[layer]}`}
-                  items={(['L1', 'L2', 'L3', 'L4'] as Layer[]).map((l) => ({ label: LAYER_LABEL[l], active: l === layer, onClick: () => setLayer(l) }))} />
-              )}
+              {/* 桌面：操作栏在上、层级切换在下（移动端二者 CSS 隐藏，改用下方两个下拉） */}
               <div className="maintoolbar">
                 <span className="mt-name">{opp.name}</span>
                 <button className="btn ghost xs" onClick={() => setOppFormOpen(true)}>编辑商机</button>
@@ -356,7 +351,12 @@ export default function App() {
                 <button className="btn ghost xs" onClick={() => setHelpOpen(true)}>❓ 帮助</button>
                 <button className="btn primary xs" onClick={() => setConsoleOpen(true)}>🧠 AI 推演</button>
               </div>
-              {/* 移动端：整排操作收进 ⋯ 菜单（.maintoolbar 在窄屏被 CSS 隐藏） */}
+              <LayerTabs layer={layer} onChange={setLayer} />
+              {/* 移动端：层级下拉（左）+ ⋯操作下拉（右），一行 */}
+              {isMobile && (
+                <OverflowMenu align="left" label={`▾ ${LAYER_LABEL[layer]}`}
+                  items={(['L1', 'L2', 'L3', 'L4'] as Layer[]).map((l) => ({ label: LAYER_LABEL[l], active: l === layer, onClick: () => setLayer(l) }))} />
+              )}
               {isMobile && (
                 <OverflowMenu align="left" label="⋯ 操作" items={[
                   { label: '🧠 AI 推演', primary: true, onClick: () => setConsoleOpen(true) },
