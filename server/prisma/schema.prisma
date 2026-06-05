@@ -187,6 +187,8 @@ model PersonSuggestion {
   status           String   @default("pending") // pending | accepted | rejected
   proposedBy       String   @default("") // 提议者 userId（审计）
   resolvedPersonId String?  // 采纳后指向真实 Person.id（保证级联采纳幂等、去重）
+  suggestedRole      String? // WorkBuddy 提议的 ADUR 角色 A/D/U/TB/R（采纳时落 OppRole，需配合 opportunityId）
+  suggestedSentiment String? // 提议的支持度 star/plus/neutral/unknown/minus/x
   createdAt        DateTime @default(now())
 
   @@index([accountId])

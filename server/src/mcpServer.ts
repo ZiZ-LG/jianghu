@@ -96,6 +96,8 @@ const TOOL_DEFS = [
         evidence: { type: 'string', description: '依据/来源摘要（建议填写，便于人审）' },
         sourceUrl: { type: 'string', description: '可选：调研来源链接' },
         confidence: { type: 'number', description: '可选：置信度 0-1' },
+        suggestedRole: { type: 'string', description: '可选：建议 ADUR 角色 A/D/U/TB/R——采纳为正式干系人时一并落该商机的角色（需配合 opportunityId）' },
+        suggestedSentiment: { type: 'string', description: '可选：建议支持度 star/plus/neutral/unknown/minus/x' },
       },
       required: ['accountId', 'name'],
       additionalProperties: false,
@@ -210,6 +212,87 @@ const TOOL_DEFS = [
         participants: { type: 'array', description: '参与人 [{name, side:our|customer}]', items: { type: 'object', properties: { name: { type: 'string' }, side: { type: 'string', enum: ['our', 'customer'] } }, additionalProperties: false } },
       },
       required: ['date', 'summary'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'set_opportunity_roles',
+    description:
+      '【写·评分状态】为某商机批量设置 ADUR 决策链角色（A批准人/D拍板人/U使用者/TB技术选型/R影响者教练）。⚠️ 只能对【已存在的正式干系人】设角色——候选人物须先经 propose_person + 用户人审采纳（或用 propose_person 带 suggestedRole，采纳时自动落角色）。G64111 趋赢力由江湖引擎据此实时算，不接收/不存死分。商机定位：opportunityId，或 opportunityExternalRef + 父客户。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        opportunityId: { type: 'string', description: '商机江湖 ID（定位一）' },
+        opportunityExternalRef: { type: 'string', description: '商机销售包锚（定位二，需配父客户）' },
+        accountId: { type: 'string', description: '父客户 ID' },
+        accountExternalRef: { type: 'string', description: '父客户销售包 customer_id' },
+        unifiedCreditCode: { type: 'string', description: '父客户 USCC' },
+        roles: {
+          type: 'array', description: '角色数组',
+          items: {
+            type: 'object',
+            properties: {
+              personId: { type: 'string', description: '正式干系人 ID（或用 personName）' },
+              personName: { type: 'string', description: '正式干系人姓名（在父客户下匹配）' },
+              role: { type: 'string', description: 'A/D/U/TB/R' },
+              sentiment: { type: 'string', description: 'star/plus/neutral/unknown/minus/x' },
+              isKeyInfluencer: { type: 'boolean', description: '是否 P4 关键影响人' },
+              procurementType: { type: 'string', description: 'purchasing/agency/ownerRep' },
+              procurementStatus: { type: 'string', description: 'collude/verbal/none' },
+              confidence: { type: 'string', description: '共识/明确/推理/不清' },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ['roles'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'set_burning_issue',
+    description:
+      '【写·评分状态】记录某干系人（通常是 D 拍板人）的「燃眉之急 BI」，按 (商机, 干系人, category) 幂等。干系人须为正式 Person（候选须先采纳）。供 G64111 的 C2/C6 计分。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        opportunityId: { type: 'string' },
+        opportunityExternalRef: { type: 'string' },
+        accountId: { type: 'string' },
+        accountExternalRef: { type: 'string' },
+        unifiedCreditCode: { type: 'string' },
+        personId: { type: 'string', description: '正式干系人 ID（或 personName）' },
+        personName: { type: 'string' },
+        description: { type: 'string', description: 'BI 描述（必填）' },
+        category: { type: 'string', description: '类别（考核压力/降本KPI/个人晋升…默认 其他）' },
+        confidence: { type: 'string', description: '共识/明确/推理/不清' },
+        isPrivate: { type: 'boolean', description: '是否私人痛点（默认 true）' },
+      },
+      required: ['description'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'set_ucv',
+    description:
+      '【写·评分状态】记录针对某 BI 的「独特价值 UCV」，按 (商机, targetBi) 幂等。定位 BI：targetBiId，或 personId/personName + category。供 G64111 的 C6 决胜计分。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        opportunityId: { type: 'string' },
+        opportunityExternalRef: { type: 'string' },
+        accountId: { type: 'string' },
+        accountExternalRef: { type: 'string' },
+        unifiedCreditCode: { type: 'string' },
+        targetBiId: { type: 'string', description: '目标 BI 的 ID（定位一）' },
+        personId: { type: 'string', description: '定位二：干系人 ID + category 找其 BI' },
+        personName: { type: 'string' },
+        category: { type: 'string' },
+        description: { type: 'string', description: 'UCV 描述（必填）' },
+        competitorCannot: { type: 'string', description: '对手给不了的点' },
+        status: { type: 'string', description: '建议/获认可/已解决（默认 建议）' },
+      },
+      required: ['description'],
       additionalProperties: false,
     },
   },
@@ -390,6 +473,8 @@ async function proposePerson(tenantId: string, userId: string, args: Record<stri
   const evidence = str(args.evidence, 500);
   const sourceUrl = str(args.sourceUrl, 500) || null;
   const confidence = Math.max(0, Math.min(1, num(args.confidence) ?? 0.5));
+  const suggestedRole = ['A', 'D', 'U', 'TB', 'R'].includes(str(args.suggestedRole)) ? str(args.suggestedRole) : null;
+  const suggestedSentiment = ['star', 'plus', 'neutral', 'unknown', 'minus', 'x'].includes(str(args.suggestedSentiment)) ? str(args.suggestedSentiment) : null;
 
   // 容量上限（防滥用）
   const pendingCount = await prisma.personSuggestion.count({ where: { tenantId, status: 'pending' } });
@@ -400,7 +485,7 @@ async function proposePerson(tenantId: string, userId: string, args: Record<stri
   if (dup) {
     await prisma.personSuggestion.update({
       where: { id: dup.id },
-      data: { title: title || dup.title, evidence: evidence || dup.evidence, sourceUrl: sourceUrl ?? dup.sourceUrl, confidence: Math.max(dup.confidence, confidence) },
+      data: { title: title || dup.title, evidence: evidence || dup.evidence, sourceUrl: sourceUrl ?? dup.sourceUrl, confidence: Math.max(dup.confidence, confidence), suggestedRole: suggestedRole ?? dup.suggestedRole, suggestedSentiment: suggestedSentiment ?? dup.suggestedSentiment },
     });
     return { suggestionId: dup.id, deduped: true, note: '已存在同名候选干系人（pending），已更新其依据而非新增。' };
   }
@@ -410,7 +495,7 @@ async function proposePerson(tenantId: string, userId: string, args: Record<stri
 
   const id = 'ps_' + randomUUID().slice(0, 12);
   await prisma.personSuggestion.create({
-    data: { id, tenantId, accountId, opportunityId, name, title, orgLevel, origin: 'mcp', evidence, sourceUrl, confidence, status: 'pending', proposedBy: userId },
+    data: { id, tenantId, accountId, opportunityId, name, title, orgLevel, origin: 'mcp', evidence, sourceUrl, confidence, status: 'pending', proposedBy: userId, suggestedRole, suggestedSentiment },
   });
   return {
     suggestionId: id,
@@ -676,6 +761,122 @@ async function appendVisitNote(tenantId: string, userId: string, args: Record<st
   return { id, accountId: account.id, opportunityId: opportunityId ?? undefined, created: true, origin: 'workbuddy', note: `已记录拜访（${date}）。` };
 }
 
+// ── 阶段1.5 评分状态工具：WorkBuddy 推 ADUR/BI/UCV，G64111 由引擎据此实时算（守硬规则⑥不存死分）──
+// 铁律：角色/BI/UCV 只能挂【正式 Person】；候选人物须先 propose_person → 人审采纳。
+
+/** 商机定位：opportunityId 直取，或 opportunityExternalRef + 父客户(accountId/accountExternalRef/unifiedCreditCode)。 */
+async function resolveOppFromArgs(tenantId: string, args: Record<string, unknown>) {
+  const oppId = str(args.opportunityId, 40).trim();
+  if (oppId) {
+    const o = await prisma.opportunity.findFirst({ where: { id: oppId, tenantId } });
+    if (o) return o;
+  }
+  const oppExtRef = str(args.opportunityExternalRef, 80).trim();
+  if (oppExtRef) {
+    const accId = str(args.accountId, 40).trim();
+    const accExtRef = str(args.accountExternalRef, 80).trim();
+    const accUscc = str(args.unifiedCreditCode, 40).trim();
+    let account = accId ? await prisma.account.findFirst({ where: { id: accId, tenantId } }) : null;
+    if (!account && accExtRef) account = await prisma.account.findFirst({ where: { tenantId, externalRef: accExtRef } });
+    if (!account && accUscc) account = await prisma.account.findFirst({ where: { tenantId, unifiedCreditCode: accUscc } });
+    if (account) {
+      const o = await prisma.opportunity.findFirst({ where: { tenantId, accountId: account.id, externalRef: oppExtRef } });
+      if (o) return o;
+    }
+  }
+  throw new Error('未定位到商机：请提供 opportunityId，或 opportunityExternalRef + 父客户(accountId/accountExternalRef/unifiedCreditCode)');
+}
+
+/** 在某客户下按 id 或 name 找正式干系人（非候选）。 */
+async function findPersonInAccount(tenantId: string, accountId: string, personId: string, personName: string) {
+  if (personId) return prisma.person.findFirst({ where: { id: personId, tenantId, accountId } });
+  if (personName) return prisma.person.findFirst({ where: { tenantId, accountId, name: personName } });
+  return null;
+}
+
+const VALID_ROLE = ['A', 'D', 'U', 'TB', 'R'];
+const VALID_SENT = ['star', 'plus', 'neutral', 'unknown', 'minus', 'x'];
+const VALID_CONF = ['共识', '明确', '推理', '不清'];
+
+/** set_opportunity_roles：批量设 ADUR 角色（只对正式 Person，候选跳过并回报）。 */
+async function setOpportunityRoles(tenantId: string, _userId: string, args: Record<string, unknown>) {
+  const opp = await resolveOppFromArgs(tenantId, args);
+  const rolesIn = Array.isArray(args.roles) ? (args.roles as any[]) : [];
+  if (!rolesIn.length) throw new Error('缺少 roles 数组');
+  const persons = await prisma.person.findMany({ where: { tenantId, accountId: opp.accountId } });
+  const byId = new Map(persons.map((p) => [p.id, p]));
+  const byName = new Map(persons.map((p) => [p.name, p]));
+  const applied: any[] = [];
+  const skipped: any[] = [];
+  for (const r of rolesIn) {
+    const pid = str(r?.personId, 40).trim();
+    const pname = str(r?.personName, 40).trim();
+    const person = pid ? byId.get(pid) : pname ? byName.get(pname) : undefined;
+    if (!person) { skipped.push({ personId: pid || undefined, personName: pname || undefined, reason: '未找到正式干系人（候选须先 propose_person 采纳）' }); continue; }
+    if (person.isCompetitor) { skipped.push({ personId: person.id, reason: '竞争对手不分配角色' }); continue; }
+    const role = VALID_ROLE.includes(str(r?.role)) ? str(r?.role) : undefined;
+    if (!role) { skipped.push({ personId: person.id, reason: '缺少有效 role(A/D/U/TB/R)' }); continue; }
+    const patch: Record<string, unknown> = { role };
+    if (VALID_SENT.includes(str(r?.sentiment))) patch.sentiment = str(r?.sentiment);
+    if (typeof r?.isKeyInfluencer === 'boolean') patch.isKeyInfluencer = r.isKeyInfluencer;
+    if (['purchasing', 'agency', 'ownerRep'].includes(str(r?.procurementType))) patch.procurementType = str(r?.procurementType);
+    if (['collude', 'verbal', 'none'].includes(str(r?.procurementStatus))) patch.procurementStatus = str(r?.procurementStatus);
+    if (VALID_CONF.includes(str(r?.confidence))) patch.confidence = str(r?.confidence);
+    await applyAction(tenantId, { type: 'SET_ROLE', accId: opp.accountId, oppId: opp.id, personId: person.id, patch });
+    applied.push({ personId: person.id, name: person.name, role, sentiment: (patch.sentiment as string) ?? 'unknown' });
+  }
+  return { opportunityId: opp.id, applied, skipped, origin: 'workbuddy', note: `已设 ${applied.length} 个角色${skipped.length ? `，跳过 ${skipped.length} 个（见 skipped，多为候选未采纳）` : ''}。趋赢力由江湖引擎实时算。` };
+}
+
+/** set_burning_issue：记某干系人的 BI（按 商机+人+category 幂等）。 */
+async function setBurningIssue(tenantId: string, _userId: string, args: Record<string, unknown>) {
+  const opp = await resolveOppFromArgs(tenantId, args);
+  const person = await findPersonInAccount(tenantId, opp.accountId, str(args.personId, 40).trim(), str(args.personName, 40).trim());
+  if (!person) throw new Error('未找到正式干系人（候选须先 propose_person 采纳，再设 BI）');
+  const description = str(args.description, 500).trim();
+  if (!description) throw new Error('缺少 description');
+  const category = str(args.category, 40) || '其他';
+  const confidence = VALID_CONF.includes(str(args.confidence)) ? str(args.confidence) : '推理';
+  const isPrivate = typeof args.isPrivate === 'boolean' ? args.isPrivate : true;
+  const existing = await prisma.burningIssue.findFirst({ where: { tenantId, opportunityId: opp.id, personId: person.id, category } });
+  if (existing) {
+    await applyAction(tenantId, { type: 'UPDATE_BI', accId: opp.accountId, oppId: opp.id, biId: existing.id, patch: { description, confidence, isPrivate } });
+    return { id: existing.id, opportunityId: opp.id, personId: person.id, updated: true, origin: 'workbuddy', note: `已更新「${person.name}」的 BI（${category}）。` };
+  }
+  const id = 'bi_' + randomUUID().slice(0, 12);
+  await applyAction(tenantId, { type: 'ADD_BI', accId: opp.accountId, oppId: opp.id, bi: { id, personId: person.id, description, category, isPrivate, confidence } });
+  return { id, opportunityId: opp.id, personId: person.id, created: true, origin: 'workbuddy', note: `已记「${person.name}」的 BI（${category}）。` };
+}
+
+/** set_ucv：记针对某 BI 的 UCV（按 商机+targetBi 幂等）。 */
+async function setUcv(tenantId: string, _userId: string, args: Record<string, unknown>) {
+  const opp = await resolveOppFromArgs(tenantId, args);
+  let targetBiId = str(args.targetBiId, 40).trim();
+  if (targetBiId) {
+    const bi = await prisma.burningIssue.findFirst({ where: { id: targetBiId, tenantId, opportunityId: opp.id } });
+    if (!bi) throw new Error('targetBiId 对应的 BI 不在该商机下');
+  } else {
+    const person = await findPersonInAccount(tenantId, opp.accountId, str(args.personId, 40).trim(), str(args.personName, 40).trim());
+    if (!person) throw new Error('未提供 targetBiId，且未找到干系人来定位 BI');
+    const category = str(args.category, 40);
+    const bi = await prisma.burningIssue.findFirst({ where: { tenantId, opportunityId: opp.id, personId: person.id, ...(category ? { category } : {}) } });
+    if (!bi) throw new Error(`未找到「${person.name}」的 BI，请先 set_burning_issue`);
+    targetBiId = bi.id;
+  }
+  const description = str(args.description, 500).trim();
+  if (!description) throw new Error('缺少 description');
+  const competitorCannot = str(args.competitorCannot, 500);
+  const status = ['建议', '获认可', '已解决'].includes(str(args.status)) ? str(args.status) : '建议';
+  const existing = await prisma.uCV.findFirst({ where: { tenantId, opportunityId: opp.id, targetBiId } });
+  if (existing) {
+    await applyAction(tenantId, { type: 'UPDATE_UCV', accId: opp.accountId, oppId: opp.id, ucvId: existing.id, patch: { description, competitorCannot, status } });
+    return { id: existing.id, opportunityId: opp.id, targetBiId, updated: true, origin: 'workbuddy', note: '已更新 UCV。' };
+  }
+  const id = 'ucv_' + randomUUID().slice(0, 12);
+  await applyAction(tenantId, { type: 'ADD_UCV', accId: opp.accountId, oppId: opp.id, ucv: { id, targetBiId, description, competitorCannot, status } });
+  return { id, opportunityId: opp.id, targetBiId, created: true, origin: 'workbuddy', note: '已记 UCV。' };
+}
+
 // ───────────────────────── 工具分发 ─────────────────────────
 
 async function callTool(tenantId: string, userId: string, name: string, args: Record<string, unknown>) {
@@ -704,6 +905,12 @@ async function callTool(tenantId: string, userId: string, name: string, args: Re
       return upsertOpportunity(tenantId, userId, args);
     case 'append_visit_note':
       return appendVisitNote(tenantId, userId, args);
+    case 'set_opportunity_roles':
+      return setOpportunityRoles(tenantId, userId, args);
+    case 'set_burning_issue':
+      return setBurningIssue(tenantId, userId, args);
+    case 'set_ucv':
+      return setUcv(tenantId, userId, args);
     default:
       throw new Error(`未知工具：${name}`);
   }
