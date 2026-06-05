@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { Opportunity, PipelineStage, EngageStage, ChangeMode } from '../types';
+import type { Opportunity, PipelineStage, EngageStage, ChangeMode, OpportunityStatus, CompetitiveSituation } from '../types';
 import { PIPELINE_STAGES, ENGAGE_STAGES, CHANGE_MODES, C3_ITEMS, C5_ITEMS } from '../types';
 import { Modal } from './Modal';
 
@@ -49,6 +49,34 @@ export function OpportunityForm({
           <input value={f.customerBusinessGoal ?? ''} onChange={(e) => set({ customerBusinessGoal: e.target.value })} /></label>
         <label className="fld"><span>购买动机</span>
           <input value={f.buyingMotivation ?? ''} onChange={(e) => set({ buyingMotivation: e.target.value })} /></label>
+      </div>
+
+      <div className="check-title" style={{ marginTop: 14 }}>商机进展（WorkBuddy 同步字段）</div>
+      <div className="fld-row">
+        <label className="fld"><span>商机状态</span>
+          <select value={f.status ?? 'active'} onChange={(e) => set({ status: e.target.value as OpportunityStatus })}>
+            <option value="active">进行中</option><option value="paused">暂停</option><option value="won">赢单</option><option value="lost">丢单</option>
+          </select></label>
+        <label className="fld"><span>赢单概率 %（销售自填，AI 不覆盖）</span>
+          <input type="number" min={0} max={100} value={f.winProbability ?? ''}
+            onChange={(e) => set({ winProbability: e.target.value === '' ? undefined : Number(e.target.value) })} /></label>
+      </div>
+      <label className="fld"><span>我方产品/方案</span>
+        <input value={f.productSolution ?? ''} onChange={(e) => set({ productSolution: e.target.value })} /></label>
+      <div className="fld-row">
+        <label className="fld"><span>主要友商</span>
+          <input value={f.competitor ?? ''} onChange={(e) => set({ competitor: e.target.value })} /></label>
+        <label className="fld"><span>竞争态势</span>
+          <select value={f.competitiveSituation ?? ''} onChange={(e) => set({ competitiveSituation: e.target.value as CompetitiveSituation })}>
+            <option value="">未识别</option><option value="领先">领先</option><option value="胶着">胶着</option><option value="落后">落后</option>
+          </select></label>
+      </div>
+      <div className="fld-row">
+        <label className="fld"><span>预计签约日</span>
+          <input type="date" value={f.expectedSignDate ?? ''} onChange={(e) => set({ expectedSignDate: e.target.value })} /></label>
+        <label className="fld"><span>预计金额（万元）</span>
+          <input type="number" min={0} value={f.expectedAmountW ?? ''}
+            onChange={(e) => set({ expectedAmountW: e.target.value === '' ? undefined : Number(e.target.value) })} /></label>
       </div>
 
       <div className="check-block">

@@ -90,6 +90,9 @@ export function CustomerHub({
               </div>
               <div className="acc-name">{a.name}</div>
               <div className="acc-type">{CUSTOMER_TYPE_LABEL[a.customerType]}</div>
+              {(a.region || a.group || a.primaryOwner) && (
+                <div className="acc-sub">{[a.region, a.group, a.primaryOwner].filter(Boolean).join(' · ')}</div>
+              )}
               <div className="acc-meta">{a.opportunities.length} 个商机 · {a.persons.length} 位干系人</div>
             </div>
           ))}

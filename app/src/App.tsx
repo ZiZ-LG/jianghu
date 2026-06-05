@@ -14,6 +14,7 @@ import { DetailDrawer } from './components/DetailDrawer';
 import { EdgeDrawer } from './components/EdgeDrawer';
 import { WinTendencyPanel } from './components/WinTendencyPanel';
 import { OpportunityForm } from './components/OpportunityForm';
+import { CustomerProfile } from './components/CustomerProfile';
 import { PersonForm } from './components/PersonForm';
 import { TeamBilling } from './components/TeamBilling';
 import { AiSettings } from './components/AiSettings';
@@ -38,6 +39,7 @@ export default function App() {
   const [layer, setLayer] = useState<Layer>('L1');
   const [oppFormOpen, setOppFormOpen] = useState(false);
   const [personFormOpen, setPersonFormOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const [teamOpen, setTeamOpen] = useState(false);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
   const [consoleOpen, setConsoleOpen] = useState(false);
@@ -344,6 +346,7 @@ export default function App() {
               <div className="maintoolbar">
                 <span className="mt-name">{opp.name}</span>
                 <button className="btn ghost xs" onClick={() => setOppFormOpen(true)}>编辑商机</button>
+                <button className="btn ghost xs" onClick={() => setProfileOpen(true)}>📇 客户档案</button>
                 <button className="btn ghost xs" onClick={() => setEnrichOpen(true)}>🏢 建图</button>
                 <button className="btn ghost xs" onClick={() => setSuggestOpen(true)}>🔮 荐关系{suggestions.length + personSuggs.length > 0 ? ` (${suggestions.length + personSuggs.length})` : ''}</button>
                 <button className="btn ghost xs" onClick={() => setReportOpen(true)}>📊 报表</button>
@@ -361,6 +364,7 @@ export default function App() {
                 <OverflowMenu align="left" label="⋯ 操作" items={[
                   { label: '🧠 AI 推演', primary: true, onClick: () => setConsoleOpen(true) },
                   { label: '✏️ 编辑商机', onClick: () => setOppFormOpen(true) },
+                  { label: '📇 客户档案', onClick: () => setProfileOpen(true) },
                   { label: '🏢 企查查建图', onClick: () => setEnrichOpen(true) },
                   { label: '🔮 荐关系', badge: suggestions.length + personSuggs.length > 0 ? String(suggestions.length + personSuggs.length) : undefined, onClick: () => setSuggestOpen(true) },
                   { label: '📊 报表', onClick: () => setReportOpen(true) },
@@ -396,7 +400,10 @@ export default function App() {
           <div className="no-opp">
             <div className="no-opp-emoji">🎯</div>
             <div className="no-opp-t">这个客户还没有商机</div>
-            <button className="btn primary" onClick={addOpp}>＋ 新建商机</button>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button className="btn primary" onClick={addOpp}>＋ 新建商机</button>
+              <button className="btn ghost" onClick={() => setProfileOpen(true)}>📇 客户档案</button>
+            </div>
           </div>
         )}
       </main>
@@ -415,6 +422,10 @@ export default function App() {
       {oppFormOpen && opp && (
         <OpportunityForm opp={opp} onClose={() => setOppFormOpen(false)}
           onSave={(patch) => act({ type: 'UPDATE_OPP', accId: account.id, oppId: opp.id, patch })} />
+      )}
+      {profileOpen && (
+        <CustomerProfile account={account} onClose={() => setProfileOpen(false)}
+          onSave={(patch) => act({ type: 'UPDATE_ACCOUNT', accId: account.id, patch })} />
       )}
       {personFormOpen && <PersonForm onCreate={addPerson} onClose={() => setPersonFormOpen(false)} />}
       {teamOpen && <TeamBilling role={auth.user.role} onClose={() => setTeamOpen(false)} />}
