@@ -55,8 +55,11 @@ interface Extracted {
 
 async function extractIntel(ai: { baseUrl: string; model: string; apiKey: string }, text: string, ctx: { accountName?: string; personNames: string[] }): Promise<Extracted> {
   const user = `【已知上下文】当前客户：${ctx.accountName || '（无，可能需新建）'}；已有干系人：${ctx.personNames.join('、') || '无'}\n\n【销售口述】\n${text}`;
-  const raw = await callLLM(ai, EXTRACT_SYSTEM, user, 1400);
-  const m = raw.match(/\{[\s\S]*\}/);
+  // 8000 token：推理模型(MiniMax-M3 / DeepSeek-R1 等)会先输出 <think> 思考，token 给足才轮到 JSON
+  const raw = await callLLM(ai, EXTRACT_SYSTEM, user, 8000);
+  // 剥离推理模型的 <think>…</think> 与 markdown 代码块围栏，再提取 JSON（普通模型无 think，剥离无害）
+  const cleaned = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/```json|```/gi, '').trim();
+  const m = cleaned.match(/\{[\s\S]*\}/);
   if (!m) throw new Error('模型未返回结构化结果');
   return JSON.parse(m[0]);
 }
@@ -92,7 +95,7 @@ export function voiceRoutes(app: FastifyInstance) {
     try { ex = await extractIntel({ baseUrl: ai.baseUrl, model: ai.model, apiKey: ai.apiKey }, text, { accountName: acc?.name, personNames: (acc?.persons ?? []).map((x) => x.name) }); }
     catch (e: any) { return reply.code(400).send({ error: '情报抽取失败：' + (e?.message || '模型返回异常') }); }
 
-    const receipt: any = { account: null, opportunity: null, personsCreated: [], personsReused: [], rolesSet: [], edgesCreated: [], burningIssues: [], candidates: { persons: [], relationships: [] }, visitNote: false, skipped: [] };
+    const receipt: any = { account: null, opportunity: null, personsCreated: [], personsReused: [], rolesSet: [], edgesCreated: [], burningIssues: [], candidates: { persons: [], relationships: [] }, notes: [], visitNote: false, skipped: [] };
 
     // ── 1) 客户（业务实体，明说直落；命中现有则补字段）──
     if (ex.account && S(ex.account.name)) {
@@ -171,7 +174,19 @@ export function voiceRoutes(app: FastifyInstance) {
       const label = S(rel.label, 40) || '关联';
       const sEnd = formalId.has(sName) ? { kind: 'person', id: formalId.get(sName)! } : suggId.has(sName) ? { kind: 'suggestion', id: suggId.get(sName)! } : null;
       const tEnd = formalId.has(tName) ? { kind: 'person', id: formalId.get(tName)! } : suggId.has(tName) ? { kind: 'suggestion', id: suggId.get(tName)! } : null;
-      if (!sEnd || !tEnd) { receipt.skipped.push({ rel: `${sName}→${tName}`, reason: '端点未识别' }); continue; }
+      if (!sEnd || !tEnd) {
+        // 一端是已识别的正式干系人、另一端是未识别第三方(如"竞争对手") → 记为该干系人的待核实备注，不丢情报
+        const knownName = formalId.has(sName) ? sName : formalId.has(tName) ? tName : null;
+        if (knownName) {
+          const otherName = knownName === sName ? tName : sName;
+          const clue = label.includes(otherName) ? label : `与「${otherName}」${label}`;
+          await applyAction(tenantId, { type: 'ADD_LOG', accId: acc.id, personId: formalId.get(knownName)!, log: { date: today, content: `🎙️ 口述线索·待核实：${clue}`, visibility: 'team' } });
+          receipt.notes.push({ person: knownName, content: clue });
+        } else {
+          receipt.skipped.push({ rel: `${sName}→${tName}`, reason: '端点未识别' });
+        }
+        continue;
+      }
       const bothFormal = sEnd.kind === 'person' && tEnd.kind === 'person';
       if (bothFormal && isExplicit(rel)) { // 明说 + 两端正式 → 直落正式 Edge
         const eid = 'e_' + randomUUID().slice(0, 12);

@@ -56,6 +56,7 @@ export function IntelCapture({ account, opportunity, onClose, onDone }: {
           {c.edgesCreated?.length > 0 && <div className="ir-row">🔗 关系：{c.edgesCreated.map((e: any) => `${e.source}→${e.target}`).join('、')} — 已上墙</div>}
           {c.burningIssues?.length > 0 && <div className="ir-row">🔥 燃眉之急：{c.burningIssues.map((b: any) => b.person).join('、')}</div>}
           {c.visitNote && <div className="ir-row">📝 拜访纪要已存档</div>}
+          {c.notes?.length > 0 && <div className="ir-row">📌 {c.notes.length} 条线索已记入干系人备注（待核实）：{c.notes.map((n: any) => `${n.person}「${n.content}」`).join('；')}</div>}
           {builtNothing && !c.needConfig && <div className="ir-row" style={{ color: 'var(--muted)' }}>这段话里没识别到可建的客户/干系人。</div>}
           {cands.length > 0 && (
             <div className="ir-candidates">
