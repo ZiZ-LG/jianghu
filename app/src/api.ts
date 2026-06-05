@@ -77,8 +77,8 @@ export const api = {
   qccTest: (): Promise<{ ok: boolean; message?: string }> => req('/api/qcc/test', { method: 'POST' }),
   qccResolve: (query: string): Promise<{ exact: boolean; candidates: CompanyCandidate[] }> =>
     req('/api/qcc/resolve', { method: 'POST', body: JSON.stringify({ query }) }),
-  enrichCompany: (name: string): Promise<{ source: string; company: string; persons: { name: string; title: string }[]; note: string }> =>
-    req('/api/enrich/company', { method: 'POST', body: JSON.stringify({ name }) }),
+  enrichCompany: (name: string, mode: 'auto' | 'web' = 'auto'): Promise<{ source: string; company: string; persons: { name: string; title: string }[]; note: string }> =>
+    req('/api/enrich/company', { method: 'POST', body: JSON.stringify({ name, mode }) }),
   // 企查查 股权/对外投资（只读·仅供参考，不写库）。name 须为完整登记名（先经 qccResolve 锚定）。
   qccCompanyData: (name: string): Promise<CompanyEquityData> =>
     req('/api/qcc/company-data', { method: 'POST', body: JSON.stringify({ name }) }),

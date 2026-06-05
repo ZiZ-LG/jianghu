@@ -283,7 +283,7 @@ export default function App() {
     if (!account) return;
     const occupied = account.persons.filter((p) => !p.isCompetitor).map((p) => ({ x: p.x, y: p.y }));
     const today = new Date().toISOString().slice(0, 10);
-    const label = (src: string) => (src === 'qcc' ? '企查查导入' : src === 'ai' ? 'AI 推测·待核实' : '角色待补齐');
+    const label = (src: string) => (src === 'qcc' ? '企查查导入' : src === 'web' ? '🔍 搜索引擎·待核实' : src === 'ai' ? 'AI 推测·待核实' : '角色待补齐');
     for (const dp of persons) {
       const { x, y } = nextFreeSlot(occupied); occupied.push({ x, y });
       const p = newPerson(dp.name, dp.title, x, y, false);
