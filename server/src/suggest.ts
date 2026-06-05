@@ -33,6 +33,17 @@ async function materializePerson(tx: any, tenantId: string, suggId: string): Pro
   const logs = [{ date: today, content: `📥 ${ORIGIN_LABEL[ps.origin] || '外部导入'}（${ps.evidence || '无备注'}）${ps.sourceUrl ? ' · ' + ps.sourceUrl : ''}`, visibility: 'team' }];
   const personId = 'p_' + randomUUID().slice(0, 12);
   await tx.person.create({ data: { id: personId, tenantId, accountId: ps.accountId, name: ps.name, title: ps.title, orgLevel: ps.orgLevel, isCompetitor: false, x, y, form: '{}', logs: JSON.stringify(logs) } });
+  // WorkBuddy 提议时带了建议角色 + 关联商机 → 采纳时一并落 OppRole（守"角色只对正式 Person"）
+  if (ps.suggestedRole && ps.opportunityId) {
+    const opp = await tx.opportunity.findFirst({ where: { id: ps.opportunityId, tenantId } });
+    if (opp) {
+      await tx.oppRole.upsert({
+        where: { opportunityId_personId: { opportunityId: ps.opportunityId, personId } },
+        create: { tenantId, opportunityId: ps.opportunityId, personId, role: ps.suggestedRole, sentiment: ps.suggestedSentiment || 'unknown', confidence: '推理' },
+        update: {},
+      });
+    }
+  }
   await tx.personSuggestion.update({ where: { id: ps.id }, data: { status: 'accepted', resolvedPersonId: personId } });
   // key 收敛：把仍 pending、引用该候选的其它关系端点改写为 person/resolvedPersonId（防重复边）
   await tx.relSuggestion.updateMany({ where: { tenantId, status: 'pending', sourceKind: 'suggestion', sourcePersonId: suggId }, data: { sourceKind: 'person', sourcePersonId: personId } });
