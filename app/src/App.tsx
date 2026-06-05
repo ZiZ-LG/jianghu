@@ -382,7 +382,7 @@ export default function App() {
                 <button className="btn cta xs" onClick={() => setIntelOpen(true)}>🎙️ 录入情报</button>
                 <button className="btn ghost xs" onClick={() => setOppFormOpen(true)}>编辑商机</button>
                 <button className="btn ghost xs" onClick={() => setProfileOpen(true)}>📇 客户档案</button>
-                <button className="btn ghost xs" onClick={() => setEnrichOpen(true)}>🏢 建图</button>
+                <button className="btn ghost xs" onClick={() => setEnrichOpen(true)}>🔍 搜索情报</button>
                 <button className="btn ghost xs" onClick={() => setSuggestOpen(true)}>🔮 荐关系{suggestions.length + personSuggs.length > 0 ? ` (${suggestions.length + personSuggs.length})` : ''}</button>
                 <button className="btn ghost xs" onClick={() => setReportOpen(true)}>📊 报表</button>
                 <button className="btn ghost xs" onClick={() => setMcpAccessOpen(true)}>🔌 接入 AI</button>
@@ -401,7 +401,7 @@ export default function App() {
                   { label: '🎙️ 录入情报', primary: true, onClick: () => setIntelOpen(true) },
                   { label: '✏️ 编辑商机', onClick: () => setOppFormOpen(true) },
                   { label: '📇 客户档案', onClick: () => setProfileOpen(true) },
-                  { label: '🏢 企查查建图', onClick: () => setEnrichOpen(true) },
+                  { label: '🔍 搜索情报', onClick: () => setEnrichOpen(true) },
                   { label: '🔮 荐关系', badge: suggestions.length + personSuggs.length > 0 ? String(suggestions.length + personSuggs.length) : undefined, onClick: () => setSuggestOpen(true) },
                   { label: '📊 报表', onClick: () => setReportOpen(true) },
                   { label: '🔌 接入 AI', onClick: () => setMcpAccessOpen(true) },

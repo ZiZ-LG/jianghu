@@ -98,7 +98,7 @@ export function EnrichPanel({
   const doImport = () => { onImport(selected.map((r) => ({ name: r.name, title: r.title, source }))); onClose(); };
 
   return (
-    <Modal title="🏢 企查查 · 自动建图" width={600} onClose={onClose}
+    <Modal title="🔍 搜索情报" width={600} onClose={onClose}
       footer={<>
         <span className="hint-text" style={{ margin: 0, marginRight: 'auto' }}>导入为节点（带来源·待验证），后续指派角色 + 核实</span>
         <button className="btn ghost" onClick={onClose}>关闭</button>
