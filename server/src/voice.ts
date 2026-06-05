@@ -24,6 +24,14 @@ const clampLevel = (v: unknown) => Math.min(4, Math.max(1, Math.round(N(v) ?? 3)
 const isExplicit = (item: any) => item?.kind !== 'inferred' && (N(item?.confidence) ?? 1) >= 0.6;
 // 新节点错位排布（与 suggest.ts / App.importPersons 同口径）
 const placeAt = (n: number) => ({ x: 220 + (n % 4) * 150, y: 150 + Math.floor(n / 4) * 135 });
+// 实体去重提示（跨库可移植，纯 JS）：精确同名已各自处理，这里找"相似但不全等"（含包含关系，如「李处」≈「李处长」）
+const stripCompany = (s: string) => s.trim().replace(/(集团)?(股份)?(有限)?(责任)?公司$/, '').replace(/集团$/, '').trim() || s.trim();
+const isSimilarName = (a: string, b: string): boolean => {
+  const x = a.trim(), y = b.trim();
+  if (!x || !y || x === y) return false; // 全等是精确匹配，不算"相似提示"
+  const [short, long] = x.length <= y.length ? [x, y] : [y, x];
+  return short.length >= 2 && long.includes(short); // 短串≥2 且被长串包含
+};
 
 const EXTRACT_SYSTEM = `你是销售情报结构化助手，精通 G64111 销售罗盘。把销售口述的拜访记录整理成结构化 JSON。
 
@@ -99,7 +107,7 @@ export function voiceRoutes(app: FastifyInstance) {
     try { ex = await extractIntel({ baseUrl: ai.baseUrl, model: ai.model, apiKey: ai.apiKey }, text, { accountName: acc?.name, personNames: (acc?.persons ?? []).map((x) => x.name) }); }
     catch (e: any) { return reply.code(400).send({ error: '情报抽取失败：' + (e?.message || '模型返回异常') }); }
 
-    const receipt: any = { account: null, opportunity: null, personsCreated: [], personsReused: [], rolesSet: [], edgesCreated: [], burningIssues: [], ucvs: [], candidates: { persons: [], relationships: [] }, notes: [], visitNote: false, skipped: [] };
+    const receipt: any = { account: null, opportunity: null, personsCreated: [], personsReused: [], rolesSet: [], edgesCreated: [], burningIssues: [], ucvs: [], dupWarnings: [], candidates: { persons: [], relationships: [] }, notes: [], visitNote: false, skipped: [] };
 
     // ── 1) 客户（业务实体，明说直落；命中现有则补字段）──
     if (ex.account && S(ex.account.name)) {
@@ -109,11 +117,15 @@ export function voiceRoutes(app: FastifyInstance) {
         if (isExplicit(ex.account) && S(ex.account.region)) await applyAction(tenantId, { type: 'UPDATE_ACCOUNT', accId: acc.id, patch: { region: S(ex.account.region, 40) } });
         receipt.account = { id: acc.id, name: acc.name, status: 'matched' };
       } else {
+        // 即将新建客户 → 先查 tenant 内相似名（命中则回执提示疑似重复，不打断、仍新建）
+        const others = await prisma.account.findMany({ where: { tenantId }, select: { name: true } });
+        const sim = others.find((o) => isSimilarName(stripCompany(o.name), stripCompany(name)));
         const id = 'acc_' + randomUUID().slice(0, 12);
         const ct = [1, 2, 3].includes(N(ex.account.customerType) as number) ? (N(ex.account.customerType) as number) : 2;
         await applyAction(tenantId, { type: 'ADD_ACCOUNT', account: { id, name, customerType: ct, region: S(ex.account.region, 40) } });
         acc = await prisma.account.findFirst({ where: { id, tenantId }, include: { persons: true, opportunities: true } });
         receipt.account = { id, name, status: 'created' };
+        if (sim) receipt.dupWarnings.push({ kind: 'account', name, similarTo: sim.name });
       }
     }
     if (!acc) return { ...receipt, note: '未能确定客户：请在某个客户/商机里录入，或在口述中说明客户名称。', raw: S(ex.rawNote, 4000) || text };
@@ -124,11 +136,13 @@ export function voiceRoutes(app: FastifyInstance) {
       const oname = S(ex.opportunity.name, 100);
       opp = acc.opportunities.find((o) => o.name === oname) ?? null;
       if (!opp) {
+        const simOpp = acc.opportunities.find((o) => isSimilarName(o.name, oname)); // 同客户内相似商机名
         const id = 'opp_' + randomUUID().slice(0, 12);
         const stage = PIPELINE.includes(S(ex.opportunity.pipelineStage)) ? S(ex.opportunity.pipelineStage) : '线索';
         await applyAction(tenantId, { type: 'ADD_OPP', accId: acc.id, opp: { id, name: oname, customerType: acc.customerType, pipelineStage: stage, engageStage: '需求调研立项', competitor: S(ex.opportunity.competitor, 200) } });
         opp = { id, name: oname } as any;
         receipt.opportunity = { id, name: oname, status: 'created' };
+        if (simOpp) receipt.dupWarnings.push({ kind: 'opportunity', name: oname, similarTo: simOpp.name });
       } else receipt.opportunity = { id: opp.id, name: opp.name, status: 'matched' };
     } else if (opp) receipt.opportunity = { id: opp.id, name: opp.name, status: 'matched' };
 
@@ -155,12 +169,15 @@ export function voiceRoutes(app: FastifyInstance) {
         continue;
       }
       if (isExplicit(per)) { // 明说 → 直落正式 Person（form 留空：敏感隐私不落；logs 带🎙️溯源）
+        // 同客户内相似名（如「李处」≈「李处长」，含本次已建）→ 回执提示疑似重复，不打断、仍新建
+        const simName = [...formalId.keys()].find((k) => isSimilarName(k, name));
         const pid = 'p_' + randomUUID().slice(0, 12);
         const { x, y } = placeAt(placeN++);
         const logs = [{ date: today, content: `🎙️ 口述录入：${S(per.evidence, 80) || name}`, visibility: 'team' }];
         await applyAction(tenantId, { type: 'ADD_PERSON', accId: acc.id, person: { id: pid, name, title: S(per.title, 60), orgLevel: clampLevel(per.orgLevel), x, y, logs } });
         formalId.set(name, pid);
         receipt.personsCreated.push({ id: pid, name, title: S(per.title, 60) });
+        if (simName) receipt.dupWarnings.push({ kind: 'person', name, similarTo: simName });
         await setRoleIf(pid, per, name);
       } else { // AI 补充 → 候选 PersonSuggestion
         const sid = 'ps_' + randomUUID().slice(0, 12);

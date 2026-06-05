@@ -69,6 +69,12 @@ export function IntelCapture({ account, opportunity, onClose, onDone, onEnterAcc
               {cands.map((s, i) => <span key={i} className="cand-chip">{s}</span>)}
             </div>
           )}
+          {c.dupWarnings?.length > 0 && (
+            <div className="ir-candidates">
+              ⚠️ 疑似重复（已按新建上墙；如与现有是同一个，请到画布 / 客户档案合并）：
+              {c.dupWarnings.map((w: any, i: number) => <span key={i} className="cand-chip">{w.name} ≈ {w.similarTo}</span>)}
+            </div>
+          )}
         </div>
       </Modal>
     );
