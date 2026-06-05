@@ -47,7 +47,9 @@ export async function assembleState(tenantId: string) {
       persons: a.persons.map((p) => ({
         id: p.id, name: p.name, title: p.title, orgLevel: p.orgLevel, isCompetitor: p.isCompetitor,
         avatarUrl: p.avatarUrl ?? undefined, coachLevel: p.coachLevel ?? undefined, color: p.color ?? undefined, x: p.x, y: p.y,
-        form: J(p.form, { family: '', occupation: '', recreation: '', moneyMotivation: '', family7: {} }),
+        // 默认结构兜底再 spread 解析结果：采纳候选/导入/语音建的 Person form='{}'，
+        // 直接 JSON.parse 会得空对象、缺 family7，前端访问 form.family7.xxx 即崩。
+        form: { family: '', occupation: '', recreation: '', moneyMotivation: '', family7: {}, ...(J(p.form, {}) as Record<string, unknown>) },
         logs: J(p.logs, []),
       })),
       baseEdges: a.edges.filter((e) => !e.opportunityId).map(edgeView),
