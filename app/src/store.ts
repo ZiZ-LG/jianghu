@@ -1,7 +1,7 @@
 // 江湖 · 数据层：状态 + reducer + localStorage 持久化 + 实体工厂
 // 抽象在此层，未来切换到后端 API 只需替换 load/save 与 dispatch 的落地方式。
 import type {
-  Account, Opportunity, Person, OppRole, Edge, BurningIssue, UCV, InteractionLog, CustomerType,
+  Account, Opportunity, Person, OppRole, Edge, BurningIssue, UCV, InteractionLog, CustomerType, VisitNote,
 } from './types';
 import { seedAccount } from './data/seed';
 
@@ -66,6 +66,9 @@ export type Action =
   | { type: 'ADD_UCV'; accId: string; oppId: string; ucv: UCV }
   | { type: 'UPDATE_UCV'; accId: string; oppId: string; ucvId: string; patch: Partial<UCV> }
   | { type: 'DELETE_UCV'; accId: string; oppId: string; ucvId: string }
+  | { type: 'ADD_VISIT'; accId: string; visit: VisitNote }
+  | { type: 'UPDATE_VISIT'; accId: string; visitId: string; patch: Partial<VisitNote> }
+  | { type: 'DELETE_VISIT'; accId: string; visitId: string }
   | { type: 'LOAD_DEMO' }
   | { type: 'RESET' }
   | { type: 'HYDRATE'; accounts: Account[] };
@@ -168,6 +171,13 @@ export function reducer(s: StoreState, action: Action): StoreState {
       return mapOpp(s, action.accId, action.oppId, (o) => ({ ...o, ucvs: o.ucvs.map((u) => (u.id === action.ucvId ? { ...u, ...action.patch } : u)) }));
     case 'DELETE_UCV':
       return mapOpp(s, action.accId, action.oppId, (o) => ({ ...o, ucvs: o.ucvs.filter((u) => u.id !== action.ucvId) }));
+
+    case 'ADD_VISIT':
+      return mapAcc(s, action.accId, (a) => ({ ...a, visitNotes: [action.visit, ...(a.visitNotes ?? [])] }));
+    case 'UPDATE_VISIT':
+      return mapAcc(s, action.accId, (a) => ({ ...a, visitNotes: (a.visitNotes ?? []).map((v) => (v.id === action.visitId ? { ...v, ...action.patch } : v)) }));
+    case 'DELETE_VISIT':
+      return mapAcc(s, action.accId, (a) => ({ ...a, visitNotes: (a.visitNotes ?? []).filter((v) => v.id !== action.visitId) }));
 
     case 'LOAD_DEMO': {
       if (s.accounts.some((a) => a.id === seedAccount.id)) return s;

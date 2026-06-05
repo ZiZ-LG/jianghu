@@ -168,6 +168,27 @@ export interface AccountProfile {
   aiSuggestion?: string;   // AI 建议（参考，不计分）
 }
 
+/** 拜访记录参与人 */
+export interface VisitParticipant {
+  name: string;
+  side: 'our' | 'customer'; // 我方 / 客户方
+}
+
+/** 拜访记录（销售包核心产出；WorkBuddy 经 MCP 同步，挂客户下，可关联商机） */
+export interface VisitNote {
+  id: string;
+  accountId: string;
+  opportunityId?: string;     // 可选：关联商机
+  externalRef?: string;       // 销售包拜访锚（幂等）
+  date: string;               // YYYY-MM-DD
+  topic: string;
+  summary: string;            // WorkBuddy 提炼正文
+  participants: VisitParticipant[];
+  origin?: string;            // workbuddy | manual
+  createdBy?: string;         // 提交者 userId
+  createdAt?: string;         // ISO
+}
+
 /** 客户（存量根） */
 export interface Account {
   id: string;
@@ -182,6 +203,7 @@ export interface Account {
   persons: Person[];
   baseEdges: Edge[]; // 存量边 L1 + 基础 L3
   opportunities: Opportunity[];
+  visitNotes?: VisitNote[]; // 拜访记录（WorkBuddy 同步）
 }
 
 // 角色显示色（设计方案 §4.1，5 色含 TB）

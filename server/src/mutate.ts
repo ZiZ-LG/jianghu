@@ -166,6 +166,25 @@ export async function applyAction(tenantId: string, action: any): Promise<void> 
       await prisma.uCV.deleteMany({ where: { id: action.ucvId, tenantId } });
       return;
 
+    case 'ADD_VISIT': {
+      const v = action.visit;
+      await prisma.visitNote.create({ data: {
+        id: v.id, tenantId, accountId: action.accId, opportunityId: v.opportunityId ?? null,
+        externalRef: v.externalRef ?? null, date: v.date ?? '', topic: v.topic ?? '', summary: v.summary ?? '',
+        participants: S(v.participants ?? []), origin: v.origin ?? 'workbuddy', createdBy: v.createdBy ?? '',
+      } });
+      return;
+    }
+    case 'UPDATE_VISIT': {
+      const d = pick(action.patch, ['opportunityId', 'externalRef', 'date', 'topic', 'summary', 'origin']);
+      if (action.patch?.participants !== undefined) d.participants = S(action.patch.participants);
+      await prisma.visitNote.updateMany({ where: { id: action.visitId, tenantId }, data: d });
+      return;
+    }
+    case 'DELETE_VISIT':
+      await prisma.visitNote.deleteMany({ where: { id: action.visitId, tenantId } });
+      return;
+
     default:
       throw new Error(`unknown action: ${t}`);
   }
