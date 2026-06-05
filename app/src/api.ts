@@ -42,7 +42,7 @@ export const api = {
   getState: (): Promise<{ accounts: Account[] }> => req('/api/state'),
   mutate: (action: Action): Promise<{ ok: true }> => req('/api/mutate', { method: 'POST', body: JSON.stringify({ action }) }),
   // 录入情报：口述文字 → 后端 LLM 抽取 + 双轨落库 → 回执
-  voiceExtract: (b: { text: string; accountId?: string; opportunityId?: string }): Promise<any> =>
+  voiceExtract: (b: { text: string; accountId?: string; opportunityId?: string; priorText?: string }): Promise<any> =>
     req('/api/voice/extract', { method: 'POST', body: JSON.stringify(b) }),
   demo: (): Promise<{ ok: true }> => req('/api/demo', { method: 'POST' }),
   reset: (): Promise<{ ok: true }> => req('/api/reset', { method: 'POST' }),

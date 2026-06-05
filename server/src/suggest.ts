@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
 import { loadAiConfig, callLLM } from './ai.js';
+import { nextFreeSlot } from './layout.js';
 
 const pairKey = (a: string, b: string) => [a, b].sort().join('|');
 const LAYER_COLOR: Record<string, string> = { L1: '#2563eb', L2: '#9333ea', L3: '#16a34a', L4: '#ef4444' };
@@ -11,11 +12,6 @@ const parseForm = (s: string) => { try { return JSON.parse(s || '{}'); } catch {
 // 候选关系端点的规范化键（含 kind，避免候选/正式同 id 混淆）
 const endKey = (kind: string, id: string) => `${kind}:${id}`;
 const ORIGIN_LABEL: Record<string, string> = { mcp: 'AI 调研·待核实', ai: 'AI 推测·待核实', qcc: '企查查导入' };
-
-// 给新干系人选画布空位：按既有非竞品人数错开排布（与 App.tsx importPersons 同口径）
-function placeAt(n: number) {
-  return { x: 220 + (n % 4) * 150, y: 150 + Math.floor(n / 4) * 135 };
-}
 
 /**
  * 从候选人物落一个正式 Person（在传入的事务客户端内执行）。幂等：若候选已 accepted 且有 resolvedPersonId 则直接复用。
@@ -27,8 +23,8 @@ async function materializePerson(tx: any, tenantId: string, suggId: string): Pro
   if (ps.status === 'rejected') throw new Error(`候选干系人「${ps.name}」已被否决，无法作为关系端点`);
   if (ps.status === 'accepted' && ps.resolvedPersonId) return { personId: ps.resolvedPersonId };
 
-  const n = await tx.person.count({ where: { tenantId, accountId: ps.accountId, isCompetitor: false } });
-  const { x, y } = placeAt(n);
+  const others = await tx.person.findMany({ where: { tenantId, accountId: ps.accountId, isCompetitor: false }, select: { x: true, y: true } });
+  const { x, y } = nextFreeSlot(others);
   const today = new Date().toISOString().slice(0, 10);
   const logs = [{ date: today, content: `📥 ${ORIGIN_LABEL[ps.origin] || '外部导入'}（${ps.evidence || '无备注'}）${ps.sourceUrl ? ' · ' + ps.sourceUrl : ''}`, visibility: 'team' }];
   const personId = 'p_' + randomUUID().slice(0, 12);

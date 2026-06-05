@@ -16,6 +16,7 @@ import { WinTendencyPanel } from './components/WinTendencyPanel';
 import { OpportunityForm } from './components/OpportunityForm';
 import { CustomerProfile } from './components/CustomerProfile';
 import { IntelCapture } from './components/IntelCapture';
+import { nextFreeSlot } from './lib/layout';
 import { PersonForm } from './components/PersonForm';
 import { TeamBilling } from './components/TeamBilling';
 import { AiSettings } from './components/AiSettings';
@@ -163,9 +164,8 @@ export default function App() {
   };
   const addPerson = (name: string, title: string, isCompetitor: boolean) => {
     if (!account) return;
-    const n = account.persons.filter((p) => !p.isCompetitor).length;
-    const x = isCompetitor ? 90 : 220 + (n % 4) * 150;
-    const y = isCompetitor ? 440 : 150 + Math.floor(n / 4) * 135;
+    const occupied = account.persons.filter((p) => !p.isCompetitor).map((p) => ({ x: p.x, y: p.y }));
+    const { x, y } = isCompetitor ? { x: 90, y: 440 } : nextFreeSlot(occupied);
     const p = newPerson(name, title, x, y, isCompetitor);
     act({ type: 'ADD_PERSON', accId: account.id, person: p });
     setSelectedId(p.id);
@@ -266,11 +266,11 @@ export default function App() {
   // ── 企查查自动建图：导入发现的关键人为节点（带溯源日志，待验证）──
   const importPersons = (persons: { name: string; title: string; source: string }[]) => {
     if (!account) return;
-    let n = account.persons.filter((p) => !p.isCompetitor).length;
+    const occupied = account.persons.filter((p) => !p.isCompetitor).map((p) => ({ x: p.x, y: p.y }));
     const today = new Date().toISOString().slice(0, 10);
     const label = (src: string) => (src === 'qcc' ? '企查查导入' : src === 'ai' ? 'AI 推测·待核实' : '角色待补齐');
     for (const dp of persons) {
-      const x = 220 + (n % 4) * 150, y = 150 + Math.floor(n / 4) * 135; n++;
+      const { x, y } = nextFreeSlot(occupied); occupied.push({ x, y });
       const p = newPerson(dp.name, dp.title, x, y, false);
       p.logs = [{ date: today, content: `📥 ${label(dp.source)}（${account.name}）`, visibility: 'team' }];
       act({ type: 'ADD_PERSON', accId: account.id, person: p });
@@ -291,8 +291,24 @@ export default function App() {
           onOpenTeam={() => setTeamOpen(true)} onLogout={logout} onOpenAiSettings={() => setAiSettingsOpen(true)}
           theme={theme} onToggleTheme={toggleTheme} onOpenHelp={() => setHelpOpen(true)}
           onOpenMcpAccess={() => setMcpAccessOpen(true)}
+          onOpenIntel={() => setIntelOpen(true)}
         />
         {syncErr && <div className="sync-toast">{syncErr}</div>}
+        {intelOpen && (
+          <IntelCapture
+            onClose={() => setIntelOpen(false)}
+            onDone={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); } catch { /* 静默：保存已成功，仅刷新失败 */ } }}
+            onEnterAccount={async (id) => {
+              setIntelOpen(false);
+              try {
+                const st = await api.getState();
+                dispatch({ type: 'HYDRATE', accounts: st.accounts });
+                const a = st.accounts.find((x) => x.id === id);
+                setAccId(id); setOppId(a?.opportunities[0]?.id ?? null); setSelectedId(null); setLayer('L1');
+              } catch { setAccId(id); }
+            }}
+          />
+        )}
         {teamOpen && <TeamBilling role={auth.user.role} onClose={() => setTeamOpen(false)} />}
         {aiSettingsOpen && <AiSettings role={auth.user.role} onClose={() => setAiSettingsOpen(false)} />}
         {helpOpen && <HelpManual onClose={() => setHelpOpen(false)} />}
