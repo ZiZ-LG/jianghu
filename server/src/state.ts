@@ -8,6 +8,9 @@ function edgeView(e: any) {
 function roleView(r: any) {
   return { personId: r.personId, role: r.role, sentiment: r.sentiment, sentimentValue: r.sentimentValue ?? undefined, confidence: r.confidence, isKeyInfluencer: r.isKeyInfluencer, procurementType: r.procurementType ?? undefined, procurementStatus: r.procurementStatus ?? undefined };
 }
+function visitView(v: any) {
+  return { id: v.id, accountId: v.accountId, opportunityId: v.opportunityId ?? undefined, externalRef: v.externalRef ?? undefined, date: v.date, topic: v.topic, summary: v.summary, participants: J(v.participants, []), origin: v.origin, createdBy: v.createdBy || undefined, createdAt: v.createdAt.toISOString() };
+}
 
 /** 组装某租户的完整 Account 树，形状与前端 types.ts 一致 */
 export async function assembleState(tenantId: string) {
@@ -20,6 +23,15 @@ export async function assembleState(tenantId: string) {
       opportunities: { include: { roles: true, edges: true, bis: true, ucvs: true } },
     },
   });
+
+  // VisitNote 与 Account 无 Prisma relation（设计稿）：单独查后按 accountId 挂到对应客户
+  const visits = await prisma.visitNote.findMany({ where: { tenantId }, orderBy: { date: 'desc' } });
+  const visitsByAccount = new Map<string, ReturnType<typeof visitView>[]>();
+  for (const v of visits) {
+    const arr = visitsByAccount.get(v.accountId) ?? [];
+    arr.push(visitView(v));
+    visitsByAccount.set(v.accountId, arr);
+  }
 
   return {
     accounts: accounts.map((a) => ({
@@ -39,6 +51,7 @@ export async function assembleState(tenantId: string) {
         logs: J(p.logs, []),
       })),
       baseEdges: a.edges.filter((e) => !e.opportunityId).map(edgeView),
+      visitNotes: visitsByAccount.get(a.id) ?? [],
       opportunities: a.opportunities.map((o) => ({
         id: o.id, accountId: o.accountId, name: o.name, customerType: o.customerType,
         pipelineStage: o.pipelineStage, engageStage: o.engageStage, changeMode: o.changeMode ?? undefined,

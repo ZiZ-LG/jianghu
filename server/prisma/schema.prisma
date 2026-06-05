@@ -254,3 +254,23 @@ model UCV {
   competitorCannot String
   status           String
 }
+
+// 拜访记录（销售包核心产出，做一等模型）。与 Account 不建 Prisma relation——
+// 候选/查询路径解耦，state.ts 单独按 accountId 挂载；participants 走 String 存 JSON（跨库可移植）。
+model VisitNote {
+  id            String   @id // visit_xxx
+  tenantId      String
+  accountId     String
+  opportunityId String?
+  externalRef   String?  // 销售包拜访记录锚，幂等
+  date          String   @default("") // YYYY-MM-DD
+  topic         String   @default("")
+  summary       String   @default("") // WorkBuddy 提炼正文
+  participants  String   @default("[]") // JSON: [{name, side: our|customer}]
+  origin        String   @default("workbuddy")
+  createdBy     String   @default("") // 提交者 userId
+  createdAt     DateTime @default(now())
+
+  @@index([accountId])
+  @@index([opportunityId])
+}

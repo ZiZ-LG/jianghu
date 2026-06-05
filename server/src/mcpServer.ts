@@ -191,6 +191,28 @@ const TOOL_DEFS = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'append_visit_note',
+    description:
+      '【写·直接落正式表】把销售包(WorkBuddy)提炼的「拜访记录」同步进江湖，按 externalRef 幂等(非候选)。先定位父客户(accountId / accountExternalRef / unifiedCreditCode 三选一，须已存在)，可选定位商机(opportunityId / opportunityExternalRef，限该客户下)。date(YYYY-MM-DD) 与 summary 必填。participants 形如 [{name, side:"our"|"customer"}]。直接写正式 VisitNote 表并带 origin=workbuddy 溯源。注意：拜访记录里提及的新干系人仍须另走 propose_person 候选人审(PIPL)。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        accountId: { type: 'string', description: '父客户江湖 ID（三种定位之一）' },
+        accountExternalRef: { type: 'string', description: '父客户销售包 customer_id（三种定位之一）' },
+        unifiedCreditCode: { type: 'string', description: '父客户统一社会信用代码（三种定位之一）' },
+        opportunityId: { type: 'string', description: '可选：关联商机江湖 ID（限本客户下）' },
+        opportunityExternalRef: { type: 'string', description: '可选：关联商机销售包锚（限本客户下）' },
+        externalRef: { type: 'string', description: '拜访记录幂等锚（销售包文件名/hash）' },
+        date: { type: 'string', description: '拜访日期 YYYY-MM-DD（必填）' },
+        summary: { type: 'string', description: '拜访纪要正文（必填）' },
+        topic: { type: 'string', description: '主题' },
+        participants: { type: 'array', description: '参与人 [{name, side:our|customer}]', items: { type: 'object', properties: { name: { type: 'string' }, side: { type: 'string', enum: ['our', 'customer'] } }, additionalProperties: false } },
+      },
+      required: ['date', 'summary'],
+      additionalProperties: false,
+    },
+  },
 ] as const;
 
 const CUSTOMER_TYPE_LABEL: Record<number, string> = {
@@ -599,6 +621,61 @@ async function upsertOpportunity(tenantId: string, _userId: string, args: Record
   return { id, accountId: account.id, created: true, origin: 'workbuddy', note: `已在客户「${account.name}」下新建商机「${name}」。` };
 }
 
+/** append_visit_note：定位父客户(+可选商机) → 按 externalRef 幂等 upsert 拜访记录。 */
+async function appendVisitNote(tenantId: string, userId: string, args: Record<string, unknown>) {
+  // 1) 定位父客户（三选一，全程 where{tenantId}）
+  const accId = str(args.accountId, 40).trim();
+  const accExtRef = str(args.accountExternalRef, 80).trim();
+  const accUscc = str(args.unifiedCreditCode, 40).trim();
+  let account = accId ? await prisma.account.findFirst({ where: { id: accId, tenantId } }) : null;
+  if (!account && accExtRef) account = await prisma.account.findFirst({ where: { tenantId, externalRef: accExtRef } });
+  if (!account && accUscc) account = await prisma.account.findFirst({ where: { tenantId, unifiedCreditCode: accUscc } });
+  if (!account) throw new Error('未定位到父客户：请提供 accountId / accountExternalRef / unifiedCreditCode 之一（该客户须已存在）');
+
+  // 2) 可选定位商机（限本客户下，避免跨客户挂错）
+  let opportunityId: string | null = null;
+  const oppId = str(args.opportunityId, 40).trim();
+  const oppExtRef = str(args.opportunityExternalRef, 80).trim();
+  if (oppId) {
+    const o = await prisma.opportunity.findFirst({ where: { id: oppId, tenantId, accountId: account.id } });
+    if (o) opportunityId = o.id;
+  }
+  if (!opportunityId && oppExtRef) {
+    const o = await prisma.opportunity.findFirst({ where: { tenantId, accountId: account.id, externalRef: oppExtRef } });
+    if (o) opportunityId = o.id;
+  }
+
+  // 3) 必填 + 字段
+  const date = str(args.date, 20).trim();
+  const summary = str(args.summary, 5000).trim();
+  if (!date) throw new Error('缺少必填参数 date（YYYY-MM-DD）');
+  if (!summary) throw new Error('缺少必填参数 summary');
+  const externalRef = str(args.externalRef, 120).trim() || null;
+  const topic = str(args.topic, 200);
+  const participants = Array.isArray(args.participants)
+    ? args.participants.slice(0, 50).map((p: any) => ({ name: str(p?.name, 40), side: p?.side === 'our' ? 'our' : 'customer' })).filter((p) => p.name)
+    : undefined;
+
+  // 4) 幂等：本客户下按 externalRef
+  const existing = externalRef ? await prisma.visitNote.findFirst({ where: { tenantId, accountId: account.id, externalRef } }) : null;
+
+  if (existing) {
+    const patch: Record<string, unknown> = { date, summary };
+    if (topic) patch.topic = topic;
+    if (opportunityId) patch.opportunityId = opportunityId;
+    if (participants !== undefined) patch.participants = participants;
+    await applyAction(tenantId, { type: 'UPDATE_VISIT', accId: account.id, visitId: existing.id, patch });
+    return { id: existing.id, accountId: account.id, opportunityId: opportunityId ?? existing.opportunityId ?? undefined, updated: true, origin: 'workbuddy', note: `已按 externalRef 命中拜访记录并更新（${date}）。` };
+  }
+
+  const id = 'visit_' + randomUUID().slice(0, 12);
+  await applyAction(tenantId, {
+    type: 'ADD_VISIT', accId: account.id,
+    visit: { id, accountId: account.id, opportunityId, externalRef, date, topic, summary, participants: participants ?? [], origin: 'workbuddy', createdBy: userId },
+  });
+  return { id, accountId: account.id, opportunityId: opportunityId ?? undefined, created: true, origin: 'workbuddy', note: `已记录拜访（${date}）。` };
+}
+
 // ───────────────────────── 工具分发 ─────────────────────────
 
 async function callTool(tenantId: string, userId: string, name: string, args: Record<string, unknown>) {
@@ -625,6 +702,8 @@ async function callTool(tenantId: string, userId: string, name: string, args: Re
       return upsertAccount(tenantId, userId, args);
     case 'upsert_opportunity':
       return upsertOpportunity(tenantId, userId, args);
+    case 'append_visit_note':
+      return appendVisitNote(tenantId, userId, args);
     default:
       throw new Error(`未知工具：${name}`);
   }
