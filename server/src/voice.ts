@@ -56,6 +56,7 @@ const EXTRACT_SYSTEM = `你是销售情报结构化助手，精通 G64111 销售
 - pipelineStage 只能取：线索/需求引导/方案认可/客户立项/招投标/合同谈判/合同双签。
 - relationships 的 source/target 必须是 persons 里出现过的人名或上下文已知干系人；端点是隐含的第三方（如"竞争对手"）时标 inferred。
 - ucvs 必须对应 burningIssues 中某人的 BI（同 person + biCategory）；销售没明说"我方能解决而对手给不了"就别造 UCV。
+- 若给了【前文】，用它消解本次口述里的指代（"他""那位副总"等指向前文的人）；但只抽取【本次补充】里新增或变更的人/关系/事实，不要重复输出前文已处理过的。
 - 没提到的部分填 null 或空数组 []。绝不编造。`;
 
 interface Extracted {
@@ -64,8 +65,9 @@ interface Extracted {
   rawNote?: string;
 }
 
-async function extractIntel(ai: { baseUrl: string; model: string; apiKey: string }, text: string, ctx: { accountName?: string; personNames: string[] }): Promise<Extracted> {
-  const user = `【已知上下文】当前客户：${ctx.accountName || '（无，可能需新建）'}；已有干系人：${ctx.personNames.join('、') || '无'}\n\n【销售口述】\n${text}`;
+async function extractIntel(ai: { baseUrl: string; model: string; apiKey: string }, text: string, ctx: { accountName?: string; personNames: string[]; priorText?: string }): Promise<Extracted> {
+  const prior = ctx.priorText ? `\n\n【本次拜访·前文（仅供理解"他/她/那位"等指代，请勿重复抽取前文已提到的人/关系）】\n${ctx.priorText}` : '';
+  const user = `【已知上下文】当前客户：${ctx.accountName || '（无，可能需新建）'}；已有干系人：${ctx.personNames.join('、') || '无'}${prior}\n\n【本次补充口述】\n${text}`;
   // 8000 token：推理模型(MiniMax-M3 / DeepSeek-R1 等)会先输出 <think> 思考，token 给足才轮到 JSON
   const raw = await callLLM(ai, EXTRACT_SYSTEM, user, 8000);
   // 剥离推理模型的 <think>…</think> 与 markdown 代码块围栏，再提取 JSON（普通模型无 think，剥离无害）
@@ -79,9 +81,10 @@ export function voiceRoutes(app: FastifyInstance) {
   app.post('/api/voice/extract', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     const tenantId = req.user.tenantId;
     const userId = req.user.id || '';
-    const p = z.object({ text: z.string().min(1), accountId: z.string().optional(), opportunityId: z.string().optional() }).safeParse(req.body);
+    const p = z.object({ text: z.string().min(1), accountId: z.string().optional(), opportunityId: z.string().optional(), priorText: z.string().optional() }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '请输入要录入的文字' });
     const text = p.data.text.slice(0, 8000);
+    const priorText = (p.data.priorText ?? '').slice(0, 8000); // 多轮增量：上一轮口述，供 LLM 指代消解
 
     // 上下文：当前客户（含 persons 用于去重、opportunities 用于定位）
     let acc = p.data.accountId
@@ -103,7 +106,7 @@ export function voiceRoutes(app: FastifyInstance) {
     }
 
     let ex: Extracted;
-    try { ex = await extractIntel({ baseUrl: ai.baseUrl, model: ai.model, apiKey: ai.apiKey }, text, { accountName: acc?.name, personNames: (acc?.persons ?? []).map((x) => x.name) }); }
+    try { ex = await extractIntel({ baseUrl: ai.baseUrl, model: ai.model, apiKey: ai.apiKey }, text, { accountName: acc?.name, personNames: (acc?.persons ?? []).map((x) => x.name), priorText }); }
     catch (e: any) { return reply.code(400).send({ error: '情报抽取失败：' + (e?.message || '模型返回异常') }); }
 
     const receipt: any = { account: null, opportunity: null, personsCreated: [], personsReused: [], rolesSet: [], edgesCreated: [], burningIssues: [], ucvs: [], dupWarnings: [], candidates: { persons: [], relationships: [] }, notes: [], visitNote: false, skipped: [] };

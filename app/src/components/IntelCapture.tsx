@@ -20,14 +20,19 @@ export function IntelCapture({ account, opportunity, onClose, onDone, onEnterAcc
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [receipt, setReceipt] = useState<any>(null);
+  const [priorText, setPriorText] = useState(''); // 多轮增量：累积已提交口述，供「再补一句」给 LLM 消解指代
+  const [lockedAccountId, setLockedAccountId] = useState<string | null>(null); // fromScratch 首轮建客户后锁定，后续轮复用同一客户
   const fromScratch = !account; // Hub 入口：无 account，据口述自动新建客户
 
   const submit = async () => {
     if (!text.trim()) return;
     setBusy(true); setErr('');
     try {
-      const r = await api.voiceExtract({ text: text.trim(), accountId: account?.id, opportunityId: scope === 'opp' ? opportunity?.id : undefined });
+      const accId = account?.id ?? lockedAccountId ?? undefined; // fromScratch 多轮：首轮建的客户后续复用
+      const r = await api.voiceExtract({ text: text.trim(), accountId: accId, opportunityId: scope === 'opp' ? opportunity?.id : undefined, priorText: priorText || undefined });
       setReceipt(r);
+      if (!accId && r?.account?.id) setLockedAccountId(r.account.id); // 首轮从零建客户 → 锁定，「再补一句」补到同一客户
+      setPriorText((prev) => (prev ? prev + '\n' : '') + text.trim()); // 累积上文供下一轮指代消解
       onDone();
     } catch (e: any) { setErr(e?.message || '录入失败'); }
     finally { setBusy(false); }
@@ -82,12 +87,14 @@ export function IntelCapture({ account, opportunity, onClose, onDone, onEnterAcc
 
   // ── 输入视图 ──
   return (
-    <Modal title={fromScratch ? '🎙️ 录入情报 · 口述一段，自动建客户 + 干系人 + 关系' : '🎙️ 录入情报 · 一句话理清客户 / 商机 / 关系'} width={560} onClose={onClose}
+    <Modal title={priorText ? '🎙️ 录入情报 · 再补一句（接着上文理解）' : fromScratch ? '🎙️ 录入情报 · 口述一段，自动建客户 + 干系人 + 关系' : '🎙️ 录入情报 · 一句话理清客户 / 商机 / 关系'} width={560} onClose={onClose}
       footer={<>
         <button className="btn ghost" onClick={onClose}>取消</button>
         <button className="btn primary" onClick={submit} disabled={busy || !text.trim()}>{busy ? '整理中…' : '📥 录入成图'}</button>
       </>}>
-      {fromScratch && <div className="intel-demo-hint">从零口述：请在文字里说出客户名称，江湖会据此自动新建客户，并整理干系人与关系。</div>}
+      {priorText
+        ? <div className="intel-demo-hint">接着上一条补充：可直接用「他 / 那位副总」等指代，江湖会结合上文理解，已建的人不会重复。</div>
+        : fromScratch && <div className="intel-demo-hint">从零口述：请在文字里说出客户名称，江湖会据此自动新建客户，并整理干系人与关系。</div>}
       <label className="fld">
         <span>把这次拜访用 Typeless 口述、确认文字后粘到这里</span>
         <textarea autoFocus rows={6} value={text} onChange={(e) => setText(e.target.value)}
