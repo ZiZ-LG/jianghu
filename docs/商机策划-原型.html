@@ -3,571 +3,577 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>商机策划 · 行动排期日历（原型）</title>
+<title>商机策划 · 行动排期日历（原型 v4）</title>
 <style>
-/* ───────── 设计令牌：直接复用产品 app/src/styles.css 的语义变量 ───────── */
 :root{
   --bg:#f1f5f9; --panel:#fff; --panel-2:#f8fafc;
   --ink:#0f172a; --ink-2:#334155; --muted:#64748b; --faint:#94a3b8;
   --line:#e2e8f0; --hover:#eef2f6;
-  --accent:#2563eb; --accent-soft:#eff6ff; --accent-ink:#1e40af;
-  --shadow:rgba(15,23,42,.08);
-  /* 事件按 G64111 gap 分类着色（方案 §6） */
-  --ev-c:#2563eb; --ev-c-soft:#eff6ff;   /* 6必清 C 蓝 */
-  --ev-p:#9333ea; --ev-p-soft:#f5f3ff;   /* 4优势 P 紫 */
-  --ev-k:#d97706; --ev-k-soft:#fffbeb;   /* 1决胜 1K 金 */
-  --ev-ms:#dc2626; --ev-ms-soft:#fef2f2; /* 里程碑 红 */
-  --ev-tc:#64748b; --ev-tc-soft:#f1f5f9; /* 历史触点 灰 */
-  /* 商机身份色 */
-  --opp-1:#2563eb; --opp-2:#f97316; --opp-3:#16a34a;
-  --radius:10px;
+  --accent:#2563eb; --accent-soft:#eff6ff; --accent-ink:#1e40af; --shadow:rgba(15,23,42,.08);
 }
 html[data-theme="dark"]{
   --bg:#0b1120; --panel:#131c2e; --panel-2:#1b2538;
   --ink:#e8edf5; --ink-2:#c0cbdb; --muted:#97a4b8; --faint:#6b788f;
   --line:#2a374d; --hover:#232f45;
-  --accent:#3b82f6; --accent-soft:#18283f; --accent-ink:#93c5fd;
-  --shadow:rgba(0,0,0,.45);
-  --ev-c:#60a5fa; --ev-c-soft:#16263f;
-  --ev-p:#c084fc; --ev-p-soft:#241a3a;
-  --ev-k:#fbbf24; --ev-k-soft:#332611;
-  --ev-ms:#f87171; --ev-ms-soft:#3a1d1d;
-  --ev-tc:#94a3b8; --ev-tc-soft:#1b2538;
-  color-scheme:dark;
+  --accent:#3b82f6; --accent-soft:#18283f; --accent-ink:#93c5fd; --shadow:rgba(0,0,0,.45); color-scheme:dark;
 }
 *{box-sizing:border-box; margin:0; padding:0;}
 html,body{height:100%;}
-body{
-  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Roboto,sans-serif;
-  color:var(--ink); background:var(--bg); -webkit-font-smoothing:antialiased;
-  height:100vh; display:flex; flex-direction:column; overflow:hidden;
-}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Roboto,sans-serif;
+  color:var(--ink); background:var(--bg); -webkit-font-smoothing:antialiased; height:100vh; display:flex; flex-direction:column; overflow:hidden;}
 button{font-family:inherit; cursor:pointer; border:none; background:none; color:inherit;}
 
-/* ───────── 顶部应用条 ───────── */
-.app-top{height:52px; flex-shrink:0; display:flex; align-items:center; gap:12px; padding:0 16px;
-  background:var(--panel); border-bottom:1px solid var(--line);}
-.logo{width:26px; height:26px; border-radius:6px; background:var(--ink); color:var(--panel);
-  display:grid; place-items:center; font-weight:800; font-size:14px;}
+.app-top{height:52px; flex-shrink:0; display:flex; align-items:center; gap:12px; padding:0 16px; background:var(--panel); border-bottom:1px solid var(--line);}
+.logo{width:26px; height:26px; border-radius:6px; background:var(--ink); color:var(--panel); display:grid; place-items:center; font-weight:800; font-size:14px;}
 html[data-theme="dark"] .logo{background:var(--accent); color:#fff;}
-.cust{font-weight:700; font-size:14px;}
-.cust small{display:block; font-weight:500; font-size:10px; color:var(--muted);}
+.cust{font-weight:700; font-size:14px;} .cust small{display:block; font-weight:500; font-size:10px; color:var(--muted);}
 .spacer{flex:1;}
-/* 客户级 ViewTabs：切「镜头」 */
 .view-tabs{display:inline-flex; gap:2px; padding:3px; background:var(--panel-2); border-radius:999px; border:1px solid var(--line);}
-.vtab{display:inline-flex; align-items:center; gap:6px; padding:6px 14px; border-radius:999px;
-  font-size:13px; font-weight:600; color:var(--muted);}
-.vtab:hover{color:var(--ink);}
+.vtab{display:inline-flex; align-items:center; gap:6px; padding:6px 14px; border-radius:999px; font-size:13px; font-weight:600; color:var(--muted);}
 .vtab.active{background:var(--panel); color:var(--accent); font-weight:800; box-shadow:0 1px 3px var(--shadow);}
 .icon-btn{width:34px; height:34px; border-radius:8px; font-size:16px; display:grid; place-items:center; color:var(--muted);}
 .icon-btn:hover{background:var(--hover); color:var(--ink);}
 
-/* ───────── 日历工具栏 ───────── */
-.planner-head{flex-shrink:0; display:flex; align-items:center; gap:10px; padding:12px 18px;
-  background:var(--panel); border-bottom:1px solid var(--line);}
-.nav-group{display:inline-flex; align-items:center; gap:2px;}
+.planner-head{flex-shrink:0; display:flex; align-items:center; gap:10px; padding:12px 18px; background:var(--panel); border-bottom:1px solid var(--line);}
+.nav-group{display:inline-flex; gap:2px;}
 .nav-group button{width:30px; height:30px; border-radius:8px; font-size:15px; color:var(--ink-2); display:grid; place-items:center;}
 .nav-group button:hover{background:var(--hover);}
 .btn-today{padding:0 12px; height:30px; border-radius:8px; border:1px solid var(--line); font-size:12px; font-weight:600; color:var(--ink-2);}
 .btn-today:hover{background:var(--hover);}
-.period-title{font-size:18px; font-weight:800; letter-spacing:.3px; min-width:170px;}
+.period-title{font-size:18px; font-weight:800; min-width:160px;}
 .seg{display:inline-flex; gap:1px; padding:3px; background:var(--panel-2); border:1px solid var(--line); border-radius:9px;}
 .seg button{padding:5px 14px; border-radius:7px; font-size:12px; font-weight:600; color:var(--muted);}
-.seg button:hover{color:var(--ink);}
 .seg button.active{background:var(--accent); color:#fff; font-weight:700;}
-.chk{display:inline-flex; align-items:center; gap:5px; font-size:12px; color:var(--ink-2); cursor:pointer; user-select:none;}
-.chk input{accent-color:var(--accent);}
-.btn-new{display:inline-flex; align-items:center; gap:5px; padding:0 14px; height:32px; border-radius:8px;
-  background:var(--accent); color:#fff; font-size:13px; font-weight:700;}
-.btn-new:hover{filter:brightness(1.06);}
+.hint-inline{font-size:11px; color:var(--faint);}
 
-/* ───────── 主体布局 ───────── */
 .body{flex:1; display:flex; min-height:0;}
 .cal-host{flex:1; min-width:0; padding:14px 18px; overflow:auto;}
-.side{width:248px; flex-shrink:0; border-left:1px solid var(--line); background:var(--panel);
-  padding:16px 14px; overflow-y:auto;}
+.side{width:262px; flex-shrink:0; border-left:1px solid var(--line); background:var(--panel); padding:16px 14px; overflow-y:auto;}
 .side h4{font-size:10px; font-weight:800; color:var(--faint); text-transform:uppercase; letter-spacing:.6px; margin:4px 0 9px;}
 .side h4:not(:first-child){margin-top:20px;}
-.legend-row{display:flex; align-items:center; gap:8px; font-size:12px; color:var(--ink-2); padding:4px 0;}
-.lg-swatch{width:18px; height:12px; border-radius:4px; flex-shrink:0;}
-.lg-bar{width:4px; height:16px; border-radius:2px; flex-shrink:0;}
-.sugg{background:var(--panel-2); border:1px dashed var(--line); border-radius:10px; padding:10px; margin-bottom:8px;}
-.sugg .t{font-size:12px; font-weight:600; color:var(--ink); line-height:1.4;}
-.sugg .m{font-size:10px; color:var(--muted); margin-top:4px; display:flex; gap:6px; align-items:center;}
-.sugg .pull{margin-top:7px; font-size:11px; color:var(--accent); font-weight:700;}
+.lg-row{display:flex; align-items:center; gap:8px; padding:5px 0;}
+.lg-row .lg-name{flex:1; font-size:12px; color:var(--ink-2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.lg-row.off .lg-name{opacity:.4;}
+.lg-name small{color:var(--muted); font-weight:400;}
+.lg-bar{width:5px; height:18px; border-radius:3px; flex-shrink:0;}
+.lg-form{width:22px; height:13px; border-radius:4px; flex-shrink:0; display:grid; place-items:center; font-size:9px;}
+.lg-eye{width:26px; height:24px; border-radius:6px; display:grid; place-items:center; flex-shrink:0;}
+.lg-eye:hover{background:var(--hover);}
+.lg-eye svg{width:16px; height:16px; fill:none; stroke:var(--muted); stroke-width:2; stroke-linecap:round; stroke-linejoin:round;}
+.lg-eye:hover svg{stroke:var(--ink);}
+.tipcard{background:var(--panel-2); border:1px solid var(--line); border-radius:10px; padding:11px; font-size:11px; color:var(--muted); line-height:1.7;}
+.tipcard b{color:var(--ink-2);}
 
-/* ═════════ 月视图 ═════════ */
-.m-head{display:grid; grid-template-columns:repeat(7,1fr); margin-bottom:6px;}
-.m-head div{text-align:center; font-size:11px; font-weight:700; color:var(--muted); padding:4px 0;}
-.m-head div.we{color:var(--faint);}
-.m-grid{display:grid; grid-template-columns:repeat(7,1fr); gap:1px; background:var(--line);
-  border:1px solid var(--line); border-radius:12px; overflow:hidden;}
-.m-cell{background:var(--panel); min-height:104px; padding:5px 5px 3px; display:flex; flex-direction:column; gap:3px; position:relative;}
+/* 通用事件条 bar（月/周共用） */
+.bar{position:absolute; height:20px; display:flex; align-items:center; gap:4px; padding:0 6px; border-radius:6px; font-size:11px; line-height:1;
+  border-left:3px solid var(--bc); background:var(--bg2); color:var(--ink); white-space:nowrap; overflow:hidden; cursor:pointer; user-select:none; touch-action:none;}
+.bar:hover{box-shadow:0 1px 4px var(--shadow); z-index:5;}
+.bar .ic{font-size:10px; flex-shrink:0;} .bar .tx{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis;}
+.bar .st-ok{color:#16a34a; font-weight:900; flex-shrink:0;} .bar .st-late{color:#dc2626; font-weight:900; flex-shrink:0;}
+.bar.ms{font-weight:700; border-left:0; border:1px solid var(--bc); background:var(--bg3);}
+.bar.tc{border-left:0; border:1px dashed var(--bc); background:transparent; color:var(--muted);}
+.bar.done{opacity:.62;}
+.bar.sel{outline:2px solid var(--accent); outline-offset:1px; z-index:8; box-shadow:0 2px 8px var(--shadow);}
+.handle{position:absolute; top:50%; width:11px; height:11px; border-radius:50%; background:var(--panel); border:2px solid var(--accent); transform:translateY(-50%); cursor:ew-resize; z-index:9; touch-action:none;}
+.handle.l{left:-6px;} .handle.r{right:-6px;}
+
+/* 月视图 */
+.m-dow{display:grid; grid-template-columns:repeat(7,1fr); margin-bottom:6px;}
+.m-dow div{text-align:center; font-size:11px; font-weight:700; color:var(--muted); padding:3px 0;}
+.m-dow div.we{color:var(--faint);}
+.m-weeks{display:flex; flex-direction:column; gap:1px; background:var(--line); border:1px solid var(--line); border-radius:12px; overflow:hidden;}
+.m-week{position:relative; background:var(--line); display:flex;}
+.m-cells{display:grid; grid-template-columns:repeat(7,1fr); gap:1px; flex:1;}
+.m-cell{background:var(--panel); padding:4px 5px;}
 .m-cell.out{background:var(--panel-2);}
-.m-cell.we{background:linear-gradient(0deg, color-mix(in srgb, var(--accent) 3%, var(--panel)), var(--panel));}
-.m-cell.drop{outline:2px dashed var(--accent); outline-offset:-3px;}
-.m-daynum{font-size:12px; font-weight:600; color:var(--ink-2); align-self:flex-start; width:22px; height:22px; display:grid; place-items:center; border-radius:50%;}
-.m-cell.out .m-daynum{color:var(--faint);}
-.m-daynum.today{background:var(--accent); color:#fff; font-weight:800;}
-.chip{display:flex; align-items:center; gap:4px; font-size:11px; line-height:1.3; padding:2px 6px 2px 5px;
-  border-radius:5px; cursor:pointer; border-left:3px solid var(--c,var(--accent)); background:var(--cs,var(--accent-soft));
-  color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; user-select:none;}
-.chip:hover{filter:brightness(.97); box-shadow:0 1px 3px var(--shadow);}
-.chip .ic{font-size:10px; flex-shrink:0;}
-.chip.done{opacity:.5; text-decoration:line-through;}
-.chip.overdue{box-shadow:inset 0 0 0 1px var(--ev-ms);}
-.chip.ms{font-weight:700; background:var(--ev-ms-soft); border-left-color:var(--ev-ms); color:var(--ev-ms);}
-html[data-theme="dark"] .chip.ms{color:var(--ev-ms);}
-.chip.tc{background:var(--ev-tc-soft); border-left-color:var(--ev-tc); color:var(--muted);}
-.m-more{font-size:10px; color:var(--muted); font-weight:600; padding:1px 5px; cursor:pointer; border-radius:4px;}
-.m-more:hover{background:var(--hover); color:var(--ink);}
+.m-cell.we{background:color-mix(in srgb, var(--accent) 3%, var(--panel));}
+.m-dnum{font-size:12px; font-weight:600; color:var(--ink-2); width:21px; height:21px; display:grid; place-items:center; border-radius:50%;}
+.m-cell.out .m-dnum{color:var(--faint);}
+.m-dnum.today{background:var(--accent); color:#fff; font-weight:800;}
+.m-bars{position:absolute; left:0; right:0; top:0; pointer-events:none;}
+.m-bars .bar{pointer-events:auto;}
 
-/* ═════════ 周视图 ═════════ */
-.w-overdue{margin-bottom:12px; padding:10px 12px; background:var(--ev-ms-soft); border:1px solid color-mix(in srgb,var(--ev-ms) 30%, transparent);
-  border-radius:10px;}
-.w-overdue .h{font-size:11px; font-weight:800; color:var(--ev-ms); text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; display:flex; align-items:center; gap:6px;}
-.w-overdue .items{display:flex; flex-wrap:wrap; gap:6px;}
-.w-grid{display:grid; grid-template-columns:repeat(7,1fr); gap:1px; background:var(--line); border:1px solid var(--line); border-radius:12px; overflow:hidden;}
-.w-col{background:var(--panel); min-height:340px; display:flex; flex-direction:column;}
-.w-colhead{text-align:center; padding:8px 0 7px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--panel);}
-.w-colhead .dow{font-size:11px; color:var(--muted); font-weight:600;}
-.w-colhead .dnum{font-size:18px; font-weight:800; margin-top:2px; width:32px; height:32px; line-height:32px; border-radius:50%; display:inline-block;}
-.w-colhead.we{background:var(--panel-2);}
-.w-colhead .dnum.today{background:var(--accent); color:#fff;}
-.w-body{flex:1; padding:7px 6px; display:flex; flex-direction:column; gap:5px;}
-.w-chip{padding:6px 8px; border-radius:7px; font-size:11.5px; line-height:1.35; cursor:pointer;
-  border-left:3px solid var(--c,var(--accent)); background:var(--cs,var(--accent-soft));}
-.w-chip:hover{box-shadow:0 1px 4px var(--shadow);}
-.w-chip .top{display:flex; align-items:center; gap:5px; font-weight:600;}
-.w-chip .sub{font-size:10px; color:var(--muted); margin-top:2px;}
-.w-chip.done{opacity:.5; text-decoration:line-through;}
-.w-chip.ms{background:var(--ev-ms-soft); border-left-color:var(--ev-ms);}
-.w-chip.tc{background:var(--ev-tc-soft); border-left-color:var(--ev-tc);}
+/* 周视图：上午/下午两横跨行带，商机泳道叠放 */
+.wk{border:1px solid var(--line); border-radius:12px; overflow:hidden;}
+.wk-head{display:grid; grid-template-columns:54px repeat(7,1fr); background:var(--panel-2); border-bottom:1px solid var(--line);}
+.wk-head .corner{border-right:1px solid var(--line);}
+.wk-head .wh{text-align:center; padding:7px 0; border-left:1px solid var(--line);}
+.wk-head .wh .dow{font-size:11px; color:var(--muted); font-weight:600;}
+.wk-head .wh .dn{font-size:17px; font-weight:800; margin-top:1px; width:28px; height:28px; line-height:28px; border-radius:50%; display:inline-block;}
+.wk-head .wh.we{background:color-mix(in srgb,var(--accent) 3%, transparent);}
+.wk-head .wh .dn.today{background:var(--accent); color:#fff;}
+.wk-band{display:grid; grid-template-columns:54px 1fr; border-top:1px solid var(--line);}
+.wk-band:first-child{border-top:0;}
+.wk-axis{border-right:1px solid var(--line); display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; color:var(--faint); background:var(--panel-2);}
+.wk-track{position:relative; background:var(--panel);}
+.wk-grid{position:absolute; inset:0; display:grid; grid-template-columns:repeat(7,1fr); pointer-events:none;}
+.wk-grid div{border-left:1px solid var(--line);}
+.wk-grid div.we{background:color-mix(in srgb,var(--accent) 2.5%, transparent);}
+.wk-today{position:absolute; top:0; bottom:0; width:2px; background:var(--accent); z-index:6; pointer-events:none;}
+.wk-track .bar{height:22px; font-size:11.5px;}
 
-/* ═════════ 年视图 ═════════ */
-.y-grid{display:grid; grid-template-columns:repeat(4,1fr); gap:14px;}
-.y-mini{background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px; cursor:pointer; transition:box-shadow .15s,transform .15s;}
-.y-mini:hover{box-shadow:0 4px 14px var(--shadow); transform:translateY(-2px);}
-.y-mini.cur{border-color:var(--accent); box-shadow:0 0 0 1px var(--accent);}
-.y-mtitle{font-size:13px; font-weight:800; margin-bottom:8px; display:flex; justify-content:space-between; align-items:baseline;}
-.y-mtitle .cnt{font-size:10px; font-weight:600; color:var(--muted);}
-.y-mhead{display:grid; grid-template-columns:repeat(7,1fr); margin-bottom:3px;}
-.y-mhead div{text-align:center; font-size:8px; color:var(--faint);}
-.y-mgrid{display:grid; grid-template-columns:repeat(7,1fr); gap:2px;}
-.y-day{aspect-ratio:1; display:grid; place-items:center; font-size:9px; color:var(--ink-2); border-radius:4px; position:relative;}
-.y-day.out{color:transparent;}
-.y-day.today{background:var(--accent); color:#fff; font-weight:800;}
-.y-dots{position:absolute; bottom:1px; left:0; right:0; display:flex; justify-content:center; gap:1px;}
-.y-dot{width:3px; height:3px; border-radius:50%;}
+/* 年视图：每月 = 周列 × 商机行 矩阵 */
+.yr{display:grid; grid-template-columns:repeat(auto-fill, minmax(280px,1fr)); gap:14px;}
+.ym{background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:11px 12px 12px;}
+.ym-t{font-size:14px; font-weight:800; margin-bottom:8px; display:flex; justify-content:space-between; align-items:baseline;}
+.ym-t .cnt{font-size:9px; font-weight:600; color:var(--muted);}
+.ym-mat{display:grid; gap:2px;}
+.ym-hd{font-size:9px; color:var(--faint); text-align:center; padding:1px 0; font-weight:700;}
+.ym-name{display:flex; align-items:center; gap:4px; font-size:10px; font-weight:600; color:var(--ink-2); overflow:hidden;}
+.ym-name .lg-bar{height:14px; width:4px;}
+.ym-cell{min-height:34px; border-radius:5px; padding:2px 3px; display:flex; flex-direction:column; justify-content:space-between; cursor:pointer; overflow:hidden; position:relative;}
+.ym-cell:hover{outline:1px solid var(--accent);}
+.ym-cell .stg{font-size:8.5px; font-weight:700; line-height:1.15; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+.ym-cell .evs{display:flex; gap:1px; flex-wrap:wrap; font-size:9px;}
+.ym-cell .evs span{cursor:pointer;}
+.ym-cell.empty{background:var(--panel-2); border:1px dashed var(--line);}
+.ym-cell.empty .stg{color:var(--faint); font-weight:500;}
 
-/* ───────── 详情抽屉 ───────── */
-.drawer-mask{position:fixed; inset:0; background:rgba(15,23,42,.25); opacity:0; pointer-events:none; transition:opacity .2s; z-index:40;}
-.drawer-mask.open{opacity:1; pointer-events:auto;}
-.drawer{position:fixed; top:0; right:0; height:100%; width:380px; max-width:92vw; background:var(--panel);
-  border-left:1px solid var(--line); box-shadow:-8px 0 24px var(--shadow); transform:translateX(100%); transition:transform .22s cubic-bezier(.4,0,.2,1); z-index:41;
-  display:flex; flex-direction:column;}
-.drawer.open{transform:translateX(0);}
-.drawer-head{padding:16px 18px; border-bottom:1px solid var(--line); display:flex; align-items:flex-start; gap:10px;}
-.drawer-head .t{font-size:16px; font-weight:800; line-height:1.35; flex:1;}
-.drawer-head .x{font-size:20px; color:var(--muted); width:30px; height:30px; border-radius:7px; display:grid; place-items:center; flex-shrink:0;}
-.drawer-head .x:hover{background:var(--hover); color:var(--ink);}
-.drawer-body{flex:1; overflow-y:auto; padding:16px 18px;}
-.d-row{display:flex; gap:10px; padding:9px 0; border-bottom:1px solid var(--line); font-size:13px;}
-.d-row .k{width:64px; flex-shrink:0; color:var(--muted); font-size:12px;}
-.d-row .v{color:var(--ink); flex:1;}
-.tag{display:inline-flex; align-items:center; gap:4px; padding:2px 9px; border-radius:999px; font-size:11px; font-weight:700;}
-.d-actions{padding:14px 18px; border-top:1px solid var(--line); display:flex; gap:8px;}
-.d-actions button{flex:1; height:38px; border-radius:9px; font-size:13px; font-weight:700;}
-.b-ghost{border:1px solid var(--line); color:var(--ink-2);}
-.b-ghost:hover{background:var(--hover);}
-.b-primary{background:var(--accent); color:#fff;}
-.b-primary:hover{filter:brightness(1.06);}
-.win-pill{display:inline-flex; align-items:center; gap:5px; padding:3px 10px; border-radius:999px; font-size:11px; font-weight:800;}
+/* 右侧抽屉（事件） */
+.dwm{position:fixed; inset:0; background:rgba(15,23,42,.28); opacity:0; pointer-events:none; transition:opacity .2s; z-index:40;}
+.dwm.open{opacity:1; pointer-events:auto;}
+.dw{position:fixed; top:0; right:0; height:100%; width:368px; max-width:92vw; background:var(--panel); border-left:1px solid var(--line);
+  box-shadow:-8px 0 24px var(--shadow); transform:translateX(100%); transition:transform .22s cubic-bezier(.4,0,.2,1); z-index:41; display:flex; flex-direction:column;}
+.dw.open{transform:none;}
+.dw-head{padding:15px 18px; border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between;}
+.dw-head .t{font-size:15px; font-weight:800;}
+.dw-head .x{font-size:20px; color:var(--muted); width:28px; height:28px; border-radius:7px; display:grid; place-items:center;}
+.dw-head .x:hover{background:var(--hover); color:var(--ink);}
+.dw-body{flex:1; overflow-y:auto; padding:16px 18px; display:flex; flex-direction:column; gap:13px;}
+.fld{display:flex; flex-direction:column; gap:5px;}
+.fld>span{font-size:11px; font-weight:700; color:var(--muted);}
+.fld input,.fld select{height:36px; border:1px solid var(--line); border-radius:8px; background:var(--panel-2); color:var(--ink); font-size:13px; padding:0 10px;}
+.type-pick,.half-pick{display:flex; gap:6px;}
+.type-pick button,.half-pick button{flex:1; height:38px; border:1px solid var(--line); border-radius:8px; font-size:12px; font-weight:600; color:var(--ink-2); display:flex; align-items:center; justify-content:center; gap:4px;}
+.type-pick button.on,.half-pick button.on{border-color:var(--accent); background:var(--accent-soft); color:var(--accent-ink);}
+.done-check{display:flex; align-items:center; gap:8px; font-size:13px; color:var(--ink-2); cursor:pointer; padding:4px 0;}
+.done-check input{width:18px; height:18px; accent-color:#16a34a; cursor:pointer;}
+.row2{display:flex; gap:10px;} .row2>*{flex:1;}
+.dw-foot{padding:13px 18px; border-top:1px solid var(--line); display:flex; gap:8px; align-items:center;}
+.dw-foot .del{margin-right:auto; color:#dc2626; font-size:13px; font-weight:700; padding:8px 12px; border-radius:8px;}
+.dw-foot .del:hover{background:#fef2f2;} html[data-theme="dark"] .dw-foot .del:hover{background:#3a1d1d;}
+.b{height:38px; padding:0 16px; border-radius:9px; font-size:13px; font-weight:700;}
+.b-ghost{border:1px solid var(--line); color:var(--ink-2);} .b-ghost:hover{background:var(--hover);}
+.b-primary{background:var(--accent); color:#fff;} .b-primary:hover{filter:brightness(1.06);}
 
-/* 当日弹层（+N more / 单元格） */
-.pop-mask{position:fixed; inset:0; z-index:30;}
-.daypop{position:fixed; width:260px; background:var(--panel); border:1px solid var(--line); border-radius:12px;
-  box-shadow:0 12px 32px var(--shadow); z-index:31; padding:12px; max-height:60vh; overflow-y:auto;}
-.daypop .h{font-size:13px; font-weight:800; margin-bottom:8px;}
-.daypop .chip{margin-bottom:4px;}
+/* 阶段段 Modal（年视图） */
+.modal-mask{position:fixed; inset:0; background:rgba(15,23,42,.32); display:none; align-items:center; justify-content:center; z-index:50;}
+.modal-mask.open{display:flex;}
+.modal{width:360px; max-width:92vw; background:var(--panel); border:1px solid var(--line); border-radius:14px; box-shadow:0 18px 48px var(--shadow); overflow:hidden;}
+.modal-head{padding:15px 18px; border-bottom:1px solid var(--line); font-size:15px; font-weight:800; display:flex; justify-content:space-between;}
+.modal-head .x{font-size:20px; color:var(--muted);}
+.modal-body{padding:16px 18px; display:flex; flex-direction:column; gap:13px;}
 
-.hint{font-size:11px; color:var(--faint); margin-top:10px; line-height:1.5;}
-.proto-tag{position:fixed; left:12px; bottom:10px; font-size:10px; color:var(--faint);
-  background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:3px 8px; z-index:20;}
-@media(max-width:880px){ .side{display:none;} .period-title{min-width:0; font-size:15px;} .planner-head{flex-wrap:wrap;} }
+.proto-tag{position:fixed; left:12px; bottom:10px; font-size:10px; color:var(--faint); background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:3px 8px; z-index:20;}
+@media(max-width:920px){ .side{display:none;} .period-title{min-width:0; font-size:15px;} .planner-head{flex-wrap:wrap;} }
 </style>
 </head>
 <body>
 
-<!-- 顶部应用条 + 客户级 ViewTabs -->
 <div class="app-top">
   <div class="logo">江</div>
-  <div class="cust">西部电力建设集团<small>客户工作台 · 3 个商机</small></div>
+  <div class="cust">西部电力建设集团<small>客户工作台 · 4 个商机</small></div>
   <div class="spacer"></div>
-  <div class="view-tabs">
-    <button class="vtab" id="tabWall">🕸 侦探墙</button>
-    <button class="vtab active" id="tabPlanner">📅 商机策划</button>
-  </div>
+  <div class="view-tabs"><button class="vtab" id="tabWall">🕸 侦探墙</button><button class="vtab active">📅 商机策划</button></div>
   <button class="icon-btn" id="themeBtn" title="切换主题">🌙</button>
 </div>
 
-<!-- 日历工具栏 -->
 <div class="planner-head">
   <div class="nav-group"><button id="prevBtn">‹</button><button id="nextBtn">›</button></div>
   <button class="btn-today" id="todayBtn">今天</button>
-  <div class="period-title" id="periodTitle">2026年6月</div>
+  <div class="period-title" id="periodTitle"></div>
   <div class="spacer"></div>
-  <label class="chk"><input type="checkbox" id="laneChk"> 按商机泳道</label>
-  <div class="seg">
-    <button data-view="year">年</button>
-    <button data-view="month" class="active">月</button>
-    <button data-view="week">周</button>
-  </div>
-  <button class="btn-new" id="newBtn">＋ 新行动</button>
+  <span class="hint-inline" id="headHint"></span>
+  <div class="seg"><button data-view="year">年</button><button data-view="month" class="active">月</button><button data-view="week">周</button></div>
 </div>
 
-<!-- 主体 -->
 <div class="body">
   <div class="cal-host" id="calHost"></div>
   <div class="side">
-    <h4>图例 · 事件三类</h4>
-    <div class="legend-row"><span class="lg-swatch" style="background:var(--ev-c-soft); border-left:3px solid var(--ev-c);"></span>🎯 行动 · 6必清(C)</div>
-    <div class="legend-row"><span class="lg-swatch" style="background:var(--ev-p-soft); border-left:3px solid var(--ev-p);"></span>🎯 行动 · 4优势(P)</div>
-    <div class="legend-row"><span class="lg-swatch" style="background:var(--ev-k-soft); border-left:3px solid var(--ev-k);"></span>🎯 行动 · 1决胜(1K)</div>
-    <div class="legend-row"><span class="lg-swatch" style="background:var(--ev-ms-soft); border-left:3px solid var(--ev-ms);"></span>🚩 商机里程碑</div>
-    <div class="legend-row"><span class="lg-swatch" style="background:var(--ev-tc-soft); border-left:3px solid var(--ev-tc);"></span>📌 历史触点</div>
-
-    <h4>商机泳道</h4>
-    <div class="legend-row"><span class="lg-bar" style="background:var(--opp-1);"></span>西部风光储一体化平台</div>
-    <div class="legend-row"><span class="lg-bar" style="background:var(--opp-2);"></span>智慧工地管理系统</div>
-    <div class="legend-row"><span class="lg-bar" style="background:var(--opp-3);"></span>集团数字化审计平台</div>
-
-    <h4>🔮 待排期建议（AI）</h4>
-    <div class="sugg" id="sugg1">
-      <div class="t">约赵建国汇报方案窗口</div>
-      <div class="m">🎯 1K · 与最高决策人 A</div>
-      <div class="pull">↪ 拖入日历排期</div>
+    <h4>事件三类 · 显示/隐藏</h4>
+    <div id="legendTypes"></div>
+    <h4>商机泳道 · 显示/隐藏</h4>
+    <div id="legendOpps"></div>
+    <h4>说明</h4>
+    <div class="tipcard">
+      事件颜色 = <b>所属商机色系</b>，类型靠形态区分。<br>
+      <b>年视图</b>：每月按「周」竖列 × 商机行，格内标当周所处<b>阶段</b>；双击格子可<b>新建阶段段</b>（支持降级回退）。<br>
+      <b>周视图</b>：上午/下午两带，事件按商机泳道叠放、多天连成整块。
     </div>
-    <div class="sugg" id="sugg2">
-      <div class="t">转化王教授（中立专家）</div>
-      <div class="m">🎯 P1 · 多数人支持</div>
-      <div class="pull">↪ 拖入日历排期</div>
-    </div>
-    <div class="hint">原型说明：AI（741 行动宝典）生成的动作先入「待排期建议」，拖入日历=人审采纳后才正式排期。</div>
   </div>
 </div>
 
-<!-- 详情抽屉 -->
-<div class="drawer-mask" id="drawerMask"></div>
-<div class="drawer" id="drawer">
-  <div class="drawer-head"><div class="t" id="dTitle"></div><button class="x" id="dClose">×</button></div>
-  <div class="drawer-body" id="dBody"></div>
-  <div class="d-actions" id="dActions"></div>
+<!-- 事件抽屉 -->
+<div class="dwm" id="dwMask"></div>
+<div class="dw" id="dw">
+  <div class="dw-head"><span class="t" id="dwTitle">详情</span><button class="x" id="dwClose">×</button></div>
+  <div class="dw-body">
+    <div class="fld"><span>事件类型</span>
+      <div class="type-pick" id="dwType"><button data-t="action">🎯 行动</button><button data-t="milestone">🚩 里程碑</button><button data-t="touch">📌 触点</button></div>
+    </div>
+    <div class="fld"><span>所属商机</span><select id="dwOpp"></select></div>
+    <div class="fld"><span>标题</span><input id="dwTitleInput" placeholder="如：拜访钱大钧·摸招标参数"></div>
+    <div class="row2"><div class="fld"><span>开始</span><input type="date" id="dwStart"></div><div class="fld"><span>结束</span><input type="date" id="dwEnd"></div></div>
+    <div class="fld"><span>时段（周视图用）</span><div class="half-pick" id="dwHalf"><button data-h="am">🌅 上午</button><button data-h="pm">🌇 下午</button><button data-h="eve">🌙 晚上</button></div></div>
+    <div class="fld" id="dwDoneFld"><span>完成状态</span><label class="done-check"><input type="checkbox" id="dwDone"> 标记为已完成（仅行动）</label></div>
+  </div>
+  <div class="dw-foot">
+    <button class="del" id="dwDel" style="display:none">🗑 删除</button>
+    <button class="b b-ghost" id="dwCancel">取消</button>
+    <button class="b b-primary" id="dwSave">保存</button>
+  </div>
 </div>
 
-<div class="proto-tag">商机策划 · 原型 v1 · 数据为虚构示例</div>
+<!-- 阶段段 Modal -->
+<div class="modal-mask" id="stMask"><div class="modal">
+  <div class="modal-head"><span id="stTitle">新建阶段段</span><button class="x" id="stClose">×</button></div>
+  <div class="modal-body">
+    <div class="fld"><span>商机</span><input id="stOpp" disabled></div>
+    <div class="fld"><span>阶段（可重复，用于降级回退）</span><select id="stStage"></select></div>
+    <div class="row2"><div class="fld"><span>开始</span><input type="date" id="stStart"></div><div class="fld"><span>结束</span><input type="date" id="stEnd"></div></div>
+  </div>
+  <div class="dw-foot">
+    <button class="del" id="stDel" style="display:none">🗑 删除此段</button>
+    <button class="b b-ghost" id="stCancel">取消</button>
+    <button class="b b-primary" id="stSave">保存</button>
+  </div>
+</div></div>
+
+<div class="proto-tag">商机策划 · 原型 v4 · 数据为虚构示例</div>
 
 <script>
-/* ───────── 固定「今天」= 2026-06-05（与项目 currentDate 对齐） ───────── */
-const TODAY = new Date(2026,5,5);
-const ymd = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-const TODAY_S = ymd(TODAY);
-const WEEK_CN = ['一','二','三','四','五','六','日'];
+const TODAY='2026-06-05';
+const p2=n=>String(n).padStart(2,'0');
+const D=s=>new Date(s+'T00:00:00');
+const ymd=d=>`${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}`;
+const addDays=(s,n)=>{const d=D(s); d.setDate(d.getDate()+n); return ymd(d);};
+const diffDays=(a,b)=>Math.round((D(b)-D(a))/864e5);
+const WEEK_CN=['一','二','三','四','五','六','日'];
+const dowMon=d=>(d.getDay()+6)%7;
 
-/* ───────── 商机 ───────── */
-const OPPS = {
-  o1:{name:'西部风光储一体化平台', color:'var(--opp-1)', stage:'招投标',  win:62, band:'相对优势'},
-  o2:{name:'智慧工地管理系统',     color:'var(--opp-2)', stage:'方案认可', win:38, band:'相对劣势'},
-  o3:{name:'集团数字化审计平台',   color:'var(--opp-3)', stage:'客户立项', win:71, band:'绝对优势'},
-};
-const BAND_COLOR={'绝对优势':'#16a34a','相对优势':'#2563eb','相对劣势':'#f97316','绝对劣势':'#dc2626'};
-
-/* ───────── 事件（三类，围绕 2026-06，含逾期/完成/跨商机） ───────── */
-let EVENTS = [
-  // 历史触点（VisitNote）
-  {id:'t1', type:'touch', date:'2026-05-12', title:'初访西部电力·建立联系', opp:'o1', person:'前台/办公室'},
-  {id:'t2', type:'touch', date:'2026-05-26', title:'钱大钧·招标参数摸底',   opp:'o1', person:'钱大钧（物资部长）'},
-  {id:'t3', type:'touch', date:'2026-06-02', title:'孙学文·技术交流',       opp:'o3', person:'孙学文（专家组长）'},
-  // 行动计划（PlanAction）
-  {id:'a0', type:'action', date:'2026-05-28', title:'拜访钱大钧·摸清招标参数', opp:'o1', gap:'C5', person:'钱大钧（物资部长）', status:'done',
-    scene:'物资部办公室', scripts:'以行业评标新规切入，请教本次招标参数倾向', target:'拿到评标规则与竞标家数'},
-  {id:'a1', type:'action', date:'2026-06-03', title:'复盘钱大钧反馈·补招采5项', opp:'o1', gap:'P2', person:'钱大钧（物资部长）', status:'todo',
-    scene:'电话', scripts:'确认招标代理与甲方代表口径', target:'P2 招采关键人对齐'},
-  {id:'a2', type:'action', date:'2026-06-05', title:'李进确认 C3 立项材料 7 项', opp:'o2', gap:'C3', person:'李进（项目经理）', status:'doing',
-    scene:'项目部', scripts:'以协助报批为由，核对立项原因/预算/资金来源', target:'补齐 C3 七项与排序'},
-  {id:'a3', type:'action', date:'2026-06-06', title:'争取赵建国汇报窗口', opp:'o1', gap:'1K', person:'赵建国（集团副总）', status:'todo',
-    scene:'教练引荐', scripts:'借安全生产话题，请孙学文牵线', target:'1K 触达最高决策人 A'},
-  {id:'a4', type:'action', date:'2026-06-09', title:'周小波·预算口径对齐', opp:'o3', gap:'C4', person:'周小波（财务审核）', status:'todo',
-    scene:'财务处', scripts:'确认预算批复进度，争取尽早介入', target:'C4 介入阶段前移'},
-  {id:'a5', type:'action', date:'2026-06-10', title:'向 D 递送 UCV 方案', opp:'o1', gap:'C6', person:'拍板人 D', status:'todo',
-    scene:'方案汇报', scripts:'对准其 BI（按期投产考核），讲竞品做不到的点', target:'C6 UCV 获认可'},
-  {id:'a6', type:'action', date:'2026-06-12', title:'孙学文专家背书攻关', opp:'o1', gap:'P3', person:'孙学文（专家组长）', status:'todo',
-    scene:'茶叙', scripts:'投其所好谈摄影，请其在评标会上为我方说话', target:'P3 与 D 密谋/支持'},
-  {id:'a7', type:'action', date:'2026-06-17', title:'招标答疑会准备', opp:'o1', gap:'C5', person:'招采中心', status:'todo',
-    scene:'答疑会', scripts:'按已掌握参数准备应答与澄清', target:'守住招标参数'},
-  {id:'a8', type:'action', date:'2026-06-18', title:'王教授（中立）转化', opp:'o2', gap:'P1', person:'王教授（外部顾问）', status:'todo',
-    scene:'行业论坛', scripts:'以咨询合作切入，争取从中立转支持', target:'P1 多数人支持'},
-  {id:'a9', type:'action', date:'2026-06-24', title:'赵建国二次汇报·临门一脚', opp:'o1', gap:'1K', person:'赵建国（集团副总）', status:'todo',
-    scene:'集团会议室', scripts:'汇报方案价值与风险兜底，请求拍板支持', target:'1K 锁定 A'},
-  {id:'a10', type:'action', date:'2026-06-29', title:'本周复盘·更新趋赢力', opp:'o3', gap:'', person:'', status:'todo',
-    scene:'内部', scripts:'按本周完成项重打分，刷新曲线', target:'周复盘'},
-  // 商机里程碑
-  {id:'m1', type:'milestone', date:'2026-06-16', title:'风光储 · 开标', opp:'o1'},
-  {id:'m2', type:'milestone', date:'2026-06-20', title:'审计平台 · 客户立项评审', opp:'o3'},
-  {id:'m3', type:'milestone', date:'2026-06-30', title:'智慧工地 · 预计签约', opp:'o2'},
-  // 跨月（给年视图密度）
-  {id:'t4', type:'touch', date:'2026-04-20', title:'行业展会偶遇钱大钧', opp:'o1', person:'钱大钧'},
-  {id:'m4', type:'milestone', date:'2026-07-08', title:'风光储 · 二期启动会', opp:'o1'},
-  {id:'a11', type:'action', date:'2026-07-15', title:'审计平台续约洽谈', opp:'o3', gap:'P4', person:'D', status:'todo', scene:'', scripts:'', target:'P4 关键影响人'},
-  {id:'m5', type:'milestone', date:'2026-08-03', title:'风光储 · 项目验收', opp:'o1'},
-  {id:'m6', type:'milestone', date:'2026-05-15', title:'智慧工地 · 需求确认', opp:'o2'},
+const OPPS=[
+  {id:'o1', hue:217, name:'西部风光储一体化平台', short:'风光储',  cur:3},
+  {id:'o2', hue:28,  name:'智慧工地管理系统',     short:'智慧工地', cur:1},
+  {id:'o3', hue:145, name:'集团数字化审计平台',   short:'审计平台', cur:2},
+  {id:'o4', hue:275, name:'生产管控平台升级',     short:'生产管控', cur:0},
 ];
+const oppById=Object.fromEntries(OPPS.map(o=>[o.id,o]));
+const STAGES=['需求引导','方案认可','客户立项','招投标','合同谈判','合同双签'];
+const STAGE_L=[73,64,56,48,41,34];
+const oppBarColor=o=>`hsl(${o.hue} 70% 48%)`;
+const oppFillColor=o=>`hsl(${o.hue} 80% 52% / .16)`;
+const oppSolidColor=o=>`hsl(${o.hue} 78% 50% / .26)`;
+const stageColor=(o,k)=>`hsl(${o.hue} ${k<2?58:62}% ${STAGE_L[k]}%)`;
+const stageInk=k=>STAGE_L[k]>54?'#1e293b':'#fff';
 
-/* gap → 着色类 */
-function gapVars(e){
-  if(e.type==='milestone') return {c:'var(--ev-ms)', cs:'var(--ev-ms-soft)'};
-  if(e.type==='touch')     return {c:'var(--ev-tc)', cs:'var(--ev-tc-soft)'};
-  const g=e.gap||'';
-  if(g.startsWith('C'))    return {c:'var(--ev-c)', cs:'var(--ev-c-soft)'};
-  if(g.startsWith('P'))    return {c:'var(--ev-p)', cs:'var(--ev-p-soft)'};
-  if(g==='1K')             return {c:'var(--ev-k)', cs:'var(--ev-k-soft)'};
-  return {c:'var(--accent)', cs:'var(--accent-soft)'};
-}
-const isOverdue = e => e.type==='action' && e.status!=='done' && e.date < TODAY_S;
-const evIcon = e => e.type==='milestone'?'🚩': e.type==='touch'?'📌':'🎯';
+/* 阶段段模型 B：段列表 {k:阶段index, s,e}，允许同名重复 / 降级回退 */
+const GANTT={
+  o1:[{k:0,s:'2026-01-08',e:'2026-02-10'},{k:1,s:'2026-02-11',e:'2026-03-15'},{k:2,s:'2026-03-16',e:'2026-04-20'},{k:3,s:'2026-04-21',e:'2026-06-20'},{k:4,s:'2026-06-21',e:'2026-07-25'},{k:5,s:'2026-07-26',e:'2026-08-20'}],
+  o2:[{k:0,s:'2026-02-01',e:'2026-03-05'},{k:1,s:'2026-03-06',e:'2026-04-30'},{k:2,s:'2026-05-01',e:'2026-06-10'},{k:3,s:'2026-06-11',e:'2026-07-15'},{k:4,s:'2026-07-16',e:'2026-08-20'},{k:5,s:'2026-08-21',e:'2026-09-15'}],
+  o3:[{k:0,s:'2026-01-20',e:'2026-02-25'},{k:1,s:'2026-02-26',e:'2026-04-01'},{k:2,s:'2026-04-02',e:'2026-06-05'},{k:3,s:'2026-06-06',e:'2026-07-10'},{k:4,s:'2026-07-11',e:'2026-08-05'},{k:5,s:'2026-08-06',e:'2026-08-30'}],
+  o4:[{k:0,s:'2026-04-10',e:'2026-06-15'},{k:1,s:'2026-06-16',e:'2026-07-30'},{k:2,s:'2026-08-01',e:'2026-09-10'},{k:3,s:'2026-09-11',e:'2026-10-20'},{k:4,s:'2026-10-21',e:'2026-11-25'},{k:5,s:'2026-11-26',e:'2026-12-20'}],
+};
+function stageOfDay(oid,ds){const g=GANTT[oid]||[]; let r=null; for(const seg of g){ if(ds>=seg.s && ds<=seg.e) r=seg; } return r;}
 
-/* ───────── 状态 ───────── */
-let state = { view:'month', cursor:new Date(2026,5,5), lanes:false };
+let EVENTS=[
+  {id:'e1', type:'action',    opp:'o1', start:'2026-06-03', end:'2026-06-04', half:'am', title:'拜访钱大钧·摸招标参数', person:'钱大钧（物资部长）', status:'todo'},
+  {id:'e2', type:'milestone', opp:'o1', start:'2026-06-20', end:'2026-06-20', half:'am', title:'风光储·开标'},
+  {id:'e3', type:'action',    opp:'o1', start:'2026-06-12', end:'2026-06-13', half:'pm', title:'孙学文专家背书攻关', person:'孙学文（专家组长）', status:'doing'},
+  {id:'e4', type:'touch',     opp:'o1', start:'2026-05-28', end:'2026-05-28', half:'pm', title:'钱大钧·初步接触', person:'钱大钧'},
+  {id:'e5', type:'action',    opp:'o1', start:'2026-06-24', end:'2026-06-25', half:'am', title:'赵建国二次汇报·临门一脚', person:'赵建国（集团副总）', status:'todo'},
+  {id:'e6', type:'action',    opp:'o2', start:'2026-06-05', end:'2026-06-06', half:'am', title:'李进确认 C3 立项材料', person:'李进（项目经理）', done:true},
+  {id:'e7', type:'action',    opp:'o2', start:'2026-06-18', end:'2026-06-18', half:'pm', title:'王教授（中立）转化', person:'王教授', status:'todo'},
+  {id:'e8', type:'milestone', opp:'o2', start:'2026-06-10', end:'2026-06-10', half:'am', title:'智慧工地·方案评审'},
+  {id:'e9', type:'action',    opp:'o3', start:'2026-06-09', end:'2026-06-09', half:'am', title:'周小波·预算口径对齐', person:'周小波（财务）', status:'todo'},
+  {id:'e10',type:'milestone', opp:'o3', start:'2026-06-05', end:'2026-06-05', half:'am', title:'审计平台·立项评审'},
+  {id:'e11',type:'touch',     opp:'o3', start:'2026-06-02', end:'2026-06-02', half:'pm', title:'孙学文·技术交流', person:'孙学文'},
+  {id:'e12',type:'action',    opp:'o4', start:'2026-06-16', end:'2026-06-19', half:'am', title:'生产管控·需求调研走访', person:'生产部', status:'todo'},
+  {id:'e13',type:'touch',     opp:'o4', start:'2026-06-11', end:'2026-06-11', half:'pm', title:'生产部门摸底', person:'生产部'},
+];
+const TYPES={action:{icon:'🎯',label:'行动'}, milestone:{icon:'🚩',label:'里程碑'}, touch:{icon:'📌',label:'历史触点'}};
+let uidN=100;
 
-/* 索引：日期 → 事件[] */
-function indexByDate(){
-  const m={};
-  for(const e of EVENTS){ (m[e.date]=m[e.date]||[]).push(e); }
-  for(const k in m){ m[k].sort((a,b)=> (a.type==='milestone'?-1:0)-(b.type==='milestone'?-1:0)); }
-  return m;
-}
+let state={view:'month', cursor:'2026-06-05', hideType:new Set(), hideOpp:new Set(), sel:null};
+const visOpps=()=>OPPS.filter(o=>!state.hideOpp.has(o.id));
+const visEvents=()=>EVENTS.filter(e=>!state.hideType.has(e.type) && !state.hideOpp.has(e.opp));
+const evOf=id=>EVENTS.find(x=>x.id===id);
+const host=document.getElementById('calHost');
+const HINTS={month:'双击空白新增 · 单击选中拖锚点改期 · 再点开详情', week:'上午/下午分带 · 商机泳道叠放 · 多天连成整块', year:'每月按周×商机 · 双击格子新建阶段段（可降级）'};
 
-/* ════════ 渲染入口 ════════ */
-const host = document.getElementById('calHost');
+const EYE_OPEN='<svg viewBox="0 0 24 24"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>';
+const EYE_OFF='<svg viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 19c-7 0-11-7-11-7a18.5 18.5 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 7 11 7a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+
+function barVars(e){const o=oppById[e.opp]; return `--bc:${oppBarColor(o)};--bg2:${oppFillColor(o)};--bg3:${oppSolidColor(o)}`;}
+function barClass(e){return ['bar', e.type==='milestone'?'ms':'', e.type==='touch'?'tc':'', e.done?'done':'', state.sel===e.id?'sel':''].join(' ');}
+function statusMark(e){ if(e.type!=='action') return ''; if(e.done) return '<span class="st-ok">✓</span>'; if(e.end<TODAY) return '<span class="st-late">✕</span>'; return ''; }
+function barInner(e){return `<span class="ic">${TYPES[e.type].icon}</span><span class="tx">${e.title}</span>${statusMark(e)}`;}
+function ancHTML(e,showL,showR){ return state.sel!==e.id?'':`${showL?'<div class="handle l" data-h="start"></div>':''}${showR?'<div class="handle r" data-h="end"></div>':''}`; }
+
 function render(){
   document.querySelectorAll('.seg button').forEach(b=>b.classList.toggle('active', b.dataset.view===state.view));
+  document.getElementById('headHint').textContent=HINTS[state.view];
+  renderLegends();
   if(state.view==='month') renderMonth();
   else if(state.view==='week') renderWeek();
   else renderYear();
 }
 
-/* ════════ 月视图 ════════ */
-function monthCells(cur){
-  const y=cur.getFullYear(), mo=cur.getMonth();
-  const first=new Date(y,mo,1);
-  const lead=(first.getDay()+6)%7;             // 周一起始
-  const start=new Date(y,mo,1-lead);
-  const days=new Date(y,mo+1,0).getDate();
-  const rows=Math.ceil((lead+days)/7);
-  return {cells:Array.from({length:rows*7},(_,i)=>{const d=new Date(start);d.setDate(start.getDate()+i);return d;}), mo};
+function renderLegends(){
+  const lt=document.getElementById('legendTypes');
+  lt.innerHTML=Object.entries(TYPES).map(([k,v])=>{
+    const off=state.hideType.has(k);
+    const form = k==='action'?'<span class="lg-form" style="background:hsl(217 80% 52% / .25); border-left:3px solid hsl(217 70% 48%)"></span>'
+      : k==='milestone'?'<span class="lg-form" style="border:1px solid var(--muted)">🚩</span>'
+      : '<span class="lg-form" style="border:1px dashed var(--muted)"></span>';
+    return `<div class="lg-row ${off?'off':''}">${form}<span class="lg-name">${v.icon} ${v.label}</span><button class="lg-eye" data-type="${k}">${off?EYE_OFF:EYE_OPEN}</button></div>`;
+  }).join('');
+  const lo=document.getElementById('legendOpps');
+  lo.innerHTML=OPPS.map(o=>{
+    const off=state.hideOpp.has(o.id);
+    return `<div class="lg-row ${off?'off':''}"><span class="lg-bar" style="background:${oppBarColor(o)}"></span><span class="lg-name">${o.name}<small> · ${STAGES[o.cur]}</small></span><button class="lg-eye" data-opp="${o.id}">${off?EYE_OFF:EYE_OPEN}</button></div>`;
+  }).join('');
+  lt.querySelectorAll('.lg-eye').forEach(b=>b.onclick=()=>{tog(state.hideType,b.dataset.type); render();});
+  lo.querySelectorAll('.lg-eye').forEach(b=>b.onclick=()=>{tog(state.hideOpp,b.dataset.opp); render();});
+}
+const tog=(set,k)=>set.has(k)?set.delete(k):set.add(k);
+
+/* ════ 月视图 ════ */
+function monthWeeks(cur){
+  const c=D(cur), y=c.getFullYear(), mo=c.getMonth();
+  const lead=dowMon(new Date(y,mo,1)), start=addDays(ymd(new Date(y,mo,1)), -lead);
+  const dim=new Date(y,mo+1,0).getDate(), rows=Math.ceil((lead+dim)/7);
+  const weeks=[]; for(let r=0;r<rows;r++) weeks.push(Array.from({length:7},(_,i)=>addDays(start, r*7+i)));
+  return {weeks, mo};
 }
 function renderMonth(){
-  const cur=state.cursor;
-  document.getElementById('periodTitle').textContent=`${cur.getFullYear()}年${cur.getMonth()+1}月`;
-  const {cells,mo}=monthCells(cur);
-  const idx=indexByDate();
-  let html='<div class="m-head">'+WEEK_CN.map((w,i)=>`<div class="${i>=5?'we':''}">周${w}</div>`).join('')+'</div>';
-  html+='<div class="m-grid">';
-  for(const d of cells){
-    const ds=ymd(d), out=d.getMonth()!==mo, we=(d.getDay()===0||d.getDay()===6);
-    const evs=idx[ds]||[];
-    const shown=evs.slice(0,3), extra=evs.length-shown.length;
-    html+=`<div class="m-cell ${out?'out':''} ${we?'we':''}" data-date="${ds}" ondragover="event.preventDefault();this.classList.add('drop')" ondragleave="this.classList.remove('drop')">`;
-    html+=`<div class="m-daynum ${ds===TODAY_S?'today':''}">${d.getDate()}</div>`;
-    for(const e of shown) html+=chipHTML(e);
-    if(extra>0) html+=`<div class="m-more" data-date="${ds}">+${extra} 更多</div>`;
-    html+='</div>';
-  }
-  html+='</div>';
-  host.innerHTML=html;
-  bindMonth();
-}
-function chipHTML(e){
-  const v=gapVars(e);
-  const lane = state.lanes ? `border-left-color:${OPPS[e.opp].color} !important;` : '';
-  const cls=['chip', e.type==='milestone'?'ms':'', e.type==='touch'?'tc':'', e.status==='done'?'done':'', isOverdue(e)?'overdue':''].join(' ');
-  return `<div class="${cls}" draggable="true" data-id="${e.id}" style="--c:${v.c};--cs:${v.cs};${lane}" title="${e.title}">`+
-    `<span class="ic">${evIcon(e)}</span><span>${e.title}</span></div>`;
-}
-function bindMonth(){
-  host.querySelectorAll('.chip').forEach(el=>{
-    el.addEventListener('click',()=>openDrawer(el.dataset.id));
-    el.addEventListener('dragstart',ev=>ev.dataTransfer.setData('id',el.dataset.id));
-  });
-  host.querySelectorAll('.m-cell').forEach(cell=>{
-    cell.addEventListener('drop',ev=>{
-      ev.preventDefault(); cell.classList.remove('drop');
-      const id=ev.dataTransfer.getData('id'); const e=EVENTS.find(x=>x.id===id);
-      if(e && e.type!=='touch'){ e.date=cell.dataset.date; render(); }
-    });
-  });
-  host.querySelectorAll('.m-more').forEach(el=> el.addEventListener('click',ev=>{ ev.stopPropagation(); openDayPop(el.dataset.date, el); }));
-}
-
-/* ════════ 周视图 ════════ */
-function weekDays(cur){
-  const lead=(cur.getDay()+6)%7; const mon=new Date(cur); mon.setDate(cur.getDate()-lead);
-  return Array.from({length:7},(_,i)=>{const d=new Date(mon);d.setDate(mon.getDate()+i);return d;});
-}
-function renderWeek(){
-  const days=weekDays(state.cursor), idx=indexByDate();
-  const a=days[0], b=days[6];
-  document.getElementById('periodTitle').textContent=`${a.getMonth()+1}月${a.getDate()}日 – ${b.getMonth()+1}月${b.getDate()}日`;
-  // 逾期/未排期轨
-  const overdue=EVENTS.filter(isOverdue);
-  let html='';
-  if(overdue.length){
-    html+='<div class="w-overdue"><div class="h">⚠ 逾期未完成 · 需补救</div><div class="items">';
-    html+=overdue.map(e=>{const v=gapVars(e);return `<div class="chip overdue" data-id="${e.id}" style="--c:${v.c};--cs:${v.cs}"><span class="ic">🎯</span><span>${e.title}（应于 ${e.date.slice(5)}）</span></div>`;}).join('');
-    html+='</div></div>';
-  }
-  html+='<div class="w-grid">';
-  for(const d of days){
-    const ds=ymd(d), we=(d.getDay()===0||d.getDay()===6), evs=idx[ds]||[];
-    html+=`<div class="w-col"><div class="w-colhead ${we?'we':''}"><div class="dow">周${WEEK_CN[(d.getDay()+6)%7]}</div><div class="dnum ${ds===TODAY_S?'today':''}">${d.getDate()}</div></div><div class="w-body">`;
+  const c=D(state.cursor);
+  document.getElementById('periodTitle').textContent=`${c.getFullYear()}年${c.getMonth()+1}月`;
+  const {weeks,mo}=monthWeeks(state.cursor);
+  const vo=visOpps(), laneOf={}; vo.forEach((o,i)=>laneOf[o.id]=i);
+  const laneH=22, headH=24, bodyH=headH+OPPS.length*laneH+4, evs=visEvents();
+  let html='<div class="m-dow">'+WEEK_CN.map((w,i)=>`<div class="${i>=5?'we':''}">周${w}</div>`).join('')+'</div><div class="m-weeks">';
+  for(const wk of weeks){
+    const wStart=wk[0], wEnd=wk[6];
+    html+=`<div class="m-week" data-days="7" data-wstart="${wStart}" style="min-height:${bodyH}px">`;
+    html+='<div class="m-cells">'+wk.map(ds=>{const d=D(ds), out=d.getMonth()!==mo, we=(d.getDay()===0||d.getDay()===6);
+      return `<div class="m-cell ${out?'out':''} ${we?'we':''}" data-date="${ds}"><div class="m-dnum ${ds===TODAY?'today':''}">${d.getDate()}</div></div>`;}).join('')+'</div>';
+    html+=`<div class="m-bars" style="height:${bodyH}px">`;
     for(const e of evs){
-      const v=gapVars(e);
-      const lane=state.lanes?`border-left-color:${OPPS[e.opp].color} !important;`:'';
-      const cls=['w-chip', e.type==='milestone'?'ms':'', e.type==='touch'?'tc':'', e.status==='done'?'done':''].join(' ');
-      html+=`<div class="${cls}" data-id="${e.id}" style="--c:${v.c};--cs:${v.cs};${lane}"><div class="top"><span>${evIcon(e)}</span><span>${e.title}</span></div><div class="sub">${OPPS[e.opp].name}${e.gap?' · '+e.gap:''}${e.person?' · '+e.person:''}</div></div>`;
+      if(e.end<wStart || e.start>wEnd || !(e.opp in laneOf)) continue;
+      const segS=e.start<wStart?wStart:e.start, segE=e.end>wEnd?wEnd:e.end;
+      const col=diffDays(wStart,segS), span=diffDays(segS,segE)+1, top=headH+laneOf[e.opp]*laneH;
+      html+=`<div class="${barClass(e)}" style="left:calc(${col/7*100}% + 3px); width:calc(${span/7*100}% - 6px); top:${top}px; ${barVars(e)}" data-id="${e.id}">${barInner(e)}${ancHTML(e,e.start>=wStart,e.end<=wEnd)}</div>`;
     }
-    if(!evs.length) html+='<div style="font-size:11px;color:var(--faint);text-align:center;margin-top:18px;">—</div>';
     html+='</div></div>';
   }
   html+='</div>';
   host.innerHTML=html;
-  host.querySelectorAll('.w-chip,.chip').forEach(el=> el.dataset.id && el.addEventListener('click',()=>openDrawer(el.dataset.id)));
+  bindBars(); bindDbl('.m-cell', el=>({date:el.dataset.date}));
 }
 
-/* ════════ 年视图 ════════ */
+/* ════ 周视图：上午/下午两带 × 商机泳道叠放 × 连续块 ════ */
+function weekDays(cur){const c=D(cur), mon=addDays(cur,-dowMon(c)); return Array.from({length:7},(_,i)=>addDays(mon,i));}
+function renderWeek(){
+  const days=weekDays(state.cursor), a=days[0], b=days[6];
+  document.getElementById('periodTitle').textContent=`${D(a).getMonth()+1}月${D(a).getDate()}日 – ${D(b).getMonth()+1}月${D(b).getDate()}日`;
+  const vo=visOpps(), laneOf={}; vo.forEach((o,i)=>laneOf[o.id]=i);
+  const laneH=30, pad=8, bandH=Math.max(184, pad+OPPS.length*laneH), evs=visEvents();
+  let html='<div class="wk"><div class="wk-head"><div class="corner"></div>'+
+    days.map(ds=>{const d=D(ds), we=d.getDay()===0||d.getDay()===6; return `<div class="wh ${we?'we':''}"><div class="dow">周${WEEK_CN[dowMon(d)]}</div><div class="dn ${ds===TODAY?'today':''}">${d.getDate()}</div></div>`;}).join('')+'</div>';
+  const HALF_LABEL={am:'上午',pm:'下午',eve:'晚上'};
+  for(const half of ['am','pm','eve']){
+    html+=`<div class="wk-band"><div class="wk-axis">${HALF_LABEL[half]}</div><div class="wk-track" data-days="7" data-wstart="${a}" data-half="${half}" style="min-height:${bandH}px">`;
+    html+='<div class="wk-grid">'+days.map(ds=>{const d=D(ds);return `<div class="${d.getDay()===0||d.getDay()===6?'we':''}"></div>`;}).join('')+'</div>';
+    if(TODAY>=a&&TODAY<=b){ html+=`<div class="wk-today" style="left:${(diffDays(a,TODAY)+0.5)/7*100}%"></div>`; }
+    for(const e of evs){
+      if((e.half||'am')!==half || e.end<a || e.start>b || !(e.opp in laneOf)) continue;
+      const segS=e.start<a?a:e.start, segE=e.end>b?b:e.end;
+      const col=diffDays(a,segS), span=diffDays(segS,segE)+1, top=pad/2+laneOf[e.opp]*laneH;
+      html+=`<div class="${barClass(e)}" style="left:calc(${col/7*100}% + 3px); width:calc(${span/7*100}% - 6px); top:${top}px; ${barVars(e)}" data-id="${e.id}">${barInner(e)}${ancHTML(e,e.start>=a,e.end<=b)}</div>`;
+    }
+    html+='</div></div>';
+  }
+  html+='</div>';
+  host.innerHTML=html;
+  bindBars(); bindDbl('.wk-track', (el,ev)=>{const r=el.getBoundingClientRect(); const day=Math.floor((ev.clientX-r.left)/(r.width/7)); return {date:addDays(el.dataset.wstart, Math.max(0,Math.min(6,day))), half:el.dataset.half};});
+}
+
+/* ════ 年视图：每月 周列 × 商机行 矩阵 ════ */
 function renderYear(){
-  const y=state.cursor.getFullYear();
+  const y=D(state.cursor).getFullYear();
   document.getElementById('periodTitle').textContent=`${y}年`;
-  const idx=indexByDate();
-  let html='<div class="y-grid">';
+  const vo=visOpps(), evs=visEvents();
+  let html='<div class="yr">';
   for(let mo=0;mo<12;mo++){
-    const first=new Date(y,mo,1), lead=(first.getDay()+6)%7, start=new Date(y,mo,1-lead);
-    const days=new Date(y,mo+1,0).getDate(), rows=Math.ceil((lead+days)/7);
-    let cnt=0;
-    for(const e of EVENTS){ if(e.date.startsWith(`${y}-${String(mo+1).padStart(2,'0')}`)) cnt++; }
-    const isCur=(mo===5);
-    html+=`<div class="y-mini ${isCur?'cur':''}" data-mo="${mo}"><div class="y-mtitle">${mo+1}月 ${cnt?`<span class="cnt">${cnt} 事项</span>`:''}</div>`;
-    html+='<div class="y-mhead">'+WEEK_CN.map(w=>`<div>${w}</div>`).join('')+'</div><div class="y-mgrid">';
-    for(let i=0;i<rows*7;i++){
-      const d=new Date(start); d.setDate(start.getDate()+i);
-      const out=d.getMonth()!==mo, ds=ymd(d), evs=out?[]:(idx[ds]||[]);
-      const dots=[...new Set(evs.map(e=>gapVars(e).c))].slice(0,3);
-      html+=`<div class="y-day ${out?'out':''} ${ds===TODAY_S?'today':''}">${d.getDate()}`;
-      if(dots.length) html+='<div class="y-dots">'+dots.map(c=>`<span class="y-dot" style="background:${c}"></span>`).join('')+'</div>';
-      html+='</div>';
+    const {weeks}=monthWeeks(`${y}-${p2(mo+1)}-01`);
+    const cnt=evs.filter(e=>e.start.startsWith(`${y}-${p2(mo+1)}`)).length;
+    const cols=weeks.length;
+    html+=`<div class="ym"><div class="ym-t">${mo+1}月 ${cnt?`<span class="cnt">${cnt}事项</span>`:''}</div>`;
+    html+=`<div class="ym-mat" style="grid-template-columns:44px repeat(${cols},1fr)">`;
+    html+='<div></div>'+weeks.map((wk,i)=>`<div class="ym-hd">W${i+1}</div>`).join('');
+    for(const o of vo){
+      html+=`<div class="ym-name"><span class="lg-bar" style="background:${oppBarColor(o)}"></span>${o.short}</div>`;
+      let prevK=null;   // 同一行连续相同阶段 → 只第一格写文字
+      for(const wk of weeks){
+        const rep = wk.find(ds=>D(ds).getMonth()===mo) || wk[3];   // 该周属本月的代表日
+        const seg=stageOfDay(o.id, rep);
+        const wEvs=evs.filter(e=>e.opp===o.id && e.end>=wk[0] && e.start<=wk[6]);
+        const icons=wEvs.slice(0,4).map(e=>`<span data-evid="${e.id}">${TYPES[e.type].icon}</span>`).join('');
+        const wStart=wk[0], wEnd=wk[6];
+        if(seg){ const label = seg.k===prevK ? '' : STAGES[seg.k]; prevK=seg.k;
+          html+=`<div class="ym-cell" data-opp="${o.id}" data-ws="${wStart}" data-we="${wEnd}" data-seg="${o.id}|${seg.s}" style="background:${stageColor(o,seg.k)}; color:${stageInk(seg.k)}"><div class="stg">${label}</div><div class="evs">${icons}</div></div>`;
+        } else { prevK=null;
+          html+=`<div class="ym-cell empty" data-opp="${o.id}" data-ws="${wStart}" data-we="${wEnd}"><div class="stg">＋阶段</div><div class="evs">${icons}</div></div>`;
+        }
+      }
     }
     html+='</div></div>';
   }
   html+='</div>';
   host.innerHTML=html;
-  host.querySelectorAll('.y-mini').forEach(el=> el.addEventListener('click',()=>{ state.cursor=new Date(y,+el.dataset.mo,1); state.view='month'; render(); }));
+  bindYearCells();
+}
+function bindYearCells(){
+  host.querySelectorAll('.ym-cell').forEach(cell=>{
+    cell.querySelectorAll('.evs span').forEach(s=>s.addEventListener('click',ev=>{ev.stopPropagation(); openDraw('edit', s.dataset.evid);}));
+    cell.addEventListener('dblclick',()=> openStage('create', cell.dataset.opp, cell.dataset.ws, cell.dataset.we));
+    cell.addEventListener('click',ev=>{ if(ev.target.closest('.evs span')) return; if(cell.dataset.seg) openStage('edit', cell.dataset.opp, null, null, cell.dataset.seg); });
+  });
 }
 
-/* ════════ 详情抽屉 ════════ */
-const drawer=document.getElementById('drawer'), dmask=document.getElementById('drawerMask');
-function openDrawer(id){
-  const e=EVENTS.find(x=>x.id===id); if(!e) return;
-  const opp=OPPS[e.opp]; const v=gapVars(e);
-  document.getElementById('dTitle').innerHTML=`${evIcon(e)} ${e.title}`;
-  const typeLabel={action:'🎯 行动计划', milestone:'🚩 商机里程碑', touch:'📌 历史触点'}[e.type];
-  let rows=`<div class="d-row"><div class="k">类型</div><div class="v">${typeLabel}</div></div>`;
-  rows+=`<div class="d-row"><div class="k">日期</div><div class="v">${e.date}${isOverdue(e)?' <span style="color:var(--ev-ms);font-weight:700">· 已逾期</span>':''}</div></div>`;
-  rows+=`<div class="d-row"><div class="k">商机</div><div class="v"><span class="tag" style="background:${opp.color};color:#fff">${opp.name}</span></div></div>`;
-  rows+=`<div class="d-row"><div class="k">阶段</div><div class="v">${opp.stage} · <span class="win-pill" style="background:${BAND_COLOR[opp.band]}22;color:${BAND_COLOR[opp.band]}">趋赢力 ${opp.win}% · ${opp.band}</span></div></div>`;
-  if(e.type==='action'){
-    rows+=`<div class="d-row"><div class="k">补分项</div><div class="v">${e.gap?`<span class="tag" style="background:${v.cs};color:${v.c}">${e.gap} ${gapName(e.gap)}</span>`:'<span style="color:var(--muted)">— 非补分动作</span>'}</div></div>`;
-    rows+=`<div class="d-row"><div class="k">目标人</div><div class="v">${e.person||'—'}</div></div>`;
-    rows+=`<div class="d-row"><div class="k">场景</div><div class="v">${e.scene||'—'}</div></div>`;
-    rows+=`<div class="d-row"><div class="k">话术</div><div class="v">${e.scripts||'<span style="color:var(--muted)">741 行动宝典可预填</span>'}</div></div>`;
-    rows+=`<div class="d-row"><div class="k">期望</div><div class="v">${e.target||'—'}</div></div>`;
-    rows+=`<div class="d-row"><div class="k">状态</div><div class="v">${statusTag(e.status)}</div></div>`;
-  } else if(e.type==='milestone'){
-    rows+=`<div class="d-row"><div class="k">说明</div><div class="v">商机关键节点（来自 Opportunity.expectedSignDate / 阶段推进，里程碑复用现有字段）</div></div>`;
-  } else {
-    rows+=`<div class="d-row"><div class="k">参与人</div><div class="v">${e.person||'—'}</div></div>`;
-    rows+=`<div class="d-row"><div class="k">来源</div><div class="v">VisitNote 拜访纪要（只读回看）</div></div>`;
+/* ════ 事件交互：pointerup 统一判断单击/拖拽（修再点抽屉 + 跨周拖拽） ════ */
+let drag=null, moved=false;
+function bindBars(){
+  host.querySelectorAll('.bar').forEach(el=>{
+    const id=el.dataset.id;
+    el.querySelectorAll('.handle').forEach(h=>h.addEventListener('pointerdown',ev=>startDrag(ev,el,id,h.dataset.h)));
+    el.addEventListener('pointerdown',ev=>{ if(!ev.target.classList.contains('handle')) startDrag(ev,el,id, state.sel===id?'move':'tap'); });
+  });
+}
+function startDrag(ev,el,id,mode){
+  ev.preventDefault(); ev.stopPropagation();
+  const track=el.closest('[data-days]'); const e=evOf(id);
+  // 不用 setPointerCapture：拖拽中实时 render 会换掉元素，靠 window 监听跟踪鼠标
+  drag={id,mode, dayPx: track? track.clientWidth/ +track.dataset.days : 30, x0:ev.clientX, oStart:e.start, oEnd:e.end};
+  moved=false;
+}
+window.addEventListener('pointermove',ev=>{
+  if(!drag) return;
+  const dpx=ev.clientX-drag.x0; if(Math.abs(dpx)>4) moved=true;
+  if(!moved || drag.mode==='tap') return;
+  const dd=Math.round(dpx/drag.dayPx);
+  const o=evOf(drag.id); let s=drag.oStart, e=drag.oEnd;
+  if(drag.mode==='move'){ s=addDays(s,dd); e=addDays(e,dd); }
+  else if(drag.mode==='start'){ s=addDays(s,dd); if(s>e) s=e; }
+  else { e=addDays(e,dd); if(e<s) e=s; }
+  let nh=o.half;
+  if(state.view==='week' && drag.mode==='move'){          // 周视图整体拖动：垂直可改 上午/下午/晚上
+    const hit=document.elementFromPoint(ev.clientX, ev.clientY);
+    const tr=hit && hit.closest && hit.closest('.wk-track');
+    if(tr && tr.dataset.half) nh=tr.dataset.half;
   }
-  document.getElementById('dBody').innerHTML=rows;
-  const act=document.getElementById('dActions');
-  if(e.type==='action'){
-    act.innerHTML = e.status==='done'
-      ? `<button class="b-ghost" onclick="toggleDone('${e.id}')">↩ 取消完成</button><button class="b-primary" onclick="alert('原型：跳转侦探墙定位该 gap 与干系人')">🕸 去侦探墙</button>`
-      : `<button class="b-ghost" onclick="alert('原型：跳转侦探墙定位该 gap 与干系人')">🕸 去侦探墙</button><button class="b-primary" onclick="toggleDone('${e.id}')">✓ 标记完成</button>`;
+  if(o.start!==s || o.end!==e || o.half!==nh){ o.start=s; o.end=e; o.half=nh; render(); }   // 实时改期/改时段 → 即时可见
+});
+window.addEventListener('pointerup',()=>{
+  if(!drag) return; const mv=moved, id=drag.id; drag=null; moved=false;
+  if(!mv) clickEvent(id);   // 未移动=单击；移动过则已实时提交
+});
+function clickEvent(id){ if(state.sel===id) openDraw('edit',id); else { state.sel=id; render(); } }
+
+/* 双击空白新增（月/周） */
+function bindDbl(sel, getData){
+  host.querySelectorAll(sel).forEach(el=>{
+    el.addEventListener('dblclick',ev=>{ if(ev.target.closest('.bar')) return; const d=getData(el,ev); if(d) openDraw('create', null, d); });
+  });
+}
+
+/* ════ 事件抽屉 ════ */
+const dw=document.getElementById('dw'), dwm=document.getElementById('dwMask');
+let dwMode='create', dwEditId=null, dwType='action', dwHalf='am';
+function setSeg(box,val,a){ box.querySelectorAll('button').forEach(b=>b.classList.toggle('on', b.dataset[a]===val)); }
+function fillOpp(sel){ sel.innerHTML=OPPS.map(o=>`<option value="${o.id}">${o.name}</option>`).join(''); }
+function openDraw(mode,id,pre){
+  dwMode=mode; dwEditId=id; fillOpp(document.getElementById('dwOpp'));
+  if(mode==='edit'){ const e=evOf(id);
+    document.getElementById('dwTitle').textContent='事件详情 · 编辑'; document.getElementById('dwDel').style.display='';
+    dwType=e.type; dwHalf=e.half||'am';
+    document.getElementById('dwOpp').value=e.opp; document.getElementById('dwTitleInput').value=e.title;
+    document.getElementById('dwStart').value=e.start; document.getElementById('dwEnd').value=e.end;
+    document.getElementById('dwDone').checked=!!e.done;
   } else {
-    act.innerHTML=`<button class="b-ghost" onclick="closeDrawer()">关闭</button><button class="b-primary" onclick="alert('原型：跳转侦探墙')">🕸 去侦探墙</button>`;
+    document.getElementById('dwTitle').textContent='新增事件'; document.getElementById('dwDel').style.display='none';
+    dwType='action'; dwHalf=pre?.half||'am';
+    document.getElementById('dwOpp').value=pre?.opp||visOpps()[0]?.id||'o1';
+    document.getElementById('dwTitleInput').value='';
+    document.getElementById('dwStart').value=pre?.date||TODAY; document.getElementById('dwEnd').value=pre?.date||TODAY;
+    document.getElementById('dwDone').checked=false;
   }
-  drawer.classList.add('open'); dmask.classList.add('open');
+  setSeg(document.getElementById('dwType'),dwType,'t'); setSeg(document.getElementById('dwHalf'),dwHalf,'h'); updateDoneVis();
+  dw.classList.add('open'); dwm.classList.add('open');
 }
-function gapName(g){return {C1:'组织图',C2:'拍板人BI',C3:'立项材料',C4:'介入阶段',C5:'招采5项',C6:'UCV',P1:'多数支持',P2:'招采关键人',P3:'与D密谋',P4:'关键影响人','1K':'最高决策人A'}[g]||'';}
-function statusTag(s){const m={todo:['待办','var(--muted)'],doing:['进行中','var(--accent)'],done:['已完成','#16a34a'],skipped:['已跳过','var(--faint)']}[s]||['',''];return `<span class="tag" style="background:${m[1]}22;color:${m[1]}">${m[0]}</span>`;}
-function toggleDone(id){const e=EVENTS.find(x=>x.id===id); e.status=e.status==='done'?'todo':'done'; e.doneAt=e.status==='done'?TODAY_S:null; openDrawer(id); render();}
-function closeDrawer(){drawer.classList.remove('open'); dmask.classList.remove('open');}
-dmask.addEventListener('click',closeDrawer);
-document.getElementById('dClose').addEventListener('click',closeDrawer);
+function updateDoneVis(){ document.getElementById('dwDoneFld').style.display = dwType==='action' ? '' : 'none'; }
+function closeDraw(){ dw.classList.remove('open'); dwm.classList.remove('open'); }
+document.getElementById('dwType').querySelectorAll('button').forEach(b=>b.onclick=()=>{dwType=b.dataset.t; setSeg(document.getElementById('dwType'),dwType,'t'); updateDoneVis();});
+document.getElementById('dwHalf').querySelectorAll('button').forEach(b=>b.onclick=()=>{dwHalf=b.dataset.h; setSeg(document.getElementById('dwHalf'),dwHalf,'h');});
+document.getElementById('dwClose').onclick=closeDraw; document.getElementById('dwCancel').onclick=closeDraw; dwm.onclick=closeDraw;
+document.getElementById('dwDel').onclick=()=>{ if(dwEditId){EVENTS=EVENTS.filter(x=>x.id!==dwEditId); state.sel=null;} closeDraw(); render(); };
+document.getElementById('dwSave').onclick=()=>{
+  let s=document.getElementById('dwStart').value||TODAY, e=document.getElementById('dwEnd').value; if(!e||e<s)e=s;
+  const title=document.getElementById('dwTitleInput').value.trim()||TYPES[dwType].label, opp=document.getElementById('dwOpp').value;
+  const done=dwType==='action' && document.getElementById('dwDone').checked;
+  if(dwMode==='create') EVENTS.push({id:'e'+(++uidN), type:dwType, opp, start:s, end:e, half:dwHalf, title, done});
+  else Object.assign(evOf(dwEditId),{type:dwType, opp, start:s, end:e, half:dwHalf, title, done});
+  closeDraw(); render();
+};
 
-/* ════════ 当日弹层（+N more） ════════ */
-function openDayPop(ds,anchor){
-  closeDayPop();
-  const idx=indexByDate(), evs=idx[ds]||[];
-  const mask=document.createElement('div'); mask.className='pop-mask'; mask.id='popMask'; mask.onclick=closeDayPop;
-  const pop=document.createElement('div'); pop.className='daypop'; pop.id='dayPop';
-  const d=new Date(ds+'T00:00:00');
-  pop.innerHTML=`<div class="h">${d.getMonth()+1}月${d.getDate()}日 · ${evs.length} 项</div>`+evs.map(chipHTML).join('');
-  document.body.append(mask,pop);
-  const r=anchor.getBoundingClientRect();
-  pop.style.left=Math.min(r.left, window.innerWidth-280)+'px';
-  pop.style.top=Math.min(r.bottom+4, window.innerHeight-pop.offsetHeight-10)+'px';
-  pop.querySelectorAll('.chip').forEach(el=> el.addEventListener('click',()=>{closeDayPop(); openDrawer(el.dataset.id);}));
+/* ════ 阶段段 Modal（年视图，模型 B） ════ */
+const stMask=document.getElementById('stMask');
+let stMode='create', stOid=null, stSegStart=null;
+function openStage(mode, oid, ws, we, segKey){
+  stMode=mode; stOid=oid;
+  document.getElementById('stStage').innerHTML=STAGES.map((s,i)=>`<option value="${i}">${i+1}. ${s}</option>`).join('');
+  document.getElementById('stOpp').value=oppById[oid].name;
+  if(mode==='edit'){
+    stSegStart=segKey.split('|')[1];
+    const seg=GANTT[oid].find(s=>s.s===stSegStart);
+    document.getElementById('stTitle').textContent='编辑阶段段'; document.getElementById('stDel').style.display='';
+    document.getElementById('stStage').value=seg.k; document.getElementById('stStart').value=seg.s; document.getElementById('stEnd').value=seg.e;
+  } else {
+    stSegStart=null;
+    document.getElementById('stTitle').textContent='新建阶段段（可降级回退）'; document.getElementById('stDel').style.display='none';
+    const o=oppById[oid]; document.getElementById('stStage').value=Math.min(o.cur+0,5);
+    document.getElementById('stStart').value=ws; document.getElementById('stEnd').value=we;
+  }
+  stMask.classList.add('open');
 }
-function closeDayPop(){['popMask','dayPop'].forEach(id=>{const el=document.getElementById(id); if(el)el.remove();});}
+function closeStage(){ stMask.classList.remove('open'); }
+document.getElementById('stClose').onclick=closeStage; document.getElementById('stCancel').onclick=closeStage;
+stMask.addEventListener('click',ev=>{ if(ev.target===stMask) closeStage(); });
+document.getElementById('stDel').onclick=()=>{ if(stSegStart){ GANTT[stOid]=GANTT[stOid].filter(s=>s.s!==stSegStart); } closeStage(); render(); };
+document.getElementById('stSave').onclick=()=>{
+  let s=document.getElementById('stStart').value, e=document.getElementById('stEnd').value; if(!s) return; if(!e||e<s)e=s;
+  const k=+document.getElementById('stStage').value;
+  if(stMode==='edit'){ const seg=GANTT[stOid].find(x=>x.s===stSegStart); seg.k=k; seg.s=s; seg.e=e; }
+  else GANTT[stOid].push({k,s,e});
+  GANTT[stOid].sort((a,b)=>a.s<b.s?-1:1);
+  closeStage(); render();
+};
 
-/* ════════ 工具栏交互 ════════ */
-document.querySelectorAll('.seg button').forEach(b=> b.addEventListener('click',()=>{state.view=b.dataset.view; render();}));
-document.getElementById('prevBtn').addEventListener('click',()=>shift(-1));
-document.getElementById('nextBtn').addEventListener('click',()=>shift(1));
-function shift(dir){const c=state.cursor;
-  if(state.view==='month') state.cursor=new Date(c.getFullYear(),c.getMonth()+dir,1);
-  else if(state.view==='week'){state.cursor=new Date(c); state.cursor.setDate(c.getDate()+dir*7);}
-  else state.cursor=new Date(c.getFullYear()+dir,c.getMonth(),1);
-  render();
+/* ════ 工具栏 ════ */
+document.querySelectorAll('.seg button').forEach(b=>b.onclick=()=>{state.view=b.dataset.view; state.sel=null; render();});
+document.getElementById('prevBtn').onclick=()=>shift(-1);
+document.getElementById('nextBtn').onclick=()=>shift(1);
+function shift(dir){const c=D(state.cursor);
+  if(state.view==='month') state.cursor=ymd(new Date(c.getFullYear(),c.getMonth()+dir,1));
+  else if(state.view==='week') state.cursor=addDays(state.cursor,dir*7);
+  else state.cursor=ymd(new Date(c.getFullYear()+dir,c.getMonth(),1));
+  state.sel=null; render();
 }
-document.getElementById('todayBtn').addEventListener('click',()=>{state.cursor=new Date(2026,5,5); render();});
-document.getElementById('laneChk').addEventListener('change',e=>{state.lanes=e.target.checked; render();});
-document.getElementById('newBtn').addEventListener('click',()=>alert('原型：弹出「新建行动」表单（标题 / 目标人 / 关联 gap / 话术 / 截止日）→ ADD_PLAN_ACTION'));
-document.getElementById('tabWall').addEventListener('click',()=>alert('原型聚焦「商机策划」。\\n实际产品中此处切回现有「侦探墙」（Canvas + L1–L4 + 趋赢力面板），零改动。'));
-
-/* 主题 */
+document.getElementById('todayBtn').onclick=()=>{state.cursor='2026-06-05'; state.sel=null; render();};
+document.getElementById('tabWall').onclick=()=>alert('原型聚焦「商机策划」。\\n实际产品中此处切回现有「侦探墙」，零改动。');
 const themeBtn=document.getElementById('themeBtn');
-themeBtn.addEventListener('click',()=>{
-  const dark=document.documentElement.getAttribute('data-theme')==='dark';
-  document.documentElement.setAttribute('data-theme', dark?'light':'dark');
-  themeBtn.textContent=dark?'🌙':'☀️';
-});
-/* 待排期建议：拖入日历 */
-[['sugg1','约赵建国汇报方案窗口','1K','赵建国（集团副总）'],['sugg2','转化王教授（中立专家）','P1','王教授（外部顾问）']].forEach(([id,title,gap,person])=>{
-  const el=document.getElementById(id); el.setAttribute('draggable','true');
-  el.addEventListener('dragstart',ev=>ev.dataTransfer.setData('id','NEW::'+JSON.stringify({title,gap,person})));
-});
-// 扩展 drop：支持从建议新建
-host.addEventListener('drop',ev=>{
-  const raw=ev.dataTransfer.getData('id');
-  if(raw && raw.startsWith('NEW::')){
-    const cell=ev.target.closest('.m-cell'); if(!cell) return;
-    const d=JSON.parse(raw.slice(5));
-    EVENTS.push({id:'new'+Date.now(), type:'action', date:cell.dataset.date, title:d.title, opp:'o1', gap:d.gap, person:d.person, status:'todo', scene:'', scripts:'', target:''});
-    render();
-  }
-},true);
+themeBtn.onclick=()=>{const dark=document.documentElement.getAttribute('data-theme')==='dark'; document.documentElement.setAttribute('data-theme',dark?'light':'dark'); themeBtn.textContent=dark?'🌙':'☀️';};
+host.addEventListener('pointerdown',ev=>{ if(!ev.target.closest('.bar')&&!ev.target.closest('.ym-cell')){ if(state.sel){state.sel=null; render();} } });
 
 render();
 </script>
