@@ -27,6 +27,11 @@ export async function assembleState(tenantId: string) {
       name: a.name,
       customerType: a.customerType,
       unifiedCreditCode: a.unifiedCreditCode ?? undefined,
+      externalRef: a.externalRef ?? undefined,
+      region: a.region,
+      group: a.group,
+      primaryOwner: a.primaryOwner,
+      profile: J(a.profile, {}),
       persons: a.persons.map((p) => ({
         id: p.id, name: p.name, title: p.title, orgLevel: p.orgLevel, isCompetitor: p.isCompetitor,
         avatarUrl: p.avatarUrl ?? undefined, coachLevel: p.coachLevel ?? undefined, color: p.color ?? undefined, x: p.x, y: p.y,

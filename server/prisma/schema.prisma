@@ -81,6 +81,11 @@ model Account {
   name              String
   customerType      Int
   unifiedCreditCode String?
+  externalRef       String?       // 销售包 customer_id，跨系统幂等主锚（WorkBuddy 集成）
+  region            String        @default("")   // 大区
+  group             String        @default("")   // 集团/母公司
+  primaryOwner      String        @default("")   // 主负责人
+  profile           String        @default("{}") // JSON：工商基础/集团关系/招投标/风险信号/我方现有合作/销售背景/AI建议
   createdAt         DateTime      @default(now())
   persons           Person[]
   opportunities     Opportunity[]

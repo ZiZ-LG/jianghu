@@ -12,6 +12,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { prisma } from './prisma.js';
+import { applyAction } from './mutate.js';
 import { scoreFromState, ITEM_LABEL, ITEM_MAX, type ItemKey } from './g64111.js';
 
 // 每租户 pending 候选容量上限（防外部 agent 刷爆）
@@ -137,6 +138,25 @@ const TOOL_DEFS = [
     inputSchema: {
       type: 'object',
       properties: { accountId: { type: 'string', description: '可选：只看某客户的候选' } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'upsert_account',
+    description:
+      '【写·直接落正式表】同步销售包（WorkBuddy）的「客户档案」到江湖，幂等 upsert（非候选）。幂等键：externalRef（销售包 customer_id，主锚）或 unifiedCreditCode（统一社会信用代码 USCC，副锚）——二者至少提供一个：先按 externalRef 命中、否则按 USCC 命中并补登 externalRef；都未命中则新建。客户档案属业务实体（非个人身份判定），直接写正式 Account 表并带 origin=workbuddy 溯源。注意：干系人本体/关系连线仍须走 propose_person / propose_relationship 候选人审（PIPL 红线）。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        externalRef: { type: 'string', description: '销售包 customer_id（幂等主锚）。与 unifiedCreditCode 至少提供一个' },
+        unifiedCreditCode: { type: 'string', description: '统一社会信用代码 USCC（幂等副锚）。与 externalRef 至少提供一个' },
+        name: { type: 'string', description: '客户全称（新建时必填）' },
+        customerType: { type: 'number', description: '客户类型 1/2/3（1=五大六小央企能源集团，2=央国企电力建设集团，3=地方/民营能源投资建设企业）' },
+        region: { type: 'string', description: '大区' },
+        group: { type: 'string', description: '集团/母公司' },
+        primaryOwner: { type: 'string', description: '主负责人' },
+        profile: { type: 'object', description: '企业背景档案 JSON：business(工商)/group(集团关系)/bidding(招投标)/risk(风险)/ourCooperation(我方合作)/salesNote(销售背景)/aiSuggestion(AI建议)', additionalProperties: true },
+      },
       additionalProperties: false,
     },
   },
@@ -422,6 +442,61 @@ async function listPending(tenantId: string, accountId: string) {
   };
 }
 
+// ───────────────────────── 业务实体直写工具（落正式表 · tenantId 隔离 · 带 origin 溯源） ─────────────────────────
+// 与 propose_* 候选工具不同：客户档案属业务实体（非个人身份判定），可直接 upsert 正式表
+//（人审边界见 docs/集成-WorkBuddy销售包对接设计.md §0）。复用 applyAction 构造 Action 落库，
+// 不另写 prisma 写逻辑；幂等去重在应用层（不靠 DB unique，保持 SQLite↔Postgres 可移植）。
+
+/** upsert_account：按 externalRef(主锚)→unifiedCreditCode(副锚) 幂等 upsert 客户档案。 */
+async function upsertAccount(tenantId: string, _userId: string, args: Record<string, unknown>) {
+  const externalRef = str(args.externalRef, 80).trim() || null;
+  const unifiedCreditCode = str(args.unifiedCreditCode, 40).trim() || null;
+  if (!externalRef && !unifiedCreditCode) throw new Error('缺少幂等锚：externalRef 或 unifiedCreditCode 至少提供一个');
+
+  const name = str(args.name, 100).trim();
+  const ct = num(args.customerType);
+  const customerType = ct && [1, 2, 3].includes(ct) ? ct : undefined;
+  const profile = args.profile != null && typeof args.profile === 'object' ? (args.profile as Record<string, unknown>) : undefined;
+
+  // 幂等查找（全程 where { tenantId }）：先主锚 externalRef，再副锚 unifiedCreditCode
+  let existing = externalRef ? await prisma.account.findFirst({ where: { tenantId, externalRef } }) : null;
+  if (!existing && unifiedCreditCode) {
+    existing = await prisma.account.findFirst({ where: { tenantId, unifiedCreditCode } });
+  }
+
+  if (existing) {
+    // 命中 → UPDATE：仅 patch 入参提供的字段（避免把未传字段清空）
+    const patch: Record<string, unknown> = {};
+    if (name) patch.name = name;
+    if (customerType) patch.customerType = customerType;
+    if (unifiedCreditCode) patch.unifiedCreditCode = unifiedCreditCode;
+    if (externalRef && !existing.externalRef) patch.externalRef = externalRef; // 副锚命中时补登主锚
+    if (args.region !== undefined) patch.region = str(args.region, 40);
+    if (args.group !== undefined) patch.group = str(args.group, 100);
+    if (args.primaryOwner !== undefined) patch.primaryOwner = str(args.primaryOwner, 40);
+    if (profile !== undefined) patch.profile = profile;
+    await applyAction(tenantId, { type: 'UPDATE_ACCOUNT', accId: existing.id, patch });
+    return { id: existing.id, updated: true, origin: 'workbuddy', note: `已按幂等锚命中现有客户「${existing.name}」并更新。` };
+  }
+
+  // 未命中 → CREATE（新建必须有 name）
+  if (!name) throw new Error('未命中现有客户，新建需提供 name');
+  const id = 'acc_' + randomUUID().slice(0, 12);
+  await applyAction(tenantId, {
+    type: 'ADD_ACCOUNT',
+    account: {
+      id, name,
+      customerType: customerType ?? 1,
+      unifiedCreditCode, externalRef,
+      region: str(args.region, 40),
+      group: str(args.group, 100),
+      primaryOwner: str(args.primaryOwner, 40),
+      profile: profile ?? {},
+    },
+  });
+  return { id, created: true, origin: 'workbuddy', note: `已新建客户「${name}」。` };
+}
+
 // ───────────────────────── 工具分发 ─────────────────────────
 
 async function callTool(tenantId: string, userId: string, name: string, args: Record<string, unknown>) {
@@ -444,6 +519,8 @@ async function callTool(tenantId: string, userId: string, name: string, args: Re
       return proposeRelationship(tenantId, userId, args);
     case 'list_pending':
       return listPending(tenantId, typeof args.accountId === 'string' ? args.accountId : '');
+    case 'upsert_account':
+      return upsertAccount(tenantId, userId, args);
     default:
       throw new Error(`未知工具：${name}`);
   }

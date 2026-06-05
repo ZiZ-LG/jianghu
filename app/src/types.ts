@@ -139,12 +139,31 @@ export interface Opportunity {
   edges: Edge[]; // 增量边 L2/L3/L4
 }
 
+/**
+ * 客户档案（profile，JSON 落库）：销售包（WorkBuddy）经 MCP 推送的企业背景，分维度。
+ * 各字段皆可选，缺省即未采集；属业务实体（非个人身份判定），可直接 upsert（非候选）。
+ */
+export interface AccountProfile {
+  business?: string;       // 工商基础：注册资本/成立日期/法定代表人/经营范围
+  group?: string;          // 集团关系：母子公司/控股结构
+  bidding?: string;        // 招投标：历史/在招项目摘要
+  risk?: string;           // 风险信号：诉讼/失信/经营异常
+  ourCooperation?: string; // 我方现有合作：已签/在执行/历史交付
+  salesNote?: string;      // 销售自填背景
+  aiSuggestion?: string;   // AI 建议（参考，不计分）
+}
+
 /** 客户（存量根） */
 export interface Account {
   id: string;
   name: string;
   customerType: CustomerType;
   unifiedCreditCode?: string;
+  externalRef?: string;     // 销售包 customer_id，跨系统幂等主锚（WorkBuddy 集成）
+  region?: string;          // 大区
+  group?: string;           // 集团/母公司
+  primaryOwner?: string;    // 主负责人
+  profile?: AccountProfile; // 企业背景档案（销售包推送）
   persons: Person[];
   baseEdges: Edge[]; // 存量边 L1 + 基础 L3
   opportunities: Opportunity[];
