@@ -6,7 +6,7 @@ import { OverflowMenu } from './OverflowMenu';
 
 export function CustomerHub({
   accounts, onOpen, onCreate, onLoadDemo, onDeleteAccount,
-  tenantName, userName, plan, onOpenTeam, onLogout, onOpenAiSettings, theme, onToggleTheme, onOpenHelp, onOpenMcpAccess,
+  tenantName, userName, plan, onOpenTeam, onLogout, onOpenAiSettings, theme, onToggleTheme, onOpenHelp, onOpenMcpAccess, onOpenIntel,
 }: {
   accounts: Account[];
   onOpen: (accId: string) => void;
@@ -23,6 +23,7 @@ export function CustomerHub({
   onToggleTheme: () => void;
   onOpenHelp: () => void;
   onOpenMcpAccess: () => void;
+  onOpenIntel: () => void; // 从零口述建客户
 }) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
@@ -51,6 +52,7 @@ export function CustomerHub({
           <button className="team-chip" onClick={onOpenTeam}>👥 团队 · ❤️ 支持</button>
           <span className="who">{userName}</span>
           <button className="btn ghost" onClick={onLoadDemo}>载入示例</button>
+          <button className="btn cta" onClick={onOpenIntel}>🎙️ 录入情报</button>
           <button className="btn primary" onClick={() => setCreating(true)}>＋ 新建客户</button>
           <button className="btn ghost" onClick={onLogout} title="退出登录">退出</button>
         </div>
@@ -59,6 +61,7 @@ export function CustomerHub({
           <button className="theme-toggle" onClick={onToggleTheme} title="切换主题">{theme === 'dark' ? '☀️' : '🌙'}</button>
           <button className="btn primary xs" onClick={() => setCreating(true)}>＋ 新建</button>
           <OverflowMenu align="right" items={[
+            { label: '🎙️ 录入情报', primary: true, onClick: onOpenIntel },
             { label: '📋 载入示例', onClick: onLoadDemo },
             { label: '🔌 接入 AI', onClick: onOpenMcpAccess },
             { label: '🧠 AI 模型', onClick: onOpenAiSettings },
@@ -74,7 +77,8 @@ export function CustomerHub({
           <div className="hub-empty-emoji">🗺️</div>
           <div className="hub-empty-t">还没有客户</div>
           <div className="hub-empty-s">从「新建客户」开始你的第一张作战地图，或先「载入示例数据」体验完整功能。</div>
-          <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+          <div style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap', justifyContent: 'center' }}>
+            <button className="btn cta" onClick={onOpenIntel}>🎙️ 口述建客户</button>
             <button className="btn primary" onClick={() => setCreating(true)}>＋ 新建客户</button>
             <button className="btn ghost" onClick={onLoadDemo}>载入示例（西部电力建设集团）</button>
           </div>

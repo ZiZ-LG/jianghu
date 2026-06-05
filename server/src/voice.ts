@@ -15,6 +15,7 @@ import { applyAction } from './mutate.js';
 const PIPELINE = ['线索', '需求引导', '方案认可', '客户立项', '招投标', '合同谈判', '合同双签'];
 const VALID_ROLE = ['A', 'D', 'U', 'TB', 'R'];
 const VALID_SENT = ['star', 'plus', 'neutral', 'unknown', 'minus', 'x'];
+const VALID_UCV_STATUS = ['建议', '获认可', '已解决'];
 
 const S = (v: unknown, max = 200): string => (typeof v === 'string' ? v.slice(0, max).trim() : '');
 const N = (v: unknown): number | undefined => (typeof v === 'number' && isFinite(v) ? v : undefined);
@@ -33,6 +34,7 @@ const EXTRACT_SYSTEM = `你是销售情报结构化助手，精通 G64111 销售
 【术语】角色 A批准人 D拍板人 U使用者 TB技术选型/招采把关 R影响者/教练（竞争对手不是角色）。
 支持度 star排他支持 plus明确支持 neutral中立 unknown未知 minus负面 x倒向对手。
 关系分层 L1组织架构 L2决策权力 L3情感阵营 L4战略本质。
+燃眉之急 BI=干系人最迫切的难题/压力；独特价值 UCV=我方能解决该 BI 而竞品给不了的差异化价值（必对应某条 BI）。
 
 【只输出 JSON】不要任何解释文字。结构：
 {
@@ -41,15 +43,17 @@ const EXTRACT_SYSTEM = `你是销售情报结构化助手，精通 G64111 销售
   "persons": [{"name":"姓名","title":"职务","orgLevel":1到4,"suggestedRole":"A|D|U|TB|R","suggestedSentiment":"star|plus|neutral|unknown|minus|x","kind":"explicit|inferred","confidence":0到1,"evidence":"原话"}],
   "relationships": [{"source":"人名","target":"人名","layer":"L1|L2|L3|L4","label":"关系描述","kind":"...","confidence":0到1,"evidence":"..."}],
   "burningIssues": [{"person":"姓名","description":"燃眉之急","category":"类别","kind":"..."}],
+  "ucvs": [{"person":"该价值针对谁的BI","biCategory":"对应BI的类别","description":"我方独特价值","competitorCannot":"竞品给不了什么","status":"建议|获认可|已解决","kind":"explicit|inferred","evidence":"原话"}],
   "rawNote": "把整段口述原样保留作为拜访纪要"
 }
 - pipelineStage 只能取：线索/需求引导/方案认可/客户立项/招投标/合同谈判/合同双签。
 - relationships 的 source/target 必须是 persons 里出现过的人名或上下文已知干系人；端点是隐含的第三方（如"竞争对手"）时标 inferred。
+- ucvs 必须对应 burningIssues 中某人的 BI（同 person + biCategory）；销售没明说"我方能解决而对手给不了"就别造 UCV。
 - 没提到的部分填 null 或空数组 []。绝不编造。`;
 
 interface Extracted {
   account?: any; opportunity?: any;
-  persons?: any[]; relationships?: any[]; burningIssues?: any[];
+  persons?: any[]; relationships?: any[]; burningIssues?: any[]; ucvs?: any[];
   rawNote?: string;
 }
 
@@ -95,7 +99,7 @@ export function voiceRoutes(app: FastifyInstance) {
     try { ex = await extractIntel({ baseUrl: ai.baseUrl, model: ai.model, apiKey: ai.apiKey }, text, { accountName: acc?.name, personNames: (acc?.persons ?? []).map((x) => x.name) }); }
     catch (e: any) { return reply.code(400).send({ error: '情报抽取失败：' + (e?.message || '模型返回异常') }); }
 
-    const receipt: any = { account: null, opportunity: null, personsCreated: [], personsReused: [], rolesSet: [], edgesCreated: [], burningIssues: [], candidates: { persons: [], relationships: [] }, notes: [], visitNote: false, skipped: [] };
+    const receipt: any = { account: null, opportunity: null, personsCreated: [], personsReused: [], rolesSet: [], edgesCreated: [], burningIssues: [], ucvs: [], candidates: { persons: [], relationships: [] }, notes: [], visitNote: false, skipped: [] };
 
     // ── 1) 客户（业务实体，明说直落；命中现有则补字段）──
     if (ex.account && S(ex.account.name)) {
@@ -201,13 +205,34 @@ export function voiceRoutes(app: FastifyInstance) {
     }
 
     // ── 5) 燃眉之急 BI（explicit，挂正式 Person + 商机）──
+    const bisByPerson = new Map<string, { biId: string; category: string }[]>(); // person → 本次建的 BI（供 UCV 挂靠）
     for (const bi of ex.burningIssues ?? []) {
-      const pid = formalId.get(S(bi.person, 40));
+      const personName = S(bi.person, 40);
+      const pid = formalId.get(personName);
       if (pid && opp && isExplicit(bi) && S(bi.description)) {
         const bid = 'bi_' + randomUUID().slice(0, 12);
-        await applyAction(tenantId, { type: 'ADD_BI', accId: acc.id, oppId: opp.id, bi: { id: bid, personId: pid, description: S(bi.description, 500), category: S(bi.category, 40) || '其他', isPrivate: true, confidence: '推理' } });
-        receipt.burningIssues.push({ person: S(bi.person, 40), category: S(bi.category, 40) || '其他' });
+        const category = S(bi.category, 40) || '其他';
+        await applyAction(tenantId, { type: 'ADD_BI', accId: acc.id, oppId: opp.id, bi: { id: bid, personId: pid, description: S(bi.description, 500), category, isPrivate: true, confidence: '推理' } });
+        const arr = bisByPerson.get(personName) ?? []; arr.push({ biId: bid, category }); bisByPerson.set(personName, arr);
+        receipt.burningIssues.push({ person: personName, category });
       }
+    }
+
+    // ── 5.5) 独特价值 UCV（explicit，须挂到本次识别的 BI；供 G64111 C6 决胜计分）──
+    for (const u of ex.ucvs ?? []) {
+      const personName = S(u.person, 40);
+      const desc = S(u.description, 500);
+      if (!desc || !opp || !isExplicit(u)) continue;
+      const cands = bisByPerson.get(personName) ?? [];
+      // 该人本次只一条 BI → 直接挂；多条 → 按 biCategory 匹配，匹配不到挂第一条；无 BI → 跳过（UCV 必依附 BI）
+      const targetBiId = cands.length === 1 ? cands[0].biId
+        : cands.length > 1 ? (cands.find((c) => c.category === (S(u.biCategory, 40) || '其他')) ?? cands[0]).biId
+        : null;
+      if (!targetBiId) { receipt.skipped.push({ ucv: desc.slice(0, 24), reason: 'UCV 未匹配到对应 BI（需先明说该人的燃眉之急）' }); continue; }
+      const status = VALID_UCV_STATUS.includes(S(u.status)) ? S(u.status) : '建议';
+      const uid = 'ucv_' + randomUUID().slice(0, 12);
+      await applyAction(tenantId, { type: 'ADD_UCV', accId: acc.id, oppId: opp.id, ucv: { id: uid, targetBiId, description: desc, competitorCannot: S(u.competitorCannot, 500), status } });
+      receipt.ucvs.push({ person: personName, status });
     }
 
     // ── 6) 拜访纪要存档（原文 → VisitNote）──

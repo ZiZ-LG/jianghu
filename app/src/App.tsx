@@ -291,8 +291,24 @@ export default function App() {
           onOpenTeam={() => setTeamOpen(true)} onLogout={logout} onOpenAiSettings={() => setAiSettingsOpen(true)}
           theme={theme} onToggleTheme={toggleTheme} onOpenHelp={() => setHelpOpen(true)}
           onOpenMcpAccess={() => setMcpAccessOpen(true)}
+          onOpenIntel={() => setIntelOpen(true)}
         />
         {syncErr && <div className="sync-toast">{syncErr}</div>}
+        {intelOpen && (
+          <IntelCapture
+            onClose={() => setIntelOpen(false)}
+            onDone={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); } catch { /* 静默：保存已成功，仅刷新失败 */ } }}
+            onEnterAccount={async (id) => {
+              setIntelOpen(false);
+              try {
+                const st = await api.getState();
+                dispatch({ type: 'HYDRATE', accounts: st.accounts });
+                const a = st.accounts.find((x) => x.id === id);
+                setAccId(id); setOppId(a?.opportunities[0]?.id ?? null); setSelectedId(null); setLayer('L1');
+              } catch { setAccId(id); }
+            }}
+          />
+        )}
         {teamOpen && <TeamBilling role={auth.user.role} onClose={() => setTeamOpen(false)} />}
         {aiSettingsOpen && <AiSettings role={auth.user.role} onClose={() => setAiSettingsOpen(false)} />}
         {helpOpen && <HelpManual onClose={() => setHelpOpen(false)} />}
