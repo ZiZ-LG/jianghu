@@ -86,7 +86,7 @@ export function Canvas({
   suggestions?: { source: string; target: string }[];
   immersive?: boolean;
   onToggleImmersive?: () => void;
-  secondTapOpens?: boolean;   // 手机端：已选中后再次单击即进入详情（替代双击）
+  secondTapOpens?: boolean;   // 选中后再次单击即进入详情（桌面+手机统一；双击仍兼容）
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState({ tx: 40, ty: 30, scale: 1 });
@@ -151,7 +151,7 @@ export function Canvas({
   };
 
   // ── 点击/双击落点（不拖拽）→ 选中 / 打开右侧栏 / 空白双击建点 ──
-  // 手机端(secondTapOpens)：小目标难双击，改为「已选中后再次单击 → 打开详情」；桌面仍走双击。
+  // 统一交互：已选中后再次单击 → 打开详情（桌面+手机一致，secondTapOpens）；双击仍可直接打开。
   const handleTap = (kind: 'empty' | 'node' | 'edge', id: string, world: Pt) => {
     const now = Date.now();
     const last = lastTap.current;
