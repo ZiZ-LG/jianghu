@@ -44,13 +44,18 @@ export async function applyAction(tenantId: string, action: any): Promise<void> 
         pipelineStage: o.pipelineStage, engageStage: o.engageStage, changeMode: o.changeMode ?? null,
         singleSalesGoal: o.singleSalesGoal ?? '', customerBusinessGoal: o.customerBusinessGoal ?? null,
         buyingMotivation: o.buyingMotivation ?? null, c3Items: S(o.c3Items ?? {}), c5Items: S(o.c5Items ?? {}),
+        externalRef: o.externalRef ?? null, status: o.status ?? 'active', productSolution: o.productSolution ?? '',
+        competitor: o.competitor ?? '', competitiveSituation: o.competitiveSituation ?? '',
+        winProbability: o.winProbability ?? 0, expectedSignDate: o.expectedSignDate ?? '',
+        expectedAmountW: o.expectedAmountW ?? 0, meta: S(o.meta ?? {}),
       } });
       return;
     }
     case 'UPDATE_OPP': {
-      const d = pick(action.patch, ['name', 'pipelineStage', 'engageStage', 'changeMode', 'singleSalesGoal', 'customerBusinessGoal', 'buyingMotivation']);
+      const d = pick(action.patch, ['name', 'pipelineStage', 'engageStage', 'changeMode', 'singleSalesGoal', 'customerBusinessGoal', 'buyingMotivation', 'externalRef', 'status', 'productSolution', 'competitor', 'competitiveSituation', 'winProbability', 'expectedSignDate', 'expectedAmountW']);
       if (action.patch?.c3Items !== undefined) d.c3Items = S(action.patch.c3Items);
       if (action.patch?.c5Items !== undefined) d.c5Items = S(action.patch.c5Items);
+      if (action.patch?.meta !== undefined) d.meta = S(action.patch.meta);
       await prisma.opportunity.updateMany({ where: { id: action.oppId, tenantId }, data: d });
       return;
     }

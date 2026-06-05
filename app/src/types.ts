@@ -119,6 +119,11 @@ export interface Edge {
   bend?: number;     // 曲线弯曲度：控制点相对中点的垂直偏移(px，带符号)
 }
 
+/** 商机生命周期状态 */
+export type OpportunityStatus = 'active' | 'paused' | 'won' | 'lost';
+/** 竞争态势（'' = 未填） */
+export type CompetitiveSituation = '' | '领先' | '胶着' | '落后' | '未识别';
+
 /** 项目/商机（增量根） */
 export interface Opportunity {
   id: string;
@@ -131,6 +136,16 @@ export interface Opportunity {
   singleSalesGoal: string;
   customerBusinessGoal?: string;
   buyingMotivation?: string;
+  // ── WorkBuddy 集成扩展（销售包推送的商机业务字段）──
+  externalRef?: string;                       // 销售包商机锚（幂等）
+  status?: OpportunityStatus;                  // 生命周期状态
+  productSolution?: string;                    // 我方产品/方案
+  competitor?: string;                         // 主要友商
+  competitiveSituation?: CompetitiveSituation; // 竞争态势
+  winProbability?: number;                     // 赢单概率(销售在江湖自填，WB 不推/不覆盖)
+  expectedSignDate?: string;                   // 预计签约 YYYY-MM-DD
+  expectedAmountW?: number;                    // 预计金额(万元)
+  meta?: Record<string, unknown>;              // JSON 兜底(BANT 辅助等)
   c3Items: Record<string, boolean>; // C3 七项是否已掌握
   c5Items: Record<string, boolean>; // C5 五项是否已掌握
   roles: OppRole[];

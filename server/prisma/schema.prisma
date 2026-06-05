@@ -127,6 +127,15 @@ model Opportunity {
   singleSalesGoal      String         @default("")
   customerBusinessGoal String?
   buyingMotivation     String?
+  externalRef          String?                            // 销售包商机锚，跨系统幂等(WorkBuddy)
+  status               String         @default("active")  // active/paused/won/lost
+  productSolution      String         @default("")
+  competitor           String         @default("")
+  competitiveSituation String         @default("")        // 领先/胶着/落后/未识别
+  winProbability       Float          @default(0)         // ⚠️ 销售在江湖自填，WorkBuddy 永不推/覆盖
+  expectedSignDate     String         @default("")        // YYYY-MM-DD
+  expectedAmountW      Float          @default(0)         // 万元
+  meta                 String         @default("{}")      // JSON 兜底：BANT 辅助分等
   c3Items              String         @default("{}") // JSON
   c5Items              String         @default("{}") // JSON
   roles                OppRole[]

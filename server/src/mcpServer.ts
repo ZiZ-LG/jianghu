@@ -160,6 +160,37 @@ const TOOL_DEFS = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'upsert_opportunity',
+    description:
+      '【写·直接落正式表】同步销售包(WorkBuddy)的「商机」到江湖，幂等 upsert(非候选)。先定位父客户(accountId / accountExternalRef=销售包 customer_id / unifiedCreditCode 三选一，该客户须已存在，否则先 upsert_account)，再按商机 externalRef 幂等：命中则更新、未命中则在该客户下新建。⚠️ winProbability(赢单概率)由销售在江湖里自填，本工具不接收、不覆盖。pipelineStage 用江湖 7 段(线索/需求引导/方案认可/客户立项/招投标/合同谈判/合同双签；"合同签约"会自动规整为"合同双签")。c3Items/c5Items 为必清项 boolean map(键用中文项名)。直接写正式 Opportunity 表并带 origin=workbuddy 溯源。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        accountId: { type: 'string', description: '父客户江湖 ID（三种定位之一）' },
+        accountExternalRef: { type: 'string', description: '父客户销售包 customer_id（三种定位之一）' },
+        unifiedCreditCode: { type: 'string', description: '父客户统一社会信用代码（三种定位之一）' },
+        externalRef: { type: 'string', description: '商机幂等锚（销售包商机标识，如 {customer_id}#opp）' },
+        name: { type: 'string', description: '商机名称（新建必填）' },
+        pipelineStage: { type: 'string', description: '管线阶段(江湖 7 段之一)' },
+        engageStage: { type: 'string', description: 'C4 介入阶段：需求调研立项/方案可研/预算批复/招标论证/招采执行' },
+        status: { type: 'string', description: '状态 active/paused/won/lost' },
+        changeMode: { type: 'string', description: '客户变化模式 G/T/EK/OC' },
+        productSolution: { type: 'string', description: '我方产品/方案' },
+        competitor: { type: 'string', description: '主要友商' },
+        competitiveSituation: { type: 'string', description: '竞争态势 领先/胶着/落后/未识别' },
+        singleSalesGoal: { type: 'string', description: '单一销售目标' },
+        customerBusinessGoal: { type: 'string', description: '客户经营目标' },
+        buyingMotivation: { type: 'string', description: '采购动机' },
+        expectedSignDate: { type: 'string', description: '预计签约日 YYYY-MM-DD' },
+        expectedAmountW: { type: 'number', description: '预计金额(万元)' },
+        c3Items: { type: 'object', description: 'C3 立项材料 7 项掌握情况(boolean map，键=中文项名)', additionalProperties: true },
+        c5Items: { type: 'object', description: 'C5 招采事项 5 项掌握情况(boolean map)', additionalProperties: true },
+        meta: { type: 'object', description: 'JSON 兜底(BANT 辅助分等)', additionalProperties: true },
+      },
+      additionalProperties: false,
+    },
+  },
 ] as const;
 
 const CUSTOMER_TYPE_LABEL: Record<number, string> = {
@@ -497,6 +528,77 @@ async function upsertAccount(tenantId: string, _userId: string, args: Record<str
   return { id, created: true, origin: 'workbuddy', note: `已新建客户「${name}」。` };
 }
 
+/** upsert_opportunity：定位父客户 → 按商机 externalRef 幂等 upsert。守"winProbability 不由 WB 推/覆盖"。 */
+async function upsertOpportunity(tenantId: string, _userId: string, args: Record<string, unknown>) {
+  // 1) 定位父客户（accountId / accountExternalRef / unifiedCreditCode 三选一，全程 where{tenantId}）
+  const accId = str(args.accountId, 40).trim();
+  const accExtRef = str(args.accountExternalRef, 80).trim();
+  const accUscc = str(args.unifiedCreditCode, 40).trim();
+  let account = accId ? await prisma.account.findFirst({ where: { id: accId, tenantId } }) : null;
+  if (!account && accExtRef) account = await prisma.account.findFirst({ where: { tenantId, externalRef: accExtRef } });
+  if (!account && accUscc) account = await prisma.account.findFirst({ where: { tenantId, unifiedCreditCode: accUscc } });
+  if (!account) throw new Error('未定位到父客户：请提供 accountId / accountExternalRef / unifiedCreditCode 之一（该客户须已存在，可先 upsert_account）');
+
+  const name = str(args.name, 100).trim();
+  const externalRef = str(args.externalRef, 80).trim() || null;
+
+  // 2) 枚举规整（"合同签约"→"合同双签"；非法值丢弃，落库走默认/保留）
+  const PIPELINE = ['线索', '需求引导', '方案认可', '客户立项', '招投标', '合同谈判', '合同双签'];
+  const ENGAGE = ['需求调研立项', '方案可研', '预算批复', '招标论证', '招采执行'];
+  const stageMapped = str(args.pipelineStage) === '合同签约' ? '合同双签' : str(args.pipelineStage);
+  const pipelineStage = PIPELINE.includes(stageMapped) ? stageMapped : undefined;
+  const engageStage = ENGAGE.includes(str(args.engageStage)) ? str(args.engageStage) : undefined;
+  const status = ['active', 'paused', 'won', 'lost'].includes(str(args.status)) ? str(args.status) : undefined;
+  const changeMode = ['G', 'T', 'EK', 'OC'].includes(str(args.changeMode)) ? str(args.changeMode) : undefined;
+  const isObj = (v: unknown) => v != null && typeof v === 'object';
+
+  // 3) 公共业务字段补丁——刻意不含 winProbability（守"销售自填不覆盖"，inputSchema 也未暴露该字段）
+  const fields: Record<string, unknown> = {};
+  if (pipelineStage) fields.pipelineStage = pipelineStage;
+  if (engageStage) fields.engageStage = engageStage;
+  if (status) fields.status = status;
+  if (changeMode) fields.changeMode = changeMode;
+  if (args.productSolution !== undefined) fields.productSolution = str(args.productSolution, 500);
+  if (args.competitor !== undefined) fields.competitor = str(args.competitor, 200);
+  if (args.competitiveSituation !== undefined) fields.competitiveSituation = str(args.competitiveSituation, 40);
+  if (args.singleSalesGoal !== undefined) fields.singleSalesGoal = str(args.singleSalesGoal, 500);
+  if (args.customerBusinessGoal !== undefined) fields.customerBusinessGoal = str(args.customerBusinessGoal, 500);
+  if (args.buyingMotivation !== undefined) fields.buyingMotivation = str(args.buyingMotivation, 500);
+  if (args.expectedSignDate !== undefined) fields.expectedSignDate = str(args.expectedSignDate, 20);
+  const amt = num(args.expectedAmountW); if (amt !== undefined) fields.expectedAmountW = amt;
+  if (isObj(args.c3Items)) fields.c3Items = args.c3Items;
+  if (isObj(args.c5Items)) fields.c5Items = args.c5Items;
+  if (isObj(args.meta)) fields.meta = args.meta;
+
+  // 4) 商机幂等：本客户下按 externalRef 查
+  const existing = externalRef
+    ? await prisma.opportunity.findFirst({ where: { tenantId, accountId: account.id, externalRef } })
+    : null;
+
+  if (existing) {
+    const patch: Record<string, unknown> = { ...fields };
+    if (name) patch.name = name;
+    if (externalRef && !existing.externalRef) patch.externalRef = externalRef;
+    await applyAction(tenantId, { type: 'UPDATE_OPP', accId: account.id, oppId: existing.id, patch });
+    return { id: existing.id, accountId: account.id, updated: true, origin: 'workbuddy', note: `已命中商机「${existing.name}」并更新（winProbability 留给销售自填，未改）。` };
+  }
+
+  if (!name) throw new Error('未命中现有商机，新建需提供 name');
+  const id = 'opp_' + randomUUID().slice(0, 12);
+  await applyAction(tenantId, {
+    type: 'ADD_OPP', accId: account.id,
+    opp: {
+      id, name, externalRef,
+      customerType: account.customerType,
+      pipelineStage: pipelineStage ?? '线索',
+      engageStage: engageStage ?? '需求调研立项',
+      status: status ?? 'active',
+      ...fields,
+    },
+  });
+  return { id, accountId: account.id, created: true, origin: 'workbuddy', note: `已在客户「${account.name}」下新建商机「${name}」。` };
+}
+
 // ───────────────────────── 工具分发 ─────────────────────────
 
 async function callTool(tenantId: string, userId: string, name: string, args: Record<string, unknown>) {
@@ -521,6 +623,8 @@ async function callTool(tenantId: string, userId: string, name: string, args: Re
       return listPending(tenantId, typeof args.accountId === 'string' ? args.accountId : '');
     case 'upsert_account':
       return upsertAccount(tenantId, userId, args);
+    case 'upsert_opportunity':
+      return upsertOpportunity(tenantId, userId, args);
     default:
       throw new Error(`未知工具：${name}`);
   }
