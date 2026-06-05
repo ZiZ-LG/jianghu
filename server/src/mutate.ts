@@ -20,12 +20,19 @@ export async function applyAction(tenantId: string, action: any): Promise<void> 
   switch (t) {
     case 'ADD_ACCOUNT': {
       const a = action.account;
-      await prisma.account.create({ data: { id: a.id, tenantId, name: a.name, customerType: a.customerType, unifiedCreditCode: a.unifiedCreditCode ?? null } });
+      await prisma.account.create({ data: {
+        id: a.id, tenantId, name: a.name, customerType: a.customerType, unifiedCreditCode: a.unifiedCreditCode ?? null,
+        externalRef: a.externalRef ?? null, region: a.region ?? '', group: a.group ?? '', primaryOwner: a.primaryOwner ?? '',
+        profile: S(a.profile ?? {}),
+      } });
       return;
     }
-    case 'UPDATE_ACCOUNT':
-      await prisma.account.updateMany({ where: { id: action.accId, tenantId }, data: pick(action.patch, ['name', 'customerType', 'unifiedCreditCode']) });
+    case 'UPDATE_ACCOUNT': {
+      const d = pick(action.patch, ['name', 'customerType', 'unifiedCreditCode', 'externalRef', 'region', 'group', 'primaryOwner']);
+      if (action.patch?.profile !== undefined) d.profile = S(action.patch.profile);
+      await prisma.account.updateMany({ where: { id: action.accId, tenantId }, data: d });
       return;
+    }
     case 'DELETE_ACCOUNT':
       await prisma.account.deleteMany({ where: { id: action.accId, tenantId } });
       return;
