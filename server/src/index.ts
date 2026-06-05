@@ -15,6 +15,7 @@ import { aiRoutes } from './ai.js';
 import { suggestRoutes } from './suggest.js';
 import { enrichRoutes } from './enrich.js';
 import { voiceRoutes } from './voice.js';
+import { opportunityRoutes } from './opp.js';
 import { handleMcpBody } from './mcpServer.js';
 import { accessTokenRoutes, mcpAuthenticate } from './accessToken.js';
 
@@ -64,6 +65,7 @@ aiRoutes(app);
 suggestRoutes(app);
 enrichRoutes(app);
 voiceRoutes(app);
+opportunityRoutes(app);
 accessTokenRoutes(app);
 
 // ── 数据：拉取整树 / 应用变更 ──

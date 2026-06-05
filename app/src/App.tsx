@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
 import type { Layer, Role, CustomerType, Edge, Person } from './types';
 import { LAYER_LABEL } from './types';
-import { reducer, newAccount, newOpportunity, newPerson, uid, type Action } from './store';
+import { reducer, newAccount, newPerson, uid, type Action } from './store';
 import { api, type AuthResult, type Suggestion, type PersonSuggestion } from './api';
 import { scoreFromDomain } from './lib/g64111';
 import { usePersistentState, useTheme, useViewport } from './ui';
@@ -16,6 +16,7 @@ import { WinTendencyPanel } from './components/WinTendencyPanel';
 import { OpportunityForm } from './components/OpportunityForm';
 import { CustomerProfile } from './components/CustomerProfile';
 import { IntelCapture } from './components/IntelCapture';
+import { NewOpportunityDialog } from './components/NewOpportunityDialog';
 import { nextFreeSlot } from './lib/layout';
 import { PersonForm } from './components/PersonForm';
 import { TeamBilling } from './components/TeamBilling';
@@ -43,6 +44,7 @@ export default function App() {
   const [personFormOpen, setPersonFormOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [intelOpen, setIntelOpen] = useState(false);
+  const [newOppOpen, setNewOppOpen] = useState(false);
   const [teamOpen, setTeamOpen] = useState(false);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
   const [consoleOpen, setConsoleOpen] = useState(false);
@@ -151,11 +153,15 @@ export default function App() {
       if (added) { setAccId(added.id); setOppId(added.opportunities[0]?.id ?? null); setSelectedId(null); setLayer('L1'); }
     } catch (e: any) { setSyncErr('载入示例失败：' + e.message); }
   };
-  const addOpp = () => {
+  const addOpp = () => { if (account) setNewOppOpen(true); };
+  const createOpportunity = async (params: { name: string; fromOppId?: string; personIds: string[]; withEdges: boolean }) => {
     if (!account) return;
-    const o = newOpportunity(account.id, '新商机', account.customerType);
-    act({ type: 'ADD_OPP', accId: account.id, opp: o });
-    setOppId(o.id); setSelectedId(null); setOppFormOpen(true);
+    setNewOppOpen(false);
+    try {
+      const { opportunityId } = await api.cloneOpportunity({ accountId: account.id, ...params });
+      const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts });
+      setOppId(opportunityId); setSelectedId(null); setLayer('L1');
+    } catch (e: any) { setSyncErr('新建商机失败：' + e.message); }
   };
   const deleteOpp = (id: string) => {
     if (!account) return;
@@ -452,6 +458,9 @@ export default function App() {
       {oppFormOpen && opp && (
         <OpportunityForm opp={opp} onClose={() => setOppFormOpen(false)}
           onSave={(patch) => act({ type: 'UPDATE_OPP', accId: account.id, oppId: opp.id, patch })} />
+      )}
+      {newOppOpen && (
+        <NewOpportunityDialog account={account} onClose={() => setNewOppOpen(false)} onCreate={createOpportunity} />
       )}
       {profileOpen && (
         <CustomerProfile account={account} onClose={() => setProfileOpen(false)}
