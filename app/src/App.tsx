@@ -168,6 +168,7 @@ export default function App() {
     const { x, y } = isCompetitor ? { x: 90, y: 440 } : nextFreeSlot(occupied);
     const p = newPerson(name, title, x, y, isCompetitor);
     act({ type: 'ADD_PERSON', accId: account.id, person: p });
+    if (opp?.memberScoped) act({ type: 'ADD_OPP_MEMBER', accId: account.id, oppId: opp.id, personId: p.id }); // memberScoped 商机内建人 → 加入成员，否则被过滤看不见
     setSelectedId(p.id);
   };
 
@@ -183,6 +184,7 @@ export default function App() {
     if (!account) return '';
     const p = newPerson('新成员', '', x, y, false);
     act({ type: 'ADD_PERSON', accId: account.id, person: p });
+    if (opp?.memberScoped) act({ type: 'ADD_OPP_MEMBER', accId: account.id, oppId: opp.id, personId: p.id });
     setSelectedId(p.id); setSelectedEdgeId(null);
     return p.id;
   };
@@ -199,6 +201,7 @@ export default function App() {
     if (!account || !opp) return '';
     const p = newPerson('新成员', '', x, y, false);
     act({ type: 'ADD_PERSON', accId: account.id, person: p });
+    if (opp.memberScoped) act({ type: 'ADD_OPP_MEMBER', accId: account.id, oppId: opp.id, personId: p.id });
     act({ type: 'ADD_EDGE', accId: account.id, oppId: opp.id, edge: makeEdge(source, p.id) });
     setSelectedId(p.id); setSelectedEdgeId(null);
     return p.id;
@@ -235,7 +238,10 @@ export default function App() {
     try {
       const { edge, createdPersons } = await api.suggestAccept(id);
       // 级联：若端点是候选人物，服务端已建正式 Person，本地须先 ADD_PERSON 再 ADD_EDGE（否则画布找不到端点）
-      for (const p of createdPersons ?? []) dispatch({ type: 'ADD_PERSON', accId: account.id, person: p });
+      for (const p of createdPersons ?? []) {
+        dispatch({ type: 'ADD_PERSON', accId: account.id, person: p });
+        if (opp.memberScoped) dispatch({ type: 'ADD_OPP_MEMBER', accId: account.id, oppId: opp.id, personId: p.id }); // 服务端已加成员，本地同步
+      }
       dispatch({ type: 'ADD_EDGE', accId: account.id, oppId: opp.id, edge }); // 服务端已建，本地直接加避免重复写
       setSuggestions((s) => s.filter((x) => x.id !== id));
     } catch (e: any) { setSyncErr('采纳失败：' + e.message); }
@@ -250,7 +256,10 @@ export default function App() {
     if (!account) return;
     try {
       const { person } = await api.personSuggestAccept(id);
-      if (person) dispatch({ type: 'ADD_PERSON', accId: account.id, person });
+      if (person) {
+        dispatch({ type: 'ADD_PERSON', accId: account.id, person });
+        if (opp?.memberScoped) dispatch({ type: 'ADD_OPP_MEMBER', accId: account.id, oppId: opp.id, personId: person.id }); // 服务端已加成员，本地同步
+      }
       setPersonSuggs((s) => s.filter((x) => x.id !== id));
     } catch (e: any) { setSyncErr('采纳干系人失败：' + e.message); }
   };
@@ -274,6 +283,7 @@ export default function App() {
       const p = newPerson(dp.name, dp.title, x, y, false);
       p.logs = [{ date: today, content: `📥 ${label(dp.source)}（${account.name}）`, visibility: 'team' }];
       act({ type: 'ADD_PERSON', accId: account.id, person: p });
+      if (opp?.memberScoped) act({ type: 'ADD_OPP_MEMBER', accId: account.id, oppId: opp.id, personId: p.id });
     }
   };
 

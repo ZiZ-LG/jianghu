@@ -29,6 +29,11 @@ async function materializePerson(tx: any, tenantId: string, suggId: string): Pro
   const logs = [{ date: today, content: `📥 ${ORIGIN_LABEL[ps.origin] || '外部导入'}（${ps.evidence || '无备注'}）${ps.sourceUrl ? ' · ' + ps.sourceUrl : ''}`, visibility: 'team' }];
   const personId = 'p_' + randomUUID().slice(0, 12);
   await tx.person.create({ data: { id: personId, tenantId, accountId: ps.accountId, name: ps.name, title: ps.title, orgLevel: ps.orgLevel, isCompetitor: false, x, y, form: '{}', logs: JSON.stringify(logs) } });
+  // 候选挂在 memberScoped 商机 → 新建的人加入该商机成员（可见性）
+  if (ps.opportunityId) {
+    const mo = await tx.opportunity.findFirst({ where: { id: ps.opportunityId, tenantId }, select: { memberScoped: true } });
+    if (mo?.memberScoped) await tx.opportunityMember.upsert({ where: { opportunityId_personId: { opportunityId: ps.opportunityId, personId } }, create: { tenantId, opportunityId: ps.opportunityId, personId }, update: {} });
+  }
   // WorkBuddy 提议时带了建议角色 + 关联商机 → 采纳时一并落 OppRole（守"角色只对正式 Person"）
   if (ps.suggestedRole && ps.opportunityId) {
     const opp = await tx.opportunity.findFirst({ where: { id: ps.opportunityId, tenantId } });
