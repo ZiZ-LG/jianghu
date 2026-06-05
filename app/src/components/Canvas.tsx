@@ -57,6 +57,7 @@ type Gesture =
   | { kind: 'endpoint'; edgeId: string; end: 'source' | 'target'; csx: number; csy: number }
   | { kind: 'bend'; edgeId: string; csx: number; csy: number }
   | { kind: 'edge'; edgeId: string; csx: number; csy: number }
+  | { kind: 'marquee'; csx: number; csy: number; x0: number; y0: number }
   | { kind: 'pinch' };
 
 export function Canvas({
@@ -96,6 +97,8 @@ export function Canvas({
   const [endpointPt, setEndpointPt] = useState<{ edgeId: string; end: 'source' | 'target'; x: number; y: number } | null>(null);
   const [bendPreview, setBendPreview] = useState<{ edgeId: string; bend: number } | null>(null);
   const [editing, setEditing] = useState<{ id: string; value: string } | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set()); // 框选多选（节点）
+  const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null); // 框选矩形(world)
 
   const gesture = useRef<Gesture | null>(null);
   const pointers = useRef<Map<number, Pt>>(new Map());
@@ -146,6 +149,8 @@ export function Canvas({
   useEffect(() => {
     if (editing && editInputRef.current) { editInputRef.current.focus(); editInputRef.current.select(); }
   }, [editing?.id]);
+  // 切层 / 商机 / 客户 → 清空框选多选
+  useEffect(() => { setSelectedIds(new Set()); setMarquee(null); }, [layer, opp.id, account.id]);
 
   const commitEdit = () => {
     if (!editing) return;
@@ -210,8 +215,11 @@ export function Canvas({
       gesture.current = { kind: 'node', id, csx: e.clientX, csy: e.clientY, ox: w.x - p.x, oy: w.y - p.y, moved: false };
     } else if (edgeH) {
       gesture.current = { kind: 'edge', edgeId: edgeH.getAttribute('data-edge')!, csx: e.clientX, csy: e.clientY };
+    } else if (e.button === 1 || e.shiftKey) {
+      gesture.current = { kind: 'pan', csx: e.clientX, csy: e.clientY, tx: view.tx, ty: view.ty }; // 中键 / Shift+拖 = 平移画布
     } else {
-      gesture.current = { kind: 'pan', csx: e.clientX, csy: e.clientY, tx: view.tx, ty: view.ty };
+      const w = toWorld(e.clientX, e.clientY);
+      gesture.current = { kind: 'marquee', csx: e.clientX, csy: e.clientY, x0: w.x, y0: w.y }; // 空白单指/左键拖 = 框选
     }
   };
 
@@ -235,6 +243,9 @@ export function Canvas({
     const moved = Math.hypot(e.clientX - (g as any).csx, e.clientY - (g as any).csy) > TAP_MOVE;
     if (g.kind === 'pan') {
       setView((v) => ({ ...v, tx: g.tx + (e.clientX - g.csx), ty: g.ty + (e.clientY - g.csy) }));
+    } else if (g.kind === 'marquee') {
+      const w = toWorld(e.clientX, e.clientY);
+      setMarquee({ x0: g.x0, y0: g.y0, x1: w.x, y1: w.y });
     } else if (g.kind === 'node') {
       if (moved) g.moved = true;
       const w = toWorld(e.clientX, e.clientY);
@@ -279,11 +290,19 @@ export function Canvas({
 
     if (g.kind === 'pan') {
       if (!moved) handleTap('empty', '', w);
+    } else if (g.kind === 'marquee') {
+      if (moved) {
+        // 框内（节点完全在框内）→ 多选；竞品同样可框选
+        const x0 = Math.min(g.x0, w.x), x1 = Math.max(g.x0, w.x), y0 = Math.min(g.y0, w.y), y1 = Math.max(g.y0, w.y);
+        const ids = visible.filter((p) => { const pt = posOf(p); return pt.x - NODE_R >= x0 && pt.x + NODE_R <= x1 && pt.y - NODE_R >= y0 && pt.y + NODE_R <= y1; }).map((p) => p.id);
+        setSelectedIds(new Set(ids)); onSelectPerson(null); onSelectEdge(null);
+      } else { setSelectedIds(new Set()); handleTap('empty', '', w); }
+      setMarquee(null);
     } else if (g.kind === 'edge') {
       if (!moved) handleTap('edge', g.edgeId, w);
     } else if (g.kind === 'node') {
       if (g.moved && dragPt) onMovePerson(g.id, Math.round(dragPt.x), Math.round(dragPt.y));
-      else handleTap('node', g.id, w);
+      else { setSelectedIds(new Set()); handleTap('node', g.id, w); }
       setDragPt(null);
     } else if (g.kind === 'link') {
       const target = nodeAt(w, g.sourceId);
@@ -337,6 +356,23 @@ export function Canvas({
   const selEdge = selectedEdgeId ? edges.find((e) => e.id === selectedEdgeId) ?? null : null;
   const stop = (e: React.PointerEvent) => e.stopPropagation();
 
+  // 框选多选 → 对齐/分布（批量 onMovePerson，世界坐标）。对齐=居中成一线；分布=首尾不动、等间距。
+  const alignSelected = (mode: 'hAlign' | 'vAlign' | 'hDist' | 'vDist') => {
+    const ps = visible.filter((p) => selectedIds.has(p.id));
+    if (ps.length < 2) return;
+    if (mode === 'hAlign') { const c = Math.round(ps.reduce((s, p) => s + p.y, 0) / ps.length); ps.forEach((p) => { if (p.y !== c) onMovePerson(p.id, p.x, c); }); }
+    else if (mode === 'vAlign') { const c = Math.round(ps.reduce((s, p) => s + p.x, 0) / ps.length); ps.forEach((p) => { if (p.x !== c) onMovePerson(p.id, c, p.y); }); }
+    else if (mode === 'hDist') { const a = [...ps].sort((x, y) => x.x - y.x); const min = a[0].x, step = (a[a.length - 1].x - min) / (a.length - 1); a.forEach((p, i) => { const nx = Math.round(min + step * i); if (p.x !== nx) onMovePerson(p.id, nx, p.y); }); }
+    else { const a = [...ps].sort((x, y) => x.y - y.y); const min = a[0].y, step = (a[a.length - 1].y - min) / (a.length - 1); a.forEach((p, i) => { const ny = Math.round(min + step * i); if (p.y !== ny) onMovePerson(p.id, p.x, ny); }); }
+  };
+  // 选中包围盒「中心·上沿」的屏幕坐标，用于浮动对齐工具栏定位
+  const selBox = (() => {
+    const ps = visible.filter((p) => selectedIds.has(p.id));
+    if (ps.length < 2) return null;
+    const xs = ps.map((p) => p.x), ys = ps.map((p) => p.y);
+    return toScreen((Math.min(...xs) + Math.max(...xs)) / 2, Math.min(...ys) - NODE_R);
+  })();
+
   return (
     <div ref={wrapRef} className="canvas-wrap"
       onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={endPointer} onPointerCancel={endPointer} onWheel={onWheel}>
@@ -352,6 +388,11 @@ export function Canvas({
           ))}
         </defs>
         <g style={{ transform: `translate(${view.tx}px, ${view.ty}px) scale(${view.scale})`, transformOrigin: '0 0', willChange: 'transform' }}>
+          {marquee && (() => {
+            const x = Math.min(marquee.x0, marquee.x1), y = Math.min(marquee.y0, marquee.y1);
+            const w = Math.abs(marquee.x1 - marquee.x0), h = Math.abs(marquee.y1 - marquee.y0);
+            return <rect x={x} y={y} width={w} height={h} fill="var(--accent)" fillOpacity={0.08} stroke="var(--accent)" strokeWidth={1} strokeDasharray="4,3" vectorEffect="non-scaling-stroke" style={{ pointerEvents: 'none' }} />;
+          })()}
           {edges.map((e) => {
             const sp = personById.get(e.source), tp = personById.get(e.target);
             if (!sp || !tp) return null;
@@ -407,7 +448,7 @@ export function Canvas({
           {visible.map((p) => {
             const pt = posOf(p);
             const role = roleByPerson.get(p.id);
-            const selected = selectedId === p.id;
+            const selected = selectedId === p.id || selectedIds.has(p.id);
             const isHover = hoverNode === p.id;
             return (
               <g key={p.id} data-node={p.id} transform={`translate(${pt.x},${pt.y})`} style={{ cursor: dragPt?.id === p.id ? 'grabbing' : 'pointer' }}>
@@ -530,6 +571,17 @@ export function Canvas({
           </div>
         );
       })()}
+
+      {selBox && (
+        <div className="align-toolbar" onPointerDown={stop} style={{ left: selBox.x, top: selBox.y - 12, transform: 'translate(-50%,-100%)' }}>
+          <span className="at-count">{selectedIds.size} 选中</span>
+          <button onClick={() => alignSelected('hAlign')} title="水平对齐：选中节点排到同一水平线">横对齐</button>
+          <button onClick={() => alignSelected('vAlign')} title="垂直对齐：选中节点排到同一垂直线">竖对齐</button>
+          <button onClick={() => alignSelected('hDist')} title="水平分布：选中节点水平方向等间距">横分布</button>
+          <button onClick={() => alignSelected('vDist')} title="垂直分布：选中节点垂直方向等间距">竖分布</button>
+          <button className="at-clear" onClick={() => setSelectedIds(new Set())} title="取消框选">✕</button>
+        </div>
+      )}
 
       <div className="zoom-controls" onPointerDown={stop}>
         {!immersive && <button onClick={() => zoomBy(1.15)} title="放大">+</button>}
