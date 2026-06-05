@@ -14,6 +14,7 @@ import { createDemoForTenant } from './seed-demo.js';
 import { aiRoutes } from './ai.js';
 import { suggestRoutes } from './suggest.js';
 import { enrichRoutes } from './enrich.js';
+import { voiceRoutes } from './voice.js';
 import { handleMcpBody } from './mcpServer.js';
 import { accessTokenRoutes, mcpAuthenticate } from './accessToken.js';
 
@@ -62,6 +63,7 @@ authRoutes(app);
 aiRoutes(app);
 suggestRoutes(app);
 enrichRoutes(app);
+voiceRoutes(app);
 accessTokenRoutes(app);
 
 // ── 数据：拉取整树 / 应用变更 ──

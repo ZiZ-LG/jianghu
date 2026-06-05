@@ -15,6 +15,7 @@ import { EdgeDrawer } from './components/EdgeDrawer';
 import { WinTendencyPanel } from './components/WinTendencyPanel';
 import { OpportunityForm } from './components/OpportunityForm';
 import { CustomerProfile } from './components/CustomerProfile';
+import { IntelCapture } from './components/IntelCapture';
 import { PersonForm } from './components/PersonForm';
 import { TeamBilling } from './components/TeamBilling';
 import { AiSettings } from './components/AiSettings';
@@ -40,6 +41,7 @@ export default function App() {
   const [oppFormOpen, setOppFormOpen] = useState(false);
   const [personFormOpen, setPersonFormOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [intelOpen, setIntelOpen] = useState(false);
   const [teamOpen, setTeamOpen] = useState(false);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
   const [consoleOpen, setConsoleOpen] = useState(false);
@@ -345,6 +347,7 @@ export default function App() {
               {/* 桌面：操作栏在上、层级切换在下（移动端二者 CSS 隐藏，改用下方两个下拉） */}
               <div className="maintoolbar">
                 <span className="mt-name">{opp.name}</span>
+                <button className="btn cta xs" onClick={() => setIntelOpen(true)}>🎙️ 录入情报</button>
                 <button className="btn ghost xs" onClick={() => setOppFormOpen(true)}>编辑商机</button>
                 <button className="btn ghost xs" onClick={() => setProfileOpen(true)}>📇 客户档案</button>
                 <button className="btn ghost xs" onClick={() => setEnrichOpen(true)}>🏢 建图</button>
@@ -363,6 +366,7 @@ export default function App() {
               {isMobile && (
                 <OverflowMenu align="left" label="⋯ 操作" items={[
                   { label: '🧠 AI 推演', primary: true, onClick: () => setConsoleOpen(true) },
+                  { label: '🎙️ 录入情报', primary: true, onClick: () => setIntelOpen(true) },
                   { label: '✏️ 编辑商机', onClick: () => setOppFormOpen(true) },
                   { label: '📇 客户档案', onClick: () => setProfileOpen(true) },
                   { label: '🏢 企查查建图', onClick: () => setEnrichOpen(true) },
@@ -426,6 +430,11 @@ export default function App() {
       {profileOpen && (
         <CustomerProfile account={account} onClose={() => setProfileOpen(false)}
           onSave={(patch) => act({ type: 'UPDATE_ACCOUNT', accId: account.id, patch })} />
+      )}
+      {intelOpen && (
+        <IntelCapture account={account} opportunity={opp}
+          onClose={() => setIntelOpen(false)}
+          onDone={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); } catch { /* 静默：保存已成功，仅刷新失败 */ } }} />
       )}
       {personFormOpen && <PersonForm onCreate={addPerson} onClose={() => setPersonFormOpen(false)} />}
       {teamOpen && <TeamBilling role={auth.user.role} onClose={() => setTeamOpen(false)} />}

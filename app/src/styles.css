@@ -201,6 +201,17 @@ select { font-family: inherit; }
 .acc-sub { font-size: 11px; color: var(--ink-2); margin-top: 6px; }
 .vn-count { font-size: 10px; background: var(--accent-soft); color: var(--accent-ink); padding: 0 6px; border-radius: 999px; font-weight: 700; }
 
+/* 录入情报：强调入口 .btn.cta（介于 ghost 与 primary，引导点击）+ 回执样式 */
+.btn.cta { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-ink); font-weight: 700; }
+.btn.cta:hover { background: var(--accent); color: #fff; }
+.intel-demo-hint { font-size: 12px; color: var(--muted); background: var(--panel-2); border: 1px dashed var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; }
+.intel-receipt { display: flex; flex-direction: column; gap: 8px; }
+.ir-row { font-size: 13px; color: var(--ink-2); }
+.ir-candidates { margin-top: 6px; padding: 8px 10px; background: var(--accent-soft); border-radius: 8px; font-size: 12px; color: var(--accent-ink); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.cand-chip { background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; font-size: 11px; }
+.intel-scope { display: flex; flex-direction: column; gap: 6px; }
+.intel-err { color: #b91c1c; font-size: 12px; margin-top: 8px; }
+
 /* ───────── Buttons / Inputs (shared) ───────── */
 .btn { padding: 8px 14px; border-radius: 8px; font-size: 13px; font-weight: 600; border: 1px solid transparent; transition: all .15s; }
 .btn.primary { background: #2563eb; color: #fff; }
