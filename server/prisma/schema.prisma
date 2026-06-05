@@ -138,11 +138,13 @@ model Opportunity {
   meta                 String         @default("{}")      // JSON 兜底：BANT 辅助分等
   c3Items              String         @default("{}") // JSON
   c5Items              String         @default("{}") // JSON
+  memberScoped         Boolean        @default(false) // false=全员可见(存量兼容)；true=按 OpportunityMember 过滤
   roles                OppRole[]
   edges                Edge[]
   bis                  BurningIssue[]
   ucvs                 UCV[]
   suggestions          RelSuggestion[]
+  members              OpportunityMember[]
 
   @@index([accountId])
 }
@@ -210,6 +212,18 @@ model OppRole {
   procurementStatus String?
 
   @@unique([opportunityId, personId])
+}
+
+// 商机成员：哪些干系人在该商机可见（仅当 Opportunity.memberScoped=true 生效）。关联表，跨库可移植。
+model OpportunityMember {
+  id            String      @id @default(uuid())
+  tenantId      String
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  personId      String
+
+  @@unique([opportunityId, personId])
+  @@index([opportunityId])
 }
 
 model Edge {

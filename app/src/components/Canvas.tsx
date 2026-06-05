@@ -109,15 +109,22 @@ export function Canvas({
     return m;
   }, [opp]);
 
+  // 商机级人物可见性：memberScoped 商机只显示成员集(含竞品)；存量商机(false/缺省)全员可见
+  const visible = useMemo(
+    () => (opp.memberScoped ? account.persons.filter((p) => (opp.memberIds ?? []).includes(p.id)) : account.persons),
+    [account.persons, opp.memberScoped, opp.memberIds],
+  );
+  const visibleIds = useMemo(() => new Set(visible.map((p) => p.id)), [visible]);
+
   const edges: Edge[] = useMemo(
-    () => [...account.baseEdges, ...opp.edges].filter((e) => e.layer === layer),
-    [account.baseEdges, opp.edges, layer],
+    () => [...account.baseEdges, ...opp.edges].filter((e) => e.layer === layer && visibleIds.has(e.source) && visibleIds.has(e.target)),
+    [account.baseEdges, opp.edges, layer, visibleIds],
   );
   const personById = useMemo(() => {
     const m = new Map<string, Person>();
-    for (const p of account.persons) m.set(p.id, p);
+    for (const p of visible) m.set(p.id, p);
     return m;
-  }, [account.persons]);
+  }, [visible]);
 
   const posOf = (p: Person): Pt => (dragPt && dragPt.id === p.id ? { x: dragPt.x, y: dragPt.y } : { x: p.x, y: p.y });
   const toWorld = (cx: number, cy: number): Pt => {
@@ -126,8 +133,8 @@ export function Canvas({
   };
   const toScreen = (wx: number, wy: number): Pt => ({ x: wx * view.scale + view.tx, y: wy * view.scale + view.ty });
   const nodeAt = (w: Pt, exclude?: string): string | null => {
-    for (let i = account.persons.length - 1; i >= 0; i--) {
-      const p = account.persons[i];
+    for (let i = visible.length - 1; i >= 0; i--) {
+      const p = visible[i];
       if (p.id === exclude) continue;
       const pt = posOf(p);
       if (Math.hypot(w.x - pt.x, w.y - pt.y) <= NODE_R + 4) return p.id;
@@ -314,7 +321,7 @@ export function Canvas({
   const zoomBy = (f: number) => setView((v) => ({ ...v, scale: Math.max(0.3, Math.min(2.5, v.scale * f)) }));
   // 总览：自适应缩放 + 居中，把全部节点完整纳入视口（竖屏/横屏通用，避开顶部菜单与底部药丸）
   const fitAll = () => {
-    const ps = account.persons;
+    const ps = visible;
     const r = wrapRef.current?.getBoundingClientRect();
     if (!ps.length || !r) { setView({ tx: 40, ty: 30, scale: 1 }); return; }
     const xs = ps.map((p) => p.x), ys = ps.map((p) => p.y);
@@ -333,8 +340,8 @@ export function Canvas({
   return (
     <div ref={wrapRef} className="canvas-wrap"
       onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={endPointer} onPointerCancel={endPointer} onWheel={onWheel}>
-      {account.persons.length === 0 && (
-        <div className="canvas-empty">👤 还没有干系人<br /><span>在空白处<b>双击</b>新建人物，或点左侧「干系人 ＋」</span></div>
+      {visible.length === 0 && (
+        <div className="canvas-empty">👤 这个商机还没有干系人<br /><span>在空白处<b>双击</b>新建人物，或点左侧「干系人 ＋」</span></div>
       )}
       <svg>
         <defs>
@@ -397,7 +404,7 @@ export function Canvas({
             );
           })}
 
-          {account.persons.map((p) => {
+          {visible.map((p) => {
             const pt = posOf(p);
             const role = roleByPerson.get(p.id);
             const selected = selectedId === p.id;

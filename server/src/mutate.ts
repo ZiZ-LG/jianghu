@@ -48,6 +48,7 @@ export async function applyAction(tenantId: string, action: any): Promise<void> 
         competitor: o.competitor ?? '', competitiveSituation: o.competitiveSituation ?? '',
         winProbability: o.winProbability ?? 0, expectedSignDate: o.expectedSignDate ?? '',
         expectedAmountW: o.expectedAmountW ?? 0, meta: S(o.meta ?? {}),
+        memberScoped: o.memberScoped ?? false,
       } });
       return;
     }
@@ -89,6 +90,7 @@ export async function applyAction(tenantId: string, action: any): Promise<void> 
       await prisma.uCV.deleteMany({ where: { tenantId, targetBiId: { in: biIds } } });
       await prisma.burningIssue.deleteMany({ where: { personId: pid, tenantId } });
       await prisma.oppRole.deleteMany({ where: { personId: pid, tenantId } });
+      await prisma.opportunityMember.deleteMany({ where: { personId: pid, tenantId } });
       await prisma.edge.deleteMany({ where: { tenantId, OR: [{ source: pid }, { target: pid }] } });
       await prisma.person.deleteMany({ where: { id: pid, tenantId } });
       return;
@@ -118,6 +120,17 @@ export async function applyAction(tenantId: string, action: any): Promise<void> 
     }
     case 'REMOVE_ROLE':
       await prisma.oppRole.deleteMany({ where: { tenantId, opportunityId: action.oppId, personId: action.personId } });
+      return;
+
+    case 'ADD_OPP_MEMBER':
+      await prisma.opportunityMember.upsert({
+        where: { opportunityId_personId: { opportunityId: action.oppId, personId: action.personId } },
+        create: { tenantId, opportunityId: action.oppId, personId: action.personId },
+        update: {},
+      });
+      return;
+    case 'REMOVE_OPP_MEMBER':
+      await prisma.opportunityMember.deleteMany({ where: { tenantId, opportunityId: action.oppId, personId: action.personId } });
       return;
 
     case 'ADD_EDGE': {

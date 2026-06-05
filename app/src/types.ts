@@ -152,6 +152,8 @@ export interface Opportunity {
   bis: BurningIssue[];
   ucvs: UCV[];
   edges: Edge[]; // 增量边 L2/L3/L4
+  memberScoped?: boolean;  // true=只显示 memberIds 的人(含竞品)；false/缺省=全员可见(存量兼容)
+  memberIds?: string[];    // 该商机可见的干系人 id 集(缺省视为空；仅 memberScoped 时生效)
 }
 
 /**

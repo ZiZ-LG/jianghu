@@ -20,7 +20,7 @@ export async function assembleState(tenantId: string) {
     include: {
       persons: true,
       edges: true,
-      opportunities: { include: { roles: true, edges: true, bis: true, ucvs: true } },
+      opportunities: { include: { roles: true, edges: true, bis: true, ucvs: true, members: true } },
     },
   });
 
@@ -68,6 +68,8 @@ export async function assembleState(tenantId: string) {
         edges: o.edges.map(edgeView),
         bis: o.bis.map((b) => ({ id: b.id, personId: b.personId, description: b.description, category: b.category, isPrivate: b.isPrivate, confidence: b.confidence })),
         ucvs: o.ucvs.map((u) => ({ id: u.id, targetBiId: u.targetBiId, description: u.description, competitorCannot: u.competitorCannot, status: u.status })),
+        memberScoped: o.memberScoped,
+        memberIds: o.members.map((m) => m.personId),
       })),
     })),
   };
