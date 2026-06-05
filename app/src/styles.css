@@ -664,6 +664,8 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 4px 14px var(--shadow); white-space: nowrap; }
 .align-toolbar .at-count { font-size: 11px; color: var(--muted); margin-right: 2px; }
 .align-toolbar button { font-size: 12px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-2); color: var(--ink); cursor: pointer; }
+.align-toolbar button.at-icon { padding: 4px 6px; display: grid; place-items: center; }
+.align-toolbar button.at-icon svg { display: block; }
 .align-toolbar button:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
 .align-toolbar .at-clear { padding: 3px 7px; color: var(--muted); }
 .align-toolbar .at-clear:hover { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }

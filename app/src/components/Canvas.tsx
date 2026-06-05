@@ -57,7 +57,7 @@ type Gesture =
   | { kind: 'endpoint'; edgeId: string; end: 'source' | 'target'; csx: number; csy: number }
   | { kind: 'bend'; edgeId: string; csx: number; csy: number }
   | { kind: 'edge'; edgeId: string; csx: number; csy: number }
-  | { kind: 'marquee'; csx: number; csy: number; x0: number; y0: number }
+  | { kind: 'marquee'; csx: number; csy: number; x0: number; y0: number; append: boolean }
   | { kind: 'pinch' };
 
 export function Canvas({
@@ -215,11 +215,11 @@ export function Canvas({
       gesture.current = { kind: 'node', id, csx: e.clientX, csy: e.clientY, ox: w.x - p.x, oy: w.y - p.y, moved: false };
     } else if (edgeH) {
       gesture.current = { kind: 'edge', edgeId: edgeH.getAttribute('data-edge')!, csx: e.clientX, csy: e.clientY };
-    } else if (e.button === 1 || e.shiftKey) {
-      gesture.current = { kind: 'pan', csx: e.clientX, csy: e.clientY, tx: view.tx, ty: view.ty }; // 中键 / Shift+拖 = 平移画布
+    } else if (e.button === 1) {
+      gesture.current = { kind: 'pan', csx: e.clientX, csy: e.clientY, tx: view.tx, ty: view.ty }; // 中键拖 = 平移画布（双指亦可）
     } else {
       const w = toWorld(e.clientX, e.clientY);
-      gesture.current = { kind: 'marquee', csx: e.clientX, csy: e.clientY, x0: w.x, y0: w.y }; // 空白单指/左键拖 = 框选
+      gesture.current = { kind: 'marquee', csx: e.clientX, csy: e.clientY, x0: w.x, y0: w.y, append: e.shiftKey }; // 空白拖=框选；按 Shift=在已选上追加
     }
   };
 
@@ -292,16 +292,17 @@ export function Canvas({
       if (!moved) handleTap('empty', '', w);
     } else if (g.kind === 'marquee') {
       if (moved) {
-        // 框内（节点完全在框内）→ 多选；竞品同样可框选
+        // 框内（节点完全在框内）→ 多选；竞品同样可框选；按 Shift 则并入已选
         const x0 = Math.min(g.x0, w.x), x1 = Math.max(g.x0, w.x), y0 = Math.min(g.y0, w.y), y1 = Math.max(g.y0, w.y);
         const ids = visible.filter((p) => { const pt = posOf(p); return pt.x - NODE_R >= x0 && pt.x + NODE_R <= x1 && pt.y - NODE_R >= y0 && pt.y + NODE_R <= y1; }).map((p) => p.id);
-        setSelectedIds(new Set(ids)); onSelectPerson(null); onSelectEdge(null);
-      } else { setSelectedIds(new Set()); handleTap('empty', '', w); }
+        setSelectedIds((s) => (g.append ? new Set([...s, ...ids]) : new Set(ids))); onSelectPerson(null); onSelectEdge(null);
+      } else if (!g.append) { setSelectedIds(new Set()); handleTap('empty', '', w); } // Shift 空点不清，保留已选
       setMarquee(null);
     } else if (g.kind === 'edge') {
       if (!moved) handleTap('edge', g.edgeId, w);
     } else if (g.kind === 'node') {
       if (g.moved && dragPt) onMovePerson(g.id, Math.round(dragPt.x), Math.round(dragPt.y));
+      else if (e.shiftKey) setSelectedIds((s) => { const n = new Set(s); if (n.has(g.id)) n.delete(g.id); else n.add(g.id); return n; }); // Shift+点 → 在已选上加/减该节点
       else { setSelectedIds(new Set()); handleTap('node', g.id, w); }
       setDragPt(null);
     } else if (g.kind === 'link') {
@@ -573,12 +574,20 @@ export function Canvas({
       })()}
 
       {selBox && (
-        <div className="align-toolbar" onPointerDown={stop} style={{ left: selBox.x, top: selBox.y - 12, transform: 'translate(-50%,-100%)' }}>
+        <div className="align-toolbar" onPointerDown={stop} style={{ left: selBox.x, top: Math.max(8, selBox.y - 44), transform: 'translateX(-50%)' }}>
           <span className="at-count">{selectedIds.size} 选中</span>
-          <button onClick={() => alignSelected('hAlign')} title="水平对齐：选中节点排到同一水平线">横对齐</button>
-          <button onClick={() => alignSelected('vAlign')} title="垂直对齐：选中节点排到同一垂直线">竖对齐</button>
-          <button onClick={() => alignSelected('hDist')} title="水平分布：选中节点水平方向等间距">横分布</button>
-          <button onClick={() => alignSelected('vDist')} title="垂直分布：选中节点垂直方向等间距">竖分布</button>
+          <button className="at-icon" onClick={() => alignSelected('hAlign')} title="水平对齐：选中节点排到同一水平线">
+            <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><line x1="2" y1="12" x2="22" y2="12" stroke="currentColor" strokeWidth="1.4" /><circle cx="6" cy="12" r="2.6" fill="currentColor" /><circle cx="12" cy="12" r="2.6" fill="currentColor" /><circle cx="18" cy="12" r="2.6" fill="currentColor" /></svg>
+          </button>
+          <button className="at-icon" onClick={() => alignSelected('vAlign')} title="垂直对齐：选中节点排到同一垂直线">
+            <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><line x1="12" y1="2" x2="12" y2="22" stroke="currentColor" strokeWidth="1.4" /><circle cx="12" cy="6" r="2.6" fill="currentColor" /><circle cx="12" cy="12" r="2.6" fill="currentColor" /><circle cx="12" cy="18" r="2.6" fill="currentColor" /></svg>
+          </button>
+          <button className="at-icon" onClick={() => alignSelected('hDist')} title="水平分布：选中节点水平方向等间距">
+            <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M2 8 L2 16 M22 8 L22 16" stroke="currentColor" strokeWidth="1.4" /><circle cx="7" cy="12" r="2.6" fill="currentColor" /><circle cx="12" cy="12" r="2.6" fill="currentColor" /><circle cx="17" cy="12" r="2.6" fill="currentColor" /></svg>
+          </button>
+          <button className="at-icon" onClick={() => alignSelected('vDist')} title="垂直分布：选中节点垂直方向等间距">
+            <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M8 2 L16 2 M8 22 L16 22" stroke="currentColor" strokeWidth="1.4" /><circle cx="12" cy="7" r="2.6" fill="currentColor" /><circle cx="12" cy="12" r="2.6" fill="currentColor" /><circle cx="12" cy="17" r="2.6" fill="currentColor" /></svg>
+          </button>
           <button className="at-clear" onClick={() => setSelectedIds(new Set())} title="取消框选">✕</button>
         </div>
       )}
