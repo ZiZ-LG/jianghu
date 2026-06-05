@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { prisma } from './prisma.js';
 import { loadAiConfig, callLLM } from './ai.js';
 import { applyAction } from './mutate.js';
+import { nextFreeSlot } from './layout.js';
 
 const PIPELINE = ['线索', '需求引导', '方案认可', '客户立项', '招投标', '合同谈判', '合同双签'];
 const VALID_ROLE = ['A', 'D', 'U', 'TB', 'R'];
@@ -22,8 +23,6 @@ const N = (v: unknown): number | undefined => (typeof v === 'number' && isFinite
 const clampLevel = (v: unknown) => Math.min(4, Math.max(1, Math.round(N(v) ?? 3)));
 // explicit 判定：未标 inferred 且置信度≥0.6 才直落正式库，否则进候选
 const isExplicit = (item: any) => item?.kind !== 'inferred' && (N(item?.confidence) ?? 1) >= 0.6;
-// 新节点错位排布（与 suggest.ts / App.importPersons 同口径）
-const placeAt = (n: number) => ({ x: 220 + (n % 4) * 150, y: 150 + Math.floor(n / 4) * 135 });
 // 实体去重提示（跨库可移植，纯 JS）：精确同名已各自处理，这里找"相似但不全等"（含包含关系，如「李处」≈「李处长」）
 const stripCompany = (s: string) => s.trim().replace(/(集团)?(股份)?(有限)?(责任)?公司$/, '').replace(/集团$/, '').trim() || s.trim();
 const isSimilarName = (a: string, b: string): boolean => {
@@ -150,7 +149,7 @@ export function voiceRoutes(app: FastifyInstance) {
     const formalId = new Map<string, string>(); // name → 正式 personId
     const suggId = new Map<string, string>();   // name → 候选 suggestionId
     for (const per of acc.persons) formalId.set(per.name, per.id);
-    let placeN = acc.persons.filter((x) => !x.isCompetitor).length;
+    const occupied = acc.persons.filter((pp) => !pp.isCompetitor).map((pp) => ({ x: pp.x, y: pp.y })); // 新节点避让：已有非竞品节点坐标
 
     const setRoleIf = async (personId: string, per: any, name: string) => {
       if (opp && VALID_ROLE.includes(S(per.suggestedRole))) {
@@ -172,7 +171,7 @@ export function voiceRoutes(app: FastifyInstance) {
         // 同客户内相似名（如「李处」≈「李处长」，含本次已建）→ 回执提示疑似重复，不打断、仍新建
         const simName = [...formalId.keys()].find((k) => isSimilarName(k, name));
         const pid = 'p_' + randomUUID().slice(0, 12);
-        const { x, y } = placeAt(placeN++);
+        const { x, y } = nextFreeSlot(occupied); occupied.push({ x, y });
         const logs = [{ date: today, content: `🎙️ 口述录入：${S(per.evidence, 80) || name}`, visibility: 'team' }];
         await applyAction(tenantId, { type: 'ADD_PERSON', accId: acc.id, person: { id: pid, name, title: S(per.title, 60), orgLevel: clampLevel(per.orgLevel), x, y, logs } });
         formalId.set(name, pid);
