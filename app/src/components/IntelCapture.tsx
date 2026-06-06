@@ -3,7 +3,7 @@ import type { ReactNode, PointerEvent as ReactPointerEvent } from 'react';
 import type { Account, Opportunity } from '../types';
 import { api } from '../api';
 
-/** 可拖动悬浮面板：替代 Modal 的居中遮罩——无遮罩、默认右上角、拖标题栏移动，便于边录边看墙。 */
+/** 可拖动悬浮面板：替代 Modal 的居中遮罩——无遮罩、默认右上角、拖标题栏移动，便于边录边看图。 */
 function FloatPanel({ title, onClose, footer, width = 420, children }: {
   title: string; onClose: () => void; footer?: ReactNode; width?: number; children: ReactNode;
 }) {

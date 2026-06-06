@@ -48,7 +48,7 @@ export function NewOpportunityDialog({ account, onClose, onCreate }: {
       </label>
       <div className="fld"><span>初始干系人</span>
         <div className="intel-scope">
-          <label className="chk-line"><input type="radio" checked={mode === 'blank'} onChange={() => setMode('blank')} />空白白板（从零搭墙）</label>
+          <label className="chk-line"><input type="radio" checked={mode === 'blank'} onChange={() => setMode('blank')} />空白白板（从零搭建）</label>
           {hasOpps && <label className="chk-line"><input type="radio" checked={mode === 'clone'} onChange={() => setMode('clone')} />从已有商机克隆</label>}
         </div>
       </div>
