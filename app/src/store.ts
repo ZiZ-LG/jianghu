@@ -31,7 +31,7 @@ export function newOpportunity(accountId: string, name: string, customerType: Cu
   return {
     id: uid('opp'), accountId, name, customerType,
     pipelineStage: '线索', engageStage: '需求调研立项', singleSalesGoal: '',
-    c3Items: {}, c5Items: {}, roles: [], bis: [], ucvs: [], edges: [],
+    c3Items: {}, c5Items: {}, roles: [], bis: [], ucvs: [], edges: [], memberScoped: false, memberIds: [],
   };
 }
 export function newPerson(name: string, title: string, x: number, y: number, isCompetitor?: boolean): Person {
@@ -57,6 +57,8 @@ export type Action =
   | { type: 'ADD_LOG'; accId: string; personId: string; log: InteractionLog }
   | { type: 'SET_ROLE'; accId: string; oppId: string; personId: string; patch: Partial<OppRole> }
   | { type: 'REMOVE_ROLE'; accId: string; oppId: string; personId: string }
+  | { type: 'ADD_OPP_MEMBER'; accId: string; oppId: string; personId: string }
+  | { type: 'REMOVE_OPP_MEMBER'; accId: string; oppId: string; personId: string }
   | { type: 'ADD_EDGE'; accId: string; oppId: string; edge: Edge }
   | { type: 'UPDATE_EDGE'; accId: string; oppId: string; edgeId: string; patch: Partial<Edge> }
   | { type: 'DELETE_EDGE'; accId: string; oppId: string; edgeId: string }
@@ -119,6 +121,7 @@ export function reducer(s: StoreState, action: Action): StoreState {
             edges: o.edges.filter((e) => e.source !== action.personId && e.target !== action.personId),
             bis: o.bis.filter((b) => b.personId !== action.personId),
             ucvs: o.ucvs.filter((u) => !deadBis.includes(u.targetBiId)),
+            memberIds: (o.memberIds ?? []).filter((id) => id !== action.personId),
           };
         }),
       }));
@@ -137,6 +140,11 @@ export function reducer(s: StoreState, action: Action): StoreState {
       });
     case 'REMOVE_ROLE':
       return mapOpp(s, action.accId, action.oppId, (o) => ({ ...o, roles: o.roles.filter((r) => r.personId !== action.personId) }));
+
+    case 'ADD_OPP_MEMBER':
+      return mapOpp(s, action.accId, action.oppId, (o) => ({ ...o, memberIds: (o.memberIds ?? []).includes(action.personId) ? o.memberIds : [...(o.memberIds ?? []), action.personId] }));
+    case 'REMOVE_OPP_MEMBER':
+      return mapOpp(s, action.accId, action.oppId, (o) => ({ ...o, memberIds: (o.memberIds ?? []).filter((id) => id !== action.personId) }));
 
     case 'ADD_EDGE':
       return mapOpp(s, action.accId, action.oppId, (o) => ({ ...o, edges: [...o.edges, action.edge] }));

@@ -178,6 +178,7 @@ export function voiceRoutes(app: FastifyInstance) {
         const logs = [{ date: today, content: `🎙️ 口述录入：${S(per.evidence, 80) || name}`, visibility: 'team' }];
         await applyAction(tenantId, { type: 'ADD_PERSON', accId: acc.id, person: { id: pid, name, title: S(per.title, 60), orgLevel: clampLevel(per.orgLevel), x, y, logs } });
         formalId.set(name, pid);
+        if (opp?.memberScoped) await applyAction(tenantId, { type: 'ADD_OPP_MEMBER', accId: acc.id, oppId: opp.id, personId: pid }); // memberScoped 商机 → 新人加入成员
         receipt.personsCreated.push({ id: pid, name, title: S(per.title, 60) });
         if (simName) receipt.dupWarnings.push({ kind: 'person', name, similarTo: simName });
         await setRoleIf(pid, per, name);

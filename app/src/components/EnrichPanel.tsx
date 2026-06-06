@@ -4,6 +4,7 @@ import { Modal } from './Modal';
 
 const SOURCE_LABEL: Record<string, { t: string; c: string }> = {
   qcc: { t: '企查查 · 权威工商数据', c: '#16a34a' },
+  web: { t: '搜索引擎(AI 联网) · 待核实', c: '#0ea5e9' },
   ai: { t: 'AI 联想 · 待核实', c: '#f59e0b' },
   mock: { t: '角色清单 · 待补齐', c: '#94a3b8' },
 };
@@ -39,15 +40,16 @@ export function EnrichPanel({
   const [showConfig, setShowConfig] = useState(false);
   const [cfgMsg, setCfgMsg] = useState('');
   const [cfgBusy, setCfgBusy] = useState(false);
+  const [dataSource, setDataSource] = useState<'auto' | 'web'>('auto'); // auto=企查查/AI；web=搜索引擎(AI 联网)
 
   useEffect(() => { api.qccConfig().then(setCfg).catch(() => {}); }, []);
 
   // 按完整登记名查关键人并填充预览
-  const fetchPersons = async (fullName: string) => {
+  const fetchPersons = async (fullName: string, mode: 'auto' | 'web' = 'auto') => {
     setErr(''); setLoading(true); setRows([]); setCandidates(null);
     setEquity(null); setEquityErr(''); // 切换主体时清空股权/投资旧数据
     try {
-      const r = await api.enrichCompany(fullName);
+      const r = await api.enrichCompany(fullName, mode);
       setRows(r.persons.map((p) => ({ ...p, selected: true })));
       setSource(r.source); setNote(r.note); setResolvedName(fullName);
     } catch (e: any) { setErr(e.message); } finally { setLoading(false); }
@@ -64,6 +66,8 @@ export function EnrichPanel({
   const search = async () => {
     if (!name.trim()) return;
     setErr(''); setRows([]); setCandidates(null); setNote('');
+    // 搜索引擎源：AI 联网直接查，无需企查查全称锚定
+    if (dataSource === 'web') { await fetchPersons(name.trim(), 'web'); return; }
     // 未配企查查 MCP：保持原逻辑（直接 AI/mock 兜底，无需锚定）
     if (!cfg.configured) { await fetchPersons(name.trim()); return; }
     // 已配 MCP：先锚定全称（企查查要求 searchKey 为完整登记名；简称会命中多候选）
@@ -98,7 +102,7 @@ export function EnrichPanel({
   const doImport = () => { onImport(selected.map((r) => ({ name: r.name, title: r.title, source }))); onClose(); };
 
   return (
-    <Modal title="🏢 企查查 · 自动建图" width={600} onClose={onClose}
+    <Modal title="🔍 搜索情报" width={600} onClose={onClose}
       footer={<>
         <span className="hint-text" style={{ margin: 0, marginRight: 'auto' }}>导入为节点（带来源·待验证），后续指派角色 + 核实</span>
         <button className="btn ghost" onClick={onClose}>关闭</button>
@@ -138,6 +142,16 @@ export function EnrichPanel({
           </div>}
         </div>
       )}
+
+      {/* 数据源选择：企查查/AI（auto）或 搜索引擎（AI 联网） */}
+      <div className="fld" style={{ marginBottom: 10 }}>
+        <span>数据源</span>
+        <div className="intel-scope">
+          <label className="chk-line"><input type="radio" checked={dataSource === 'auto'} onChange={() => setDataSource('auto')} />{cfg.configured ? '企查查 MCP（工商数据）' : 'AI 联想（未配企查查）'}</label>
+          <label className="chk-line"><input type="radio" checked={dataSource === 'web'} onChange={() => setDataSource('web')} />🔍 搜索引擎（AI 联网·待核实）</label>
+        </div>
+        {dataSource === 'web' && <div className="hint-text" style={{ margin: '4px 0 0' }}>从公开网络搜索，需所配 AI 模型支持联网；结果均为待核实，勾选后导入。</div>}
+      </div>
 
       {/* 查询 */}
       <div className="enrich-search">

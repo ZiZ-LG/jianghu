@@ -19,6 +19,19 @@ async function llmProfile(ai: { baseUrl: string; model: string; apiKey: string }
   } catch { return []; }
 }
 
+// ── 搜索引擎源：复用 AI 模型【联网搜索】（需模型支持 web search；不支持则退化为凭知识）──
+async function webProfile(ai: { baseUrl: string; model: string; apiKey: string }, name: string): Promise<DiscoveredPerson[]> {
+  const sys = '你是企业情报助手，具备联网搜索能力。请【联网搜索】该公司的最新公开信息（官网、新闻报道、公开资料），找出其关键人员（董事长/总经理/分管副总/信息化或数字化负责人/财务/采购或招标/项目或工程负责人等）及职务。只输出 JSON 数组 [{name,title}]，最多 8 条；姓名不确定写「(待核实)」，title 可附一句背景线索。不要输出 JSON 以外内容。';
+  let text = '';
+  try { text = await callLLM(ai, sys, `公司：${name}。请联网检索后作答。`, 800); } catch { return []; }
+  const m = text.match(/\[[\s\S]*\]/);
+  if (!m) return [];
+  try {
+    const arr = JSON.parse(m[0]);
+    return (Array.isArray(arr) ? arr : []).map((x: any) => ({ name: String(x.name || '').slice(0, 20), title: String(x.title || '关键人员').slice(0, 40) })).filter((p) => p.name).slice(0, 8);
+  } catch { return []; }
+}
+
 // ── 演示回退（无任何配置时）：给出 G64111 需补齐的典型角色清单 ──
 function mockProfile(): DiscoveredPerson[] {
   return [
@@ -97,13 +110,21 @@ export function enrichRoutes(app: FastifyInstance) {
 
   // 自动建图：返回某公司的关键人（企查查 MCP → AI 回退 → 演示），供前端预览后导入
   app.post('/api/enrich/company', { preHandler: [app.authenticate] }, async (req, reply) => {
-    const p = z.object({ name: z.string().min(1) }).safeParse(req.body);
+    const p = z.object({ name: z.string().min(1), mode: z.enum(['auto', 'web']).default('auto') }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '请输入公司名称' });
     const name = p.data.name.trim();
     const tenantId = req.user.tenantId;
 
     let persons: DiscoveredPerson[] = [];
     let source = '', note = '';
+
+    // 搜索引擎源：复用 AI 模型联网搜索（红线②：结果均待核实，用户勾选导入，不自动写库）
+    if (p.data.mode === 'web') {
+      const ai = await loadAiConfig(tenantId);
+      if (!ai || ai.provider === 'mock' || !ai.baseUrl || !ai.model) return reply.code(400).send({ error: '搜索引擎源需先配置 AI 模型（且模型需支持联网搜索）', needConfig: true });
+      persons = await webProfile({ baseUrl: ai.baseUrl, model: ai.model, apiKey: ai.apiKey }, name);
+      return { source: 'web', company: name, persons, note: persons.length ? '搜索引擎(AI 联网)·均为待核实，请勾选后导入' : '未搜到关键人，可换关键词或改用其他数据源' };
+    }
 
     const qcc = await prisma.qccConfig.findUnique({ where: { tenantId } });
     if (qcc?.appKey === 'mcp' && qcc?.secretKeyEnc) {

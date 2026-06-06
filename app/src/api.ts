@@ -44,6 +44,9 @@ export const api = {
   // 录入情报：口述文字 → 后端 LLM 抽取 + 双轨落库 → 回执
   voiceExtract: (b: { text: string; accountId?: string; opportunityId?: string; priorText?: string }): Promise<any> =>
     req('/api/voice/extract', { method: 'POST', body: JSON.stringify(b) }),
+  // 新建商机：空白(personIds 空) 或 从 fromOppId 克隆选定人物(+角色，可选关系线)
+  cloneOpportunity: (b: { accountId: string; name: string; fromOppId?: string; personIds: string[]; withEdges: boolean }): Promise<{ opportunityId: string; memberCount: number }> =>
+    req('/api/opportunity/clone', { method: 'POST', body: JSON.stringify(b) }),
   demo: (): Promise<{ ok: true }> => req('/api/demo', { method: 'POST' }),
   reset: (): Promise<{ ok: true }> => req('/api/reset', { method: 'POST' }),
   billing: (): Promise<{ plan: string; subscriptionStatus: string; seatLimit: number; memberCount: number }> => req('/api/billing'),
@@ -74,8 +77,8 @@ export const api = {
   qccTest: (): Promise<{ ok: boolean; message?: string }> => req('/api/qcc/test', { method: 'POST' }),
   qccResolve: (query: string): Promise<{ exact: boolean; candidates: CompanyCandidate[] }> =>
     req('/api/qcc/resolve', { method: 'POST', body: JSON.stringify({ query }) }),
-  enrichCompany: (name: string): Promise<{ source: string; company: string; persons: { name: string; title: string }[]; note: string }> =>
-    req('/api/enrich/company', { method: 'POST', body: JSON.stringify({ name }) }),
+  enrichCompany: (name: string, mode: 'auto' | 'web' = 'auto'): Promise<{ source: string; company: string; persons: { name: string; title: string }[]; note: string }> =>
+    req('/api/enrich/company', { method: 'POST', body: JSON.stringify({ name, mode }) }),
   // 企查查 股权/对外投资（只读·仅供参考，不写库）。name 须为完整登记名（先经 qccResolve 锚定）。
   qccCompanyData: (name: string): Promise<CompanyEquityData> =>
     req('/api/qcc/company-data', { method: 'POST', body: JSON.stringify({ name }) }),

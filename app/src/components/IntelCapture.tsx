@@ -1,7 +1,37 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
+import type { ReactNode, PointerEvent as ReactPointerEvent } from 'react';
 import type { Account, Opportunity } from '../types';
-import { Modal } from './Modal';
 import { api } from '../api';
+
+/** 可拖动悬浮面板：替代 Modal 的居中遮罩——无遮罩、默认右上角、拖标题栏移动，便于边录边看墙。 */
+function FloatPanel({ title, onClose, footer, width = 420, children }: {
+  title: string; onClose: () => void; footer?: ReactNode; width?: number; children: ReactNode;
+}) {
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null); // null = CSS 默认（右上角）
+  const drag = useRef<{ dx: number; dy: number } | null>(null);
+  const onDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const r = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
+    drag.current = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* 某些环境无真实指针时忽略 */ }
+  };
+  const onMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!drag.current) return;
+    const x = Math.min(Math.max(8, e.clientX - drag.current.dx), window.innerWidth - 120);
+    const y = Math.min(Math.max(8, e.clientY - drag.current.dy), window.innerHeight - 60);
+    setPos({ x, y });
+  };
+  const onUp = (e: ReactPointerEvent<HTMLDivElement>) => { drag.current = null; try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* noop */ } };
+  return (
+    <div className="intel-float" style={{ width, ...(pos ? { left: pos.x, top: pos.y, right: 'auto' } : {}) }}>
+      <div className="intel-float-head" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp}>
+        <span>{title}</span>
+        <button className="x-btn" onPointerDown={(e) => e.stopPropagation()} onClick={onClose}>×</button>
+      </div>
+      <div className="modal-body">{children}</div>
+      {footer && <div className="modal-foot">{footer}</div>}
+    </div>
+  );
+}
 
 /**
  * 录入情报：销售用 Typeless 口述→转文字→粘贴→一键自动整理成 客户/商机/干系人/关系。
@@ -48,7 +78,7 @@ export function IntelCapture({ account, opportunity, onClose, onDone, onEnterAcc
     const builtNothing = !c.account && !c.opportunity && !(c.personsCreated?.length) && !(c.edgesCreated?.length) && !cands.length;
     const canEnter = Boolean(fromScratch && c.account?.id && onEnterAccount); // 从零建客户成功 → 可一键进入
     return (
-      <Modal title="🎙️ 录入情报 · 已录入" width={520} onClose={onClose}
+      <FloatPanel title="🎙️ 录入情报 · 已录入" width={420} onClose={onClose}
         footer={<>
           <button className="btn ghost" onClick={onClose}>完成</button>
           <button className={canEnter ? 'btn ghost' : 'btn primary'} onClick={() => { setReceipt(null); setText(''); }}>＋ 再记一条</button>
@@ -81,13 +111,13 @@ export function IntelCapture({ account, opportunity, onClose, onDone, onEnterAcc
             </div>
           )}
         </div>
-      </Modal>
+      </FloatPanel>
     );
   }
 
   // ── 输入视图 ──
   return (
-    <Modal title={priorText ? '🎙️ 录入情报 · 再补一句（接着上文理解）' : fromScratch ? '🎙️ 录入情报 · 口述一段，自动建客户 + 干系人 + 关系' : '🎙️ 录入情报 · 一句话理清客户 / 商机 / 关系'} width={560} onClose={onClose}
+    <FloatPanel title={priorText ? '🎙️ 录入情报 · 再补一句（接着上文理解）' : fromScratch ? '🎙️ 录入情报 · 口述一段，自动建客户 + 干系人 + 关系' : '🎙️ 录入情报 · 一句话理清客户 / 商机 / 关系'} width={440} onClose={onClose}
       footer={<>
         <button className="btn ghost" onClick={onClose}>取消</button>
         <button className="btn primary" onClick={submit} disabled={busy || !text.trim()}>{busy ? '整理中…' : '📥 录入成图'}</button>
@@ -112,6 +142,6 @@ export function IntelCapture({ account, opportunity, onClose, onDone, onEnterAcc
         </div>
       )}
       {err && <div className="intel-err">{err}</div>}
-    </Modal>
+    </FloatPanel>
   );
 }

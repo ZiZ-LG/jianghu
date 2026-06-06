@@ -248,6 +248,11 @@ select { font-family: inherit; }
 .modal-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--line); font-weight: 700; font-size: 15px; }
 .modal-body { padding: 18px 20px; overflow-y: auto; }
 .modal-foot { padding: 14px 20px; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; gap: 10px; }
+/* 录入情报悬浮面板：可拖动、不遮挡画布（边录边看墙）。无遮罩，默认右上角，拖标题栏移动 */
+.intel-float { position: fixed; top: 66px; right: 16px; z-index: 60; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 18px 50px rgba(15,23,42,.28); display: flex; flex-direction: column; max-height: calc(100vh - 86px); }
+.intel-float-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--line); font-weight: 700; font-size: 15px; cursor: move; touch-action: none; user-select: none; }
+/* 新建商机克隆：可滚动的人物勾选列表 */
+.clone-people { max-height: 200px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; display: flex; flex-direction: column; gap: 2px; }
 
 /* ───────── Hub ───────── */
 .hub { height: 100vh; overflow-y: auto; background: var(--bg); padding: 0 0 40px; }
@@ -654,6 +659,16 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 .shape-btn.del { font-size: 13px; padding: 5px 8px; }
 .shape-btn.del:hover { background: #fef2f2; color: #b91c1c; }
 .edge-tb-sep { width: 1px; align-self: stretch; background: var(--line); margin: 2px 1px; }
+/* 框选多选 → 对齐/分布浮动工具栏 */
+.align-toolbar { position: absolute; z-index: 26; display: flex; align-items: center; gap: 4px; padding: 5px 7px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 4px 14px var(--shadow); white-space: nowrap; }
+.align-toolbar .at-count { font-size: 11px; color: var(--muted); margin-right: 2px; }
+.align-toolbar button { font-size: 12px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-2); color: var(--ink); cursor: pointer; }
+.align-toolbar button.at-icon { padding: 4px 6px; display: grid; place-items: center; }
+.align-toolbar button.at-icon svg { display: block; }
+.align-toolbar button:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+.align-toolbar .at-clear { padding: 3px 7px; color: var(--muted); }
+.align-toolbar .at-clear:hover { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
 /* 选中节点的浮框：改色 + 删除 */
 .node-toolbar { position: absolute; z-index: 25; display: flex; align-items: center; gap: 4px; padding: 5px 6px;
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 4px 14px var(--shadow); }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
 import type { Layer, Role, CustomerType, Edge, Person } from './types';
 import { LAYER_LABEL } from './types';
-import { reducer, newAccount, newOpportunity, newPerson, uid, type Action } from './store';
+import { reducer, newAccount, newPerson, uid, type Action } from './store';
 import { api, type AuthResult, type Suggestion, type PersonSuggestion } from './api';
 import { scoreFromDomain } from './lib/g64111';
 import { usePersistentState, useTheme, useViewport } from './ui';
@@ -16,6 +16,7 @@ import { WinTendencyPanel } from './components/WinTendencyPanel';
 import { OpportunityForm } from './components/OpportunityForm';
 import { CustomerProfile } from './components/CustomerProfile';
 import { IntelCapture } from './components/IntelCapture';
+import { NewOpportunityDialog } from './components/NewOpportunityDialog';
 import { nextFreeSlot } from './lib/layout';
 import { PersonForm } from './components/PersonForm';
 import { TeamBilling } from './components/TeamBilling';
@@ -43,6 +44,7 @@ export default function App() {
   const [personFormOpen, setPersonFormOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [intelOpen, setIntelOpen] = useState(false);
+  const [newOppOpen, setNewOppOpen] = useState(false);
   const [teamOpen, setTeamOpen] = useState(false);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
   const [consoleOpen, setConsoleOpen] = useState(false);
@@ -151,11 +153,15 @@ export default function App() {
       if (added) { setAccId(added.id); setOppId(added.opportunities[0]?.id ?? null); setSelectedId(null); setLayer('L1'); }
     } catch (e: any) { setSyncErr('载入示例失败：' + e.message); }
   };
-  const addOpp = () => {
+  const addOpp = () => { if (account) setNewOppOpen(true); };
+  const createOpportunity = async (params: { name: string; fromOppId?: string; personIds: string[]; withEdges: boolean }) => {
     if (!account) return;
-    const o = newOpportunity(account.id, '新商机', account.customerType);
-    act({ type: 'ADD_OPP', accId: account.id, opp: o });
-    setOppId(o.id); setSelectedId(null); setOppFormOpen(true);
+    setNewOppOpen(false);
+    try {
+      const { opportunityId } = await api.cloneOpportunity({ accountId: account.id, ...params });
+      const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts });
+      setOppId(opportunityId); setSelectedId(null); setLayer('L1');
+    } catch (e: any) { setSyncErr('新建商机失败：' + e.message); }
   };
   const deleteOpp = (id: string) => {
     if (!account) return;
@@ -168,6 +174,7 @@ export default function App() {
     const { x, y } = isCompetitor ? { x: 90, y: 440 } : nextFreeSlot(occupied);
     const p = newPerson(name, title, x, y, isCompetitor);
     act({ type: 'ADD_PERSON', accId: account.id, person: p });
+    if (opp?.memberScoped) act({ type: 'ADD_OPP_MEMBER', accId: account.id, oppId: opp.id, personId: p.id }); // memberScoped 商机内建人 → 加入成员，否则被过滤看不见
     setSelectedId(p.id);
   };
 
@@ -183,6 +190,7 @@ export default function App() {
     if (!account) return '';
     const p = newPerson('新成员', '', x, y, false);
     act({ type: 'ADD_PERSON', accId: account.id, person: p });
+    if (opp?.memberScoped) act({ type: 'ADD_OPP_MEMBER', accId: account.id, oppId: opp.id, personId: p.id });
     setSelectedId(p.id); setSelectedEdgeId(null);
     return p.id;
   };
@@ -199,6 +207,7 @@ export default function App() {
     if (!account || !opp) return '';
     const p = newPerson('新成员', '', x, y, false);
     act({ type: 'ADD_PERSON', accId: account.id, person: p });
+    if (opp.memberScoped) act({ type: 'ADD_OPP_MEMBER', accId: account.id, oppId: opp.id, personId: p.id });
     act({ type: 'ADD_EDGE', accId: account.id, oppId: opp.id, edge: makeEdge(source, p.id) });
     setSelectedId(p.id); setSelectedEdgeId(null);
     return p.id;
@@ -235,7 +244,10 @@ export default function App() {
     try {
       const { edge, createdPersons } = await api.suggestAccept(id);
       // 级联：若端点是候选人物，服务端已建正式 Person，本地须先 ADD_PERSON 再 ADD_EDGE（否则画布找不到端点）
-      for (const p of createdPersons ?? []) dispatch({ type: 'ADD_PERSON', accId: account.id, person: p });
+      for (const p of createdPersons ?? []) {
+        dispatch({ type: 'ADD_PERSON', accId: account.id, person: p });
+        if (opp.memberScoped) dispatch({ type: 'ADD_OPP_MEMBER', accId: account.id, oppId: opp.id, personId: p.id }); // 服务端已加成员，本地同步
+      }
       dispatch({ type: 'ADD_EDGE', accId: account.id, oppId: opp.id, edge }); // 服务端已建，本地直接加避免重复写
       setSuggestions((s) => s.filter((x) => x.id !== id));
     } catch (e: any) { setSyncErr('采纳失败：' + e.message); }
@@ -250,7 +262,10 @@ export default function App() {
     if (!account) return;
     try {
       const { person } = await api.personSuggestAccept(id);
-      if (person) dispatch({ type: 'ADD_PERSON', accId: account.id, person });
+      if (person) {
+        dispatch({ type: 'ADD_PERSON', accId: account.id, person });
+        if (opp?.memberScoped) dispatch({ type: 'ADD_OPP_MEMBER', accId: account.id, oppId: opp.id, personId: person.id }); // 服务端已加成员，本地同步
+      }
       setPersonSuggs((s) => s.filter((x) => x.id !== id));
     } catch (e: any) { setSyncErr('采纳干系人失败：' + e.message); }
   };
@@ -268,12 +283,13 @@ export default function App() {
     if (!account) return;
     const occupied = account.persons.filter((p) => !p.isCompetitor).map((p) => ({ x: p.x, y: p.y }));
     const today = new Date().toISOString().slice(0, 10);
-    const label = (src: string) => (src === 'qcc' ? '企查查导入' : src === 'ai' ? 'AI 推测·待核实' : '角色待补齐');
+    const label = (src: string) => (src === 'qcc' ? '企查查导入' : src === 'web' ? '🔍 搜索引擎·待核实' : src === 'ai' ? 'AI 推测·待核实' : '角色待补齐');
     for (const dp of persons) {
       const { x, y } = nextFreeSlot(occupied); occupied.push({ x, y });
       const p = newPerson(dp.name, dp.title, x, y, false);
       p.logs = [{ date: today, content: `📥 ${label(dp.source)}（${account.name}）`, visibility: 'team' }];
       act({ type: 'ADD_PERSON', accId: account.id, person: p });
+      if (opp?.memberScoped) act({ type: 'ADD_OPP_MEMBER', accId: account.id, oppId: opp.id, personId: p.id });
     }
   };
 
@@ -366,7 +382,7 @@ export default function App() {
                 <button className="btn cta xs" onClick={() => setIntelOpen(true)}>🎙️ 录入情报</button>
                 <button className="btn ghost xs" onClick={() => setOppFormOpen(true)}>编辑商机</button>
                 <button className="btn ghost xs" onClick={() => setProfileOpen(true)}>📇 客户档案</button>
-                <button className="btn ghost xs" onClick={() => setEnrichOpen(true)}>🏢 建图</button>
+                <button className="btn ghost xs" onClick={() => setEnrichOpen(true)}>🔍 搜索情报</button>
                 <button className="btn ghost xs" onClick={() => setSuggestOpen(true)}>🔮 荐关系{suggestions.length + personSuggs.length > 0 ? ` (${suggestions.length + personSuggs.length})` : ''}</button>
                 <button className="btn ghost xs" onClick={() => setReportOpen(true)}>📊 报表</button>
                 <button className="btn ghost xs" onClick={() => setMcpAccessOpen(true)}>🔌 接入 AI</button>
@@ -385,7 +401,7 @@ export default function App() {
                   { label: '🎙️ 录入情报', primary: true, onClick: () => setIntelOpen(true) },
                   { label: '✏️ 编辑商机', onClick: () => setOppFormOpen(true) },
                   { label: '📇 客户档案', onClick: () => setProfileOpen(true) },
-                  { label: '🏢 企查查建图', onClick: () => setEnrichOpen(true) },
+                  { label: '🔍 搜索情报', onClick: () => setEnrichOpen(true) },
                   { label: '🔮 荐关系', badge: suggestions.length + personSuggs.length > 0 ? String(suggestions.length + personSuggs.length) : undefined, onClick: () => setSuggestOpen(true) },
                   { label: '📊 报表', onClick: () => setReportOpen(true) },
                   { label: '🔌 接入 AI', onClick: () => setMcpAccessOpen(true) },
@@ -401,7 +417,7 @@ export default function App() {
               onAddPersonAt={addPersonAt} onAddConnectedNode={addConnectedNode} onConnect={connectNodes}
               onUpdateEdge={updateEdge} onDeleteEdge={deleteEdgeById}
               onUpdatePerson={updatePerson} onDeletePerson={deletePerson}
-              immersive={immersive} onToggleImmersive={toggleImmersive} secondTapOpens={isMobile}
+              immersive={immersive} onToggleImmersive={toggleImmersive} secondTapOpens={true}
               suggestions={suggestions} />
             {!immersive && breakdown && (
               (isMobile ? winMobileCollapsed : winCollapsed) ? (
@@ -442,6 +458,9 @@ export default function App() {
       {oppFormOpen && opp && (
         <OpportunityForm opp={opp} onClose={() => setOppFormOpen(false)}
           onSave={(patch) => act({ type: 'UPDATE_OPP', accId: account.id, oppId: opp.id, patch })} />
+      )}
+      {newOppOpen && (
+        <NewOpportunityDialog account={account} onClose={() => setNewOppOpen(false)} onCreate={createOpportunity} />
       )}
       {profileOpen && (
         <CustomerProfile account={account} onClose={() => setProfileOpen(false)}
