@@ -191,6 +191,44 @@ export interface VisitNote {
   createdAt?: string;         // ISO
 }
 
+/** 时段（周视图定位用） */
+export type Half = 'am' | 'pm' | 'eve';
+
+/** 商机策划 · 行动计划（🎯，带完成态） */
+export interface PlanAction {
+  id: string;
+  accountId: string;
+  opportunityId: string;
+  gapItem?: string;        // 关联 G64111 低分项 C1..C6|P1..P4|1K（空=非补分动作）
+  personId?: string;       // 目标干系人
+  title: string;
+  scene?: string;
+  scripts?: string;        // 话术（741 行动宝典可预填）
+  target?: string;
+  ownerId?: string;
+  startDate: string;       // YYYY-MM-DD（日历主锚·起）
+  endDate: string;         // YYYY-MM-DD（止；单日 == startDate）
+  half: Half;
+  done: boolean;
+  doneAt?: string;
+  review?: string;
+  origin?: string;         // manual | ai | workbuddy
+  createdBy?: string;
+  createdAt?: string;
+}
+
+/** 商机策划 · 里程碑（🚩，可多个/自由增删） */
+export interface OppMilestone {
+  id: string;
+  accountId: string;
+  opportunityId: string;
+  title: string;
+  startDate: string;
+  endDate: string;
+  half: Half;
+  createdAt?: string;
+}
+
 /** 客户（存量根） */
 export interface Account {
   id: string;
@@ -206,6 +244,8 @@ export interface Account {
   baseEdges: Edge[]; // 存量边 L1 + 基础 L3
   opportunities: Opportunity[];
   visitNotes?: VisitNote[]; // 拜访记录（WorkBuddy 同步）
+  planActions?: PlanAction[]; // 商机策划 · 行动计划
+  milestones?: OppMilestone[]; // 商机策划 · 里程碑
 }
 
 // 角色显示色（设计方案 §4.1，5 色含 TB）

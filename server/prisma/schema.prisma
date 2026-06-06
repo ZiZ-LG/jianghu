@@ -290,3 +290,47 @@ model VisitNote {
   @@index([accountId])
   @@index([opportunityId])
 }
+
+// 商机策划 · 行动计划（🎯）。与 Account 不建 relation，state.ts 按 accountId 挂载（同 VisitNote）。
+// 字段全 String/Float/DateTime/Boolean，无 enum/json（跨库可移植）。
+model PlanAction {
+  id            String   @id // act_xxx
+  tenantId      String
+  accountId     String   // 冗余存：客户级日历直接按 accountId 聚合，免 join
+  opportunityId String   // 必属某商机
+  gapItem       String   @default("") // 关联 G64111 低分项：C1..C6 | P1..P4 | 1K（空=非补分动作）
+  personId      String?  // 目标干系人
+  title         String
+  scene         String   @default("")
+  scripts       String   @default("") // 话术（741 行动宝典可预填）
+  target        String   @default("") // 期望达成
+  ownerId       String   @default("")
+  startDate     String   @default("") // YYYY-MM-DD ← 日历主锚（起）
+  endDate       String   @default("") // YYYY-MM-DD（止；单日则 == startDate）
+  half          String   @default("am") // 时段：am 上午 | pm 下午 | eve 晚上
+  done          Boolean  @default(false) // 是否完成（仅行动有完成态）
+  doneAt        String?  // 完成日期 YYYY-MM-DD
+  review        String   @default("") // 复盘（喂周复盘）
+  origin        String   @default("manual") // manual | ai(741) | workbuddy
+  createdBy     String   @default("")
+  createdAt     DateTime @default(now())
+
+  @@index([accountId])
+  @@index([opportunityId])
+}
+
+// 商机策划 · 商机里程碑（🚩）。轻量，可多个/自由增删。同样按 accountId 挂载。
+model OppMilestone {
+  id            String   @id // ms_xxx
+  tenantId      String
+  accountId     String
+  opportunityId String
+  title         String   // 开标 / 立项评审 / 预计签约…
+  startDate     String   @default("") // YYYY-MM-DD
+  endDate       String   @default("") // 多为单日：== startDate
+  half          String   @default("am")
+  createdAt     DateTime @default(now())
+
+  @@index([accountId])
+  @@index([opportunityId])
+}

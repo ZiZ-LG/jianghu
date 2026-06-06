@@ -10,6 +10,8 @@ import { CustomerHub } from './components/CustomerHub';
 import { Sidebar } from './components/Sidebar';
 import { LayerTabs } from './components/LayerTabs';
 import { Canvas } from './components/Canvas';
+import { ViewTabs, type CustomerView } from './components/ViewTabs';
+import { DealPlanner } from './components/DealPlanner';
 import { DetailDrawer } from './components/DetailDrawer';
 import { EdgeDrawer } from './components/EdgeDrawer';
 import { WinTendencyPanel } from './components/WinTendencyPanel';
@@ -58,6 +60,7 @@ export default function App() {
   const [mcpAccessOpen, setMcpAccessOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistentState('jianghu.sidebarCollapsed', false);
   const [winCollapsed, setWinCollapsed] = usePersistentState('jianghu.winCollapsed', false);
+  const [view, setView] = usePersistentState<CustomerView>('jianghu.customerView', 'wall'); // 客户级镜头：关系地图 / 商机策划
   const [theme, toggleTheme] = useTheme();
   // 画布选中模型：单击=选中(节点出锚点/连线出控制点)，双击=打开右侧栏
   const [drawerPersonId, setDrawerPersonId] = useState<string | null>(null);
@@ -379,6 +382,7 @@ export default function App() {
               {/* 桌面：操作栏在上、层级切换在下（移动端二者 CSS 隐藏，改用下方两个下拉） */}
               <div className="maintoolbar">
                 <span className="mt-name">{opp.name}</span>
+                <ViewTabs view={view} onChange={setView} />
                 <button className="btn cta xs" onClick={() => setIntelOpen(true)}>🎙️ 录入情报</button>
                 <button className="btn ghost xs" onClick={() => setOppFormOpen(true)}>编辑商机</button>
                 <button className="btn ghost xs" onClick={() => setProfileOpen(true)}>📇 客户档案</button>
@@ -389,9 +393,9 @@ export default function App() {
                 <button className="btn ghost xs" onClick={() => setHelpOpen(true)}>❓ 帮助</button>
                 <button className="btn primary xs" onClick={() => setConsoleOpen(true)}>🧠 AI 推演</button>
               </div>
-              <LayerTabs layer={layer} onChange={setLayer} />
+              {view === 'wall' && <LayerTabs layer={layer} onChange={setLayer} />}
               {/* 移动端：层级下拉（左）+ ⋯操作下拉（右），一行 */}
-              {isMobile && (
+              {view === 'wall' && isMobile && (
                 <OverflowMenu align="left" label={`▾ ${LAYER_LABEL[layer]}`}
                   items={(['L1', 'L2', 'L3', 'L4'] as Layer[]).map((l) => ({ label: LAYER_LABEL[l], active: l === layer, onClick: () => setLayer(l) }))} />
               )}
@@ -409,6 +413,8 @@ export default function App() {
                 ]} />
               )}
             </div>}
+            {view === 'wall' ? (
+            <>
             <Canvas account={account} opp={opp} layer={layer}
               selectedId={selectedId} selectedEdgeId={selectedEdgeId}
               onSelectPerson={selectPerson} onSelectEdge={selectEdge}
@@ -430,6 +436,10 @@ export default function App() {
                 <WinTendencyPanel breakdown={breakdown} collapsed={false} grabber
                   onToggle={() => (isMobile ? setWinMobileCollapsed(true) : setWinCollapsed(true))} />
               )
+            )}
+            </>
+            ) : (
+              <DealPlanner account={account} dispatch={act} />
             )}
           </>
         ) : (

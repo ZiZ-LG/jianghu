@@ -1,7 +1,7 @@
 // 江湖 · 数据层：状态 + reducer + localStorage 持久化 + 实体工厂
 // 抽象在此层，未来切换到后端 API 只需替换 load/save 与 dispatch 的落地方式。
 import type {
-  Account, Opportunity, Person, OppRole, Edge, BurningIssue, UCV, InteractionLog, CustomerType, VisitNote,
+  Account, Opportunity, Person, OppRole, Edge, BurningIssue, UCV, InteractionLog, CustomerType, VisitNote, PlanAction, OppMilestone, Half,
 } from './types';
 import { seedAccount } from './data/seed';
 
@@ -41,6 +41,12 @@ export function newPerson(name: string, title: string, x: number, y: number, isC
     logs: [], x, y,
   };
 }
+export function newPlanAction(accountId: string, opportunityId: string, startDate: string, endDate?: string, half: Half = 'am'): PlanAction {
+  return { id: uid('act'), accountId, opportunityId, title: '', startDate, endDate: endDate || startDate, half, done: false, origin: 'manual' };
+}
+export function newMilestone(accountId: string, opportunityId: string, startDate: string, half: Half = 'am'): OppMilestone {
+  return { id: uid('ms'), accountId, opportunityId, title: '', startDate, endDate: startDate, half };
+}
 
 // ── Actions ──
 export type Action =
@@ -71,6 +77,13 @@ export type Action =
   | { type: 'ADD_VISIT'; accId: string; visit: VisitNote }
   | { type: 'UPDATE_VISIT'; accId: string; visitId: string; patch: Partial<VisitNote> }
   | { type: 'DELETE_VISIT'; accId: string; visitId: string }
+  | { type: 'ADD_PLAN_ACTION'; accId: string; oppId: string; planAction: PlanAction }
+  | { type: 'UPDATE_PLAN_ACTION'; accId: string; actionId: string; patch: Partial<PlanAction> }
+  | { type: 'DELETE_PLAN_ACTION'; accId: string; actionId: string }
+  | { type: 'TOGGLE_PLAN_ACTION'; accId: string; actionId: string; done: boolean; doneAt?: string }
+  | { type: 'ADD_MILESTONE'; accId: string; oppId: string; milestone: OppMilestone }
+  | { type: 'UPDATE_MILESTONE'; accId: string; milestoneId: string; patch: Partial<OppMilestone> }
+  | { type: 'DELETE_MILESTONE'; accId: string; milestoneId: string }
   | { type: 'LOAD_DEMO' }
   | { type: 'RESET' }
   | { type: 'HYDRATE'; accounts: Account[] };
@@ -186,6 +199,22 @@ export function reducer(s: StoreState, action: Action): StoreState {
       return mapAcc(s, action.accId, (a) => ({ ...a, visitNotes: (a.visitNotes ?? []).map((v) => (v.id === action.visitId ? { ...v, ...action.patch } : v)) }));
     case 'DELETE_VISIT':
       return mapAcc(s, action.accId, (a) => ({ ...a, visitNotes: (a.visitNotes ?? []).filter((v) => v.id !== action.visitId) }));
+
+    // ── 商机策划 · 行动计划 / 里程碑（挂 account 级，同 visitNotes）──
+    case 'ADD_PLAN_ACTION':
+      return mapAcc(s, action.accId, (a) => ({ ...a, planActions: [...(a.planActions ?? []), action.planAction] }));
+    case 'UPDATE_PLAN_ACTION':
+      return mapAcc(s, action.accId, (a) => ({ ...a, planActions: (a.planActions ?? []).map((p) => (p.id === action.actionId ? { ...p, ...action.patch } : p)) }));
+    case 'DELETE_PLAN_ACTION':
+      return mapAcc(s, action.accId, (a) => ({ ...a, planActions: (a.planActions ?? []).filter((p) => p.id !== action.actionId) }));
+    case 'TOGGLE_PLAN_ACTION':
+      return mapAcc(s, action.accId, (a) => ({ ...a, planActions: (a.planActions ?? []).map((p) => (p.id === action.actionId ? { ...p, done: action.done, doneAt: action.done ? (action.doneAt ?? new Date().toISOString().slice(0, 10)) : undefined } : p)) }));
+    case 'ADD_MILESTONE':
+      return mapAcc(s, action.accId, (a) => ({ ...a, milestones: [...(a.milestones ?? []), action.milestone] }));
+    case 'UPDATE_MILESTONE':
+      return mapAcc(s, action.accId, (a) => ({ ...a, milestones: (a.milestones ?? []).map((m) => (m.id === action.milestoneId ? { ...m, ...action.patch } : m)) }));
+    case 'DELETE_MILESTONE':
+      return mapAcc(s, action.accId, (a) => ({ ...a, milestones: (a.milestones ?? []).filter((m) => m.id !== action.milestoneId) }));
 
     case 'LOAD_DEMO': {
       if (s.accounts.some((a) => a.id === seedAccount.id)) return s;

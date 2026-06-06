@@ -11,6 +11,12 @@ function roleView(r: any) {
 function visitView(v: any) {
   return { id: v.id, accountId: v.accountId, opportunityId: v.opportunityId ?? undefined, externalRef: v.externalRef ?? undefined, date: v.date, topic: v.topic, summary: v.summary, participants: J(v.participants, []), origin: v.origin, createdBy: v.createdBy || undefined, createdAt: v.createdAt.toISOString() };
 }
+function planActionView(a: any) {
+  return { id: a.id, accountId: a.accountId, opportunityId: a.opportunityId, gapItem: a.gapItem || undefined, personId: a.personId ?? undefined, title: a.title, scene: a.scene || undefined, scripts: a.scripts || undefined, target: a.target || undefined, ownerId: a.ownerId || undefined, startDate: a.startDate, endDate: a.endDate, half: a.half, done: a.done, doneAt: a.doneAt ?? undefined, review: a.review || undefined, origin: a.origin, createdBy: a.createdBy || undefined, createdAt: a.createdAt.toISOString() };
+}
+function milestoneView(m: any) {
+  return { id: m.id, accountId: m.accountId, opportunityId: m.opportunityId, title: m.title, startDate: m.startDate, endDate: m.endDate, half: m.half, createdAt: m.createdAt.toISOString() };
+}
 
 /** 组装某租户的完整 Account 树，形状与前端 types.ts 一致 */
 export async function assembleState(tenantId: string) {
@@ -31,6 +37,22 @@ export async function assembleState(tenantId: string) {
     const arr = visitsByAccount.get(v.accountId) ?? [];
     arr.push(visitView(v));
     visitsByAccount.set(v.accountId, arr);
+  }
+
+  // PlanAction / OppMilestone 同 VisitNote：无 Account relation，单独查后按 accountId 挂载
+  const plans = await prisma.planAction.findMany({ where: { tenantId } });
+  const plansByAccount = new Map<string, ReturnType<typeof planActionView>[]>();
+  for (const p of plans) {
+    const arr = plansByAccount.get(p.accountId) ?? [];
+    arr.push(planActionView(p));
+    plansByAccount.set(p.accountId, arr);
+  }
+  const milestones = await prisma.oppMilestone.findMany({ where: { tenantId } });
+  const milestonesByAccount = new Map<string, ReturnType<typeof milestoneView>[]>();
+  for (const m of milestones) {
+    const arr = milestonesByAccount.get(m.accountId) ?? [];
+    arr.push(milestoneView(m));
+    milestonesByAccount.set(m.accountId, arr);
   }
 
   return {
@@ -54,6 +76,8 @@ export async function assembleState(tenantId: string) {
       })),
       baseEdges: a.edges.filter((e) => !e.opportunityId).map(edgeView),
       visitNotes: visitsByAccount.get(a.id) ?? [],
+      planActions: plansByAccount.get(a.id) ?? [],
+      milestones: milestonesByAccount.get(a.id) ?? [],
       opportunities: a.opportunities.map((o) => ({
         id: o.id, accountId: o.accountId, name: o.name, customerType: o.customerType,
         pipelineStage: o.pipelineStage, engageStage: o.engageStage, changeMode: o.changeMode ?? undefined,
