@@ -798,3 +798,95 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
   .drawer { width: min(460px, 72%); border-left: 1px solid var(--line); }  /* 横屏右抽屉不必全屏 */
   .mobile-drawer .sidebar { width: min(58vw, 320px); }
 }
+
+/* ════════ 商机策划 · 日历（DealPlanner V1 月视图）════════ */
+/* 镜头切换 ViewTabs（关系地图 / 商机策划） */
+.view-tabs { display: inline-flex; gap: 2px; padding: 3px; background: var(--panel-2); border-radius: 999px; border: 1px solid var(--line); }
+.vtab { display: inline-flex; align-items: center; gap: 5px; padding: 5px 13px; border-radius: 999px; font-size: 13px; font-weight: 600; color: var(--muted); background: none; border: none; cursor: pointer; white-space: nowrap; }
+.vtab.active { background: var(--panel); color: var(--accent); font-weight: 800; box-shadow: 0 1px 3px var(--shadow); }
+
+.dp-root { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.dp-head { flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--line); }
+.dp-nav { display: inline-flex; gap: 2px; }
+.dp-nav button { width: 30px; height: 30px; border-radius: 8px; font-size: 16px; color: var(--ink-2); background: none; border: none; cursor: pointer; }
+.dp-nav button:hover { background: var(--hover); }
+.dp-today { padding: 0 12px; height: 30px; border-radius: 8px; border: 1px solid var(--line); font-size: 12px; font-weight: 600; color: var(--ink-2); background: none; cursor: pointer; }
+.dp-today:hover { background: var(--hover); }
+.dp-period { font-size: 17px; font-weight: 800; color: var(--ink); }
+.dp-hint { margin-left: auto; font-size: 11px; color: var(--faint); }
+
+.dp-body { flex: 1; display: flex; min-height: 0; }
+.dp-cal { flex: 1; min-width: 0; padding: 12px 14px; overflow: auto; }
+.dp-side { width: 232px; flex-shrink: 0; border-left: 1px solid var(--line); background: var(--panel); padding: 14px 12px; overflow-y: auto; }
+.dp-side h4 { font-size: 10px; font-weight: 800; color: var(--faint); text-transform: uppercase; letter-spacing: .5px; margin: 4px 0 8px; }
+.dp-side h4:not(:first-child) { margin-top: 18px; }
+
+.dp-dow { display: grid; grid-template-columns: repeat(7, 1fr); margin-bottom: 5px; }
+.dp-dow div { text-align: center; font-size: 11px; font-weight: 700; color: var(--muted); padding: 2px 0; }
+.dp-dow div.we { color: var(--faint); }
+.dp-weeks { display: flex; flex-direction: column; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.dp-week { position: relative; background: var(--line); display: flex; }
+.dp-cells { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; flex: 1; }
+.dp-cell { background: var(--panel); padding: 4px 5px; }
+.dp-cell.out { background: var(--panel-2); }
+.dp-cell.we { background: color-mix(in srgb, var(--accent) 3%, var(--panel)); }
+.dp-dnum { font-size: 12px; font-weight: 600; color: var(--ink-2); width: 21px; height: 21px; display: grid; place-items: center; border-radius: 50%; }
+.dp-cell.out .dp-dnum { color: var(--faint); }
+.dp-dnum.today { background: var(--accent); color: #fff; font-weight: 800; }
+.dp-bars { position: absolute; left: 0; right: 0; top: 0; pointer-events: none; }
+
+.dp-bar { position: absolute; height: 20px; display: flex; align-items: center; gap: 4px; padding: 0 6px; border-radius: 6px; font-size: 11px; line-height: 1; white-space: nowrap; overflow: hidden; cursor: pointer; user-select: none; touch-action: none; pointer-events: auto;
+  border-left: 3px solid hsl(var(--hue) 70% 48%); background: hsl(var(--hue) 80% 52% / .16); color: var(--ink); }
+.dp-bar:hover { box-shadow: 0 1px 4px var(--shadow); z-index: 5; }
+.dp-bar.k-milestone { border-left: 0; border: 1px solid hsl(var(--hue) 70% 48%); background: hsl(var(--hue) 78% 50% / .24); font-weight: 700; }
+.dp-bar.k-touch { border-left: 0; border: 1px dashed hsl(var(--hue) 60% 55%); background: transparent; color: var(--muted); }
+.dp-bar.done { opacity: .6; }
+.dp-bar.sel { outline: 2px solid var(--accent); outline-offset: 1px; z-index: 8; box-shadow: 0 2px 8px var(--shadow); }
+.dp-ic { font-size: 10px; flex-shrink: 0; }
+.dp-tx { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.dp-ok { color: #16a34a; font-weight: 900; flex-shrink: 0; }
+.dp-late { color: #dc2626; font-weight: 900; flex-shrink: 0; }
+.dp-handle { position: absolute; top: 50%; width: 11px; height: 11px; border-radius: 50%; background: var(--panel); border: 2px solid var(--accent); transform: translateY(-50%); cursor: ew-resize; z-index: 9; touch-action: none; }
+.dp-handle.l { left: -5px; } .dp-handle.r { right: -5px; }
+
+.dp-lg { display: flex; align-items: center; gap: 7px; padding: 4px 0; }
+.dp-lg.off { opacity: .42; }
+.dp-lg-ic { width: 18px; text-align: center; flex-shrink: 0; }
+.dp-lg-bar { width: 5px; height: 16px; border-radius: 3px; flex-shrink: 0; }
+.dp-lg-name { flex: 1; font-size: 12px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dp-eye { width: 26px; height: 24px; border-radius: 6px; display: grid; place-items: center; flex-shrink: 0; background: none; border: none; cursor: pointer; font-size: 13px; }
+.dp-eye:hover { background: var(--hover); }
+.dp-empty-hint { font-size: 11px; color: var(--faint); padding: 4px 0; }
+.dp-tip { margin-top: 14px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px; font-size: 11px; color: var(--muted); line-height: 1.7; }
+.dp-tip b { color: var(--ink-2); }
+
+/* 事件抽屉 */
+.dp-mask { position: fixed; inset: 0; background: rgba(15,23,42,.28); z-index: 40; }
+.dp-drawer { position: fixed; top: 0; right: 0; height: 100%; width: 360px; max-width: 92vw; background: var(--panel); border-left: 1px solid var(--line); box-shadow: -8px 0 24px var(--shadow); z-index: 41; display: flex; flex-direction: column; }
+.dp-dw-head { padding: 14px 17px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; font-size: 15px; font-weight: 800; }
+.dp-x { font-size: 20px; color: var(--muted); width: 28px; height: 28px; border-radius: 7px; display: grid; place-items: center; background: none; border: none; cursor: pointer; }
+.dp-x:hover { background: var(--hover); color: var(--ink); }
+.dp-dw-body { flex: 1; overflow-y: auto; padding: 15px 17px; display: flex; flex-direction: column; gap: 12px; }
+.dp-fld { display: flex; flex-direction: column; gap: 5px; }
+.dp-fld > span { font-size: 11px; font-weight: 700; color: var(--muted); }
+.dp-fld input, .dp-fld select { height: 36px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); color: var(--ink); font-size: 13px; padding: 0 10px; }
+.dp-pick { display: flex; gap: 6px; }
+.dp-pick button { flex: 1; height: 36px; border: 1px solid var(--line); border-radius: 8px; font-size: 12px; font-weight: 600; color: var(--ink-2); background: none; cursor: pointer; }
+.dp-pick button.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-ink); }
+.dp-pick button:disabled { opacity: .5; cursor: not-allowed; }
+.dp-row2 { display: flex; gap: 10px; } .dp-row2 > * { flex: 1; }
+.dp-done { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); cursor: pointer; padding: 2px 0; }
+.dp-done input { width: 17px; height: 17px; accent-color: #16a34a; cursor: pointer; }
+.dp-dw-foot { padding: 12px 17px; border-top: 1px solid var(--line); display: flex; gap: 8px; align-items: center; }
+.dp-del { margin-right: auto; color: #dc2626; font-size: 13px; font-weight: 700; padding: 7px 11px; border-radius: 8px; background: none; border: none; cursor: pointer; }
+.dp-del:hover { background: color-mix(in srgb, #dc2626 12%, transparent); }
+.dp-btn { height: 36px; padding: 0 15px; border-radius: 9px; font-size: 13px; font-weight: 700; border: none; cursor: pointer; }
+.dp-btn.ghost { border: 1px solid var(--line); color: var(--ink-2); background: none; }
+.dp-btn.ghost:hover { background: var(--hover); }
+.dp-btn.primary { background: var(--accent); color: #fff; }
+
+@media (max-width: 768px) {
+  .dp-side { display: none; }
+  .dp-drawer { width: 100%; max-width: 100%; }
+  .dp-hint { display: none; }
+}

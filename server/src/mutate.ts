@@ -198,6 +198,53 @@ export async function applyAction(tenantId: string, action: any): Promise<void> 
       await prisma.visitNote.deleteMany({ where: { id: action.visitId, tenantId } });
       return;
 
+    // ── 商机策划 · 行动计划（PlanAction）──
+    case 'ADD_PLAN_ACTION': {
+      await assertOpp(action.oppId);
+      const a = action.planAction;
+      await prisma.planAction.create({ data: {
+        id: a.id, tenantId, accountId: action.accId, opportunityId: action.oppId,
+        gapItem: a.gapItem ?? '', personId: a.personId ?? null, title: a.title ?? '',
+        scene: a.scene ?? '', scripts: a.scripts ?? '', target: a.target ?? '', ownerId: a.ownerId ?? '',
+        startDate: a.startDate ?? '', endDate: a.endDate ?? '', half: a.half ?? 'am',
+        done: !!a.done, doneAt: a.doneAt ?? null, review: a.review ?? '', origin: a.origin ?? 'manual', createdBy: a.createdBy ?? '',
+      } });
+      return;
+    }
+    case 'UPDATE_PLAN_ACTION': {
+      const d = pick(action.patch, ['gapItem', 'personId', 'title', 'scene', 'scripts', 'target', 'ownerId', 'startDate', 'endDate', 'half', 'done', 'doneAt', 'review']);
+      await prisma.planAction.updateMany({ where: { id: action.actionId, tenantId }, data: d });
+      return;
+    }
+    case 'DELETE_PLAN_ACTION':
+      await prisma.planAction.deleteMany({ where: { id: action.actionId, tenantId } });
+      return;
+    case 'TOGGLE_PLAN_ACTION':
+      await prisma.planAction.updateMany({
+        where: { id: action.actionId, tenantId },
+        data: { done: !!action.done, doneAt: action.done ? (action.doneAt ?? new Date().toISOString().slice(0, 10)) : null },
+      });
+      return;
+
+    // ── 商机策划 · 里程碑（OppMilestone）──
+    case 'ADD_MILESTONE': {
+      await assertOpp(action.oppId);
+      const m = action.milestone;
+      await prisma.oppMilestone.create({ data: {
+        id: m.id, tenantId, accountId: action.accId, opportunityId: action.oppId,
+        title: m.title ?? '', startDate: m.startDate ?? '', endDate: m.endDate ?? '', half: m.half ?? 'am',
+      } });
+      return;
+    }
+    case 'UPDATE_MILESTONE': {
+      const d = pick(action.patch, ['title', 'startDate', 'endDate', 'half']);
+      await prisma.oppMilestone.updateMany({ where: { id: action.milestoneId, tenantId }, data: d });
+      return;
+    }
+    case 'DELETE_MILESTONE':
+      await prisma.oppMilestone.deleteMany({ where: { id: action.milestoneId, tenantId } });
+      return;
+
     default:
       throw new Error(`unknown action: ${t}`);
   }

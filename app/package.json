@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "江湖 (Game of JiangHu) · 销售干系人作战地图 MVP — 侦探墙 + G64111 趋赢力评分引擎",
+  "description": "江湖 (Game of JiangHu) · 销售干系人作战地图 MVP — 关系地图 + G64111 趋赢力评分引擎",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
