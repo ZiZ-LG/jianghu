@@ -174,7 +174,7 @@ html[data-theme="dark"] .logo{background:var(--accent); color:#fff;}
   <div class="logo">江</div>
   <div class="cust">西部电力建设集团<small>客户工作台 · 4 个商机</small></div>
   <div class="spacer"></div>
-  <div class="view-tabs"><button class="vtab" id="tabWall">🕸 侦探墙</button><button class="vtab active">📅 商机策划</button></div>
+  <div class="view-tabs"><button class="vtab" id="tabWall">🗺️ 关系地图</button><button class="vtab active">📅 商机策划</button></div>
   <button class="icon-btn" id="themeBtn" title="切换主题">🌙</button>
 </div>
 
@@ -570,7 +570,7 @@ function shift(dir){const c=D(state.cursor);
   state.sel=null; render();
 }
 document.getElementById('todayBtn').onclick=()=>{state.cursor='2026-06-05'; state.sel=null; render();};
-document.getElementById('tabWall').onclick=()=>alert('原型聚焦「商机策划」。\\n实际产品中此处切回现有「侦探墙」，零改动。');
+document.getElementById('tabWall').onclick=()=>alert('原型聚焦「商机策划」。\\n实际产品中此处切回现有「关系地图」，零改动。');
 const themeBtn=document.getElementById('themeBtn');
 themeBtn.onclick=()=>{const dark=document.documentElement.getAttribute('data-theme')==='dark'; document.documentElement.setAttribute('data-theme',dark?'light':'dark'); themeBtn.textContent=dark?'🌙':'☀️';};
 host.addEventListener('pointerdown',ev=>{ if(!ev.target.closest('.bar')&&!ev.target.closest('.ym-cell')){ if(state.sel){state.sel=null; render();} } });
