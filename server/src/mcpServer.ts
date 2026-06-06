@@ -8,7 +8,7 @@
 // 工具分两类：
 //   · 读工具（list_accounts/get_account_detail/get_win_tendency）：仅 findMany/findFirst，绝不写库。
 //   · 写工具（propose_person/propose_relationship）：只写【候选层】(PersonSuggestion/RelSuggestion，status=pending)，
-//     绝不直接写正式 Person/Edge。候选须经用户在前端人审采纳才上墙（PIPL 红线）。
+//     绝不直接写正式 Person/Edge。候选须经用户在前端人审采纳才上图（PIPL 红线）。
 
 import { randomUUID } from 'node:crypto';
 import { prisma } from './prisma.js';
@@ -84,7 +84,7 @@ const TOOL_DEFS = [
   {
     name: 'propose_person',
     description:
-      '【提议·写候选】把你调研到的一个新干系人提交为「候选干系人」，进入待人审队列——不会立即出现在侦探墙上，需用户在江湖里人工采纳后才上墙。用于外部联网调研发现的、墙上还没有的人。返回候选 ID（可用于 propose_relationship 的端点）。请在 evidence 写明依据、sourceUrl 给来源链接。',
+      '【提议·写候选】把你调研到的一个新干系人提交为「候选干系人」，进入待人审队列——不会立即出现在关系地图上，需用户在江湖里人工采纳后才上图。用于外部联网调研发现的、图上还没有的人。返回候选 ID（可用于 propose_relationship 的端点）。请在 evidence 写明依据、sourceUrl 给来源链接。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -106,7 +106,7 @@ const TOOL_DEFS = [
   {
     name: 'propose_relationship',
     description:
-      '【提议·写候选】把两个干系人之间的一条关系提交为「候选关系」，进入待人审队列——不会立即画线，需用户采纳后才上墙。端点可以是已存在的干系人（kind=person，id 来自 get_account_detail）或你刚用 propose_person 提交的候选人物（kind=suggestion，id 为其返回的候选 ID）。layer：L1组织架构/L2决策权力/L3情感阵营/L4战略本质。',
+      '【提议·写候选】把两个干系人之间的一条关系提交为「候选关系」，进入待人审队列——不会立即画线，需用户采纳后才上图。端点可以是已存在的干系人（kind=person，id 来自 get_account_detail）或你刚用 propose_person 提交的候选人物（kind=suggestion，id 为其返回的候选 ID）。layer：L1组织架构/L2决策权力/L3情感阵营/L4战略本质。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -501,7 +501,7 @@ async function proposePerson(tenantId: string, userId: string, args: Record<stri
     suggestionId: id,
     note: existingPerson
       ? `⚠️ 该客户下已存在同名正式干系人（id=${existingPerson.id}）。候选已提交，请人审时判断是合并到现有还是新建，AI 不自动合并。`
-      : '候选干系人已提交，等待用户人审采纳后才会出现在侦探墙上。',
+      : '候选干系人已提交，等待用户人审采纳后才会出现在关系地图上。',
   };
 }
 
@@ -558,7 +558,7 @@ async function proposeRelationship(tenantId: string, _userId: string, args: Reco
   await prisma.relSuggestion.create({
     data: { id, tenantId, opportunityId, sourcePersonId: source.id, sourceKind: source.kind, targetPersonId: target.id, targetKind: target.kind, layer, label, confidence, origin: 'mcp', evidence, status: 'pending' },
   });
-  return { suggestionId: id, note: '候选关系已提交，等待用户人审采纳后才会画到侦探墙上。' };
+  return { suggestionId: id, note: '候选关系已提交，等待用户人审采纳后才会画到关系地图上。' };
 }
 
 /** list_pending：列本租户待人审候选（只读）。 */
@@ -940,7 +940,7 @@ export async function handleMcpMessage(tenantId: string, userId: string, msg: Js
           protocolVersion: PROTOCOL_VERSION,
           capabilities: { tools: {} },
           serverInfo: SERVER_INFO,
-          instructions: '江湖 MCP：读——list_accounts 看客户、get_account_detail 看某客户干系人与关系、get_win_tendency 看商机 G64111 趋赢力评分；提议（写候选，须用户人审采纳才上墙）——propose_person 提议新干系人、propose_relationship 提议关系、list_pending 看待审候选。所有数据按你的工作区隔离。绝不会自动写入正式数据。',
+          instructions: '江湖 MCP：读——list_accounts 看客户、get_account_detail 看某客户干系人与关系、get_win_tendency 看商机 G64111 趋赢力评分；提议（写候选，须用户人审采纳才上图）——propose_person 提议新干系人、propose_relationship 提议关系、list_pending 看待审候选。所有数据按你的工作区隔离。绝不会自动写入正式数据。',
         });
 
       case 'ping':

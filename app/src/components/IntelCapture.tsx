@@ -60,9 +60,9 @@ export function IntelCapture({ account, opportunity, onClose, onDone, onEnterAcc
         <div className="intel-receipt">
           {c.account && <div className="ir-row">🏢 客户：<b>{c.account.name}</b>（{c.account.status === 'created' ? '新建' : '已关联'}）</div>}
           {c.opportunity && <div className="ir-row">🎯 商机：<b>{c.opportunity.name}</b>（{c.opportunity.status === 'created' ? '新建' : '已关联'}）</div>}
-          {c.personsCreated?.length > 0 && <div className="ir-row">👤 新建干系人：<b>{c.personsCreated.map((p: any) => p.name).join('、')}</b> — 已上墙</div>}
+          {c.personsCreated?.length > 0 && <div className="ir-row">👤 新建干系人：<b>{c.personsCreated.map((p: any) => p.name).join('、')}</b> — 已上图</div>}
           {c.rolesSet?.length > 0 && <div className="ir-row">🎭 角色：{c.rolesSet.map((r: any) => `${r.name}(${r.role})`).join('、')}</div>}
-          {c.edgesCreated?.length > 0 && <div className="ir-row">🔗 关系：{c.edgesCreated.map((e: any) => `${e.source}→${e.target}`).join('、')} — 已上墙</div>}
+          {c.edgesCreated?.length > 0 && <div className="ir-row">🔗 关系：{c.edgesCreated.map((e: any) => `${e.source}→${e.target}`).join('、')} — 已上图</div>}
           {c.burningIssues?.length > 0 && <div className="ir-row">🔥 燃眉之急：{c.burningIssues.map((b: any) => b.person).join('、')}</div>}
           {c.ucvs?.length > 0 && <div className="ir-row">💎 独特价值：{c.ucvs.map((u: any) => `${u.person}(${u.status})`).join('、')}</div>}
           {c.visitNote && <div className="ir-row">📝 拜访纪要已存档</div>}
@@ -76,7 +76,7 @@ export function IntelCapture({ account, opportunity, onClose, onDone, onEnterAcc
           )}
           {c.dupWarnings?.length > 0 && (
             <div className="ir-candidates">
-              ⚠️ 疑似重复（已按新建上墙；如与现有是同一个，请到画布 / 客户档案合并）：
+              ⚠️ 疑似重复（已按新建上图；如与现有是同一个，请到画布 / 客户档案合并）：
               {c.dupWarnings.map((w: any, i: number) => <span key={i} className="cand-chip">{w.name} ≈ {w.similarTo}</span>)}
             </div>
           )}

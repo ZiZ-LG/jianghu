@@ -21,7 +21,7 @@ export function SuggestionPanel({
   return (
     <Modal title="🔮 AI 关系推断 + 候选干系人（待确认）" width={620} onClose={onClose}
       footer={<>
-        <span className="hint-text" style={{ margin: 0, marginRight: 'auto' }}>AI/外部调研只给候选，采纳后才上墙 · 绝不自动写入</span>
+        <span className="hint-text" style={{ margin: 0, marginRight: 'auto' }}>AI/外部调研只给候选，采纳后才上图 · 绝不自动写入</span>
         <button className="btn ghost" onClick={onClose}>关闭</button>
         <button className="btn primary" onClick={onRegenerate} disabled={generating}>{generating ? '扫描中…' : '🔍 重新扫描'}</button>
       </>}>
@@ -29,7 +29,7 @@ export function SuggestionPanel({
       {/* 候选干系人（外部 agent 经 MCP 提议的新人物）*/}
       {personSuggs.length > 0 && (
         <>
-          <div className="sug-section-t">🌐 候选干系人（外部调研提议，采纳后建节点上墙）</div>
+          <div className="sug-section-t">🌐 候选干系人（外部调研提议，采纳后建节点上图）</div>
           <div className="sug-list" style={{ marginBottom: 16 }}>
             {personSuggs.map((p) => (
               <div key={p.id} className="sug-row">
