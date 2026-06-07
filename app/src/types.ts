@@ -240,6 +240,50 @@ export interface OppStage {
   createdAt?: string;
 }
 
+// ───────── 策略沙盘（推演段）─────────
+
+/** 策略沙盘 · 策略卡（打法卡）。挂靠 G64111 低分项；origin=ai 时 status=pending 为待采纳候选 */
+export interface StrategyCard {
+  id: string;
+  accountId: string;
+  opportunityId: string;
+  gapItem?: string;        // 挂靠 G64111 低分项 C1..C6|P1..P4|1K（空=非补分打法）
+  title: string;
+  basis?: string;          // 依据
+  alternatives?: string;   // 备选打法
+  personId?: string;       // 目标干系人（仅引用已存在 Person）
+  status?: 'active' | 'pending' | 'dismissed';
+  origin?: 'manual' | 'ai';
+  orderIndex?: number;
+  dispatchedActionIds?: string[]; // 已派发的 PlanAction id（防重复派发）
+  createdAt?: string;
+}
+
+/** 策略沙盘 · 风险/假设（kind 区分二者） */
+export interface StrategyRisk {
+  id: string;
+  accountId: string;
+  opportunityId: string;
+  kind: 'risk' | 'assumption';
+  text: string;
+  severity?: 'low' | 'mid' | 'high';
+  mitigation?: string;
+  status?: 'open' | 'resolved' | 'dismissed';
+  origin?: 'manual' | 'ai';
+  createdAt?: string;
+}
+
+/** 策略沙盘 · 轻量弹药清单（不建全局资源库） */
+export interface StrategyResource {
+  id: string;
+  accountId: string;
+  opportunityId: string;
+  label: string;
+  kind?: string;           // 自由文本 product/relation/case/commercial…
+  note?: string;
+  createdAt?: string;
+}
+
 /** 客户（存量根） */
 export interface Account {
   id: string;
@@ -258,6 +302,9 @@ export interface Account {
   planActions?: PlanAction[]; // 商机策划 · 行动计划
   milestones?: OppMilestone[]; // 商机策划 · 里程碑
   oppStages?: OppStage[]; // 商机策划 · 阶段段（年视图）
+  strategyCards?: StrategyCard[]; // 策略沙盘 · 策略卡
+  strategyRisks?: StrategyRisk[]; // 策略沙盘 · 风险/假设
+  strategyResources?: StrategyResource[]; // 策略沙盘 · 轻量弹药
 }
 
 // 角色显示色（设计方案 §4.1，5 色含 TB）

@@ -20,6 +20,15 @@ function milestoneView(m: any) {
 function oppStageView(s: any) {
   return { id: s.id, accountId: s.accountId, opportunityId: s.opportunityId, stageKey: s.stageKey, startDate: s.startDate, endDate: s.endDate, createdAt: s.createdAt.toISOString() };
 }
+function strategyCardView(c: any) {
+  return { id: c.id, accountId: c.accountId, opportunityId: c.opportunityId, gapItem: c.gapItem || undefined, title: c.title, basis: c.basis || undefined, alternatives: c.alternatives || undefined, personId: c.personId ?? undefined, status: c.status, origin: c.origin, orderIndex: c.orderIndex, dispatchedActionIds: J(c.dispatchedActionIds, []), createdAt: c.createdAt.toISOString() };
+}
+function strategyRiskView(r: any) {
+  return { id: r.id, accountId: r.accountId, opportunityId: r.opportunityId, kind: r.kind, text: r.text, severity: r.severity, mitigation: r.mitigation || undefined, status: r.status, origin: r.origin, createdAt: r.createdAt.toISOString() };
+}
+function strategyResourceView(x: any) {
+  return { id: x.id, accountId: x.accountId, opportunityId: x.opportunityId, label: x.label, kind: x.kind || undefined, note: x.note || undefined, createdAt: x.createdAt.toISOString() };
+}
 
 /** 组装某租户的完整 Account 树，形状与前端 types.ts 一致 */
 export async function assembleState(tenantId: string) {
@@ -65,6 +74,29 @@ export async function assembleState(tenantId: string) {
     stagesByAccount.set(s.accountId, arr);
   }
 
+  // 策略沙盘 · 策略卡/风险/弹药：同 PlanAction，无 Account relation，按 accountId 挂载
+  const sCards = await prisma.strategyCard.findMany({ where: { tenantId } });
+  const cardsByAccount = new Map<string, ReturnType<typeof strategyCardView>[]>();
+  for (const c of sCards) {
+    const arr = cardsByAccount.get(c.accountId) ?? [];
+    arr.push(strategyCardView(c));
+    cardsByAccount.set(c.accountId, arr);
+  }
+  const sRisks = await prisma.strategyRisk.findMany({ where: { tenantId } });
+  const risksByAccount = new Map<string, ReturnType<typeof strategyRiskView>[]>();
+  for (const r of sRisks) {
+    const arr = risksByAccount.get(r.accountId) ?? [];
+    arr.push(strategyRiskView(r));
+    risksByAccount.set(r.accountId, arr);
+  }
+  const sResources = await prisma.strategyResource.findMany({ where: { tenantId } });
+  const resourcesByAccount = new Map<string, ReturnType<typeof strategyResourceView>[]>();
+  for (const x of sResources) {
+    const arr = resourcesByAccount.get(x.accountId) ?? [];
+    arr.push(strategyResourceView(x));
+    resourcesByAccount.set(x.accountId, arr);
+  }
+
   return {
     accounts: accounts.map((a) => ({
       id: a.id,
@@ -89,6 +121,9 @@ export async function assembleState(tenantId: string) {
       planActions: plansByAccount.get(a.id) ?? [],
       milestones: milestonesByAccount.get(a.id) ?? [],
       oppStages: stagesByAccount.get(a.id) ?? [],
+      strategyCards: cardsByAccount.get(a.id) ?? [],
+      strategyRisks: risksByAccount.get(a.id) ?? [],
+      strategyResources: resourcesByAccount.get(a.id) ?? [],
       opportunities: a.opportunities.map((o) => ({
         id: o.id, accountId: o.accountId, name: o.name, customerType: o.customerType,
         pipelineStage: o.pipelineStage, engageStage: o.engageStage, changeMode: o.changeMode ?? undefined,

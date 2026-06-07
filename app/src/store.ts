@@ -2,6 +2,7 @@
 // 抽象在此层，未来切换到后端 API 只需替换 load/save 与 dispatch 的落地方式。
 import type {
   Account, Opportunity, Person, OppRole, Edge, BurningIssue, UCV, InteractionLog, CustomerType, VisitNote, PlanAction, OppMilestone, OppStage, Half,
+  StrategyCard, StrategyRisk, StrategyResource,
 } from './types';
 import { seedAccount } from './data/seed';
 
@@ -50,6 +51,16 @@ export function newMilestone(accountId: string, opportunityId: string, startDate
 export function newOppStage(accountId: string, opportunityId: string, stageKey: string, startDate: string, endDate: string): OppStage {
   return { id: uid('st'), accountId, opportunityId, stageKey, startDate, endDate };
 }
+// ── 策略沙盘工厂 ──
+export function newStrategyCard(accountId: string, opportunityId: string, gapItem = ''): StrategyCard {
+  return { id: uid('sc'), accountId, opportunityId, gapItem, title: '', status: 'active', origin: 'manual', orderIndex: 0, dispatchedActionIds: [] };
+}
+export function newStrategyRisk(accountId: string, opportunityId: string, kind: 'risk' | 'assumption' = 'risk'): StrategyRisk {
+  return { id: uid('sr'), accountId, opportunityId, kind, text: '', severity: 'mid', status: 'open', origin: 'manual' };
+}
+export function newStrategyResource(accountId: string, opportunityId: string): StrategyResource {
+  return { id: uid('sx'), accountId, opportunityId, label: '', kind: '', note: '' };
+}
 
 // ── Actions ──
 export type Action =
@@ -90,6 +101,15 @@ export type Action =
   | { type: 'ADD_OPP_STAGE'; accId: string; oppId: string; stage: OppStage }
   | { type: 'UPDATE_OPP_STAGE'; accId: string; stageId: string; patch: Partial<OppStage> }
   | { type: 'DELETE_OPP_STAGE'; accId: string; stageId: string }
+  | { type: 'ADD_STRATEGY_CARD'; accId: string; oppId: string; card: StrategyCard }
+  | { type: 'UPDATE_STRATEGY_CARD'; accId: string; cardId: string; patch: Partial<StrategyCard> }
+  | { type: 'DELETE_STRATEGY_CARD'; accId: string; cardId: string }
+  | { type: 'ADD_STRATEGY_RISK'; accId: string; oppId: string; risk: StrategyRisk }
+  | { type: 'UPDATE_STRATEGY_RISK'; accId: string; riskId: string; patch: Partial<StrategyRisk> }
+  | { type: 'DELETE_STRATEGY_RISK'; accId: string; riskId: string }
+  | { type: 'ADD_STRATEGY_RESOURCE'; accId: string; oppId: string; resource: StrategyResource }
+  | { type: 'UPDATE_STRATEGY_RESOURCE'; accId: string; resourceId: string; patch: Partial<StrategyResource> }
+  | { type: 'DELETE_STRATEGY_RESOURCE'; accId: string; resourceId: string }
   | { type: 'LOAD_DEMO' }
   | { type: 'RESET' }
   | { type: 'HYDRATE'; accounts: Account[] };
@@ -228,6 +248,26 @@ export function reducer(s: StoreState, action: Action): StoreState {
       return mapAcc(s, action.accId, (a) => ({ ...a, oppStages: (a.oppStages ?? []).map((st) => (st.id === action.stageId ? { ...st, ...action.patch } : st)) }));
     case 'DELETE_OPP_STAGE':
       return mapAcc(s, action.accId, (a) => ({ ...a, oppStages: (a.oppStages ?? []).filter((st) => st.id !== action.stageId) }));
+
+    // ── 策略沙盘 · 策略卡 / 风险 / 弹药（挂 account 级，同 planActions）──
+    case 'ADD_STRATEGY_CARD':
+      return mapAcc(s, action.accId, (a) => ({ ...a, strategyCards: [...(a.strategyCards ?? []), action.card] }));
+    case 'UPDATE_STRATEGY_CARD':
+      return mapAcc(s, action.accId, (a) => ({ ...a, strategyCards: (a.strategyCards ?? []).map((c) => (c.id === action.cardId ? { ...c, ...action.patch } : c)) }));
+    case 'DELETE_STRATEGY_CARD':
+      return mapAcc(s, action.accId, (a) => ({ ...a, strategyCards: (a.strategyCards ?? []).filter((c) => c.id !== action.cardId) }));
+    case 'ADD_STRATEGY_RISK':
+      return mapAcc(s, action.accId, (a) => ({ ...a, strategyRisks: [...(a.strategyRisks ?? []), action.risk] }));
+    case 'UPDATE_STRATEGY_RISK':
+      return mapAcc(s, action.accId, (a) => ({ ...a, strategyRisks: (a.strategyRisks ?? []).map((r) => (r.id === action.riskId ? { ...r, ...action.patch } : r)) }));
+    case 'DELETE_STRATEGY_RISK':
+      return mapAcc(s, action.accId, (a) => ({ ...a, strategyRisks: (a.strategyRisks ?? []).filter((r) => r.id !== action.riskId) }));
+    case 'ADD_STRATEGY_RESOURCE':
+      return mapAcc(s, action.accId, (a) => ({ ...a, strategyResources: [...(a.strategyResources ?? []), action.resource] }));
+    case 'UPDATE_STRATEGY_RESOURCE':
+      return mapAcc(s, action.accId, (a) => ({ ...a, strategyResources: (a.strategyResources ?? []).map((x) => (x.id === action.resourceId ? { ...x, ...action.patch } : x)) }));
+    case 'DELETE_STRATEGY_RESOURCE':
+      return mapAcc(s, action.accId, (a) => ({ ...a, strategyResources: (a.strategyResources ?? []).filter((x) => x.id !== action.resourceId) }));
 
     case 'LOAD_DEMO': {
       if (s.accounts.some((a) => a.id === seedAccount.id)) return s;

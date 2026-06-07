@@ -12,6 +12,7 @@ import { LayerTabs } from './components/LayerTabs';
 import { Canvas } from './components/Canvas';
 import { ViewTabs, type CustomerView } from './components/ViewTabs';
 import { DealPlanner } from './components/DealPlanner';
+import { StrategySandbox } from './components/StrategySandbox';
 import { DetailDrawer } from './components/DetailDrawer';
 import { EdgeDrawer } from './components/EdgeDrawer';
 import { WinTendencyPanel } from './components/WinTendencyPanel';
@@ -438,6 +439,11 @@ export default function App() {
               )
             )}
             </>
+            ) : view === 'sandbox' ? (
+              breakdown ? (
+                <StrategySandbox account={account} opp={opp} breakdown={breakdown} dispatch={act}
+                  view={view} onChangeView={setView} onOpenConsole={() => setConsoleOpen(true)} />
+              ) : null
             ) : (
               <DealPlanner account={account} dispatch={act} view={view} onChangeView={setView} />
             )}
