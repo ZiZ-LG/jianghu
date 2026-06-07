@@ -1,7 +1,7 @@
 // 江湖 · 数据层：状态 + reducer + localStorage 持久化 + 实体工厂
 // 抽象在此层，未来切换到后端 API 只需替换 load/save 与 dispatch 的落地方式。
 import type {
-  Account, Opportunity, Person, OppRole, Edge, BurningIssue, UCV, InteractionLog, CustomerType, VisitNote, PlanAction, OppMilestone, Half,
+  Account, Opportunity, Person, OppRole, Edge, BurningIssue, UCV, InteractionLog, CustomerType, VisitNote, PlanAction, OppMilestone, OppStage, Half,
 } from './types';
 import { seedAccount } from './data/seed';
 
@@ -47,6 +47,9 @@ export function newPlanAction(accountId: string, opportunityId: string, startDat
 export function newMilestone(accountId: string, opportunityId: string, startDate: string, half: Half = 'am'): OppMilestone {
   return { id: uid('ms'), accountId, opportunityId, title: '', startDate, endDate: startDate, half };
 }
+export function newOppStage(accountId: string, opportunityId: string, stageKey: string, startDate: string, endDate: string): OppStage {
+  return { id: uid('st'), accountId, opportunityId, stageKey, startDate, endDate };
+}
 
 // ── Actions ──
 export type Action =
@@ -84,6 +87,9 @@ export type Action =
   | { type: 'ADD_MILESTONE'; accId: string; oppId: string; milestone: OppMilestone }
   | { type: 'UPDATE_MILESTONE'; accId: string; milestoneId: string; patch: Partial<OppMilestone> }
   | { type: 'DELETE_MILESTONE'; accId: string; milestoneId: string }
+  | { type: 'ADD_OPP_STAGE'; accId: string; oppId: string; stage: OppStage }
+  | { type: 'UPDATE_OPP_STAGE'; accId: string; stageId: string; patch: Partial<OppStage> }
+  | { type: 'DELETE_OPP_STAGE'; accId: string; stageId: string }
   | { type: 'LOAD_DEMO' }
   | { type: 'RESET' }
   | { type: 'HYDRATE'; accounts: Account[] };
@@ -215,6 +221,13 @@ export function reducer(s: StoreState, action: Action): StoreState {
       return mapAcc(s, action.accId, (a) => ({ ...a, milestones: (a.milestones ?? []).map((m) => (m.id === action.milestoneId ? { ...m, ...action.patch } : m)) }));
     case 'DELETE_MILESTONE':
       return mapAcc(s, action.accId, (a) => ({ ...a, milestones: (a.milestones ?? []).filter((m) => m.id !== action.milestoneId) }));
+
+    case 'ADD_OPP_STAGE':
+      return mapAcc(s, action.accId, (a) => ({ ...a, oppStages: [...(a.oppStages ?? []), action.stage] }));
+    case 'UPDATE_OPP_STAGE':
+      return mapAcc(s, action.accId, (a) => ({ ...a, oppStages: (a.oppStages ?? []).map((st) => (st.id === action.stageId ? { ...st, ...action.patch } : st)) }));
+    case 'DELETE_OPP_STAGE':
+      return mapAcc(s, action.accId, (a) => ({ ...a, oppStages: (a.oppStages ?? []).filter((st) => st.id !== action.stageId) }));
 
     case 'LOAD_DEMO': {
       if (s.accounts.some((a) => a.id === seedAccount.id)) return s;

@@ -17,6 +17,9 @@ function planActionView(a: any) {
 function milestoneView(m: any) {
   return { id: m.id, accountId: m.accountId, opportunityId: m.opportunityId, title: m.title, startDate: m.startDate, endDate: m.endDate, half: m.half, createdAt: m.createdAt.toISOString() };
 }
+function oppStageView(s: any) {
+  return { id: s.id, accountId: s.accountId, opportunityId: s.opportunityId, stageKey: s.stageKey, startDate: s.startDate, endDate: s.endDate, createdAt: s.createdAt.toISOString() };
+}
 
 /** 组装某租户的完整 Account 树，形状与前端 types.ts 一致 */
 export async function assembleState(tenantId: string) {
@@ -54,6 +57,13 @@ export async function assembleState(tenantId: string) {
     arr.push(milestoneView(m));
     milestonesByAccount.set(m.accountId, arr);
   }
+  const oppStages = await prisma.oppStage.findMany({ where: { tenantId } });
+  const stagesByAccount = new Map<string, ReturnType<typeof oppStageView>[]>();
+  for (const s of oppStages) {
+    const arr = stagesByAccount.get(s.accountId) ?? [];
+    arr.push(oppStageView(s));
+    stagesByAccount.set(s.accountId, arr);
+  }
 
   return {
     accounts: accounts.map((a) => ({
@@ -78,6 +88,7 @@ export async function assembleState(tenantId: string) {
       visitNotes: visitsByAccount.get(a.id) ?? [],
       planActions: plansByAccount.get(a.id) ?? [],
       milestones: milestonesByAccount.get(a.id) ?? [],
+      oppStages: stagesByAccount.get(a.id) ?? [],
       opportunities: a.opportunities.map((o) => ({
         id: o.id, accountId: o.accountId, name: o.name, customerType: o.customerType,
         pipelineStage: o.pipelineStage, engageStage: o.engageStage, changeMode: o.changeMode ?? undefined,

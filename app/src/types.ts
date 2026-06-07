@@ -229,6 +229,17 @@ export interface OppMilestone {
   createdAt?: string;
 }
 
+/** 商机策划 · 阶段段（年视图模型 B，可同名重复/降级回退） */
+export interface OppStage {
+  id: string;
+  accountId: string;
+  opportunityId: string;
+  stageKey: string;        // 需求引导|方案认可|客户立项|招投标|合同谈判|合同双签
+  startDate: string;
+  endDate: string;
+  createdAt?: string;
+}
+
 /** 客户（存量根） */
 export interface Account {
   id: string;
@@ -246,6 +257,7 @@ export interface Account {
   visitNotes?: VisitNote[]; // 拜访记录（WorkBuddy 同步）
   planActions?: PlanAction[]; // 商机策划 · 行动计划
   milestones?: OppMilestone[]; // 商机策划 · 里程碑
+  oppStages?: OppStage[]; // 商机策划 · 阶段段（年视图）
 }
 
 // 角色显示色（设计方案 §4.1，5 色含 TB）
