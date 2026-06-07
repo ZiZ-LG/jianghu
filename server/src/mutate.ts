@@ -245,6 +245,25 @@ export async function applyAction(tenantId: string, action: any): Promise<void> 
       await prisma.oppMilestone.deleteMany({ where: { id: action.milestoneId, tenantId } });
       return;
 
+    // ── 商机策划 · 阶段段（OppStage，年视图模型 B）──
+    case 'ADD_OPP_STAGE': {
+      await assertOpp(action.oppId);
+      const s = action.stage;
+      await prisma.oppStage.create({ data: {
+        id: s.id, tenantId, accountId: action.accId, opportunityId: action.oppId,
+        stageKey: s.stageKey ?? '', startDate: s.startDate ?? '', endDate: s.endDate ?? '',
+      } });
+      return;
+    }
+    case 'UPDATE_OPP_STAGE': {
+      const d = pick(action.patch, ['stageKey', 'startDate', 'endDate']);
+      await prisma.oppStage.updateMany({ where: { id: action.stageId, tenantId }, data: d });
+      return;
+    }
+    case 'DELETE_OPP_STAGE':
+      await prisma.oppStage.deleteMany({ where: { id: action.stageId, tenantId } });
+      return;
+
     default:
       throw new Error(`unknown action: ${t}`);
   }

@@ -334,3 +334,18 @@ model OppMilestone {
   @@index([accountId])
   @@index([opportunityId])
 }
+
+// 商机策划 · 阶段段（年视图，模型 B）。商机阶段 = 时间轴上一串阶段段，允许同名重复/降级回退。
+model OppStage {
+  id            String   @id // st_xxx
+  tenantId      String
+  accountId     String   // 冗余存：照 PlanAction/OppMilestone 按 accountId 挂载
+  opportunityId String
+  stageKey      String   // 需求引导|方案认可|客户立项|招投标|合同谈判|合同双签（可重复=降级回退）
+  startDate     String   @default("") // YYYY-MM-DD
+  endDate       String   @default("")
+  createdAt     DateTime @default(now())
+
+  @@index([accountId])
+  @@index([opportunityId])
+}

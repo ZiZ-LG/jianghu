@@ -357,7 +357,7 @@ export default function App() {
 
   return (
     <div className={`app-shell${isMobile ? ' mobile' : ''}${immersive ? ' immersive' : ''}`}>
-      {!immersive && (isMobile ? (
+      {view === 'wall' && !immersive && (isMobile ? (
         <>
           {!mobileNavOpen && <button className="edge-arrow edge-left" onClick={() => setMobileNavOpen(true)} title="展开侧边栏" aria-label="展开侧边栏">›</button>}
           {mobileNavOpen && <div className="mobile-backdrop" onClick={() => setMobileNavOpen(false)} />}
@@ -378,7 +378,7 @@ export default function App() {
       <main className="main">
         {opp ? (
           <>
-            {!immersive && <div className="canvas-top">
+            {view === 'wall' && !immersive && <div className="canvas-top">
               {/* 桌面：操作栏在上、层级切换在下（移动端二者 CSS 隐藏，改用下方两个下拉） */}
               <div className="maintoolbar">
                 <span className="mt-name">{opp.name}</span>
@@ -439,7 +439,7 @@ export default function App() {
             )}
             </>
             ) : (
-              <DealPlanner account={account} dispatch={act} />
+              <DealPlanner account={account} dispatch={act} view={view} onChangeView={setView} />
             )}
           </>
         ) : (
