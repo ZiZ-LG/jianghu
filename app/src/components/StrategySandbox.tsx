@@ -29,7 +29,7 @@ interface FwdCand { gapItem: string; title: string; basis: string; }
 interface BwdCand { title: string; offsetDays: number; }
 
 export function StrategySandbox({
-  account, opp, breakdown, dispatch, view, onChangeView, onOpenConsole,
+  account, opp, breakdown, dispatch, view, onChangeView, onOpenConsole, theme, onToggleTheme,
 }: {
   account: Account;
   opp: Opportunity;
@@ -38,6 +38,8 @@ export function StrategySandbox({
   view: CustomerView;
   onChangeView: (v: CustomerView) => void;
   onOpenConsole: () => void;
+  theme: 'light' | 'dark';
+  onToggleTheme: () => void;
 }) {
   const itemKeys = Object.keys(ITEM_MAX) as ItemKey[];
   const personById = new Map(account.persons.map((p) => [p.id, p]));
@@ -150,11 +152,12 @@ export function StrategySandbox({
 
   return (
     <div className="sandbox">
-      <div className="sandbox-top">
-        <span className="mt-name">{opp.name}</span>
+      <div className="module-top">
         <ViewTabs view={view} onChange={onChangeView} />
+        <span className="mt-name">{opp.name}</span>
         <span className="sb-band-pill" style={{ color: tone, borderColor: tone }}>● {BAND_LABEL[breakdown.band]} · 趋赢力 {pct}%</span>
-        <button className="btn primary xs" onClick={onOpenConsole}>🧠 AI 推演</button>
+        <button className="btn primary xs mt-action" onClick={onOpenConsole}>🧠 AI 推演</button>
+        <button className="theme-toggle mt-theme" onClick={onToggleTheme} title={theme === 'dark' ? '切换到白天模式' : '切换到黑夜模式'}>{theme === 'dark' ? '☀️' : '🌙'}</button>
       </div>
 
       <div className="sandbox-body">
@@ -283,8 +286,8 @@ export function StrategySandbox({
                   </select>
                   <div className="sb-card-foot">
                     {dispatched
-                      ? <span className="sb-dispatched" title="已生成行动到商机策划">✓ 已派发 {card.dispatchedActionIds!.length} 个行动</span>
-                      : <button className="btn ghost sm" disabled={!card.title} title={card.title ? '生成行动，落到商机策划时间轴' : '先填打法标题'} onClick={() => dispatchToPlanner(card)}>📤 送行动策划</button>}
+                      ? <span className="sb-dispatched" title="已生成行动到行动计划">✓ 已派发 {card.dispatchedActionIds!.length} 个行动</span>
+                      : <button className="btn ghost sm" disabled={!card.title} title={card.title ? '生成行动，落到行动计划时间轴' : '先填打法标题'} onClick={() => dispatchToPlanner(card)}>📤 送行动策划</button>}
                   </div>
                 </div>
               );
@@ -328,7 +331,7 @@ export function StrategySandbox({
             </div>
           )}
           <div className="sb-milestones">
-            {milestones.length === 0 && bwdCands.length === 0 && <div className="sb-empty-s">从终局倒排关键节点（开标 / 立项评审 / 签约…），直接落到商机策划时间轴</div>}
+            {milestones.length === 0 && bwdCands.length === 0 && <div className="sb-empty-s">从终局倒排关键节点（开标 / 立项评审 / 签约…），直接落到行动计划时间轴</div>}
             {milestones.map((m) => (
               <div className="sb-ms" key={m.id}>
                 <input className="sb-ms-title" defaultValue={m.title} placeholder="里程碑（如：立项评审）"
@@ -345,7 +348,7 @@ export function StrategySandbox({
             <div className="sb-ready-row"><span>现状趋赢力</span><b style={{ color: tone }}>{pct}%</b></div>
             <div className="sb-ready-row"><span>缺口覆盖</span><b>{coveredCount}/{gaps.length}（{coverage}%）</b></div>
             <div className="sb-ready-bar"><div className="sb-ready-fill" style={{ width: `${Math.max(0, coverage)}%` }} /></div>
-            <div className="sb-ready-hint">缺口挂策略卡 →「送行动策划」落到商机策划时间轴。</div>
+            <div className="sb-ready-hint">缺口挂策略卡 →「送行动策划」落到行动计划时间轴。</div>
           </div>
         </section>
       </div>

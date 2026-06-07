@@ -54,7 +54,7 @@ interface EditorState { mode: 'create' | 'edit'; kind: Kind; editId?: string; op
 
 const laneH = 22, headH = 24, padB = 6;
 
-export function DealPlanner({ account, dispatch, view, onChangeView }: { account: Account; dispatch: (a: Action) => void; view: CustomerView; onChangeView: (v: CustomerView) => void }) {
+export function DealPlanner({ account, dispatch, view, onChangeView, theme, onToggleTheme }: { account: Account; dispatch: (a: Action) => void; view: CustomerView; onChangeView: (v: CustomerView) => void; theme: 'light' | 'dark'; onToggleTheme: () => void }) {
   const [TODAY] = useState(() => ymd(new Date()));
   const [calView, setCalView] = usePersistentState<CalView>('jianghu.plannerView', 'month');
   const [cursor, setCursor] = useState(() => TODAY.slice(0, 8) + '01');
@@ -321,7 +321,7 @@ export function DealPlanner({ account, dispatch, view, onChangeView }: { account
 
   return (
     <div className="dp-root">
-      <header className="dp-topbar">
+      <header className="module-top">
         <ViewTabs view={view} onChange={onChangeView} />
         <div className="dp-vtabs">
           {CAL_VIEWS.map((v) => <button key={v.id} className={`dp-vtab${calView === v.id ? ' active' : ''}`} onClick={() => { setSel(null); setCalView(v.id); }}>{v.label}</button>)}
@@ -329,6 +329,7 @@ export function DealPlanner({ account, dispatch, view, onChangeView }: { account
         <div className="dp-nav"><button onClick={() => shift(-1)} aria-label="上一页">‹</button><button className="dp-today" onClick={goToday}>今天</button><button onClick={() => shift(1)} aria-label="下一页">›</button></div>
         <div className="dp-period">{periodTitle}</div>
         <span className="dp-hint">{calView === 'month' ? '双击空白新增 · 单击选中拖锚点改期 · 再点编辑' : calView === 'week' ? '上午/下午/晚上分带' : '双击格新建阶段段'}</span>
+        <button className="theme-toggle mt-theme" onClick={onToggleTheme} title={theme === 'dark' ? '切换到白天模式' : '切换到黑夜模式'}>{theme === 'dark' ? '☀️' : '🌙'}</button>
       </header>
 
       <div className="dp-body">

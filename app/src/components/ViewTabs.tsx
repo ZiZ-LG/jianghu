@@ -4,7 +4,7 @@ export type CustomerView = 'wall' | 'sandbox' | 'planner';
 const VIEWS: { id: CustomerView; icon: string; label: string }[] = [
   { id: 'wall', icon: '🗺️', label: '关系地图' },
   { id: 'sandbox', icon: '♟️', label: '策略沙盘' },
-  { id: 'planner', icon: '📅', label: '商机策划' },
+  { id: 'planner', icon: '📅', label: '行动计划' },
 ];
 
 export function ViewTabs({ view, onChange }: { view: CustomerView; onChange: (v: CustomerView) => void }) {

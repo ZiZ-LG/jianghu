@@ -379,41 +379,40 @@ export default function App() {
       <main className="main">
         {opp ? (
           <>
-            {view === 'wall' && !immersive && <div className="canvas-top">
-              {/* 桌面：操作栏在上、层级切换在下（移动端二者 CSS 隐藏，改用下方两个下拉） */}
-              <div className="maintoolbar">
-                <span className="mt-name">{opp.name}</span>
+            {view === 'wall' && !immersive && (
+              <div className="module-top wall-top">
                 <ViewTabs view={view} onChange={setView} />
-                <button className="btn cta xs" onClick={() => setIntelOpen(true)}>🎙️ 录入情报</button>
-                <button className="btn ghost xs" onClick={() => setOppFormOpen(true)}>编辑商机</button>
-                <button className="btn ghost xs" onClick={() => setProfileOpen(true)}>📇 客户档案</button>
-                <button className="btn ghost xs" onClick={() => setEnrichOpen(true)}>🔍 搜索情报</button>
-                <button className="btn ghost xs" onClick={() => setSuggestOpen(true)}>🔮 荐关系{suggestions.length + personSuggs.length > 0 ? ` (${suggestions.length + personSuggs.length})` : ''}</button>
-                <button className="btn ghost xs" onClick={() => setReportOpen(true)}>📊 报表</button>
-                <button className="btn ghost xs" onClick={() => setMcpAccessOpen(true)}>🔌 接入 AI</button>
-                <button className="btn ghost xs" onClick={() => setHelpOpen(true)}>❓ 帮助</button>
-                <button className="btn primary xs" onClick={() => setConsoleOpen(true)}>🧠 AI 推演</button>
+                <span className="mt-name">{opp.name}</span>
+                {!isMobile && <LayerTabs layer={layer} onChange={setLayer} />}
+                {!isMobile && (<>
+                  <button className="btn cta xs" onClick={() => setIntelOpen(true)}>🎙️ 录入情报</button>
+                  <button className="btn ghost xs" onClick={() => setOppFormOpen(true)}>编辑商机</button>
+                  <button className="btn ghost xs" onClick={() => setProfileOpen(true)}>📇 客户档案</button>
+                  <button className="btn ghost xs" onClick={() => setEnrichOpen(true)}>🔍 搜索情报</button>
+                  <button className="btn ghost xs" onClick={() => setSuggestOpen(true)}>🔮 荐关系{suggestions.length + personSuggs.length > 0 ? ` (${suggestions.length + personSuggs.length})` : ''}</button>
+                  <button className="btn ghost xs" onClick={() => setReportOpen(true)}>📊 报表</button>
+                  <button className="btn ghost xs" onClick={() => setMcpAccessOpen(true)}>🔌 接入 AI</button>
+                  <button className="btn ghost xs" onClick={() => setHelpOpen(true)}>❓ 帮助</button>
+                  <button className="btn primary xs" onClick={() => setConsoleOpen(true)}>🧠 AI 推演</button>
+                </>)}
+                {isMobile && (<>
+                  <OverflowMenu align="left" label={`▾ ${LAYER_LABEL[layer]}`}
+                    items={(['L1', 'L2', 'L3', 'L4'] as Layer[]).map((l) => ({ label: LAYER_LABEL[l], active: l === layer, onClick: () => setLayer(l) }))} />
+                  <OverflowMenu align="left" label="⋯ 操作" items={[
+                    { label: '🧠 AI 推演', primary: true, onClick: () => setConsoleOpen(true) },
+                    { label: '🎙️ 录入情报', primary: true, onClick: () => setIntelOpen(true) },
+                    { label: '✏️ 编辑商机', onClick: () => setOppFormOpen(true) },
+                    { label: '📇 客户档案', onClick: () => setProfileOpen(true) },
+                    { label: '🔍 搜索情报', onClick: () => setEnrichOpen(true) },
+                    { label: '🔮 荐关系', badge: suggestions.length + personSuggs.length > 0 ? String(suggestions.length + personSuggs.length) : undefined, onClick: () => setSuggestOpen(true) },
+                    { label: '📊 报表', onClick: () => setReportOpen(true) },
+                    { label: '🔌 接入 AI', onClick: () => setMcpAccessOpen(true) },
+                    { label: '❓ 帮助', onClick: () => setHelpOpen(true) },
+                  ]} />
+                </>)}
+                <button className="theme-toggle mt-theme" onClick={toggleTheme} title={theme === 'dark' ? '切换到白天模式' : '切换到黑夜模式'}>{theme === 'dark' ? '☀️' : '🌙'}</button>
               </div>
-              {view === 'wall' && <LayerTabs layer={layer} onChange={setLayer} />}
-              {/* 移动端：层级下拉（左）+ ⋯操作下拉（右），一行 */}
-              {view === 'wall' && isMobile && (
-                <OverflowMenu align="left" label={`▾ ${LAYER_LABEL[layer]}`}
-                  items={(['L1', 'L2', 'L3', 'L4'] as Layer[]).map((l) => ({ label: LAYER_LABEL[l], active: l === layer, onClick: () => setLayer(l) }))} />
-              )}
-              {isMobile && (
-                <OverflowMenu align="left" label="⋯ 操作" items={[
-                  { label: '🧠 AI 推演', primary: true, onClick: () => setConsoleOpen(true) },
-                  { label: '🎙️ 录入情报', primary: true, onClick: () => setIntelOpen(true) },
-                  { label: '✏️ 编辑商机', onClick: () => setOppFormOpen(true) },
-                  { label: '📇 客户档案', onClick: () => setProfileOpen(true) },
-                  { label: '🔍 搜索情报', onClick: () => setEnrichOpen(true) },
-                  { label: '🔮 荐关系', badge: suggestions.length + personSuggs.length > 0 ? String(suggestions.length + personSuggs.length) : undefined, onClick: () => setSuggestOpen(true) },
-                  { label: '📊 报表', onClick: () => setReportOpen(true) },
-                  { label: '🔌 接入 AI', onClick: () => setMcpAccessOpen(true) },
-                  { label: '❓ 帮助', onClick: () => setHelpOpen(true) },
-                ]} />
-              )}
-            </div>}
+            )}
             {view === 'wall' ? (
             <>
             <Canvas account={account} opp={opp} layer={layer}
@@ -442,10 +441,11 @@ export default function App() {
             ) : view === 'sandbox' ? (
               breakdown ? (
                 <StrategySandbox account={account} opp={opp} breakdown={breakdown} dispatch={act}
-                  view={view} onChangeView={setView} onOpenConsole={() => setConsoleOpen(true)} />
+                  view={view} onChangeView={setView} onOpenConsole={() => setConsoleOpen(true)}
+                  theme={theme} onToggleTheme={toggleTheme} />
               ) : null
             ) : (
-              <DealPlanner account={account} dispatch={act} view={view} onChangeView={setView} />
+              <DealPlanner account={account} dispatch={act} view={view} onChangeView={setView} theme={theme} onToggleTheme={toggleTheme} />
             )}
           </>
         ) : (

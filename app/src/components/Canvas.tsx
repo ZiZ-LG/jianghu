@@ -215,11 +215,11 @@ export function Canvas({
       gesture.current = { kind: 'node', id, csx: e.clientX, csy: e.clientY, ox: w.x - p.x, oy: w.y - p.y, moved: false };
     } else if (edgeH) {
       gesture.current = { kind: 'edge', edgeId: edgeH.getAttribute('data-edge')!, csx: e.clientX, csy: e.clientY };
-    } else if (e.button === 1) {
-      gesture.current = { kind: 'pan', csx: e.clientX, csy: e.clientY, tx: view.tx, ty: view.ty }; // 中键拖 = 平移画布（双指亦可）
-    } else {
+    } else if (e.button === 0 && e.shiftKey) {
       const w = toWorld(e.clientX, e.clientY);
-      gesture.current = { kind: 'marquee', csx: e.clientX, csy: e.clientY, x0: w.x, y0: w.y, append: e.shiftKey }; // 空白拖=框选；按 Shift=在已选上追加
+      gesture.current = { kind: 'marquee', csx: e.clientX, csy: e.clientY, x0: w.x, y0: w.y, append: false }; // Shift+左键拖 = 框选
+    } else {
+      gesture.current = { kind: 'pan', csx: e.clientX, csy: e.clientY, tx: view.tx, ty: view.ty }; // 左键/中键空白拖 = 平移画布
     }
   };
 
@@ -332,7 +332,8 @@ export function Canvas({
   const onWheel = (e: React.WheelEvent) => {
     const r = wrapRef.current!.getBoundingClientRect();
     const mx = e.clientX - r.left, my = e.clientY - r.top;
-    const factor = e.deltaY > 0 ? 0.9 : 1.1;
+    // 指数映射 + 夹紧：触控板(deltaY 小)连续顺滑、鼠标滚轮(deltaY 大)不过冲
+    const factor = Math.min(1.25, Math.max(0.8, Math.exp(-e.deltaY * 0.0015)));
     setView((v) => {
       const scale = Math.max(0.3, Math.min(2.5, v.scale * factor));
       return { scale, tx: mx - ((mx - v.tx) / v.scale) * scale, ty: my - ((my - v.ty) / v.scale) * scale };

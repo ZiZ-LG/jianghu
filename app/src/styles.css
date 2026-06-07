@@ -75,8 +75,9 @@ select { font-family: inherit; }
 .nav-opp { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 8px; font-size: 12px; cursor: pointer; }
 .nav-opp.active { background: #2563eb; color: #fff; }
 .nav-opp .stage { font-size: 10px; opacity: .8; }
-.legend { padding: 0 14px 12px; border-top: 1px solid var(--line); background: rgba(255,255,255,.7); flex-shrink: 0; }
-.legend.collapsed { padding-bottom: 0; }
+.legend { padding: 0 12px 12px; border-top: 1px solid var(--line); background: rgba(255,255,255,.7); flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; max-height: 45vh; }
+.legend.collapsed { padding-bottom: 0; max-height: none; }
+.legend-body { overflow-y: auto; min-height: 0; }
 /* 图例折叠条：位于分割线处，点一下收起/展开图例，给干系人列表让出空间 */
 .legend-toggle { width: 100%; display: flex; align-items: center; justify-content: space-between;
   padding: 7px 2px; font-size: 10px; font-weight: 700; color: var(--faint); text-transform: uppercase; letter-spacing: .6px; background: none; }
@@ -957,9 +958,12 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 
 /* ════════ 策略沙盘 · 推演工作台（StrategySandbox）════════ */
 .sandbox { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.sandbox-top { flex-shrink: 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
+/* 三模块统一顶栏（关系地图 / 策略沙盘 / 行动计划共用；主题切换固定右上，切换不割裂） */
+.module-top { position: relative; flex-shrink: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 7px 48px 7px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.module-top .mt-name { font-size: 13px; font-weight: 700; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.module-top .mt-action { margin-left: auto; }
+.mt-theme { position: absolute; top: 6px; right: 10px; }
 .sb-band-pill { font-size: 12px; font-weight: 700; padding: 3px 10px; border: 1px solid; border-radius: 999px; white-space: nowrap; }
-.sandbox-top .btn { margin-left: auto; }
 
 .sandbox-body { flex: 1; display: flex; min-height: 0; }
 .sandbox-col { min-width: 0; padding: 14px 16px; overflow-y: auto; border-right: 1px solid var(--line); }
