@@ -1,6 +1,7 @@
 // 策略沙盘 · 推演工作台（关系地图 → 沙盘 → 行动策划 的中间「桥」）。
 // 结构化三栏：现状(只读引 G64111 + 风险/弹药) → 方向(策略卡，挂靠低分项，可送行动策划) → 终局(目标/截止日 + 倒推里程碑 + 就绪度)。
-// P0：手工 CRUD + 就绪度。P1：策略卡→送行动策划(生成 PlanAction 落 DealPlanner)、倒推里程碑(共享 OppMilestone)、风险/弹药 CRUD。
+// P0：手工 CRUD + 就绪度。P1：派发行动 + 倒推里程碑 + 风险/弹药。P2：AI 顺推(策略卡候选)/倒推(里程碑候选)，候选本地暂存、人审采纳才落库。
+import { useState } from 'react';
 import type { Account, Opportunity, StrategyCard } from '../types';
 import { SENTIMENT_CHAR, SENTIMENT_COLOR, ROLE_LABEL } from '../types';
 import type { Action } from '../store';
@@ -8,6 +9,8 @@ import { newStrategyCard, newStrategyRisk, newStrategyResource, newPlanAction, n
 import type { ScoreBreakdown, ItemKey, Band741 } from '../lib/g64111';
 import { ITEM_MAX, ITEM_LABEL, ITEM_GROUP, BAND_LABEL, BAND_STRATEGY } from '../lib/g64111';
 import { ViewTabs, type CustomerView } from './ViewTabs';
+import { api } from '../api';
+import { buildAiContext } from '../aiContext';
 
 // 741 四档语义色（同 types.ts ROLE_COLOR/SENTIMENT_COLOR 的硬编码语义色惯例）
 const BAND_TONE: Record<Band741, string> = {
@@ -18,7 +21,12 @@ const BAND_TONE: Record<Band741, string> = {
 };
 const GROUPS = ['6必清', '4优势', '1决胜'] as const;
 const p2 = (n: number) => String(n).padStart(2, '0');
-const todayYmd = () => { const d = new Date(); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`; };
+const fmt = (d: Date) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+const todayYmd = () => fmt(new Date());
+const addDaysYmd = (n: number) => { const d = new Date(); d.setDate(d.getDate() + n); return fmt(d); };
+
+interface FwdCand { gapItem: string; title: string; basis: string; }
+interface BwdCand { title: string; offsetDays: number; }
 
 export function StrategySandbox({
   account, opp, breakdown, dispatch, view, onChangeView, onOpenConsole,
@@ -107,6 +115,39 @@ export function StrategySandbox({
     dispatch({ type: 'UPDATE_STRATEGY_RESOURCE', accId: account.id, resourceId, patch });
   const deleteResource = (resourceId: string) => dispatch({ type: 'DELETE_STRATEGY_RESOURCE', accId: account.id, resourceId });
 
+  // ── AI 顺推/倒推（候选本地暂存，采纳才落库；守"AI 绝不自动写库"红线）──
+  const [aiBusy, setAiBusy] = useState<'forward' | 'backward' | null>(null);
+  const [aiErr, setAiErr] = useState('');
+  const [fwdCands, setFwdCands] = useState<FwdCand[]>([]);
+  const [bwdCands, setBwdCands] = useState<BwdCand[]>([]);
+
+  const runSuggest = async (mode: 'forward' | 'backward') => {
+    if (aiBusy) return;
+    setAiBusy(mode); setAiErr('');
+    try {
+      const ctx = { ...buildAiContext(account, opp, breakdown), existingCardTitles: cards.map((c) => c.title).filter(Boolean) };
+      const r = await api.strategySuggest(opp.id, mode, ctx);
+      if (mode === 'forward') setFwdCands(r.candidates || []);
+      else setBwdCands(r.candidates || []);
+    } catch (e: any) {
+      setAiErr(e?.message || 'AI 推演失败');
+    } finally { setAiBusy(null); }
+  };
+  const acceptFwd = (i: number) => {
+    const c = fwdCands[i]; if (!c) return;
+    const card = newStrategyCard(account.id, opp.id, c.gapItem || '');
+    card.title = c.title; card.basis = c.basis; card.origin = 'ai'; card.orderIndex = cards.length;
+    dispatch({ type: 'ADD_STRATEGY_CARD', accId: account.id, oppId: opp.id, card });
+    setFwdCands((xs) => xs.filter((_, j) => j !== i));
+  };
+  const acceptBwd = (i: number) => {
+    const c = bwdCands[i]; if (!c) return;
+    const ms = newMilestone(account.id, opp.id, addDaysYmd(c.offsetDays), 'am');
+    ms.title = c.title;
+    dispatch({ type: 'ADD_MILESTONE', accId: account.id, oppId: opp.id, milestone: ms });
+    setBwdCands((xs) => xs.filter((_, j) => j !== i));
+  };
+
   return (
     <div className="sandbox">
       <div className="sandbox-top">
@@ -190,12 +231,32 @@ export function StrategySandbox({
           </div>
         </section>
 
-        {/* ② 方向栏（策略卡 CRUD + 送行动策划） */}
+        {/* ② 方向栏（策略卡 CRUD + 送行动策划 + AI 顺推候选） */}
         <section className="sandbox-col sb-dirs">
           <h3 className="sb-h">方向 · 策略卡 <span className="sb-count">{cards.length}</span></h3>
-          <button className="btn ghost sm sb-addcard" onClick={() => addCard()}>＋ 新建策略卡</button>
+          <div className="sb-dir-acts">
+            <button className="btn ghost sm" onClick={() => addCard()}>＋ 新建</button>
+            <button className="btn ghost sm sb-ai-btn" disabled={aiBusy === 'forward'} onClick={() => runSuggest('forward')}>{aiBusy === 'forward' ? '推演中…' : '✨ AI 顺推'}</button>
+          </div>
+          {aiErr && <div className="sb-ai-err">{aiErr}</div>}
+          {fwdCands.length > 0 && (
+            <div className="sb-cands">
+              <div className="sb-cands-h">✨ AI 顺推候选 · 采纳后入策略卡（未采纳不入库）</div>
+              {fwdCands.map((c, i) => (
+                <div className="sb-cand" key={i}>
+                  {c.gapItem && <span className="sb-cand-gap">{ITEM_LABEL[c.gapItem as ItemKey] || c.gapItem}</span>}
+                  <div className="sb-cand-title">{c.title}</div>
+                  {c.basis && <div className="sb-cand-basis">{c.basis}</div>}
+                  <div className="sb-cand-acts">
+                    <button className="btn ghost xs" onClick={() => acceptFwd(i)}>采纳</button>
+                    <button className="sb-cand-ignore" onClick={() => setFwdCands((xs) => xs.filter((_, j) => j !== i))}>忽略</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="sb-cards">
-            {cards.length === 0 && <div className="sb-empty">还没有策略卡。从左侧缺口点「＋」，或「新建策略卡」开始排打法。</div>}
+            {cards.length === 0 && fwdCands.length === 0 && <div className="sb-empty">还没有策略卡。从左侧缺口点「＋」、「新建」，或「✨ AI 顺推」让 AI 按缺口荐打法。</div>}
             {cards.map((card) => {
               const dispatched = (card.dispatchedActionIds?.length ?? 0) > 0;
               return (
@@ -245,9 +306,29 @@ export function StrategySandbox({
               onChange={(e) => updateGoal({ expectedSignDate: e.target.value })} />
           </label>
 
-          <h4 className="sb-sub">🚩 里程碑（倒排）<span className="sb-sub-acts"><button className="sb-mini-add" onClick={addMilestone}>＋</button></span></h4>
+          <h4 className="sb-sub">🚩 里程碑（倒排）
+            <span className="sb-sub-acts">
+              <button className="sb-mini-add" disabled={aiBusy === 'backward'} onClick={() => runSuggest('backward')}>{aiBusy === 'backward' ? '…' : '✨ AI 倒推'}</button>
+              <button className="sb-mini-add" onClick={addMilestone}>＋</button>
+            </span>
+          </h4>
+          {bwdCands.length > 0 && (
+            <div className="sb-cands">
+              <div className="sb-cands-h">✨ AI 倒推候选 · 采纳后入里程碑</div>
+              {bwdCands.map((c, i) => (
+                <div className="sb-cand" key={i}>
+                  <div className="sb-cand-title">{c.title}</div>
+                  <div className="sb-cand-basis">约 {c.offsetDays} 天后</div>
+                  <div className="sb-cand-acts">
+                    <button className="btn ghost xs" onClick={() => acceptBwd(i)}>采纳</button>
+                    <button className="sb-cand-ignore" onClick={() => setBwdCands((xs) => xs.filter((_, j) => j !== i))}>忽略</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="sb-milestones">
-            {milestones.length === 0 && <div className="sb-empty-s">从终局倒排关键节点（开标 / 立项评审 / 签约…），直接落到商机策划时间轴</div>}
+            {milestones.length === 0 && bwdCands.length === 0 && <div className="sb-empty-s">从终局倒排关键节点（开标 / 立项评审 / 签约…），直接落到商机策划时间轴</div>}
             {milestones.map((m) => (
               <div className="sb-ms" key={m.id}>
                 <input className="sb-ms-title" defaultValue={m.title} placeholder="里程碑（如：立项评审）"

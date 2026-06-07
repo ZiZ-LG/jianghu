@@ -1044,6 +1044,22 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 .sb-ms-title { flex: 1; min-width: 0; font-size: 12px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
 .sb-ms-date { flex-shrink: 0; font-size: 11px; padding: 3px 4px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink-2); font-family: inherit; }
 
+/* 策略沙盘 P2：AI 顺推/倒推候选（本地暂存，采纳前不入库） */
+.sb-dir-acts { display: flex; gap: 6px; margin-bottom: 10px; }
+.sb-dir-acts .btn { flex: 1; }
+.sb-ai-btn { color: var(--accent); }
+.sb-mini-add[disabled] { opacity: .5; cursor: not-allowed; }
+.sb-ai-err { font-size: 12px; color: #dc2626; background: color-mix(in srgb, #dc2626 8%, var(--panel)); border: 1px solid color-mix(in srgb, #dc2626 30%, var(--line)); border-radius: 6px; padding: 6px 8px; margin-bottom: 8px; }
+.sb-cands { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; padding: 8px; background: var(--accent-soft); border: 1px dashed var(--accent); border-radius: 8px; }
+.sb-cands-h { font-size: 11px; font-weight: 700; color: var(--accent-ink); }
+.sb-cand { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px; display: flex; flex-direction: column; gap: 4px; }
+.sb-cand-gap { align-self: flex-start; font-size: 10px; font-weight: 700; padding: 1px 6px; background: var(--accent-soft); color: var(--accent-ink); border-radius: 4px; }
+.sb-cand-title { font-size: 13px; font-weight: 600; color: var(--ink); line-height: 1.4; }
+.sb-cand-basis { font-size: 11px; color: var(--muted); line-height: 1.4; }
+.sb-cand-acts { display: flex; gap: 10px; align-items: center; margin-top: 2px; }
+.sb-cand-ignore { font-size: 12px; color: var(--muted); background: none; border: none; cursor: pointer; }
+.sb-cand-ignore:hover { color: var(--ink-2); text-decoration: underline; }
+
 @media (max-width: 760px) {
   .sandbox-body { flex-direction: column; overflow-y: auto; }
   .sandbox-col { flex: none; border-right: none; border-bottom: 8px solid var(--bg); }
