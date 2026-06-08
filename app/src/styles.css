@@ -465,6 +465,8 @@ select { font-family: inherit; }
 /* ───────── Sync toast ───────── */
 .sync-toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); z-index: 200;
   background: #b91c1c; color: #fff; font-size: 13px; padding: 10px 18px; border-radius: 10px; box-shadow: 0 8px 24px rgba(185,28,28,.3); }
+.undo-toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); z-index: 200; pointer-events: none;
+  background: var(--accent); color: #fff; font-size: 13px; font-weight: 600; padding: 9px 16px; border-radius: 10px; box-shadow: 0 8px 24px rgba(37,99,235,.3); }
 
 /* ───────── 备案号页脚（env 驱动；未配置则组件返回 null）───────── */
 .beian-footer { position: fixed; bottom: 0; left: 0; right: 0; z-index: 50;

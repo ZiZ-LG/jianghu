@@ -338,7 +338,7 @@ export function Canvas({
       const r = wrap.getBoundingClientRect();
       const mx = e.clientX - r.left, my = e.clientY - r.top;
       // 指数映射 + 夹紧：触控板(deltaY 小)连续顺滑、鼠标滚轮(deltaY 大)不过冲
-      const factor = Math.min(1.25, Math.max(0.8, Math.exp(-e.deltaY * 0.0015)));
+      const factor = Math.min(1.6, Math.max(0.6, Math.exp(-e.deltaY * 0.0075)));
       setView((v) => {
         const scale = Math.max(0.3, Math.min(2.5, v.scale * factor));
         return { scale, tx: mx - ((mx - v.tx) / v.scale) * scale, ty: my - ((my - v.ty) / v.scale) * scale };

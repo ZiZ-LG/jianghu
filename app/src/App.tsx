@@ -38,6 +38,7 @@ export default function App() {
   const [auth, setAuth] = useState<AuthResult | null>(null);
   const [booting, setBooting] = useState(true);
   const [syncErr, setSyncErr] = useState('');
+  const [undoHint, setUndoHint] = useState('');
 
   const [accId, setAccId] = useState<string | null>(null);
   const [oppId, setOppId] = useState<string | null>(null);
@@ -133,17 +134,19 @@ export default function App() {
   }, [applyRaw]);
   const undo = useCallback(() => {
     const item = undoStack.current.pop();
-    if (!item) return;
+    if (!item) { setUndoHint('⊘ 没有可撤销的操作'); return; }
     item.undo.forEach((x) => applyRaw(x));
     redoStack.current.push(item);
     if (redoStack.current.length > 10) redoStack.current.shift();
+    setUndoHint(`↶ 已撤销 · 还可撤销 ${undoStack.current.length} 步`);
   }, [applyRaw]);
   const redo = useCallback(() => {
     const item = redoStack.current.pop();
-    if (!item) return;
+    if (!item) { setUndoHint('⊘ 没有可重做的操作'); return; }
     item.redo.forEach((x) => applyRaw(x));
     undoStack.current.push(item);
     if (undoStack.current.length > 10) undoStack.current.shift();
+    setUndoHint(`↷ 已重做 · 还可重做 ${redoStack.current.length} 步`);
   }, [applyRaw]);
   // 全局快捷键：Ctrl/Cmd+Z 撤销 · Ctrl/Cmd+Shift+Z 或 Ctrl+Y 重做（输入框内不拦截）
   useEffect(() => {
@@ -158,6 +161,7 @@ export default function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [undo, redo]);
+  useEffect(() => { if (!undoHint) return; const t = setTimeout(() => setUndoHint(''), 1600); return () => clearTimeout(t); }, [undoHint]);
 
   const account = state.accounts.find((a) => a.id === accId) ?? null;
   const opp = account?.opportunities.find((o) => o.id === oppId) ?? null;
@@ -553,6 +557,7 @@ export default function App() {
           onClose={() => setSuggestOpen(false)} />
       )}
       {syncErr && <div className="sync-toast">{syncErr}</div>}
+      {undoHint && <div className="undo-toast">{undoHint}</div>}
     </div>
   );
 }
