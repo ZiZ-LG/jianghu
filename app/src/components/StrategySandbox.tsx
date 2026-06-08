@@ -29,7 +29,7 @@ interface FwdCand { gapItem: string; title: string; basis: string; }
 interface BwdCand { title: string; offsetDays: number; }
 
 export function StrategySandbox({
-  account, opp, breakdown, dispatch, view, onChangeView, onOpenConsole, theme, onToggleTheme,
+  account, opp, breakdown, dispatch, view, onChangeView, onOpenConsole, theme, onToggleTheme, onSelectOpp,
 }: {
   account: Account;
   opp: Opportunity;
@@ -40,6 +40,7 @@ export function StrategySandbox({
   onOpenConsole: () => void;
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
+  onSelectOpp: (id: string) => void;
 }) {
   const itemKeys = Object.keys(ITEM_MAX) as ItemKey[];
   const personById = new Map(account.persons.map((p) => [p.id, p]));
@@ -154,7 +155,10 @@ export function StrategySandbox({
     <div className="sandbox">
       <div className="module-top">
         <ViewTabs view={view} onChange={onChangeView} />
-        <span className="mt-name">{opp.name}</span>
+        <span className="mt-account">{account.name}</span>
+        <select className="mt-opp-select" value={opp.id} onChange={(e) => onSelectOpp(e.target.value)} title="切换商机">
+          {account.opportunities.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+        </select>
         <span className="sb-band-pill" style={{ color: tone, borderColor: tone }}>● {BAND_LABEL[breakdown.band]} · 趋赢力 {pct}%</span>
         <button className="btn primary xs mt-action" onClick={onOpenConsole}>🧠 AI 推演</button>
         <button className="theme-toggle mt-theme" onClick={onToggleTheme} title={theme === 'dark' ? '切换到白天模式' : '切换到黑夜模式'}>{theme === 'dark' ? '☀️' : '🌙'}</button>

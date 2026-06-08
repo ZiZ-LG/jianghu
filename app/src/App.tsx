@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { Layer, Role, CustomerType, Edge, Person } from './types';
 import { LAYER_LABEL } from './types';
-import { reducer, newAccount, newPerson, uid, type Action } from './store';
+import { reducer, computeInverse, newAccount, newPerson, uid, type Action } from './store';
 import { api, type AuthResult, type Suggestion, type PersonSuggestion } from './api';
 import { scoreFromDomain } from './lib/g64111';
 import { usePersistentState, useTheme, useViewport } from './ui';
@@ -110,11 +110,54 @@ export default function App() {
   const logout = () => { api.setToken(null); setAuth(null); setAccId(null); setSelectedId(null); dispatch({ type: 'HYDRATE', accounts: [] }); };
 
   // 乐观本地更新 + 云端持久化
-  const act = useCallback(async (action: Action) => {
+  // 底层落地：乐观本地 + 云端持久化（普通操作与 undo/redo 共用）
+  const applyRaw = useCallback(async (action: Action) => {
     dispatch(action);
     try { await api.mutate(action); setSyncErr(''); }
     catch (e: any) { setSyncErr('云端保存失败：' + e.message); }
   }, []);
+  // 最新 state 镜像，供 computeInverse 取旧值
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const undoStack = useRef<{ redo: Action[]; undo: Action[] }[]>([]);
+  const redoStack = useRef<{ redo: Action[]; undo: Action[] }[]>([]);
+  // 用户操作：先算逆 action 入撤销栈（前后各 10 次），再落地
+  const act = useCallback((action: Action) => {
+    const inv = computeInverse(action, stateRef.current);
+    if (inv && inv.length) {
+      undoStack.current.push({ redo: [action], undo: inv });
+      if (undoStack.current.length > 10) undoStack.current.shift();
+      redoStack.current = [];
+    }
+    applyRaw(action);
+  }, [applyRaw]);
+  const undo = useCallback(() => {
+    const item = undoStack.current.pop();
+    if (!item) return;
+    item.undo.forEach((x) => applyRaw(x));
+    redoStack.current.push(item);
+    if (redoStack.current.length > 10) redoStack.current.shift();
+  }, [applyRaw]);
+  const redo = useCallback(() => {
+    const item = redoStack.current.pop();
+    if (!item) return;
+    item.redo.forEach((x) => applyRaw(x));
+    undoStack.current.push(item);
+    if (undoStack.current.length > 10) undoStack.current.shift();
+  }, [applyRaw]);
+  // 全局快捷键：Ctrl/Cmd+Z 撤销 · Ctrl/Cmd+Shift+Z 或 Ctrl+Y 重做（输入框内不拦截）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+      const k = e.key.toLowerCase();
+      if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
+      else if ((k === 'z' && e.shiftKey) || k === 'y') { e.preventDefault(); redo(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [undo, redo]);
 
   const account = state.accounts.find((a) => a.id === accId) ?? null;
   const opp = account?.opportunities.find((o) => o.id === oppId) ?? null;
@@ -382,6 +425,7 @@ export default function App() {
             {view === 'wall' && !immersive && (
               <div className="module-top wall-top">
                 <ViewTabs view={view} onChange={setView} />
+                <span className="mt-account">{account.name}</span>
                 <span className="mt-name">{opp.name}</span>
                 {!isMobile && <LayerTabs layer={layer} onChange={setLayer} />}
                 {!isMobile && (<>
@@ -442,7 +486,7 @@ export default function App() {
               breakdown ? (
                 <StrategySandbox account={account} opp={opp} breakdown={breakdown} dispatch={act}
                   view={view} onChangeView={setView} onOpenConsole={() => setConsoleOpen(true)}
-                  theme={theme} onToggleTheme={toggleTheme} />
+                  theme={theme} onToggleTheme={toggleTheme} onSelectOpp={setOppId} />
               ) : null
             ) : (
               <DealPlanner account={account} dispatch={act} view={view} onChangeView={setView} theme={theme} onToggleTheme={toggleTheme} />

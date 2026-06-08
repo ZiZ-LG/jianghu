@@ -337,6 +337,7 @@ export function DealPlanner({ account, dispatch, view, onChangeView, theme, onTo
     <div className="dp-root">
       <header className="module-top">
         <ViewTabs view={view} onChange={onChangeView} />
+        <span className="mt-account">{account.name}</span>
         <div className="dp-vtabs">
           {CAL_VIEWS.map((v) => <button key={v.id} className={`dp-vtab${calView === v.id ? ' active' : ''}`} onClick={() => { setSel(null); setCalView(v.id); }}>{v.label}</button>)}
         </div>

@@ -973,6 +973,8 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 .module-top .mt-name { font-size: 13px; font-weight: 700; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .module-top .mt-action { margin-left: auto; }
 .mt-theme { position: absolute; top: 6px; right: 10px; }
+.module-top .mt-account { font-size: 13px; font-weight: 800; color: var(--ink); max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mt-opp-select { font-size: 12px; font-weight: 600; padding: 4px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-2); color: var(--ink); max-width: 200px; cursor: pointer; }
 .sb-band-pill { font-size: 12px; font-weight: 700; padding: 3px 10px; border: 1px solid; border-radius: 999px; white-space: nowrap; }
 
 .sandbox-body { flex: 1; display: flex; min-height: 0; }
