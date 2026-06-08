@@ -183,9 +183,9 @@ export default function App() {
   };
 
   // ── 画布交互：选中 / 打开右侧栏 / 飞书式建点连线 ──
-  const selectPerson = (id: string | null) => { setSelectedId(id); setSelectedEdgeId(null); };
+  const selectPerson = (id: string | null) => { setSelectedId(id); setSelectedEdgeId(null); if (id && (drawerPersonId || drawerEdgeId)) { setDrawerEdgeId(null); setDrawerPersonId(id); } };
   const openPerson = (id: string) => { setSelectedId(id); setSelectedEdgeId(null); setDrawerEdgeId(null); setDrawerPersonId(id); };
-  const selectEdge = (id: string | null) => { setSelectedEdgeId(id); setSelectedId(null); };
+  const selectEdge = (id: string | null) => { setSelectedEdgeId(id); setSelectedId(null); if (id && (drawerPersonId || drawerEdgeId)) { setDrawerPersonId(null); setDrawerEdgeId(id); } };
   const openEdge = (id: string) => { setDrawerPersonId(null); setDrawerEdgeId(id); };
   // 切客户/商机时清空一切选中
   useEffect(() => { setSelectedId(null); setSelectedEdgeId(null); setDrawerPersonId(null); setDrawerEdgeId(null); }, [accId, oppId]);

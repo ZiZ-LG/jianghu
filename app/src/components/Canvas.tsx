@@ -329,16 +329,24 @@ export function Canvas({
     }
   };
 
-  const onWheel = (e: React.WheelEvent) => {
-    const r = wrapRef.current!.getBoundingClientRect();
-    const mx = e.clientX - r.left, my = e.clientY - r.top;
-    // 指数映射 + 夹紧：触控板(deltaY 小)连续顺滑、鼠标滚轮(deltaY 大)不过冲
-    const factor = Math.min(1.25, Math.max(0.8, Math.exp(-e.deltaY * 0.0015)));
-    setView((v) => {
-      const scale = Math.max(0.3, Math.min(2.5, v.scale * factor));
-      return { scale, tx: mx - ((mx - v.tx) / v.scale) * scale, ty: my - ((my - v.ty) / v.scale) * scale };
-    });
-  };
+  // 缩放走 native wheel 监听（passive:false）以 preventDefault——否则触控板双指捏合(=ctrl+wheel)会被浏览器解释为「整页缩放」
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const handler = (e: WheelEvent) => {
+      e.preventDefault();
+      const r = wrap.getBoundingClientRect();
+      const mx = e.clientX - r.left, my = e.clientY - r.top;
+      // 指数映射 + 夹紧：触控板(deltaY 小)连续顺滑、鼠标滚轮(deltaY 大)不过冲
+      const factor = Math.min(1.25, Math.max(0.8, Math.exp(-e.deltaY * 0.0015)));
+      setView((v) => {
+        const scale = Math.max(0.3, Math.min(2.5, v.scale * factor));
+        return { scale, tx: mx - ((mx - v.tx) / v.scale) * scale, ty: my - ((my - v.ty) / v.scale) * scale };
+      });
+    };
+    wrap.addEventListener('wheel', handler, { passive: false });
+    return () => wrap.removeEventListener('wheel', handler);
+  }, []);
   const zoomBy = (f: number) => setView((v) => ({ ...v, scale: Math.max(0.3, Math.min(2.5, v.scale * f)) }));
   // 总览：自适应缩放 + 居中，把全部节点完整纳入视口（竖屏/横屏通用，避开顶部菜单与底部药丸）
   const fitAll = () => {
@@ -377,7 +385,7 @@ export function Canvas({
 
   return (
     <div ref={wrapRef} className="canvas-wrap"
-      onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={endPointer} onPointerCancel={endPointer} onWheel={onWheel}>
+      onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={endPointer} onPointerCancel={endPointer}>
       {visible.length === 0 && (
         <div className="canvas-empty">👤 这个商机还没有干系人<br /><span>在空白处<b>双击</b>新建人物，或点左侧「干系人 ＋」</span></div>
       )}

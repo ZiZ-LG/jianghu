@@ -75,8 +75,9 @@ select { font-family: inherit; }
 .nav-opp { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 8px; font-size: 12px; cursor: pointer; }
 .nav-opp.active { background: #2563eb; color: #fff; }
 .nav-opp .stage { font-size: 10px; opacity: .8; }
-.legend { padding: 0 12px 12px; border-top: 1px solid var(--line); background: rgba(255,255,255,.7); flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; max-height: 45vh; }
-.legend.collapsed { padding-bottom: 0; max-height: none; }
+/* 图例高度对齐趋赢力面板(.winpanel 190px)：两者都贴各自容器底 → 上边界水平对齐；内容超出滚动 */
+.legend { padding: 0 12px 12px; border-top: 1px solid var(--line); background: rgba(255,255,255,.7); flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; height: 190px; }
+.legend.collapsed { padding-bottom: 0; height: auto; }
 .legend-body { overflow-y: auto; min-height: 0; }
 /* 图例折叠条：位于分割线处，点一下收起/展开图例，给干系人列表让出空间 */
 .legend-toggle { width: 100%; display: flex; align-items: center; justify-content: space-between;
@@ -809,9 +810,9 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 .dp-root { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .dp-head { flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--line); }
 .dp-nav { display: inline-flex; gap: 2px; }
-.dp-nav button { width: 30px; height: 30px; border-radius: 8px; font-size: 16px; color: var(--ink-2); background: none; border: none; cursor: pointer; }
+.dp-nav button:not(.dp-today) { width: 30px; height: 30px; border-radius: 8px; font-size: 16px; color: var(--ink-2); background: none; border: none; cursor: pointer; }
 .dp-nav button:hover { background: var(--hover); }
-.dp-today { padding: 0 12px; height: 30px; border-radius: 8px; border: 1px solid var(--line); font-size: 12px; font-weight: 600; color: var(--ink-2); background: none; cursor: pointer; }
+.dp-today { padding: 0 12px; height: 30px; border-radius: 8px; border: 1px solid var(--line); font-size: 12px; font-weight: 600; color: var(--ink-2); background: none; cursor: pointer; white-space: nowrap; }
 .dp-today:hover { background: var(--hover); }
 .dp-period { font-size: 17px; font-weight: 800; color: var(--ink); }
 .dp-hint { margin-left: auto; font-size: 11px; color: var(--faint); }
@@ -855,8 +856,17 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 .dp-lg-ic { width: 18px; text-align: center; flex-shrink: 0; }
 .dp-lg-bar { width: 5px; height: 16px; border-radius: 3px; flex-shrink: 0; }
 .dp-lg-name { flex: 1; font-size: 12px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dp-eye { width: 26px; height: 24px; border-radius: 6px; display: grid; place-items: center; flex-shrink: 0; background: none; border: none; cursor: pointer; font-size: 13px; }
-.dp-eye:hover { background: var(--hover); }
+.dp-eye { width: 26px; height: 24px; border-radius: 6px; display: grid; place-items: center; flex-shrink: 0; background: none; border: none; cursor: pointer; color: var(--faint); }
+.dp-eye:hover { background: var(--hover); color: var(--ink-2); }
+.dp-lg.off .dp-eye { color: var(--muted); }
+/* 行动事项列表（左栏底部，点选→右栏编辑） */
+.dp-action-item { display: flex; align-items: center; gap: 7px; padding: 5px 7px; border-radius: 6px; font-size: 12px; color: var(--ink-2); cursor: pointer; }
+.dp-action-item:hover { background: var(--hover); }
+.dp-action-item.active { background: var(--accent-soft); color: var(--accent-ink); }
+.dp-action-item.done .dp-ai-name { text-decoration: line-through; color: var(--faint); }
+.dp-ai-dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+.dp-ai-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dp-ai-date { font-size: 11px; color: var(--faint); flex-shrink: 0; font-variant-numeric: tabular-nums; }
 .dp-empty-hint { font-size: 11px; color: var(--faint); padding: 4px 0; }
 .dp-tip { margin-top: 14px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px; font-size: 11px; color: var(--muted); line-height: 1.7; }
 .dp-tip b { color: var(--ink-2); }

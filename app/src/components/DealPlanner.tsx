@@ -23,6 +23,20 @@ interface CalEvent { id: string; kind: Kind; oppId: string; start: string; end: 
 
 const KIND_ICON: Record<Kind, string> = { action: '🎯', milestone: '🚩', touch: '📌' };
 const KIND_LABEL: Record<Kind, string> = { action: '行动计划', milestone: '里程碑', touch: '历史触点' };
+// 线条眼睛图标（睁眼=显示 / 闭眼划线=隐藏），视觉弱、无填充
+function EyeIcon({ off }: { off: boolean }) {
+  return off ? (
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24M6.06 6.06A18.46 18.46 0 0 0 1 12s4 8 11 8a9.12 9.12 0 0 0 5.94-2.06" />
+      <line x1="2" y1="2" x2="22" y2="22" />
+    </svg>
+  ) : (
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
 const EDITABLE = (k: Kind) => k === 'action' || k === 'milestone';
 const CAL_VIEWS: { id: CalView; label: string }[] = [{ id: 'year', label: '年' }, { id: 'month', label: '月' }, { id: 'week', label: '周' }];
 
@@ -338,7 +352,7 @@ export function DealPlanner({ account, dispatch, view, onChangeView, theme, onTo
           {(Object.keys(KIND_LABEL) as Kind[]).map((k) => (
             <div key={k} className={`dp-lg${hideKind.has(k) ? ' off' : ''}`}>
               <span className="dp-lg-ic">{KIND_ICON[k]}</span><span className="dp-lg-name">{KIND_LABEL[k]}</span>
-              <button className="dp-eye" onClick={() => setHideKind((s) => tog(s, k))} aria-label={hideKind.has(k) ? '显示' : '隐藏'}>{hideKind.has(k) ? '🚫' : '👁'}</button>
+              <button className="dp-eye" onClick={() => setHideKind((s) => tog(s, k))} aria-label={hideKind.has(k) ? '显示' : '隐藏'}><EyeIcon off={hideKind.has(k)} /></button>
             </div>
           ))}
           <h4>商机泳道 · 显示/隐藏</h4>
@@ -346,7 +360,16 @@ export function DealPlanner({ account, dispatch, view, onChangeView, theme, onTo
           {opps.map((o, i) => (
             <div key={o.id} className={`dp-lg${hideOpp.has(o.id) ? ' off' : ''}`}>
               <span className="dp-lg-bar" style={{ background: `hsl(${oppHue(i)} 70% 48%)` }} /><span className="dp-lg-name">{o.name}</span>
-              <button className="dp-eye" onClick={() => setHideOpp((s) => tog(s, o.id))} aria-label={hideOpp.has(o.id) ? '显示' : '隐藏'}>{hideOpp.has(o.id) ? '🚫' : '👁'}</button>
+              <button className="dp-eye" onClick={() => setHideOpp((s) => tog(s, o.id))} aria-label={hideOpp.has(o.id) ? '显示' : '隐藏'}><EyeIcon off={hideOpp.has(o.id)} /></button>
+            </div>
+          ))}
+          <h4>行动事项 · 点选编辑</h4>
+          {events.filter((e) => e.kind === 'action').length === 0 && <div className="dp-empty-hint">暂无行动，双击日历新增或从策略沙盘派发</div>}
+          {events.filter((e) => e.kind === 'action').map((e) => (
+            <div key={e.id} className={`dp-action-item${sel === e.id ? ' active' : ''}${e.done ? ' done' : ''}`} onClick={() => openEdit(e)}>
+              <span className="dp-ai-dot" style={{ background: `hsl(${oppHue(oppIndex[e.oppId] ?? 0)} 70% 48%)` }} />
+              <span className="dp-ai-name">{e.title}</span>
+              <span className="dp-ai-date">{(e.start || '').slice(5)}</span>
             </div>
           ))}
         </aside>
