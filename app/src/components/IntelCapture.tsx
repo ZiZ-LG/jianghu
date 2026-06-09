@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import type { ReactNode, PointerEvent as ReactPointerEvent } from 'react';
 import type { Account, Opportunity } from '../types';
 import { api } from '../api';
+import { IntelReceipt } from './IntelReceipt';
 
 /** 可拖动悬浮面板：替代 Modal 的居中遮罩——无遮罩、默认右上角、拖标题栏移动，便于边录边看图。 */
 function FloatPanel({ title, onClose, footer, width = 420, children }: {
@@ -71,11 +72,6 @@ export function IntelCapture({ account, opportunity, onClose, onDone, onEnterAcc
   // ── 回执视图 ──
   if (receipt) {
     const c = receipt;
-    const cands = [
-      ...(c.candidates?.persons ?? []).map((p: any) => `${p.name}?`),
-      ...(c.candidates?.relationships ?? []).map((r: any) => `${r.source}↔${r.target}?`),
-    ];
-    const builtNothing = !c.account && !c.opportunity && !(c.personsCreated?.length) && !(c.edgesCreated?.length) && !cands.length;
     const canEnter = Boolean(fromScratch && c.account?.id && onEnterAccount); // 从零建客户成功 → 可一键进入
     return (
       <FloatPanel title="🎙️ 录入情报 · 已录入" width={420} onClose={onClose}
@@ -84,33 +80,7 @@ export function IntelCapture({ account, opportunity, onClose, onDone, onEnterAcc
           <button className={canEnter ? 'btn ghost' : 'btn primary'} onClick={() => { setReceipt(null); setText(''); }}>＋ 再记一条</button>
           {canEnter && <button className="btn primary" onClick={() => onEnterAccount!(c.account.id)}>🗺️ 进入客户</button>}
         </>}>
-        {(c.needConfig || c.demo) && (
-          <div className="intel-demo-hint">未配 AI 模型，已先把口述存为拜访纪要。配置「🧠 AI 模型」后即可自动抽取客户/商机/干系人/关系。</div>
-        )}
-        <div className="intel-receipt">
-          {c.account && <div className="ir-row">🏢 客户：<b>{c.account.name}</b>（{c.account.status === 'created' ? '新建' : '已关联'}）</div>}
-          {c.opportunity && <div className="ir-row">🎯 商机：<b>{c.opportunity.name}</b>（{c.opportunity.status === 'created' ? '新建' : '已关联'}）</div>}
-          {c.personsCreated?.length > 0 && <div className="ir-row">👤 新建干系人：<b>{c.personsCreated.map((p: any) => p.name).join('、')}</b> — 已上图</div>}
-          {c.rolesSet?.length > 0 && <div className="ir-row">🎭 角色：{c.rolesSet.map((r: any) => `${r.name}(${r.role})`).join('、')}</div>}
-          {c.edgesCreated?.length > 0 && <div className="ir-row">🔗 关系：{c.edgesCreated.map((e: any) => `${e.source}→${e.target}`).join('、')} — 已上图</div>}
-          {c.burningIssues?.length > 0 && <div className="ir-row">🔥 燃眉之急：{c.burningIssues.map((b: any) => b.person).join('、')}</div>}
-          {c.ucvs?.length > 0 && <div className="ir-row">💎 独特价值：{c.ucvs.map((u: any) => `${u.person}(${u.status})`).join('、')}</div>}
-          {c.visitNote && <div className="ir-row">📝 拜访纪要已存档</div>}
-          {c.notes?.length > 0 && <div className="ir-row">📌 {c.notes.length} 条线索已记入干系人备注（待核实）：{c.notes.map((n: any) => `${n.person}「${n.content}」`).join('；')}</div>}
-          {builtNothing && !c.needConfig && <div className="ir-row" style={{ color: 'var(--muted)' }}>{c.note || (fromScratch ? '没听出客户名称——请在口述里说明是哪家客户，再试一次。' : '这段话里没识别到可建的客户/干系人。')}</div>}
-          {cands.length > 0 && (
-            <div className="ir-candidates">
-              ⚠️ {cands.length} 条我拿不准的，已放进「🔮 荐关系」等你定夺：
-              {cands.map((s, i) => <span key={i} className="cand-chip">{s}</span>)}
-            </div>
-          )}
-          {c.dupWarnings?.length > 0 && (
-            <div className="ir-candidates">
-              ⚠️ 疑似重复（已按新建上图；如与现有是同一个，请到画布 / 客户档案合并）：
-              {c.dupWarnings.map((w: any, i: number) => <span key={i} className="cand-chip">{w.name} ≈ {w.similarTo}</span>)}
-            </div>
-          )}
-        </div>
+        <IntelReceipt receipt={c} emptyHint={fromScratch ? '没听出客户名称——请在口述里说明是哪家客户，再试一次。' : '这段话里没识别到可建的客户/干系人。'} />
       </FloatPanel>
     );
   }
