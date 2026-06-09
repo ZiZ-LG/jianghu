@@ -27,12 +27,14 @@ function ItemCell({ k, score }: { k: ItemKey; score: number }) {
 }
 
 export function WinTendencyPanel({
-  breakdown, collapsed = false, onToggle, grabber = false,
+  breakdown, collapsed = false, onToggle, grabber = false, onOpenGaps, gapCount = 0,
 }: {
   breakdown: ScoreBreakdown;
   collapsed?: boolean;
   onToggle?: () => void;
   grabber?: boolean;   // 移动端：用顶部居中 ⌄ 手柄收起（镜像底部 ⌃ 药丸），而非文字按钮
+  onOpenGaps?: () => void;  // 打开「补分清单」(M3)
+  gapCount?: number;        // 缺口数（badge）
 }) {
   const pct = Math.round(breakdown.percent * 100);
   const color = BAND_COLOR[breakdown.band];
@@ -69,6 +71,7 @@ export function WinTendencyPanel({
       <div className="win-items">
         <div className="grp">
           6 必清（{breakdown.clears}/35） · 4 优势（{breakdown.priorities}/45） · 1 决胜（{breakdown.key}/20）→ 总分 {breakdown.total}/100
+          {onOpenGaps && <button className="win-gaps-btn" onClick={onOpenGaps} title="把低分项变成待确认卡片，点选即补分">📋 补分{gapCount > 0 ? ` · ${gapCount}` : ''}</button>}
           {onToggle && !grabber && <button className="win-toggle" onClick={onToggle} title="折叠趋赢力面板">折叠 ⌄</button>}
         </div>
         <div className="item-grid">

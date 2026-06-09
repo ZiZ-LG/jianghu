@@ -19,6 +19,9 @@ import { OpportunityForm } from './components/OpportunityForm';
 import { CustomerProfile } from './components/CustomerProfile';
 import { IntelCapture } from './components/IntelCapture';
 import { NewOpportunityDialog } from './components/NewOpportunityDialog';
+import { layoutSkeleton, type SkeletonRole } from './data/skeletons';
+import { computeGaps } from './lib/gaps';
+import { GapCards } from './components/GapCards';
 import { nextFreeSlot } from './lib/layout';
 import { PersonForm } from './components/PersonForm';
 import { TeamBilling } from './components/TeamBilling';
@@ -55,6 +58,7 @@ export default function App() {
   const [personSuggs, setPersonSuggs] = useState<PersonSuggestion[]>([]);
   const [generating, setGenerating] = useState(false);
   const [enrichOpen, setEnrichOpen] = useState(false);
+  const [gapsOpen, setGapsOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [mcpAccessOpen, setMcpAccessOpen] = useState(false);
@@ -118,6 +122,7 @@ export default function App() {
   const account = state.accounts.find((a) => a.id === accId) ?? null;
   const opp = account?.opportunities.find((o) => o.id === oppId) ?? null;
   const breakdown = useMemo(() => (account && opp ? scoreFromDomain(account, opp) : null), [account, opp]);
+  const gaps = useMemo(() => (account && opp ? computeGaps(account, opp) : []), [account, opp]);
   const roleByPerson = useMemo(() => {
     const m = new Map<string, Role>();
     if (opp) for (const r of opp.roles) m.set(r.personId, r.role);
@@ -157,11 +162,21 @@ export default function App() {
     } catch (e: any) { setSyncErr('载入示例失败：' + e.message); }
   };
   const addOpp = () => { if (account) setNewOppOpen(true); };
-  const createOpportunity = async (params: { name: string; fromOppId?: string; personIds: string[]; withEdges: boolean }) => {
+  const createOpportunity = async (params: { name: string; fromOppId?: string; personIds: string[]; withEdges: boolean; skeleton?: SkeletonRole[] }) => {
     if (!account) return;
     setNewOppOpen(false);
     try {
-      const { opportunityId } = await api.cloneOpportunity({ accountId: account.id, ...params });
+      const { opportunityId } = await api.cloneOpportunity({ accountId: account.id, name: params.name, fromOppId: params.fromOppId, personIds: params.personIds, withEdges: params.withEdges });
+      // M2 骨架预填：clone 建的新商机 memberScoped=true，占位人物须 ADD_OPP_MEMBER 才在画布可见，再 SET_ROLE 设角色（占位支持度=未知，待认领）。
+      if (params.skeleton?.length) {
+        for (const sk of layoutSkeleton(params.skeleton)) {
+          const p = newPerson(sk.title, sk.title, sk.x, sk.y, false);
+          p.orgLevel = sk.orgLevel;
+          await api.mutate({ type: 'ADD_PERSON', accId: account.id, person: p });
+          await api.mutate({ type: 'ADD_OPP_MEMBER', accId: account.id, oppId: opportunityId, personId: p.id });
+          await api.mutate({ type: 'SET_ROLE', accId: account.id, oppId: opportunityId, personId: p.id, patch: { role: sk.role, sentiment: 'unknown', confidence: '不清' } });
+        }
+      }
       const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts });
       setOppId(opportunityId); setSelectedId(null); setLayer('L1');
     } catch (e: any) { setSyncErr('新建商机失败：' + e.message); }
@@ -434,7 +449,8 @@ export default function App() {
                 </button>
               ) : (
                 <WinTendencyPanel breakdown={breakdown} collapsed={false} grabber
-                  onToggle={() => (isMobile ? setWinMobileCollapsed(true) : setWinCollapsed(true))} />
+                  onToggle={() => (isMobile ? setWinMobileCollapsed(true) : setWinCollapsed(true))}
+                  onOpenGaps={() => setGapsOpen(true)} gapCount={gaps.length} />
               )
             )}
             </>
@@ -474,7 +490,8 @@ export default function App() {
       )}
       {profileOpen && (
         <CustomerProfile account={account} onClose={() => setProfileOpen(false)}
-          onSave={(patch) => act({ type: 'UPDATE_ACCOUNT', accId: account.id, patch })} />
+          onSave={(patch) => act({ type: 'UPDATE_ACCOUNT', accId: account.id, patch })}
+          onDone={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); } catch { /* 静默：保存已成功，仅刷新失败 */ } }} />
       )}
       {intelOpen && (
         <IntelCapture account={account} opportunity={opp}
@@ -496,6 +513,9 @@ export default function App() {
       )}
       {helpOpen && <HelpManual onClose={() => setHelpOpen(false)} />}
       {mcpAccessOpen && <McpAccess onClose={() => setMcpAccessOpen(false)} />}
+      {gapsOpen && account && opp && breakdown && (
+        <GapCards account={account} opp={opp} dispatch={act} onClose={() => setGapsOpen(false)} />
+      )}
       {suggestOpen && (
         <SuggestionPanel suggestions={suggestions} generating={generating}
           onRegenerate={generateSuggestions} onAccept={acceptSuggestion} onReject={rejectSuggestion}

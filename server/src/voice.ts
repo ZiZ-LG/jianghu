@@ -81,10 +81,12 @@ export function voiceRoutes(app: FastifyInstance) {
   app.post('/api/voice/extract', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     const tenantId = req.user.tenantId;
     const userId = req.user.id || '';
-    const p = z.object({ text: z.string().min(1), accountId: z.string().optional(), opportunityId: z.string().optional(), priorText: z.string().optional() }).safeParse(req.body);
+    const p = z.object({ text: z.string().min(1), accountId: z.string().optional(), opportunityId: z.string().optional(), priorText: z.string().optional(), sourceVisitId: z.string().optional() }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '请输入要录入的文字' });
     const text = p.data.text.slice(0, 8000);
     const priorText = (p.data.priorText ?? '').slice(0, 8000); // 多轮增量：上一轮口述，供 LLM 指代消解
+    // 从「已存在的拜访纪要」抽取(M1 焊接缝)：源本身就是一条纪要，跳过末尾的纪要存档，避免重复落库
+    const skipVisitNote = Boolean(p.data.sourceVisitId);
 
     // 上下文：当前客户（含 persons 用于去重、opportunities 用于定位）
     let acc = p.data.accountId
@@ -96,6 +98,8 @@ export function voiceRoutes(app: FastifyInstance) {
 
     // 无可用模型 → 退化：仅把原文存为拜访纪要（无 key 也有基本价值，引导配模型）
     if (!ai || ai.provider === 'mock' || !ai.baseUrl || !ai.model) {
+      // 从已有纪要抽取(skipVisitNote)：源就是纪要本身，无模型时无可抽取、也绝不再复制一条纪要
+      if (skipVisitNote) return { needConfig: true, account: acc ? { id: acc.id, name: acc.name, status: 'matched' } : null, visitNote: false, note: '未配置 AI 模型，无法从这条纪要抽取结构化情报。请先在「🧠 AI 模型」里配置模型。' };
       if (acc) {
         const oppId = p.data.opportunityId && acc.opportunities.some((o) => o.id === p.data.opportunityId) ? p.data.opportunityId : null;
         const vid = 'visit_' + randomUUID().slice(0, 12);
@@ -255,9 +259,9 @@ export function voiceRoutes(app: FastifyInstance) {
       receipt.ucvs.push({ person: personName, status });
     }
 
-    // ── 6) 拜访纪要存档（原文 → VisitNote）──
+    // ── 6) 拜访纪要存档（原文 → VisitNote）。从已有纪要抽取(skipVisitNote)时跳过，避免重复 ──
     const rawNote = S(ex.rawNote, 5000) || text;
-    if (rawNote) {
+    if (rawNote && !skipVisitNote) {
       const vid = 'visit_' + randomUUID().slice(0, 12);
       await applyAction(tenantId, { type: 'ADD_VISIT', accId: acc.id, visit: { id: vid, accountId: acc.id, opportunityId: opp?.id ?? null, date: today, topic: '口述录入', summary: rawNote, origin: 'voice', createdBy: userId } });
       receipt.visitNote = true;

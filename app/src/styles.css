@@ -182,7 +182,7 @@ select { font-family: inherit; }
 .timeline { border-left: 2px solid var(--line); margin-left: 6px; padding-left: 14px; }
 .tl-item { position: relative; margin-bottom: 12px; }
 .tl-item::before { content: ''; position: absolute; left: -20px; top: 4px; width: 8px; height: 8px; border-radius: 50%; background: #60a5fa; border: 2px solid #fff; }
-.tl-item .dt { font-size: 10px; color: #94a3b8; }
+.tl-item .dt { font-size: 10px; color: #94a3b8; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
 .tl-item .ct { font-size: 12px; color: #475569; background: #f8fafc; padding: 6px 8px; border-radius: 8px; margin-top: 2px; }
 .sensitive-tag { font-size: 10px; color: #b45309; background: #fffbeb; border: 1px solid #fde68a; padding: 0 5px; border-radius: 4px; margin-left: 6px; }
 .empty-hint { font-size: 12px; color: #94a3b8; font-style: italic; }
@@ -211,6 +211,26 @@ select { font-family: inherit; }
 .cand-chip { background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; font-size: 11px; }
 .intel-scope { display: flex; flex-direction: column; gap: 6px; }
 .intel-err { color: #b91c1c; font-size: 12px; margin-top: 8px; }
+/* M1 拜访纪要「抽取成图」按钮 + 客户档案内的抽取回执卡片 */
+.visit-extract { margin-left: auto; font-size: 11px; padding: 1px 8px; }
+.intel-receipt-wrap { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; background: var(--panel-2); }
+.intel-receipt-wrap .ir-head { display: flex; align-items: center; justify-content: space-between; font-weight: 700; font-size: 12px; margin-bottom: 6px; }
+/* M2 骨架预填：决策链角色徽标 */
+.skel-role-badge { display: inline-block; min-width: 20px; text-align: center; font-size: 10px; font-weight: 800; padding: 1px 5px; border-radius: 6px; background: var(--accent-soft); color: var(--accent-ink); margin-right: 6px; }
+/* M3 补分清单（缺口卡片）：低分项 → 待确认卡片，点选即补分 */
+.win-gaps-btn { margin-left: 8px; font-size: 11px; padding: 1px 8px; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent-ink); font-weight: 700; cursor: pointer; }
+.gap-list { display: flex; flex-direction: column; gap: 10px; }
+.gap-card { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--panel-2); }
+.gap-head { display: flex; align-items: center; gap: 8px; }
+.gap-item { font-size: 10px; font-weight: 800; padding: 1px 6px; border-radius: 6px; background: var(--accent-soft); color: var(--accent-ink); }
+.gap-title { font-size: 13px; color: var(--ink); }
+.gap-hint { font-size: 11px; color: var(--muted); margin: 4px 0 8px; }
+.gap-ops { display: flex; flex-wrap: wrap; gap: 6px; }
+.gap-sent { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); cursor: pointer; }
+.gap-sent .gs-char { font-size: 14px; }
+.gap-chip { font-size: 12px; padding: 3px 9px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--ink-2); cursor: pointer; }
+.gap-chip:hover, .gap-sent:hover { border-color: var(--accent); background: var(--hover); }
+.gap-guide { font-size: 12px; color: var(--muted); font-style: italic; }
 
 /* ───────── Buttons / Inputs (shared) ───────── */
 .btn { padding: 8px 14px; border-radius: 8px; font-size: 13px; font-weight: 600; border: 1px solid transparent; transition: all .15s; }
