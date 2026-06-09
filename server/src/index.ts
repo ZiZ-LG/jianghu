@@ -136,8 +136,9 @@ app.post('/api/members', { preHandler: [app.authenticate] }, async (req, reply) 
   if (tenant && count >= tenant.seatLimit) return reply.code(402).send({ error: `席位已满（${count}/${tenant.seatLimit}）` });
 
   const { phone, email } = body.data;
-  if (phone && (await prisma.user.findUnique({ where: { phone } }))) return reply.code(409).send({ error: '该手机号已被使用' });
-  if (email && (await prisma.user.findUnique({ where: { email } }))) return reply.code(409).send({ error: '该邮箱已被使用' });
+  // 租户内查重（不再跨租户 findUnique）：复合唯一 [tenantId, phone/email] 保证同租户不撞，且不泄漏该号是否在别的工作区存在。
+  if (phone && (await prisma.user.findFirst({ where: { tenantId: req.user.tenantId, phone } }))) return reply.code(409).send({ error: '该手机号已被使用' });
+  if (email && (await prisma.user.findFirst({ where: { tenantId: req.user.tenantId, email } }))) return reply.code(409).send({ error: '该邮箱已被使用' });
 
   const u = await prisma.user.create({ data: { tenantId: req.user.tenantId, phone: phone ?? null, email: email ?? null, name: body.data.name, role: body.data.role, passwordHash: await bcrypt.hash(body.data.password, 10) } });
   return { member: { id: u.id, phone: u.phone, email: u.email, name: u.name, role: u.role } };
