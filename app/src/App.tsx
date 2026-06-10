@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { Layer, Role, CustomerType, Edge, Person } from './types';
 import { LAYER_LABEL } from './types';
-import { reducer, computeInverse, newAccount, newPerson, uid, type Action } from './store';
+import { reducer, computeInverse, injectBaseVersion, newAccount, newPerson, uid, type Action } from './store';
 import { api, type AuthResult, type Suggestion, type PersonSuggestion } from './api';
 import { scoreFromDomain } from './lib/g64111';
 import { usePersistentState, useTheme, useViewport } from './ui';
@@ -110,16 +110,23 @@ export default function App() {
   };
   const logout = () => { api.setToken(null); setAuth(null); setAccId(null); setSelectedId(null); dispatch({ type: 'HYDRATE', accounts: [] }); };
 
-  // 乐观本地更新 + 云端持久化
-  // 底层落地：乐观本地 + 云端持久化（普通操作与 undo/redo 共用）
-  const applyRaw = useCallback(async (action: Action) => {
-    dispatch(action);
-    try { await api.mutate(action); setSyncErr(''); }
-    catch (e: any) { setSyncErr('云端保存失败：' + e.message); }
-  }, []);
-  // 最新 state 镜像，供 computeInverse 取旧值
+  // 最新 state 镜像：供 computeInverse 取旧值 + 乐观锁注入 baseVersion
   const stateRef = useRef(state);
   stateRef.current = state;
+  // 底层落地：乐观本地 + 云端持久化（乐观锁注入 baseVersion；409 冲突重拉整树覆盖本地；普通操作与 undo/redo 共用）
+  const applyRaw = useCallback(async (action: Action) => {
+    const a = injectBaseVersion(stateRef.current, action);
+    dispatch(a);
+    try { await api.mutate(a); setSyncErr(''); }
+    catch (e: any) {
+      if (e?.status === 409) {
+        setSyncErr('⚠️ 该数据刚被其他成员修改，已为你刷新到最新——你这步未保存，请在最新内容上重做。');
+        try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); } catch { /* 重拉失败：下次操作再同步 */ }
+      } else {
+        setSyncErr('云端保存失败：' + e.message);
+      }
+    }
+  }, []);
   const undoStack = useRef<{ redo: Action[]; undo: Action[] }[]>([]);
   const redoStack = useRef<{ redo: Action[]; undo: Action[] }[]>([]);
   // 用户操作：先算逆 action 入撤销栈（前后各 10 次），再落地

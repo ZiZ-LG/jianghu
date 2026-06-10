@@ -47,13 +47,18 @@ model User {
   id           String   @id @default(uuid())
   tenantId     String
   tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  phone        String?  @unique
-  email        String?  @unique
+  phone        String?
+  email        String?
   passwordHash String
   name         String
   role         String   @default("member") // owner | admin | member | viewer
   createdAt    DateTime @default(now())
 
+  // 手机号/邮箱在「同一租户内」唯一（而非全局）——彻底消除跨租户撞号与 DoS，对齐「绝不跨租户」铁律。
+  // 同一手机号可在不同工作区各建独立账号；登录时按 phone/email 定位候选、多工作区则让用户选。
+  // NULL 在 SQLite/Postgres 均按 distinct 处理，故 phone/email 二选一时同租户内多行不冲突。
+  @@unique([tenantId, phone])
+  @@unique([tenantId, email])
   @@index([tenantId])
 }
 
@@ -110,6 +115,7 @@ model Person {
   y            Float   @default(240)
   form         String  @default("{}") // JSON
   logs         String  @default("[]") // JSON
+  version      Int     @default(0) // 乐观锁：内容编辑并发冲突检测（UPDATE_PERSON）
 
   @@index([accountId])
 }
@@ -139,6 +145,7 @@ model Opportunity {
   c3Items              String         @default("{}") // JSON
   c5Items              String         @default("{}") // JSON
   memberScoped         Boolean        @default(false) // false=全员可见(存量兼容)；true=按 OpportunityMember 过滤
+  version              Int            @default(0) // 乐观锁：内容编辑并发冲突检测（UPDATE_OPP）
   roles                OppRole[]
   edges                Edge[]
   bis                  BurningIssue[]
@@ -244,6 +251,7 @@ model Edge {
   origin        String       @default("manual")
   shape         String?      // 直线 straight / 折线 orthogonal / 曲线 curved（缺省按 layer 推断）
   bend          Float?       // 曲线弯曲度：控制点相对中点的垂直偏移(px，带符号)
+  version       Int          @default(0) // 乐观锁：连线编辑并发冲突检测（UPDATE_EDGE）
 
   @@index([accountId])
 }

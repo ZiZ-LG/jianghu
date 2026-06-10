@@ -20,6 +20,7 @@ const loginSchema = z.object({
   phone: phone.optional(),
   email: email.optional(),
   password: z.string().min(1),
+  tenantId: z.string().optional(), // 同一手机号/邮箱在多个工作区都有账号时，前端二次提交据此定位目标工作区
 }).refine((d) => d.phone || d.email, { message: '请提供手机号或邮箱' });
 
 function tenantView(t: { id: string; name: string; plan: string; subscriptionStatus: string; seatLimit: number }) {
@@ -35,9 +36,8 @@ export function authRoutes(app: FastifyInstance) {
     if (!p.success) return reply.code(400).send({ error: p.error.issues[0]?.message || '参数无效' });
     const { phone: ph, email: em, password, name, tenantName } = p.data;
 
-    if (ph && (await prisma.user.findUnique({ where: { phone: ph } }))) return reply.code(409).send({ error: '该手机号已注册' });
-    if (em && (await prisma.user.findUnique({ where: { email: em } }))) return reply.code(409).send({ error: '该邮箱已注册' });
-
+    // 注册即新建独立工作区（租户）。复合唯一 [tenantId, phone/email] 下，同一手机号可在不同工作区各注册一个账号，
+    // 故不再做全局查重（旧逻辑造成跨租户 DoS：A 占号后 B 永远无法注册）；新建租户内必不撞号。
     const tenant = await prisma.tenant.create({ data: { id: randomUUID(), name: tenantName } });
     const user = await prisma.user.create({
       data: { tenantId: tenant.id, phone: ph ?? null, email: em ?? null, name, role: 'owner', passwordHash: await bcrypt.hash(password, 10) },
@@ -49,13 +49,19 @@ export function authRoutes(app: FastifyInstance) {
   app.post('/api/auth/login', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
     const p = loginSchema.safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: p.error.issues[0]?.message || '参数无效' });
-    const { phone: ph, email: em, password } = p.data;
+    const { phone: ph, email: em, password, tenantId } = p.data;
 
-    const user = ph
-      ? await prisma.user.findUnique({ where: { phone: ph } })
-      : await prisma.user.findUnique({ where: { email: em! } });
-    if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
-      return reply.code(401).send({ error: '账号或密码错误' });
+    // 复合唯一下 phone/email 不再全局唯一：按 phone/email 找出所有同号账号（可能分布在多个工作区），逐个验密码。
+    const candidates = await prisma.user.findMany({ where: ph ? { phone: ph } : { email: em! } });
+    const matched: typeof candidates = [];
+    for (const u of candidates) if (await bcrypt.compare(password, u.passwordHash)) matched.push(u);
+    if (matched.length === 0) return reply.code(401).send({ error: '账号或密码错误' });
+
+    // 命中唯一账号 → 直接登录；命中多个（同号多工作区且同密码）→ 让前端选工作区后带 tenantId 二次提交。
+    const user = matched.length === 1 ? matched[0] : matched.find((u) => u.tenantId === tenantId);
+    if (!user) {
+      const tenants = await prisma.tenant.findMany({ where: { id: { in: matched.map((u) => u.tenantId) } } });
+      return reply.send({ needWorkspace: true, workspaces: tenants.map((t) => ({ tenantId: t.id, tenantName: t.name })) });
     }
     const tenant = await prisma.tenant.findUnique({ where: { id: user.tenantId } });
     if (!tenant) return reply.code(401).send({ error: '工作区不存在' });

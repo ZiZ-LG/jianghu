@@ -74,6 +74,8 @@ accessTokenRoutes(app);
 app.get('/api/state', { preHandler: [app.authenticate] }, async (req) => assembleState(req.user.tenantId));
 
 app.post('/api/mutate', { preHandler: [app.authenticate] }, async (req, reply) => {
+  // 写总入口：applyAction 全是写操作（create/update/delete），viewer 只读须一律拒绝；owner/admin/member 放行（对齐 /api/members 的 RBAC）
+  if (!requireRole(req, reply, ['owner', 'admin', 'member'])) return;
   const body = z.object({ action: z.object({ type: z.string() }).passthrough() }).safeParse(req.body);
   if (!body.success) return reply.code(400).send({ error: '无效的 action' });
   try {
@@ -81,6 +83,8 @@ app.post('/api/mutate', { preHandler: [app.authenticate] }, async (req, reply) =
     return { ok: true };
   } catch (e: any) {
     req.log.warn(e);
+    // 乐观锁冲突 → 409，前端据此提示并重拉整树（区别于 400 的参数/业务错误）
+    if (e?.conflict) return reply.code(409).send({ error: e.message || '该数据已被其他成员修改，请刷新后重试' });
     return reply.code(400).send({ error: e?.message || '应用变更失败' });
   }
 });
@@ -138,8 +142,9 @@ app.post('/api/members', { preHandler: [app.authenticate] }, async (req, reply) 
   if (tenant && count >= tenant.seatLimit) return reply.code(402).send({ error: `席位已满（${count}/${tenant.seatLimit}）` });
 
   const { phone, email } = body.data;
-  if (phone && (await prisma.user.findUnique({ where: { phone } }))) return reply.code(409).send({ error: '该手机号已被使用' });
-  if (email && (await prisma.user.findUnique({ where: { email } }))) return reply.code(409).send({ error: '该邮箱已被使用' });
+  // 租户内查重（不再跨租户 findUnique）：复合唯一 [tenantId, phone/email] 保证同租户不撞，且不泄漏该号是否在别的工作区存在。
+  if (phone && (await prisma.user.findFirst({ where: { tenantId: req.user.tenantId, phone } }))) return reply.code(409).send({ error: '该手机号已被使用' });
+  if (email && (await prisma.user.findFirst({ where: { tenantId: req.user.tenantId, email } }))) return reply.code(409).send({ error: '该邮箱已被使用' });
 
   const u = await prisma.user.create({ data: { tenantId: req.user.tenantId, phone: phone ?? null, email: email ?? null, name: body.data.name, role: body.data.role, passwordHash: await bcrypt.hash(body.data.password, 10) } });
   return { member: { id: u.id, phone: u.phone, email: u.email, name: u.name, role: u.role } };

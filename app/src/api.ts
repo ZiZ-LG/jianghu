@@ -16,7 +16,7 @@ async function req(path: string, opts: RequestInit = {}): Promise<any> {
   if (opts.body) headers['Content-Type'] = 'application/json';
   const res = await fetch(BASE + path, { ...opts, headers });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `请求失败（HTTP ${res.status}）`);
+  if (!res.ok) throw Object.assign(new Error(data.error || `请求失败（HTTP ${res.status}）`), { status: res.status });
   return data;
 }
 
@@ -26,6 +26,8 @@ export interface AuthResult {
   tenant: { id: string; name: string; plan: string; subscriptionStatus: string; seatLimit: number };
 }
 export interface Credentials { phone?: string; email?: string; password: string }
+// 登录命中「同一手机号/邮箱在多个工作区都有账号」时，后端返回候选工作区让用户选（而非直接发 token）
+export interface WorkspaceChoice { needWorkspace: true; workspaces: { tenantId: string; tenantName: string }[] }
 
 export const api = {
   getToken: () => token,
@@ -36,7 +38,7 @@ export const api = {
   },
   register: (b: Credentials & { name: string; tenantName: string }): Promise<AuthResult> =>
     req('/api/auth/register', { method: 'POST', body: JSON.stringify(b) }),
-  login: (b: Credentials): Promise<AuthResult> =>
+  login: (b: Credentials & { tenantId?: string }): Promise<AuthResult | WorkspaceChoice> =>
     req('/api/auth/login', { method: 'POST', body: JSON.stringify(b) }),
   me: (): Promise<{ user: AuthResult['user']; tenant: AuthResult['tenant'] }> => req('/api/me'),
   getState: (): Promise<{ accounts: Account[] }> => req('/api/state'),

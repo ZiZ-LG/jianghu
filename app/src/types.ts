@@ -68,6 +68,7 @@ export interface Person {
   // 画布种子坐标
   x: number;
   y: number;
+  version?: number; // 乐观锁版本（后端 GET /state 带出；UPDATE_PERSON 时回传作 baseVersion）
 }
 
 /** 燃眉之急 BI */
@@ -117,6 +118,7 @@ export interface Edge {
   origin?: 'manual' | 'qcc' | 'ai';
   shape?: EdgeShape; // 缺省按 layer 推断：L1=orthogonal，其余=straight
   bend?: number;     // 曲线弯曲度：控制点相对中点的垂直偏移(px，带符号)
+  version?: number;  // 乐观锁版本（后端带出；UPDATE_EDGE 时回传作 baseVersion）
 }
 
 /** 商机生命周期状态 */
@@ -154,6 +156,7 @@ export interface Opportunity {
   edges: Edge[]; // 增量边 L2/L3/L4
   memberScoped?: boolean;  // true=只显示 memberIds 的人(含竞品)；false/缺省=全员可见(存量兼容)
   memberIds?: string[];    // 该商机可见的干系人 id 集(缺省视为空；仅 memberScoped 时生效)
+  version?: number;        // 乐观锁版本（后端带出；UPDATE_OPP 时回传作 baseVersion）
 }
 
 /**
