@@ -47,13 +47,18 @@ model User {
   id           String   @id @default(uuid())
   tenantId     String
   tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  phone        String?  @unique
-  email        String?  @unique
+  phone        String?
+  email        String?
   passwordHash String
   name         String
   role         String   @default("member") // owner | admin | member | viewer
   createdAt    DateTime @default(now())
 
+  // 手机号/邮箱在「同一租户内」唯一（而非全局）——彻底消除跨租户撞号与 DoS，对齐「绝不跨租户」铁律。
+  // 同一手机号可在不同工作区各建独立账号；登录时按 phone/email 定位候选、多工作区则让用户选。
+  // NULL 在 SQLite/Postgres 均按 distinct 处理，故 phone/email 二选一时同租户内多行不冲突。
+  @@unique([tenantId, phone])
+  @@unique([tenantId, email])
   @@index([tenantId])
 }
 
