@@ -16,7 +16,7 @@ async function req(path: string, opts: RequestInit = {}): Promise<any> {
   if (opts.body) headers['Content-Type'] = 'application/json';
   const res = await fetch(BASE + path, { ...opts, headers });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `请求失败（HTTP ${res.status}）`);
+  if (!res.ok) throw Object.assign(new Error(data.error || `请求失败（HTTP ${res.status}）`), { status: res.status });
   return data;
 }
 

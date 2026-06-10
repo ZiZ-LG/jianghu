@@ -115,6 +115,7 @@ model Person {
   y            Float   @default(240)
   form         String  @default("{}") // JSON
   logs         String  @default("[]") // JSON
+  version      Int     @default(0) // 乐观锁：内容编辑并发冲突检测（UPDATE_PERSON）
 
   @@index([accountId])
 }
@@ -144,6 +145,7 @@ model Opportunity {
   c3Items              String         @default("{}") // JSON
   c5Items              String         @default("{}") // JSON
   memberScoped         Boolean        @default(false) // false=全员可见(存量兼容)；true=按 OpportunityMember 过滤
+  version              Int            @default(0) // 乐观锁：内容编辑并发冲突检测（UPDATE_OPP）
   roles                OppRole[]
   edges                Edge[]
   bis                  BurningIssue[]
@@ -249,6 +251,7 @@ model Edge {
   origin        String       @default("manual")
   shape         String?      // 直线 straight / 折线 orthogonal / 曲线 curved（缺省按 layer 推断）
   bend          Float?       // 曲线弯曲度：控制点相对中点的垂直偏移(px，带符号)
+  version       Int          @default(0) // 乐观锁：连线编辑并发冲突检测（UPDATE_EDGE）
 
   @@index([accountId])
 }

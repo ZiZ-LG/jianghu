@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { Layer, Role, CustomerType, Edge, Person } from './types';
 import { LAYER_LABEL } from './types';
-import { reducer, newAccount, newPerson, uid, type Action } from './store';
+import { reducer, newAccount, newPerson, uid, injectBaseVersion, type Action } from './store';
 import { api, type AuthResult, type Suggestion, type PersonSuggestion } from './api';
 import { scoreFromDomain } from './lib/g64111';
 import { usePersistentState, useTheme, useViewport } from './ui';
@@ -108,11 +108,23 @@ export default function App() {
   };
   const logout = () => { api.setToken(null); setAuth(null); setAccId(null); setSelectedId(null); dispatch({ type: 'HYDRATE', accounts: [] }); };
 
-  // 乐观本地更新 + 云端持久化
+  // 最新 state 的 ref：供 act() 在 dispatch 前读取实体当前 version（乐观锁 baseVersion）
+  const stateRef = useRef(state);
+  useEffect(() => { stateRef.current = state; });
+
+  // 乐观本地更新 + 云端持久化（乐观锁：注入 baseVersion；冲突 409 则重拉整树覆盖本地）
   const act = useCallback(async (action: Action) => {
-    dispatch(action);
-    try { await api.mutate(action); setSyncErr(''); }
-    catch (e: any) { setSyncErr('云端保存失败：' + e.message); }
+    const a = injectBaseVersion(stateRef.current, action);
+    dispatch(a);
+    try { await api.mutate(a); setSyncErr(''); }
+    catch (e: any) {
+      if (e?.status === 409) {
+        setSyncErr('⚠️ 该数据刚被其他成员修改，已为你刷新到最新——你这步未保存，请在最新内容上重做。');
+        try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); } catch { /* 重拉失败：保留提示，下次操作或手动刷新再同步 */ }
+      } else {
+        setSyncErr('云端保存失败：' + e.message);
+      }
+    }
   }, []);
 
   const account = state.accounts.find((a) => a.id === accId) ?? null;
