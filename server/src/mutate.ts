@@ -1,5 +1,28 @@
 import { prisma } from './prisma.js';
 
+/** 乐观锁冲突：目标实体 version 与客户端 baseVersion 不一致（他人已先改）。index.ts 据此回 409。 */
+class ConflictError extends Error {
+  readonly conflict = true;
+  constructor(msg = '该数据已被其他成员修改，请刷新后重试') { super(msg); }
+}
+
+/**
+ * 乐观锁 update：带 baseVersion 时按 version 匹配写入并自增；未命中再区分「版本冲突」与「记录不存在」。
+ * - baseVersion 缺省（旧客户端 / 非关键路径）：不校验，仍自增 version 保持单调，便于并发方感知变化。
+ * - 命中 0 行且记录仍在 → 版本已被他人改过 → 抛 ConflictError（→ 409）。
+ * - 命中 0 行且记录已不在 → 删除竞争，静默（前端重拉即一致）。
+ */
+async function lockedUpdate(opts: {
+  baseVersion?: number;
+  update: (versionWhere: { version?: number }) => Promise<{ count: number }>;
+  exists: () => Promise<boolean>;
+}): Promise<void> {
+  const { baseVersion, update, exists } = opts;
+  if (baseVersion === undefined || baseVersion === null) { await update({}); return; }
+  const r = await update({ version: baseVersion });
+  if (r.count === 0 && (await exists())) throw new ConflictError();
+}
+
 /** 把前端 Action 落到数据库（全程按 tenantId 隔离）。返回是否成功，失败抛错。 */
 export async function applyAction(tenantId: string, action: any): Promise<void> {
   const t = action?.type as string;
@@ -57,7 +80,11 @@ export async function applyAction(tenantId: string, action: any): Promise<void> 
       if (action.patch?.c3Items !== undefined) d.c3Items = S(action.patch.c3Items);
       if (action.patch?.c5Items !== undefined) d.c5Items = S(action.patch.c5Items);
       if (action.patch?.meta !== undefined) d.meta = S(action.patch.meta);
-      await prisma.opportunity.updateMany({ where: { id: action.oppId, tenantId }, data: d });
+      await lockedUpdate({
+        baseVersion: action.baseVersion,
+        update: (vw) => prisma.opportunity.updateMany({ where: { id: action.oppId, tenantId, ...vw }, data: { ...d, version: { increment: 1 } } }),
+        exists: async () => !!(await prisma.opportunity.findFirst({ where: { id: action.oppId, tenantId }, select: { id: true } })),
+      });
       return;
     }
     case 'DELETE_OPP':
@@ -77,7 +104,11 @@ export async function applyAction(tenantId: string, action: any): Promise<void> 
       const d = pick(action.patch, ['name', 'title', 'orgLevel', 'avatarUrl', 'coachLevel', 'color']);
       if (action.patch?.form !== undefined) d.form = S(action.patch.form);
       if (action.patch?.logs !== undefined) d.logs = S(action.patch.logs);
-      await prisma.person.updateMany({ where: { id: action.personId, tenantId }, data: d });
+      await lockedUpdate({
+        baseVersion: action.baseVersion,
+        update: (vw) => prisma.person.updateMany({ where: { id: action.personId, tenantId, ...vw }, data: { ...d, version: { increment: 1 } } }),
+        exists: async () => !!(await prisma.person.findFirst({ where: { id: action.personId, tenantId }, select: { id: true } })),
+      });
       return;
     }
     case 'MOVE_PERSON':
@@ -143,13 +174,16 @@ export async function applyAction(tenantId: string, action: any): Promise<void> 
       } });
       return;
     }
-    case 'UPDATE_EDGE':
-      // 端点改接(source/target)+外观(label/color/style/width/directed/layer)+形状(shape/bend)，全程租户隔离
-      await prisma.edge.updateMany({
-        where: { id: action.edgeId, tenantId },
-        data: pick(action.patch, ['source', 'target', 'layer', 'label', 'color', 'style', 'width', 'directed', 'shape', 'bend']),
+    case 'UPDATE_EDGE': {
+      // 端点改接(source/target)+外观(label/color/style/width/directed/layer)+形状(shape/bend)，全程租户隔离 + 乐观锁
+      const d = pick(action.patch, ['source', 'target', 'layer', 'label', 'color', 'style', 'width', 'directed', 'shape', 'bend']);
+      await lockedUpdate({
+        baseVersion: action.baseVersion,
+        update: (vw) => prisma.edge.updateMany({ where: { id: action.edgeId, tenantId, ...vw }, data: { ...d, version: { increment: 1 } } }),
+        exists: async () => !!(await prisma.edge.findFirst({ where: { id: action.edgeId, tenantId }, select: { id: true } })),
       });
       return;
+    }
     case 'DELETE_EDGE':
       await prisma.edge.deleteMany({ where: { id: action.edgeId, tenantId } });
       return;

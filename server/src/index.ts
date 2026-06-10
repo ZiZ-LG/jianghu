@@ -81,6 +81,8 @@ app.post('/api/mutate', { preHandler: [app.authenticate] }, async (req, reply) =
     return { ok: true };
   } catch (e: any) {
     req.log.warn(e);
+    // 乐观锁冲突 → 409，前端据此提示并重拉整树（区别于 400 的参数/业务错误）
+    if (e?.conflict) return reply.code(409).send({ error: e.message || '该数据已被其他成员修改，请刷新后重试' });
     return reply.code(400).send({ error: e?.message || '应用变更失败' });
   }
 });

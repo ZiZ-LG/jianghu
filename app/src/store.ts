@@ -57,10 +57,10 @@ export type Action =
   | { type: 'UPDATE_ACCOUNT'; accId: string; patch: Partial<Account> }
   | { type: 'DELETE_ACCOUNT'; accId: string }
   | { type: 'ADD_OPP'; accId: string; opp: Opportunity }
-  | { type: 'UPDATE_OPP'; accId: string; oppId: string; patch: Partial<Opportunity> }
+  | { type: 'UPDATE_OPP'; accId: string; oppId: string; patch: Partial<Opportunity>; baseVersion?: number }
   | { type: 'DELETE_OPP'; accId: string; oppId: string }
   | { type: 'ADD_PERSON'; accId: string; person: Person }
-  | { type: 'UPDATE_PERSON'; accId: string; personId: string; patch: Partial<Person> }
+  | { type: 'UPDATE_PERSON'; accId: string; personId: string; patch: Partial<Person>; baseVersion?: number }
   | { type: 'MOVE_PERSON'; accId: string; personId: string; x: number; y: number }
   | { type: 'DELETE_PERSON'; accId: string; personId: string }
   | { type: 'ADD_LOG'; accId: string; personId: string; log: InteractionLog }
@@ -69,7 +69,7 @@ export type Action =
   | { type: 'ADD_OPP_MEMBER'; accId: string; oppId: string; personId: string }
   | { type: 'REMOVE_OPP_MEMBER'; accId: string; oppId: string; personId: string }
   | { type: 'ADD_EDGE'; accId: string; oppId: string; edge: Edge }
-  | { type: 'UPDATE_EDGE'; accId: string; oppId: string; edgeId: string; patch: Partial<Edge> }
+  | { type: 'UPDATE_EDGE'; accId: string; oppId: string; edgeId: string; patch: Partial<Edge>; baseVersion?: number }
   | { type: 'DELETE_EDGE'; accId: string; oppId: string; edgeId: string }
   | { type: 'ADD_BI'; accId: string; oppId: string; bi: BurningIssue }
   | { type: 'UPDATE_BI'; accId: string; oppId: string; biId: string; patch: Partial<BurningIssue> }
@@ -113,7 +113,7 @@ export function reducer(s: StoreState, action: Action): StoreState {
     case 'ADD_OPP':
       return mapAcc(s, action.accId, (a) => ({ ...a, opportunities: [...a.opportunities, action.opp] }));
     case 'UPDATE_OPP':
-      return mapOpp(s, action.accId, action.oppId, (o) => ({ ...o, ...action.patch }));
+      return mapOpp(s, action.accId, action.oppId, (o) => ({ ...o, ...action.patch, version: (o.version ?? 0) + 1 }));
     case 'DELETE_OPP':
       return mapAcc(s, action.accId, (a) => ({ ...a, opportunities: a.opportunities.filter((o) => o.id !== action.oppId) }));
 
@@ -121,7 +121,7 @@ export function reducer(s: StoreState, action: Action): StoreState {
       return mapAcc(s, action.accId, (a) => ({ ...a, persons: [...a.persons, action.person] }));
     case 'UPDATE_PERSON':
       return mapAcc(s, action.accId, (a) => ({
-        ...a, persons: a.persons.map((p) => (p.id === action.personId ? { ...p, ...action.patch } : p)),
+        ...a, persons: a.persons.map((p) => (p.id === action.personId ? { ...p, ...action.patch, version: (p.version ?? 0) + 1 } : p)),
       }));
     case 'MOVE_PERSON':
       return mapAcc(s, action.accId, (a) => ({
@@ -171,9 +171,9 @@ export function reducer(s: StoreState, action: Action): StoreState {
       // 连线可能在 baseEdges(L1) 或某商机 edges 里——两处都尝试 patch（按 id 命中才改）
       return mapAcc(s, action.accId, (a) => ({
         ...a,
-        baseEdges: a.baseEdges.map((e) => (e.id === action.edgeId ? { ...e, ...action.patch } : e)),
+        baseEdges: a.baseEdges.map((e) => (e.id === action.edgeId ? { ...e, ...action.patch, version: (e.version ?? 0) + 1 } : e)),
         opportunities: a.opportunities.map((o) => ({
-          ...o, edges: o.edges.map((e) => (e.id === action.edgeId ? { ...e, ...action.patch } : e)),
+          ...o, edges: o.edges.map((e) => (e.id === action.edgeId ? { ...e, ...action.patch, version: (e.version ?? 0) + 1 } : e)),
         })),
       }));
     case 'DELETE_EDGE':
@@ -239,5 +239,29 @@ export function reducer(s: StoreState, action: Action): StoreState {
       return { accounts: action.accounts };
     default:
       return s;
+  }
+}
+
+/**
+ * 乐观锁：dispatch 前为 UPDATE_PERSON/OPP/EDGE 注入 baseVersion（取最新 state 中实体的当前 version）。
+ * 集中在此，免去每个调用点手填；其余 action 原样返回。后端据 baseVersion 校验并发冲突（不匹配→409）。
+ */
+export function injectBaseVersion(s: StoreState, action: Action): Action {
+  switch (action.type) {
+    case 'UPDATE_PERSON': {
+      const p = s.accounts.find((a) => a.id === action.accId)?.persons.find((x) => x.id === action.personId);
+      return { ...action, baseVersion: p?.version };
+    }
+    case 'UPDATE_OPP': {
+      const o = s.accounts.find((a) => a.id === action.accId)?.opportunities.find((x) => x.id === action.oppId);
+      return { ...action, baseVersion: o?.version };
+    }
+    case 'UPDATE_EDGE': {
+      const acc = s.accounts.find((a) => a.id === action.accId);
+      const edges = acc ? [...acc.baseEdges, ...acc.opportunities.flatMap((o) => o.edges)] : [];
+      return { ...action, baseVersion: edges.find((x) => x.id === action.edgeId)?.version };
+    }
+    default:
+      return action;
   }
 }
