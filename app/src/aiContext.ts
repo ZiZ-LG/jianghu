@@ -21,7 +21,7 @@ export function buildAiContext(account: Account, opp: Opportunity, breakdown: Sc
 
   return {
     account: { name: account.name, customerType: account.customerType },
-    opportunity: { name: opp.name, pipelineStage: opp.pipelineStage, engageStage: opp.engageStage, singleSalesGoal: opp.singleSalesGoal },
+    opportunity: { name: opp.name, pipelineStage: opp.pipelineStage, engageStage: opp.engageStage, singleSalesGoal: opp.singleSalesGoal, expectedSignDate: opp.expectedSignDate ?? null },
     winTendency: { percent: breakdown.percent, total: breakdown.total, band: breakdown.band, items: breakdown.items },
     people, relationships, bis,
   };

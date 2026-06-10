@@ -215,11 +215,11 @@ export function Canvas({
       gesture.current = { kind: 'node', id, csx: e.clientX, csy: e.clientY, ox: w.x - p.x, oy: w.y - p.y, moved: false };
     } else if (edgeH) {
       gesture.current = { kind: 'edge', edgeId: edgeH.getAttribute('data-edge')!, csx: e.clientX, csy: e.clientY };
-    } else if (e.button === 1) {
-      gesture.current = { kind: 'pan', csx: e.clientX, csy: e.clientY, tx: view.tx, ty: view.ty }; // 中键拖 = 平移画布（双指亦可）
-    } else {
+    } else if (e.button === 0 && e.shiftKey) {
       const w = toWorld(e.clientX, e.clientY);
-      gesture.current = { kind: 'marquee', csx: e.clientX, csy: e.clientY, x0: w.x, y0: w.y, append: e.shiftKey }; // 空白拖=框选；按 Shift=在已选上追加
+      gesture.current = { kind: 'marquee', csx: e.clientX, csy: e.clientY, x0: w.x, y0: w.y, append: false }; // Shift+左键拖 = 框选
+    } else {
+      gesture.current = { kind: 'pan', csx: e.clientX, csy: e.clientY, tx: view.tx, ty: view.ty }; // 左键/中键空白拖 = 平移画布
     }
   };
 
@@ -329,15 +329,24 @@ export function Canvas({
     }
   };
 
-  const onWheel = (e: React.WheelEvent) => {
-    const r = wrapRef.current!.getBoundingClientRect();
-    const mx = e.clientX - r.left, my = e.clientY - r.top;
-    const factor = e.deltaY > 0 ? 0.9 : 1.1;
-    setView((v) => {
-      const scale = Math.max(0.3, Math.min(2.5, v.scale * factor));
-      return { scale, tx: mx - ((mx - v.tx) / v.scale) * scale, ty: my - ((my - v.ty) / v.scale) * scale };
-    });
-  };
+  // 缩放走 native wheel 监听（passive:false）以 preventDefault——否则触控板双指捏合(=ctrl+wheel)会被浏览器解释为「整页缩放」
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const handler = (e: WheelEvent) => {
+      e.preventDefault();
+      const r = wrap.getBoundingClientRect();
+      const mx = e.clientX - r.left, my = e.clientY - r.top;
+      // 指数映射 + 夹紧：触控板(deltaY 小)连续顺滑、鼠标滚轮(deltaY 大)不过冲
+      const factor = Math.min(1.6, Math.max(0.6, Math.exp(-e.deltaY * 0.0075)));
+      setView((v) => {
+        const scale = Math.max(0.3, Math.min(2.5, v.scale * factor));
+        return { scale, tx: mx - ((mx - v.tx) / v.scale) * scale, ty: my - ((my - v.ty) / v.scale) * scale };
+      });
+    };
+    wrap.addEventListener('wheel', handler, { passive: false });
+    return () => wrap.removeEventListener('wheel', handler);
+  }, []);
   const zoomBy = (f: number) => setView((v) => ({ ...v, scale: Math.max(0.3, Math.min(2.5, v.scale * f)) }));
   // 总览：自适应缩放 + 居中，把全部节点完整纳入视口（竖屏/横屏通用，避开顶部菜单与底部药丸）
   const fitAll = () => {
@@ -376,7 +385,7 @@ export function Canvas({
 
   return (
     <div ref={wrapRef} className="canvas-wrap"
-      onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={endPointer} onPointerCancel={endPointer} onWheel={onWheel}>
+      onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={endPointer} onPointerCancel={endPointer}>
       {visible.length === 0 && (
         <div className="canvas-empty">👤 这个商机还没有干系人<br /><span>在空白处<b>双击</b>新建人物，或点左侧「干系人 ＋」</span></div>
       )}

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { Layer, Role, CustomerType, Edge, Person } from './types';
 import { LAYER_LABEL } from './types';
-import { reducer, newAccount, newPerson, uid, injectBaseVersion, type Action } from './store';
+import { reducer, computeInverse, injectBaseVersion, newAccount, newPerson, uid, type Action } from './store';
 import { api, type AuthResult, type Suggestion, type PersonSuggestion } from './api';
 import { scoreFromDomain } from './lib/g64111';
 import { usePersistentState, useTheme, useViewport } from './ui';
@@ -12,6 +12,7 @@ import { LayerTabs } from './components/LayerTabs';
 import { Canvas } from './components/Canvas';
 import { ViewTabs, type CustomerView } from './components/ViewTabs';
 import { DealPlanner } from './components/DealPlanner';
+import { StrategySandbox } from './components/StrategySandbox';
 import { DetailDrawer } from './components/DetailDrawer';
 import { EdgeDrawer } from './components/EdgeDrawer';
 import { WinTendencyPanel } from './components/WinTendencyPanel';
@@ -37,6 +38,7 @@ export default function App() {
   const [auth, setAuth] = useState<AuthResult | null>(null);
   const [booting, setBooting] = useState(true);
   const [syncErr, setSyncErr] = useState('');
+  const [undoHint, setUndoHint] = useState('');
 
   const [accId, setAccId] = useState<string | null>(null);
   const [oppId, setOppId] = useState<string | null>(null);
@@ -108,24 +110,65 @@ export default function App() {
   };
   const logout = () => { api.setToken(null); setAuth(null); setAccId(null); setSelectedId(null); dispatch({ type: 'HYDRATE', accounts: [] }); };
 
-  // 最新 state 的 ref：供 act() 在 dispatch 前读取实体当前 version（乐观锁 baseVersion）
+  // 最新 state 镜像：供 computeInverse 取旧值 + 乐观锁注入 baseVersion
   const stateRef = useRef(state);
-  useEffect(() => { stateRef.current = state; });
-
-  // 乐观本地更新 + 云端持久化（乐观锁：注入 baseVersion；冲突 409 则重拉整树覆盖本地）
-  const act = useCallback(async (action: Action) => {
+  stateRef.current = state;
+  // 底层落地：乐观本地 + 云端持久化（乐观锁注入 baseVersion；409 冲突重拉整树覆盖本地；普通操作与 undo/redo 共用）
+  const applyRaw = useCallback(async (action: Action) => {
     const a = injectBaseVersion(stateRef.current, action);
     dispatch(a);
     try { await api.mutate(a); setSyncErr(''); }
     catch (e: any) {
       if (e?.status === 409) {
         setSyncErr('⚠️ 该数据刚被其他成员修改，已为你刷新到最新——你这步未保存，请在最新内容上重做。');
-        try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); } catch { /* 重拉失败：保留提示，下次操作或手动刷新再同步 */ }
+        try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); } catch { /* 重拉失败：下次操作再同步 */ }
       } else {
         setSyncErr('云端保存失败：' + e.message);
       }
     }
   }, []);
+  const undoStack = useRef<{ redo: Action[]; undo: Action[] }[]>([]);
+  const redoStack = useRef<{ redo: Action[]; undo: Action[] }[]>([]);
+  // 用户操作：先算逆 action 入撤销栈（前后各 10 次），再落地
+  const act = useCallback((action: Action) => {
+    const inv = computeInverse(action, stateRef.current);
+    if (inv && inv.length) {
+      undoStack.current.push({ redo: [action], undo: inv });
+      if (undoStack.current.length > 10) undoStack.current.shift();
+      redoStack.current = [];
+    }
+    applyRaw(action);
+  }, [applyRaw]);
+  const undo = useCallback(() => {
+    const item = undoStack.current.pop();
+    if (!item) { setUndoHint('⊘ 没有可撤销的操作'); return; }
+    item.undo.forEach((x) => applyRaw(x));
+    redoStack.current.push(item);
+    if (redoStack.current.length > 10) redoStack.current.shift();
+    setUndoHint(`↶ 已撤销 · 还可撤销 ${undoStack.current.length} 步`);
+  }, [applyRaw]);
+  const redo = useCallback(() => {
+    const item = redoStack.current.pop();
+    if (!item) { setUndoHint('⊘ 没有可重做的操作'); return; }
+    item.redo.forEach((x) => applyRaw(x));
+    undoStack.current.push(item);
+    if (undoStack.current.length > 10) undoStack.current.shift();
+    setUndoHint(`↷ 已重做 · 还可重做 ${redoStack.current.length} 步`);
+  }, [applyRaw]);
+  // 全局快捷键：Ctrl/Cmd+Z 撤销 · Ctrl/Cmd+Shift+Z 或 Ctrl+Y 重做（输入框内不拦截）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+      const k = e.key.toLowerCase();
+      if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
+      else if ((k === 'z' && e.shiftKey) || k === 'y') { e.preventDefault(); redo(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [undo, redo]);
+  useEffect(() => { if (!undoHint) return; const t = setTimeout(() => setUndoHint(''), 1600); return () => clearTimeout(t); }, [undoHint]);
 
   const account = state.accounts.find((a) => a.id === accId) ?? null;
   const opp = account?.opportunities.find((o) => o.id === oppId) ?? null;
@@ -194,9 +237,9 @@ export default function App() {
   };
 
   // ── 画布交互：选中 / 打开右侧栏 / 飞书式建点连线 ──
-  const selectPerson = (id: string | null) => { setSelectedId(id); setSelectedEdgeId(null); };
+  const selectPerson = (id: string | null) => { setSelectedId(id); setSelectedEdgeId(null); if (id && (drawerPersonId || drawerEdgeId)) { setDrawerEdgeId(null); setDrawerPersonId(id); } };
   const openPerson = (id: string) => { setSelectedId(id); setSelectedEdgeId(null); setDrawerEdgeId(null); setDrawerPersonId(id); };
-  const selectEdge = (id: string | null) => { setSelectedEdgeId(id); setSelectedId(null); };
+  const selectEdge = (id: string | null) => { setSelectedEdgeId(id); setSelectedId(null); if (id && (drawerPersonId || drawerEdgeId)) { setDrawerPersonId(null); setDrawerEdgeId(id); } };
   const openEdge = (id: string) => { setDrawerPersonId(null); setDrawerEdgeId(id); };
   // 切客户/商机时清空一切选中
   useEffect(() => { setSelectedId(null); setSelectedEdgeId(null); setDrawerPersonId(null); setDrawerEdgeId(null); }, [accId, oppId]);
@@ -390,41 +433,41 @@ export default function App() {
       <main className="main">
         {opp ? (
           <>
-            {view === 'wall' && !immersive && <div className="canvas-top">
-              {/* 桌面：操作栏在上、层级切换在下（移动端二者 CSS 隐藏，改用下方两个下拉） */}
-              <div className="maintoolbar">
-                <span className="mt-name">{opp.name}</span>
+            {view === 'wall' && !immersive && (
+              <div className="module-top wall-top">
                 <ViewTabs view={view} onChange={setView} />
-                <button className="btn cta xs" onClick={() => setIntelOpen(true)}>🎙️ 录入情报</button>
-                <button className="btn ghost xs" onClick={() => setOppFormOpen(true)}>编辑商机</button>
-                <button className="btn ghost xs" onClick={() => setProfileOpen(true)}>📇 客户档案</button>
-                <button className="btn ghost xs" onClick={() => setEnrichOpen(true)}>🔍 搜索情报</button>
-                <button className="btn ghost xs" onClick={() => setSuggestOpen(true)}>🔮 荐关系{suggestions.length + personSuggs.length > 0 ? ` (${suggestions.length + personSuggs.length})` : ''}</button>
-                <button className="btn ghost xs" onClick={() => setReportOpen(true)}>📊 报表</button>
-                <button className="btn ghost xs" onClick={() => setMcpAccessOpen(true)}>🔌 接入 AI</button>
-                <button className="btn ghost xs" onClick={() => setHelpOpen(true)}>❓ 帮助</button>
-                <button className="btn primary xs" onClick={() => setConsoleOpen(true)}>🧠 AI 推演</button>
+                <span className="mt-account">{account.name}</span>
+                <span className="mt-name">{opp.name}</span>
+                {!isMobile && <LayerTabs layer={layer} onChange={setLayer} />}
+                {!isMobile && (<>
+                  <button className="btn cta xs" onClick={() => setIntelOpen(true)}>🎙️ 录入情报</button>
+                  <button className="btn ghost xs" onClick={() => setOppFormOpen(true)}>编辑商机</button>
+                  <button className="btn ghost xs" onClick={() => setProfileOpen(true)}>📇 客户档案</button>
+                  <button className="btn ghost xs" onClick={() => setEnrichOpen(true)}>🔍 搜索情报</button>
+                  <button className="btn ghost xs" onClick={() => setSuggestOpen(true)}>🔮 荐关系{suggestions.length + personSuggs.length > 0 ? ` (${suggestions.length + personSuggs.length})` : ''}</button>
+                  <button className="btn ghost xs" onClick={() => setReportOpen(true)}>📊 报表</button>
+                  <button className="btn ghost xs" onClick={() => setMcpAccessOpen(true)}>🔌 接入 AI</button>
+                  <button className="btn ghost xs" onClick={() => setHelpOpen(true)}>❓ 帮助</button>
+                  <button className="btn primary xs" onClick={() => setConsoleOpen(true)}>🧠 AI 推演</button>
+                </>)}
+                {isMobile && (<>
+                  <OverflowMenu align="left" label={`▾ ${LAYER_LABEL[layer]}`}
+                    items={(['L1', 'L2', 'L3', 'L4'] as Layer[]).map((l) => ({ label: LAYER_LABEL[l], active: l === layer, onClick: () => setLayer(l) }))} />
+                  <OverflowMenu align="left" label="⋯ 操作" items={[
+                    { label: '🧠 AI 推演', primary: true, onClick: () => setConsoleOpen(true) },
+                    { label: '🎙️ 录入情报', primary: true, onClick: () => setIntelOpen(true) },
+                    { label: '✏️ 编辑商机', onClick: () => setOppFormOpen(true) },
+                    { label: '📇 客户档案', onClick: () => setProfileOpen(true) },
+                    { label: '🔍 搜索情报', onClick: () => setEnrichOpen(true) },
+                    { label: '🔮 荐关系', badge: suggestions.length + personSuggs.length > 0 ? String(suggestions.length + personSuggs.length) : undefined, onClick: () => setSuggestOpen(true) },
+                    { label: '📊 报表', onClick: () => setReportOpen(true) },
+                    { label: '🔌 接入 AI', onClick: () => setMcpAccessOpen(true) },
+                    { label: '❓ 帮助', onClick: () => setHelpOpen(true) },
+                  ]} />
+                </>)}
+                <button className="theme-toggle mt-theme" onClick={toggleTheme} title={theme === 'dark' ? '切换到白天模式' : '切换到黑夜模式'}>{theme === 'dark' ? '☀️' : '🌙'}</button>
               </div>
-              {view === 'wall' && <LayerTabs layer={layer} onChange={setLayer} />}
-              {/* 移动端：层级下拉（左）+ ⋯操作下拉（右），一行 */}
-              {view === 'wall' && isMobile && (
-                <OverflowMenu align="left" label={`▾ ${LAYER_LABEL[layer]}`}
-                  items={(['L1', 'L2', 'L3', 'L4'] as Layer[]).map((l) => ({ label: LAYER_LABEL[l], active: l === layer, onClick: () => setLayer(l) }))} />
-              )}
-              {isMobile && (
-                <OverflowMenu align="left" label="⋯ 操作" items={[
-                  { label: '🧠 AI 推演', primary: true, onClick: () => setConsoleOpen(true) },
-                  { label: '🎙️ 录入情报', primary: true, onClick: () => setIntelOpen(true) },
-                  { label: '✏️ 编辑商机', onClick: () => setOppFormOpen(true) },
-                  { label: '📇 客户档案', onClick: () => setProfileOpen(true) },
-                  { label: '🔍 搜索情报', onClick: () => setEnrichOpen(true) },
-                  { label: '🔮 荐关系', badge: suggestions.length + personSuggs.length > 0 ? String(suggestions.length + personSuggs.length) : undefined, onClick: () => setSuggestOpen(true) },
-                  { label: '📊 报表', onClick: () => setReportOpen(true) },
-                  { label: '🔌 接入 AI', onClick: () => setMcpAccessOpen(true) },
-                  { label: '❓ 帮助', onClick: () => setHelpOpen(true) },
-                ]} />
-              )}
-            </div>}
+            )}
             {view === 'wall' ? (
             <>
             <Canvas account={account} opp={opp} layer={layer}
@@ -450,8 +493,14 @@ export default function App() {
               )
             )}
             </>
+            ) : view === 'sandbox' ? (
+              breakdown ? (
+                <StrategySandbox account={account} opp={opp} breakdown={breakdown} dispatch={act}
+                  view={view} onChangeView={setView} onOpenConsole={() => setConsoleOpen(true)}
+                  theme={theme} onToggleTheme={toggleTheme} onSelectOpp={setOppId} />
+              ) : null
             ) : (
-              <DealPlanner account={account} dispatch={act} view={view} onChangeView={setView} />
+              <DealPlanner account={account} dispatch={act} view={view} onChangeView={setView} theme={theme} onToggleTheme={toggleTheme} />
             )}
           </>
         ) : (
@@ -515,6 +564,7 @@ export default function App() {
           onClose={() => setSuggestOpen(false)} />
       )}
       {syncErr && <div className="sync-toast">{syncErr}</div>}
+      {undoHint && <div className="undo-toast">{undoHint}</div>}
     </div>
   );
 }

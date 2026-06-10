@@ -2,6 +2,7 @@
 // 抽象在此层，未来切换到后端 API 只需替换 load/save 与 dispatch 的落地方式。
 import type {
   Account, Opportunity, Person, OppRole, Edge, BurningIssue, UCV, InteractionLog, CustomerType, VisitNote, PlanAction, OppMilestone, OppStage, Half,
+  StrategyCard, StrategyRisk, StrategyResource,
 } from './types';
 import { seedAccount } from './data/seed';
 
@@ -50,6 +51,16 @@ export function newMilestone(accountId: string, opportunityId: string, startDate
 export function newOppStage(accountId: string, opportunityId: string, stageKey: string, startDate: string, endDate: string): OppStage {
   return { id: uid('st'), accountId, opportunityId, stageKey, startDate, endDate };
 }
+// ── 策略沙盘工厂 ──
+export function newStrategyCard(accountId: string, opportunityId: string, gapItem = ''): StrategyCard {
+  return { id: uid('sc'), accountId, opportunityId, gapItem, title: '', status: 'active', origin: 'manual', orderIndex: 0, dispatchedActionIds: [] };
+}
+export function newStrategyRisk(accountId: string, opportunityId: string, kind: 'risk' | 'assumption' = 'risk'): StrategyRisk {
+  return { id: uid('sr'), accountId, opportunityId, kind, text: '', severity: 'mid', status: 'open', origin: 'manual' };
+}
+export function newStrategyResource(accountId: string, opportunityId: string): StrategyResource {
+  return { id: uid('sx'), accountId, opportunityId, label: '', kind: '', note: '' };
+}
 
 // ── Actions ──
 export type Action =
@@ -90,6 +101,15 @@ export type Action =
   | { type: 'ADD_OPP_STAGE'; accId: string; oppId: string; stage: OppStage }
   | { type: 'UPDATE_OPP_STAGE'; accId: string; stageId: string; patch: Partial<OppStage> }
   | { type: 'DELETE_OPP_STAGE'; accId: string; stageId: string }
+  | { type: 'ADD_STRATEGY_CARD'; accId: string; oppId: string; card: StrategyCard }
+  | { type: 'UPDATE_STRATEGY_CARD'; accId: string; cardId: string; patch: Partial<StrategyCard> }
+  | { type: 'DELETE_STRATEGY_CARD'; accId: string; cardId: string }
+  | { type: 'ADD_STRATEGY_RISK'; accId: string; oppId: string; risk: StrategyRisk }
+  | { type: 'UPDATE_STRATEGY_RISK'; accId: string; riskId: string; patch: Partial<StrategyRisk> }
+  | { type: 'DELETE_STRATEGY_RISK'; accId: string; riskId: string }
+  | { type: 'ADD_STRATEGY_RESOURCE'; accId: string; oppId: string; resource: StrategyResource }
+  | { type: 'UPDATE_STRATEGY_RESOURCE'; accId: string; resourceId: string; patch: Partial<StrategyResource> }
+  | { type: 'DELETE_STRATEGY_RESOURCE'; accId: string; resourceId: string }
   | { type: 'LOAD_DEMO' }
   | { type: 'RESET' }
   | { type: 'HYDRATE'; accounts: Account[] };
@@ -229,6 +249,26 @@ export function reducer(s: StoreState, action: Action): StoreState {
     case 'DELETE_OPP_STAGE':
       return mapAcc(s, action.accId, (a) => ({ ...a, oppStages: (a.oppStages ?? []).filter((st) => st.id !== action.stageId) }));
 
+    // ── 策略沙盘 · 策略卡 / 风险 / 弹药（挂 account 级，同 planActions）──
+    case 'ADD_STRATEGY_CARD':
+      return mapAcc(s, action.accId, (a) => ({ ...a, strategyCards: [...(a.strategyCards ?? []), action.card] }));
+    case 'UPDATE_STRATEGY_CARD':
+      return mapAcc(s, action.accId, (a) => ({ ...a, strategyCards: (a.strategyCards ?? []).map((c) => (c.id === action.cardId ? { ...c, ...action.patch } : c)) }));
+    case 'DELETE_STRATEGY_CARD':
+      return mapAcc(s, action.accId, (a) => ({ ...a, strategyCards: (a.strategyCards ?? []).filter((c) => c.id !== action.cardId) }));
+    case 'ADD_STRATEGY_RISK':
+      return mapAcc(s, action.accId, (a) => ({ ...a, strategyRisks: [...(a.strategyRisks ?? []), action.risk] }));
+    case 'UPDATE_STRATEGY_RISK':
+      return mapAcc(s, action.accId, (a) => ({ ...a, strategyRisks: (a.strategyRisks ?? []).map((r) => (r.id === action.riskId ? { ...r, ...action.patch } : r)) }));
+    case 'DELETE_STRATEGY_RISK':
+      return mapAcc(s, action.accId, (a) => ({ ...a, strategyRisks: (a.strategyRisks ?? []).filter((r) => r.id !== action.riskId) }));
+    case 'ADD_STRATEGY_RESOURCE':
+      return mapAcc(s, action.accId, (a) => ({ ...a, strategyResources: [...(a.strategyResources ?? []), action.resource] }));
+    case 'UPDATE_STRATEGY_RESOURCE':
+      return mapAcc(s, action.accId, (a) => ({ ...a, strategyResources: (a.strategyResources ?? []).map((x) => (x.id === action.resourceId ? { ...x, ...action.patch } : x)) }));
+    case 'DELETE_STRATEGY_RESOURCE':
+      return mapAcc(s, action.accId, (a) => ({ ...a, strategyResources: (a.strategyResources ?? []).filter((x) => x.id !== action.resourceId) }));
+
     case 'LOAD_DEMO': {
       if (s.accounts.some((a) => a.id === seedAccount.id)) return s;
       return { accounts: [...s.accounts, JSON.parse(JSON.stringify(seedAccount))] };
@@ -239,6 +279,52 @@ export function reducer(s: StoreState, action: Action): StoreState {
       return { accounts: action.accounts };
     default:
       return s;
+  }
+}
+
+// ── Undo/Redo：逆 action 计算（复用现有 mutate 链路；不可逆操作返回 null 不入历史）──
+// 级联删除(PERSON/OPP/ACCOUNT)、ADD_LOG、MEMBER、VISIT、HYDRATE/LOAD_DEMO/RESET 不纳入撤销。
+export function computeInverse(a: Action, s: StoreState): Action[] | null {
+  const acc = (id: string) => s.accounts.find((x) => x.id === id);
+  const allEdges = (id: string) => { const A = acc(id); return A ? [...A.baseEdges, ...A.opportunities.flatMap((o) => o.edges)] : []; };
+  const pick = (obj: any, keys: string[]) => { const o: any = {}; for (const k of keys) o[k] = obj[k]; return o; };
+  switch (a.type) {
+    case 'MOVE_PERSON': { const p = acc(a.accId)?.persons.find((x) => x.id === a.personId); return p ? [{ type: 'MOVE_PERSON', accId: a.accId, personId: a.personId, x: p.x, y: p.y }] : null; }
+    case 'ADD_PERSON': return [{ type: 'DELETE_PERSON', accId: a.accId, personId: a.person.id }];
+    case 'UPDATE_PERSON': { const p = acc(a.accId)?.persons.find((x) => x.id === a.personId); return p ? [{ type: 'UPDATE_PERSON', accId: a.accId, personId: a.personId, patch: pick(p, Object.keys(a.patch)) }] : null; }
+    case 'ADD_EDGE': return [{ type: 'DELETE_EDGE', accId: a.accId, oppId: a.oppId, edgeId: a.edge.id }];
+    case 'DELETE_EDGE': { const e = allEdges(a.accId).find((x) => x.id === a.edgeId); return e ? [{ type: 'ADD_EDGE', accId: a.accId, oppId: a.oppId, edge: e }] : null; }
+    case 'UPDATE_EDGE': { const e = allEdges(a.accId).find((x) => x.id === a.edgeId); return e ? [{ type: 'UPDATE_EDGE', accId: a.accId, oppId: a.oppId, edgeId: a.edgeId, patch: pick(e, Object.keys(a.patch)) }] : null; }
+    case 'SET_ROLE': { const o = acc(a.accId)?.opportunities.find((x) => x.id === a.oppId); const old = o?.roles.find((r) => r.personId === a.personId); return old ? [{ type: 'SET_ROLE', accId: a.accId, oppId: a.oppId, personId: a.personId, patch: old }] : [{ type: 'REMOVE_ROLE', accId: a.accId, oppId: a.oppId, personId: a.personId }]; }
+    case 'REMOVE_ROLE': { const o = acc(a.accId)?.opportunities.find((x) => x.id === a.oppId); const old = o?.roles.find((r) => r.personId === a.personId); return old ? [{ type: 'SET_ROLE', accId: a.accId, oppId: a.oppId, personId: a.personId, patch: old }] : null; }
+    case 'UPDATE_OPP': { const o = acc(a.accId)?.opportunities.find((x) => x.id === a.oppId); return o ? [{ type: 'UPDATE_OPP', accId: a.accId, oppId: a.oppId, patch: pick(o, Object.keys(a.patch)) }] : null; }
+    case 'UPDATE_ACCOUNT': { const A = acc(a.accId); return A ? [{ type: 'UPDATE_ACCOUNT', accId: a.accId, patch: pick(A, Object.keys(a.patch)) }] : null; }
+    case 'ADD_BI': return [{ type: 'DELETE_BI', accId: a.accId, oppId: a.oppId, biId: a.bi.id }];
+    case 'DELETE_BI': { const b = acc(a.accId)?.opportunities.find((x) => x.id === a.oppId)?.bis.find((x) => x.id === a.biId); return b ? [{ type: 'ADD_BI', accId: a.accId, oppId: a.oppId, bi: b }] : null; }
+    case 'UPDATE_BI': { const b = acc(a.accId)?.opportunities.find((x) => x.id === a.oppId)?.bis.find((x) => x.id === a.biId); return b ? [{ type: 'UPDATE_BI', accId: a.accId, oppId: a.oppId, biId: a.biId, patch: pick(b, Object.keys(a.patch)) }] : null; }
+    case 'ADD_UCV': return [{ type: 'DELETE_UCV', accId: a.accId, oppId: a.oppId, ucvId: a.ucv.id }];
+    case 'DELETE_UCV': { const u = acc(a.accId)?.opportunities.find((x) => x.id === a.oppId)?.ucvs.find((x) => x.id === a.ucvId); return u ? [{ type: 'ADD_UCV', accId: a.accId, oppId: a.oppId, ucv: u }] : null; }
+    case 'UPDATE_UCV': { const u = acc(a.accId)?.opportunities.find((x) => x.id === a.oppId)?.ucvs.find((x) => x.id === a.ucvId); return u ? [{ type: 'UPDATE_UCV', accId: a.accId, oppId: a.oppId, ucvId: a.ucvId, patch: pick(u, Object.keys(a.patch)) }] : null; }
+    case 'ADD_PLAN_ACTION': return [{ type: 'DELETE_PLAN_ACTION', accId: a.accId, actionId: a.planAction.id }];
+    case 'DELETE_PLAN_ACTION': { const pa = acc(a.accId)?.planActions?.find((x) => x.id === a.actionId); return pa ? [{ type: 'ADD_PLAN_ACTION', accId: a.accId, oppId: pa.opportunityId, planAction: pa }] : null; }
+    case 'UPDATE_PLAN_ACTION': { const pa = acc(a.accId)?.planActions?.find((x) => x.id === a.actionId); return pa ? [{ type: 'UPDATE_PLAN_ACTION', accId: a.accId, actionId: a.actionId, patch: pick(pa, Object.keys(a.patch)) }] : null; }
+    case 'TOGGLE_PLAN_ACTION': { const pa = acc(a.accId)?.planActions?.find((x) => x.id === a.actionId); return pa ? [{ type: 'TOGGLE_PLAN_ACTION', accId: a.accId, actionId: a.actionId, done: pa.done, doneAt: pa.doneAt }] : null; }
+    case 'ADD_MILESTONE': return [{ type: 'DELETE_MILESTONE', accId: a.accId, milestoneId: a.milestone.id }];
+    case 'DELETE_MILESTONE': { const m = acc(a.accId)?.milestones?.find((x) => x.id === a.milestoneId); return m ? [{ type: 'ADD_MILESTONE', accId: a.accId, oppId: m.opportunityId, milestone: m }] : null; }
+    case 'UPDATE_MILESTONE': { const m = acc(a.accId)?.milestones?.find((x) => x.id === a.milestoneId); return m ? [{ type: 'UPDATE_MILESTONE', accId: a.accId, milestoneId: a.milestoneId, patch: pick(m, Object.keys(a.patch)) }] : null; }
+    case 'ADD_OPP_STAGE': return [{ type: 'DELETE_OPP_STAGE', accId: a.accId, stageId: a.stage.id }];
+    case 'DELETE_OPP_STAGE': { const st = acc(a.accId)?.oppStages?.find((x) => x.id === a.stageId); return st ? [{ type: 'ADD_OPP_STAGE', accId: a.accId, oppId: st.opportunityId, stage: st }] : null; }
+    case 'UPDATE_OPP_STAGE': { const st = acc(a.accId)?.oppStages?.find((x) => x.id === a.stageId); return st ? [{ type: 'UPDATE_OPP_STAGE', accId: a.accId, stageId: a.stageId, patch: pick(st, Object.keys(a.patch)) }] : null; }
+    case 'ADD_STRATEGY_CARD': return [{ type: 'DELETE_STRATEGY_CARD', accId: a.accId, cardId: a.card.id }];
+    case 'DELETE_STRATEGY_CARD': { const c = acc(a.accId)?.strategyCards?.find((x) => x.id === a.cardId); return c ? [{ type: 'ADD_STRATEGY_CARD', accId: a.accId, oppId: c.opportunityId, card: c }] : null; }
+    case 'UPDATE_STRATEGY_CARD': { const c = acc(a.accId)?.strategyCards?.find((x) => x.id === a.cardId); return c ? [{ type: 'UPDATE_STRATEGY_CARD', accId: a.accId, cardId: a.cardId, patch: pick(c, Object.keys(a.patch)) }] : null; }
+    case 'ADD_STRATEGY_RISK': return [{ type: 'DELETE_STRATEGY_RISK', accId: a.accId, riskId: a.risk.id }];
+    case 'DELETE_STRATEGY_RISK': { const r = acc(a.accId)?.strategyRisks?.find((x) => x.id === a.riskId); return r ? [{ type: 'ADD_STRATEGY_RISK', accId: a.accId, oppId: r.opportunityId, risk: r }] : null; }
+    case 'UPDATE_STRATEGY_RISK': { const r = acc(a.accId)?.strategyRisks?.find((x) => x.id === a.riskId); return r ? [{ type: 'UPDATE_STRATEGY_RISK', accId: a.accId, riskId: a.riskId, patch: pick(r, Object.keys(a.patch)) }] : null; }
+    case 'ADD_STRATEGY_RESOURCE': return [{ type: 'DELETE_STRATEGY_RESOURCE', accId: a.accId, resourceId: a.resource.id }];
+    case 'DELETE_STRATEGY_RESOURCE': { const x = acc(a.accId)?.strategyResources?.find((y) => y.id === a.resourceId); return x ? [{ type: 'ADD_STRATEGY_RESOURCE', accId: a.accId, oppId: x.opportunityId, resource: x }] : null; }
+    case 'UPDATE_STRATEGY_RESOURCE': { const x = acc(a.accId)?.strategyResources?.find((y) => y.id === a.resourceId); return x ? [{ type: 'UPDATE_STRATEGY_RESOURCE', accId: a.accId, resourceId: a.resourceId, patch: pick(x, Object.keys(a.patch)) }] : null; }
+    default: return null;
   }
 }
 

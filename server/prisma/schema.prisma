@@ -357,3 +357,61 @@ model OppStage {
   @@index([accountId])
   @@index([opportunityId])
 }
+
+// ───────── 策略沙盘（推演段：关系地图 → 沙盘 → 行动策划 的中间「桥」）─────────
+// 三表全 opp 级（带 opportunityId），accountId 冗余列照 PlanAction 按 accountId 挂载。
+// 字段全 String/Int/Boolean/DateTime，无 enum/json（跨库可移植）。
+
+// 策略卡（打法卡）。挂靠 G64111 低分项。origin=ai 时 status=pending 为顺推候选，人审采纳后 active。
+model StrategyCard {
+  id            String   @id // sc_xxx
+  tenantId      String
+  accountId     String   // 冗余存：照 PlanAction 按 accountId 挂载
+  opportunityId String   // 沙盘根（1 商机 1 沙盘）
+  gapItem       String   @default("") // 挂靠 G64111 低分项 C1..C6|P1..P4|1K（空=非补分打法）
+  title         String   @default("")
+  basis         String   @default("") // 依据
+  alternatives  String   @default("") // 备选打法
+  personId      String?  // 目标干系人（仅引用已存在 Person，AI 不得造新人）
+  status        String   @default("active") // active | pending(AI候选待采纳) | dismissed
+  origin        String   @default("manual") // manual | ai
+  orderIndex    Int      @default(0)
+  dispatchedActionIds String @default("[]") // JSON：已派生的 PlanAction id（防重复派发）
+  createdAt     DateTime @default(now())
+
+  @@index([accountId])
+  @@index([opportunityId])
+}
+
+// 风险/假设。kind 区分二者（语义正交，不塞并列文本字段）。
+model StrategyRisk {
+  id            String   @id // sr_xxx
+  tenantId      String
+  accountId     String
+  opportunityId String
+  kind          String   @default("risk") // risk 风险 | assumption 假设
+  text          String   @default("") // 风险描述 / 假设前提
+  severity      String   @default("mid") // low | mid | high
+  mitigation    String   @default("") // 缓解措施（assumption 时可空）
+  status        String   @default("open") // open | resolved | dismissed
+  origin        String   @default("manual") // manual | ai
+  createdAt     DateTime @default(now())
+
+  @@index([accountId])
+  @@index([opportunityId])
+}
+
+// 轻量弹药清单（沙盘内自由列举，不建全局资源库/配额调度）。
+model StrategyResource {
+  id            String   @id // sx_xxx
+  tenantId      String
+  accountId     String
+  opportunityId String
+  label         String   @default("")
+  kind          String   @default("") // 自由文本 product/relation/case/commercial…（不枚举）
+  note          String   @default("")
+  createdAt     DateTime @default(now())
+
+  @@index([accountId])
+  @@index([opportunityId])
+}

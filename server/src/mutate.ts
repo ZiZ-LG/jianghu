@@ -298,6 +298,67 @@ export async function applyAction(tenantId: string, action: any): Promise<void> 
       await prisma.oppStage.deleteMany({ where: { id: action.stageId, tenantId } });
       return;
 
+    // ── 策略沙盘 · 策略卡（StrategyCard）──
+    case 'ADD_STRATEGY_CARD': {
+      await assertOpp(action.oppId);
+      const c = action.card;
+      await prisma.strategyCard.create({ data: {
+        id: c.id, tenantId, accountId: action.accId, opportunityId: action.oppId,
+        gapItem: c.gapItem ?? '', title: c.title ?? '', basis: c.basis ?? '', alternatives: c.alternatives ?? '',
+        personId: c.personId ?? null, status: c.status ?? 'active', origin: c.origin ?? 'manual',
+        orderIndex: c.orderIndex ?? 0, dispatchedActionIds: S(c.dispatchedActionIds ?? []),
+      } });
+      return;
+    }
+    case 'UPDATE_STRATEGY_CARD': {
+      const d = pick(action.patch, ['gapItem', 'title', 'basis', 'alternatives', 'personId', 'status', 'origin', 'orderIndex']);
+      if (action.patch?.dispatchedActionIds !== undefined) d.dispatchedActionIds = S(action.patch.dispatchedActionIds);
+      await prisma.strategyCard.updateMany({ where: { id: action.cardId, tenantId }, data: d });
+      return;
+    }
+    case 'DELETE_STRATEGY_CARD':
+      await prisma.strategyCard.deleteMany({ where: { id: action.cardId, tenantId } });
+      return;
+
+    // ── 策略沙盘 · 风险/假设（StrategyRisk）──
+    case 'ADD_STRATEGY_RISK': {
+      await assertOpp(action.oppId);
+      const r = action.risk;
+      await prisma.strategyRisk.create({ data: {
+        id: r.id, tenantId, accountId: action.accId, opportunityId: action.oppId,
+        kind: r.kind ?? 'risk', text: r.text ?? '', severity: r.severity ?? 'mid',
+        mitigation: r.mitigation ?? '', status: r.status ?? 'open', origin: r.origin ?? 'manual',
+      } });
+      return;
+    }
+    case 'UPDATE_STRATEGY_RISK': {
+      const d = pick(action.patch, ['kind', 'text', 'severity', 'mitigation', 'status', 'origin']);
+      await prisma.strategyRisk.updateMany({ where: { id: action.riskId, tenantId }, data: d });
+      return;
+    }
+    case 'DELETE_STRATEGY_RISK':
+      await prisma.strategyRisk.deleteMany({ where: { id: action.riskId, tenantId } });
+      return;
+
+    // ── 策略沙盘 · 轻量弹药（StrategyResource）──
+    case 'ADD_STRATEGY_RESOURCE': {
+      await assertOpp(action.oppId);
+      const x = action.resource;
+      await prisma.strategyResource.create({ data: {
+        id: x.id, tenantId, accountId: action.accId, opportunityId: action.oppId,
+        label: x.label ?? '', kind: x.kind ?? '', note: x.note ?? '',
+      } });
+      return;
+    }
+    case 'UPDATE_STRATEGY_RESOURCE': {
+      const d = pick(action.patch, ['label', 'kind', 'note']);
+      await prisma.strategyResource.updateMany({ where: { id: action.resourceId, tenantId }, data: d });
+      return;
+    }
+    case 'DELETE_STRATEGY_RESOURCE':
+      await prisma.strategyResource.deleteMany({ where: { id: action.resourceId, tenantId } });
+      return;
+
     default:
       throw new Error(`unknown action: ${t}`);
   }

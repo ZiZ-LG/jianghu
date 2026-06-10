@@ -62,6 +62,9 @@ export const api = {
   aiTest: (): Promise<{ ok: boolean; message?: string }> => req('/api/ai/test', { method: 'POST' }),
   aiSimulate: (context: any, hypothesis: string): Promise<{ analysis: string; provider: string }> =>
     req('/api/ai/simulate', { method: 'POST', body: JSON.stringify({ context, hypothesis }) }),
+  // 策略沙盘 AI 顺推(策略卡候选)/倒推(里程碑候选)——只返回候选，前端暂存 + 人审采纳后才落库
+  strategySuggest: (opportunityId: string, mode: 'forward' | 'backward', context: any): Promise<{ mode: string; candidates: any[]; provider: string }> =>
+    req('/api/strategy/suggest', { method: 'POST', body: JSON.stringify({ opportunityId, mode, context }) }),
   // AI 关系推断（待确认候选）
   suggestList: (opportunityId: string): Promise<{ suggestions: Suggestion[] }> => req(`/api/suggest?opportunityId=${encodeURIComponent(opportunityId)}`),
   suggestGenerate: (opportunityId: string): Promise<{ added: number; suggestions: Suggestion[] }> => req('/api/suggest/generate', { method: 'POST', body: JSON.stringify({ opportunityId }) }),
