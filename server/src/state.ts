@@ -3,7 +3,7 @@ import { prisma } from './prisma.js';
 const J = (s: string | null | undefined, d: unknown) => { try { return s ? JSON.parse(s) : d; } catch { return d; } };
 
 function edgeView(e: any) {
-  return { id: e.id, source: e.source, target: e.target, layer: e.layer, label: e.label, color: e.color ?? undefined, style: e.style ?? undefined, width: e.width ?? undefined, directed: e.directed, origin: e.origin, shape: e.shape ?? undefined, bend: e.bend ?? undefined };
+  return { id: e.id, source: e.source, target: e.target, layer: e.layer, label: e.label, color: e.color ?? undefined, style: e.style ?? undefined, width: e.width ?? undefined, directed: e.directed, origin: e.origin, shape: e.shape ?? undefined, bend: e.bend ?? undefined, version: e.version };
 }
 function roleView(r: any) {
   return { personId: r.personId, role: r.role, sentiment: r.sentiment, sentimentValue: r.sentimentValue ?? undefined, confidence: r.confidence, isKeyInfluencer: r.isKeyInfluencer, procurementType: r.procurementType ?? undefined, procurementStatus: r.procurementStatus ?? undefined };
@@ -78,7 +78,7 @@ export async function assembleState(tenantId: string) {
       profile: J(a.profile, {}),
       persons: a.persons.map((p) => ({
         id: p.id, name: p.name, title: p.title, orgLevel: p.orgLevel, isCompetitor: p.isCompetitor,
-        avatarUrl: p.avatarUrl ?? undefined, coachLevel: p.coachLevel ?? undefined, color: p.color ?? undefined, x: p.x, y: p.y,
+        avatarUrl: p.avatarUrl ?? undefined, coachLevel: p.coachLevel ?? undefined, color: p.color ?? undefined, x: p.x, y: p.y, version: p.version,
         // 默认结构兜底再 spread 解析结果：采纳候选/导入/语音建的 Person form='{}'，
         // 直接 JSON.parse 会得空对象、缺 family7，前端访问 form.family7.xxx 即崩。
         form: { family: '', occupation: '', recreation: '', moneyMotivation: '', family7: {}, ...(J(p.form, {}) as Record<string, unknown>) },
@@ -105,6 +105,7 @@ export async function assembleState(tenantId: string) {
         ucvs: o.ucvs.map((u) => ({ id: u.id, targetBiId: u.targetBiId, description: u.description, competitorCannot: u.competitorCannot, status: u.status })),
         memberScoped: o.memberScoped,
         memberIds: o.members.map((m) => m.personId),
+        version: o.version,
       })),
     })),
   };
