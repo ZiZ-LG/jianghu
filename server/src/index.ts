@@ -72,6 +72,8 @@ accessTokenRoutes(app);
 app.get('/api/state', { preHandler: [app.authenticate] }, async (req) => assembleState(req.user.tenantId));
 
 app.post('/api/mutate', { preHandler: [app.authenticate] }, async (req, reply) => {
+  // 写总入口：applyAction 全是写操作（create/update/delete），viewer 只读须一律拒绝；owner/admin/member 放行（对齐 /api/members 的 RBAC）
+  if (!requireRole(req, reply, ['owner', 'admin', 'member'])) return;
   const body = z.object({ action: z.object({ type: z.string() }).passthrough() }).safeParse(req.body);
   if (!body.success) return reply.code(400).send({ error: '无效的 action' });
   try {
