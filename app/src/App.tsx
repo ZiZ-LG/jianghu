@@ -31,6 +31,7 @@ import { ReportPanel } from './components/ReportPanel';
 import { HelpManual } from './components/HelpManual';
 import { McpAccess } from './components/McpAccess';
 import { OverflowMenu } from './components/OverflowMenu';
+import { OrientationGate } from './components/OrientationGate';
 import { Footer } from './components/Footer';
 
 export default function App() {
@@ -71,15 +72,18 @@ export default function App() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [winMobileCollapsed, setWinMobileCollapsed] = usePersistentState('jianghu.winMobileCollapsed', true);
   const [immersive, setImmersive] = useState(false);
-  const { isMobile } = useViewport();
+  const { isMobile, isLandscape } = useViewport();
 
   // 全屏「只看白板」：隐藏所有 UI + 调用原生 Fullscreen（隐藏浏览器栏，桌面/安卓支持；iOS Safari 非视频不支持，则仅隐藏本应用 UI）
   const toggleImmersive = useCallback(() => {
     setImmersive((cur) => {
       const next = !cur;
       try {
-        if (next) document.documentElement.requestFullscreen?.();
-        else if (document.fullscreenElement) document.exitFullscreen?.();
+        if (next) {
+          // 全屏后尝试锁横屏（Android 生效；iOS Safari 不支持则静默忽略，退出全屏自动解锁）
+          const fs = document.documentElement.requestFullscreen?.();
+          (fs as Promise<void> | undefined)?.then?.(() => (screen.orientation as unknown as { lock?: (o: string) => Promise<void> })?.lock?.('landscape'))?.catch?.(() => { /* 不支持 */ });
+        } else if (document.fullscreenElement) document.exitFullscreen?.();
       } catch { /* 不支持则仅 CSS 沉浸 */ }
       return next;
     });
@@ -412,6 +416,7 @@ export default function App() {
 
   return (
     <div className={`app-shell${isMobile ? ' mobile' : ''}${immersive ? ' immersive' : ''}`}>
+      {isMobile && !isLandscape && <OrientationGate />}
       {view === 'wall' && !immersive && (isMobile ? (
         <>
           {!mobileNavOpen && <button className="edge-arrow edge-left" onClick={() => setMobileNavOpen(true)} title="展开侧边栏" aria-label="展开侧边栏">›</button>}

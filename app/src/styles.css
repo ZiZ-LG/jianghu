@@ -1080,3 +1080,12 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
   .sb2-cand-acts .btn { min-height: 32px; }
   .sb2-signal { gap: 10px; }
 }
+
+/* ── 手机竖屏引导遮罩（工作台三视图为横屏设计；OrientationGate）── */
+.orient-gate { position: fixed; inset: 0; z-index: 90; background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 32px; text-align: center; }
+.orient-phone { font-size: 54px; line-height: 1; animation: orientSpin 2s ease-in-out infinite; }
+@keyframes orientSpin { 0%, 18% { transform: rotate(0); } 55%, 82% { transform: rotate(90deg); } 100% { transform: rotate(90deg); } }
+@media (prefers-reduced-motion: reduce) { .orient-phone { animation: none; transform: rotate(90deg); } }
+.orient-gate h3 { margin: 0; font-size: 18px; font-weight: 800; color: var(--ink); }
+.orient-gate p { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.7; max-width: 280px; }
+.orient-skip { border: none; background: none; color: var(--faint); font-size: 12px; cursor: pointer; margin-top: 6px; text-decoration: underline; }
