@@ -1,7 +1,7 @@
-// 策略沙盘 · 推演工作台（关系地图 → 沙盘 → 行动策划 的中间「桥」）。
-// 结构化三栏：现状(只读引 G64111 + 风险/弹药) → 方向(策略卡，挂靠低分项，可送行动策划) → 终局(目标/截止日 + 倒推里程碑 + 就绪度)。
-// P0：手工 CRUD + 就绪度。P1：派发行动 + 倒推里程碑 + 风险/弹药。P2：AI 顺推(策略卡候选)/倒推(里程碑候选)，候选本地暂存、人审采纳才落库。
-import { useState } from 'react';
+// 策略沙盘 v2 · 三锚双泳道单画布（设计权威：docs/策略沙盘-交互设计方案.md）。
+// 上=策略泳道（现状锚→策略卡→AI候选虚位）、下=里程碑泳道（按最晚时间排→终局锚）；
+// 风险/弹药/关键人收进底部「展开汇总」；点卡开右侧详情抽屉热切换。数据逻辑与 Action 全承自 P0。
+import { useEffect, useState } from 'react';
 import type { Account, Opportunity, StrategyCard } from '../types';
 import { SENTIMENT_CHAR, SENTIMENT_COLOR, ROLE_LABEL } from '../types';
 import type { Action } from '../store';
@@ -24,9 +24,17 @@ const p2 = (n: number) => String(n).padStart(2, '0');
 const fmt = (d: Date) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
 const todayYmd = () => fmt(new Date());
 const addDaysYmd = (n: number) => { const d = new Date(); d.setDate(d.getDate() + n); return fmt(d); };
+const mmdd = (ymd: string) => (ymd && ymd.length >= 10 ? `${ymd.slice(5, 7)}/${ymd.slice(8, 10)}` : '未定');
 
 interface FwdCand { gapItem: string; title: string; basis: string; }
 interface BwdCand { title: string; offsetDays: number; }
+type DrawerState = null | { kind: 'card'; id: string } | { kind: 'milestone'; id: string } | { kind: 'goal' };
+
+/** 泳道横滚：把纵向滚轮转为横向（泳道内容超宽时） */
+const wheelX = (e: React.WheelEvent<HTMLDivElement>) => {
+  const el = e.currentTarget;
+  if (el.scrollWidth > el.clientWidth && Math.abs(e.deltaY) > Math.abs(e.deltaX)) el.scrollLeft += e.deltaY;
+};
 
 export function StrategySandbox({
   account, opp, breakdown, dispatch, view, onChangeView, onOpenConsole, theme, onToggleTheme, onSelectOpp,
@@ -68,20 +76,21 @@ export function StrategySandbox({
   // 就绪度：缺口被策略卡 gapItem 命中的覆盖率
   const coveredGaps = new Set(cards.map((c) => c.gapItem).filter(Boolean));
   const coveredCount = gaps.filter((g) => coveredGaps.has(g.key)).length;
-  const coverage = gaps.length ? Math.round((coveredCount / gaps.length) * 100) : 100;
 
   const pct = Math.round(breakdown.percent * 100);
   const tone = BAND_TONE[breakdown.band];
+  const highRisks = risks.filter((r) => (r.severity || 'mid') === 'high').length;
 
   // ── 策略卡 ──
   const addCard = (gapItem = '') => {
     const card = newStrategyCard(account.id, opp.id, gapItem);
     card.orderIndex = cards.length;
     dispatch({ type: 'ADD_STRATEGY_CARD', accId: account.id, oppId: opp.id, card });
+    setDrawer({ kind: 'card', id: card.id });
   };
   const updateCard = (cardId: string, patch: Partial<StrategyCard>) =>
     dispatch({ type: 'UPDATE_STRATEGY_CARD', accId: account.id, cardId, patch });
-  const deleteCard = (cardId: string) => dispatch({ type: 'DELETE_STRATEGY_CARD', accId: account.id, cardId });
+  const deleteCard = (cardId: string) => { dispatch({ type: 'DELETE_STRATEGY_CARD', accId: account.id, cardId }); setDrawer(null); };
 
   // ── 派发：策略卡 → 行动策划（生成 PlanAction 快照，落 DealPlanner 时间轴）──
   const dispatchToPlanner = (card: StrategyCard) => {
@@ -101,10 +110,11 @@ export function StrategySandbox({
   const addMilestone = () => {
     const ms = newMilestone(account.id, opp.id, opp.expectedSignDate || todayYmd(), 'am');
     dispatch({ type: 'ADD_MILESTONE', accId: account.id, oppId: opp.id, milestone: ms });
+    setDrawer({ kind: 'milestone', id: ms.id });
   };
   const updateMilestone = (milestoneId: string, patch: { title?: string; startDate?: string; endDate?: string }) =>
     dispatch({ type: 'UPDATE_MILESTONE', accId: account.id, milestoneId, patch });
-  const deleteMilestone = (milestoneId: string) => dispatch({ type: 'DELETE_MILESTONE', accId: account.id, milestoneId });
+  const deleteMilestone = (milestoneId: string) => { dispatch({ type: 'DELETE_MILESTONE', accId: account.id, milestoneId }); setDrawer(null); };
 
   // ── 风险 / 假设 ──
   const addRisk = (kind: 'risk' | 'assumption') => dispatch({ type: 'ADD_STRATEGY_RISK', accId: account.id, oppId: opp.id, risk: newStrategyRisk(account.id, opp.id, kind) });
@@ -151,6 +161,26 @@ export function StrategySandbox({
     setBwdCands((xs) => xs.filter((_, j) => j !== i));
   };
 
+  // ── v2 视图状态：详情抽屉 + 底部汇总展开 ──
+  const [drawer, setDrawer] = useState<DrawerState>(null);
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setDrawer(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+  // 切商机/客户 → 关抽屉、清候选展示状态
+  useEffect(() => { setDrawer(null); }, [opp.id, account.id]);
+
+  // 里程碑泳道条目：正式里程碑 + 倒推候选按日期混排（候选虚位出现在它将落的位置上）
+  const laneMs: ({ t: 'ms'; date: string; m: (typeof milestones)[number] } | { t: 'cand'; date: string; c: BwdCand; i: number })[] = [
+    ...milestones.map((m) => ({ t: 'ms' as const, date: m.startDate || '9999-99-99', m })),
+    ...bwdCands.map((c, i) => ({ t: 'cand' as const, date: addDaysYmd(c.offsetDays), c, i })),
+  ].sort((a, b) => a.date.localeCompare(b.date));
+
+  const drawerCard = drawer?.kind === 'card' ? cards.find((c) => c.id === drawer.id) : null;
+  const drawerMs = drawer?.kind === 'milestone' ? milestones.find((m) => m.id === drawer.id) : null;
+
   return (
     <div className="sandbox">
       <div className="module-top">
@@ -164,198 +194,291 @@ export function StrategySandbox({
         <button className="theme-toggle mt-theme" onClick={onToggleTheme} title={theme === 'dark' ? '切换到白天模式' : '切换到黑夜模式'}>{theme === 'dark' ? '☀️' : '🌙'}</button>
       </div>
 
-      <div className="sandbox-body">
-        {/* ① 现状栏（只读引 G64111 + 风险/弹药盘点） */}
-        <section className="sandbox-col sb-now">
-          <h3 className="sb-h">现状 · 来自关系地图</h3>
-          <div className="sb-band-card" style={{ borderColor: tone }}>
-            <div className="sb-band-top"><b style={{ color: tone }}>{BAND_LABEL[breakdown.band]}</b><span className="sb-pct">{pct}%</span></div>
-            <div className="sb-band-strat">{BAND_STRATEGY[breakdown.band]}</div>
-          </div>
-
-          <h4 className="sb-sub">📉 G64111 缺口<span className="sb-hint-inline">点「＋」挂策略卡</span></h4>
-          <div className="sb-gaps">
-            {gaps.length === 0 && <div className="sb-empty-s">无明显缺口 · 各项接近满分 🎉</div>}
-            {gaps.map((g) => (
-              <div className="sb-gap" key={g.key}>
-                <span className="sb-gap-label">{ITEM_LABEL[g.key]}</span>
-                <span className="sb-gap-score">{g.score}/{g.max}</span>
-                {coveredGaps.has(g.key)
-                  ? <span className="sb-gap-cov" title="已有策略卡覆盖">✓</span>
-                  : <button className="sb-gap-add" title="挂一张策略卡" onClick={() => addCard(g.key)}>＋</button>}
-              </div>
-            ))}
-          </div>
-
-          <h4 className="sb-sub">👥 关键干系人</h4>
-          <div className="sb-players">
-            {keyPlayers.length === 0 && <div className="sb-empty-s">尚未标记 A/D/关键影响人</div>}
-            {keyPlayers.map((x, i) => (
-              <div className="sb-player" key={i}>
-                <span className="sb-role">{ROLE_LABEL[x.role]}</span>
-                <span className="sb-pname">{x.person?.name}</span>
-                <span className="sb-sent" style={{ color: SENTIMENT_COLOR[x.sentiment] }}>{SENTIMENT_CHAR[x.sentiment]}</span>
-                {x.isKey && <span className="sb-keytag">关键</span>}
-              </div>
-            ))}
-          </div>
-
-          <h4 className="sb-sub">⚠️ 风险 / 假设
-            <span className="sb-sub-acts">
-              <button className="sb-mini-add" onClick={() => addRisk('risk')}>＋风险</button>
-              <button className="sb-mini-add" onClick={() => addRisk('assumption')}>＋假设</button>
-            </span>
-          </h4>
-          <div className="sb-risks">
-            {risks.length === 0 && <div className="sb-empty-s">链路上会出事的、或推演依赖的前提</div>}
-            {risks.map((r) => (
-              <div className={`sb-risk k-${r.kind}`} key={r.id}>
-                <div className="sb-risk-head">
-                  <span className="sb-risk-kind">{r.kind === 'risk' ? '风险' : '假设'}</span>
-                  <select className="sb-sev" value={r.severity || 'mid'} onChange={(e) => updateRisk(r.id, { severity: e.target.value as 'low' | 'mid' | 'high' })}>
-                    <option value="low">低</option><option value="mid">中</option><option value="high">高</option>
-                  </select>
-                  <button className="sb-del" title="删除" onClick={() => deleteRisk(r.id)}>✕</button>
+      <div className="sb2-body" onClick={() => setDrawer(null)}>
+        {/* ── 策略泳道（正推：现状 → 方向）── */}
+        <div className="sb2-lane-head">
+          <span className="sb2-lane-label">策略泳道 · 打法<i>正推：现状 → 方向</i></span>
+          <span className="sb2-lane-acts" onClick={(e) => e.stopPropagation()}>
+            {aiErr && <span className="sb2-ai-err">{aiErr}</span>}
+            <button className="btn ghost xs" onClick={() => addCard()}>＋ 新建</button>
+            <button className="btn ghost xs" disabled={aiBusy === 'forward'} onClick={() => runSuggest('forward')}>{aiBusy === 'forward' ? '推演中…' : '✨ AI 顺推'}</button>
+          </span>
+        </div>
+        <div className="sb2-lane" onWheel={wheelX} onClick={(e) => e.stopPropagation()}>
+          {/* 现状锚 */}
+          <div className="sb2-card sb2-anchor" style={{ borderColor: tone }}>
+            <div className="sb2-anchor-tag">现状锚 · 来自地图</div>
+            <div className="sb2-anchor-band" style={{ color: tone }}>{pct}% {BAND_LABEL[breakdown.band].split(' · ')[0]}</div>
+            <div className="sb2-anchor-strat">{BAND_STRATEGY[breakdown.band].split('：')[0]}</div>
+            <div className="sb2-anchor-gaps">
+              {gaps.slice(0, 3).map((g) => (
+                <div className="sb2-gap-row" key={g.key}>
+                  <span className="sb2-gap-name">{ITEM_LABEL[g.key]}</span>
+                  <span className="sb2-gap-score">{g.score}/{g.max}</span>
+                  {coveredGaps.has(g.key)
+                    ? <span className="sb2-gap-cov" title="已有策略卡覆盖">✓</span>
+                    : <button className="sb2-gap-add" title="挂一张策略卡" onClick={() => addCard(g.key)}>＋</button>}
                 </div>
-                <input className="sb-risk-text" defaultValue={r.text} placeholder={r.kind === 'risk' ? '风险描述' : '依赖的前提假设'}
-                  onBlur={(e) => e.target.value !== r.text && updateRisk(r.id, { text: e.target.value })} />
-              </div>
-            ))}
+              ))}
+              {gaps.length === 0 && <div className="sb2-gap-row sb2-dim">无明显缺口 🎉</div>}
+              {gaps.length > 3 && <button className="sb2-gap-more" onClick={() => setSummaryOpen(true)}>…共 {gaps.length} 项缺口</button>}
+            </div>
           </div>
 
-          <h4 className="sb-sub">🎒 弹药清单<span className="sb-sub-acts"><button className="sb-mini-add" onClick={addResource}>＋</button></span></h4>
-          <div className="sb-resources">
-            {resources.length === 0 && <div className="sb-empty-s">可调用的牌：产品演示 / 标杆案例 / 高层关系 / 商务让步…</div>}
-            {resources.map((x) => (
-              <div className="sb-res" key={x.id}>
-                <input className="sb-res-label" defaultValue={x.label} placeholder="弹药（如：CP3D 信创实测）"
-                  onBlur={(e) => e.target.value !== x.label && updateResource(x.id, { label: e.target.value })} />
-                <input className="sb-res-kind" defaultValue={x.kind ?? ''} placeholder="类型"
-                  onBlur={(e) => e.target.value !== (x.kind ?? '') && updateResource(x.id, { kind: e.target.value })} />
-                <button className="sb-del" title="删除" onClick={() => deleteResource(x.id)}>✕</button>
+          {/* 策略卡 */}
+          {cards.map((card) => {
+            const dispatched = (card.dispatchedActionIds?.length ?? 0) > 0;
+            const target = card.personId ? personById.get(card.personId) : null;
+            return (
+              <div key={card.id} className={`sb2-card sb2-strat${dispatched ? ' dispatched' : ''}${drawer?.kind === 'card' && drawer.id === card.id ? ' sel' : ''}`}
+                onClick={() => setDrawer({ kind: 'card', id: card.id })}>
+                <div className="sb2-card-top">
+                  {card.gapItem
+                    ? <span className="sb2-chip">{ITEM_LABEL[card.gapItem as ItemKey] || card.gapItem}</span>
+                    : <span className="sb2-chip sb2-chip-none">未挂缺口</span>}
+                  {dispatched
+                    ? <span className="sb2-dispatched">✓ 已派发 {card.dispatchedActionIds!.length}</span>
+                    : <button className="sb2-send" disabled={!card.title} title={card.title ? '生成行动，落到行动计划时间轴' : '先填打法标题'}
+                        onClick={(e) => { e.stopPropagation(); dispatchToPlanner(card); }}>→ 派发</button>}
+                </div>
+                <div className="sb2-card-title">{card.title || <span className="sb2-dim">（未命名打法 · 点击编辑）</span>}</div>
+                <div className="sb2-card-sub">
+                  {card.basis ? `依据：${card.basis}` : '依据待补'}
+                  {target ? ` · 目标：${target.name}` : ''}
+                </div>
               </div>
-            ))}
-          </div>
-        </section>
+            );
+          })}
 
-        {/* ② 方向栏（策略卡 CRUD + 送行动策划 + AI 顺推候选） */}
-        <section className="sandbox-col sb-dirs">
-          <h3 className="sb-h">方向 · 策略卡 <span className="sb-count">{cards.length}</span></h3>
-          <div className="sb-dir-acts">
-            <button className="btn ghost sm" onClick={() => addCard()}>＋ 新建</button>
-            <button className="btn ghost sm sb-ai-btn" disabled={aiBusy === 'forward'} onClick={() => runSuggest('forward')}>{aiBusy === 'forward' ? '推演中…' : '✨ AI 顺推'}</button>
+          {/* AI 顺推候选虚位卡 */}
+          {fwdCands.map((c, i) => (
+            <div key={`fc${i}`} className="sb2-card sb2-cand">
+              <div className="sb2-card-top">
+                {c.gapItem && <span className="sb2-chip">{ITEM_LABEL[c.gapItem as ItemKey] || c.gapItem}</span>}
+                <span className="sb2-stamp">待采纳</span>
+              </div>
+              <div className="sb2-card-title">{c.title}</div>
+              <div className="sb2-card-sub">AI 顺推 · {c.basis || '依据见推演'}</div>
+              <div className="sb2-cand-acts">
+                <button className="btn primary xs" onClick={() => acceptFwd(i)}>采纳</button>
+                <button className="btn ghost xs" onClick={() => setFwdCands((xs) => xs.filter((_, j) => j !== i))}>忽略</button>
+              </div>
+            </div>
+          ))}
+          {cards.length === 0 && fwdCands.length === 0 && (
+            <div className="sb2-card sb2-empty-card" onClick={() => addCard()}>还没有策略卡<br /><span>从现状锚缺口点「＋」、「＋新建」，或「✨ AI 顺推」</span></div>
+          )}
+        </div>
+
+        <div className="sb2-drive">↓ 驱动 · 策略落到里程碑，按最晚时间倒排</div>
+
+        {/* ── 里程碑泳道（倒推：终局 → 最晚时间）── */}
+        <div className="sb2-lane-head">
+          <span className="sb2-lane-label">里程碑泳道 · 倒排<i>倒推：终局 → 最晚时间</i></span>
+          <span className="sb2-lane-acts" onClick={(e) => e.stopPropagation()}>
+            <button className="btn ghost xs" onClick={addMilestone}>＋ 里程碑</button>
+            <button className="btn ghost xs" disabled={aiBusy === 'backward' || !opp.expectedSignDate} title={opp.expectedSignDate ? '' : '先在终局锚设置预计签约日'}
+              onClick={() => runSuggest('backward')}>{aiBusy === 'backward' ? '推演中…' : '✨ AI 倒推'}</button>
+          </span>
+        </div>
+        <div className="sb2-lane" onWheel={wheelX} onClick={(e) => e.stopPropagation()}>
+          {laneMs.length === 0 && (
+            <div className="sb2-card sb2-empty-card" onClick={addMilestone}>从终局倒排关键节点<br /><span>开标 / 立项评审 / 签约…直接落行动计划时间轴</span></div>
+          )}
+          {laneMs.map((item) => item.t === 'ms' ? (
+            <div key={item.m.id} className={`sb2-card sb2-ms${drawer?.kind === 'milestone' && drawer.id === item.m.id ? ' sel' : ''}`}
+              onClick={() => setDrawer({ kind: 'milestone', id: item.m.id })}>
+              <div className="sb2-card-top">
+                <span className="sb2-card-title">{item.m.title || <span className="sb2-dim">（未命名）</span>}</span>
+                <span className="sb2-ms-date">最晚 {mmdd(item.m.startDate || '')}</span>
+              </div>
+              <div className="sb2-card-sub">{item.m.startDate || '日期未定 · 点击设置'}</div>
+            </div>
+          ) : (
+            <div key={`bc${item.i}`} className="sb2-card sb2-cand">
+              <div className="sb2-card-top">
+                <span className="sb2-card-title">{item.c.title}</span>
+                <span className="sb2-stamp">待采纳</span>
+              </div>
+              <div className="sb2-card-sub">AI 倒推 · 约 {item.c.offsetDays} 天后（{mmdd(item.date)}）</div>
+              <div className="sb2-cand-acts">
+                <button className="btn primary xs" onClick={() => acceptBwd(item.i)}>采纳</button>
+                <button className="btn ghost xs" onClick={() => setBwdCands((xs) => xs.filter((_, j) => j !== item.i))}>忽略</button>
+              </div>
+            </div>
+          ))}
+
+          {/* 终局锚 */}
+          <div className={`sb2-card sb2-goal${drawer?.kind === 'goal' ? ' sel' : ''}`} onClick={() => setDrawer({ kind: 'goal' })}>
+            <div className="sb2-anchor-tag">终局锚</div>
+            <div className="sb2-goal-name">{opp.singleSalesGoal || <span className="sb2-dim">点击设定单一销售目标</span>}</div>
+            {opp.expectedSignDate
+              ? <span className="sb2-goal-date">≤ {mmdd(opp.expectedSignDate)}</span>
+              : <span className="sb2-goal-date sb2-goal-unset">先设截止日（倒排基准）</span>}
           </div>
-          {aiErr && <div className="sb-ai-err">{aiErr}</div>}
-          {fwdCands.length > 0 && (
-            <div className="sb-cands">
-              <div className="sb-cands-h">✨ AI 顺推候选 · 采纳后入策略卡（未采纳不入库）</div>
-              {fwdCands.map((c, i) => (
-                <div className="sb-cand" key={i}>
-                  {c.gapItem && <span className="sb-cand-gap">{ITEM_LABEL[c.gapItem as ItemKey] || c.gapItem}</span>}
-                  <div className="sb-cand-title">{c.title}</div>
-                  {c.basis && <div className="sb-cand-basis">{c.basis}</div>}
-                  <div className="sb-cand-acts">
-                    <button className="btn ghost xs" onClick={() => acceptFwd(i)}>采纳</button>
-                    <button className="sb-cand-ignore" onClick={() => setFwdCands((xs) => xs.filter((_, j) => j !== i))}>忽略</button>
+        </div>
+
+        {/* ── 信号汇总条 ── */}
+        <div className="sb2-signal" onClick={(e) => { e.stopPropagation(); setSummaryOpen((v) => !v); }}>
+          <span className={gaps.length - coveredCount > 0 ? 'sb2-sig-bad' : 'sb2-sig-ok'}>▢ 未覆盖缺口 {gaps.length - coveredCount}</span>
+          <span>策略覆盖 {coveredCount}/{gaps.length}</span>
+          <span className={highRisks > 0 ? 'sb2-sig-warn' : ''}>⚠ 风险 {risks.length}{highRisks > 0 ? ` · 高 ${highRisks}` : ''}</span>
+          <span>🎒 弹药 {resources.length}</span>
+          <span className="sb2-sig-toggle">{summaryOpen ? '收起汇总 ⌃' : '展开汇总 ⌄'}</span>
+        </div>
+
+        {summaryOpen && (
+          <div className="sb2-summary" onClick={(e) => e.stopPropagation()}>
+            <div className="sb2-sum-col">
+              <h4>📉 全部缺口<span className="sb2-sum-hint">点 ＋ 挂策略卡</span></h4>
+              {gaps.map((g) => (
+                <div className="sb2-gap-row" key={g.key}>
+                  <span className="sb2-gap-name">{ITEM_LABEL[g.key]}</span>
+                  <span className="sb2-gap-score">{g.score}/{g.max}</span>
+                  {coveredGaps.has(g.key) ? <span className="sb2-gap-cov">✓</span> : <button className="sb2-gap-add" onClick={() => addCard(g.key)}>＋</button>}
+                </div>
+              ))}
+              {gaps.length === 0 && <div className="sb2-dim">无明显缺口</div>}
+              <h4 style={{ marginTop: 12 }}>👥 关键干系人</h4>
+              {keyPlayers.map((x, i) => (
+                <div className="sb2-gap-row" key={i}>
+                  <span className="sb2-gap-name">{ROLE_LABEL[x.role]} · {x.person?.name}</span>
+                  <span style={{ color: SENTIMENT_COLOR[x.sentiment], fontWeight: 700 }}>{SENTIMENT_CHAR[x.sentiment]}</span>
+                  {x.isKey && <span className="sb2-keytag">关键</span>}
+                </div>
+              ))}
+              {keyPlayers.length === 0 && <div className="sb2-dim">尚未标记 A/D/关键影响人</div>}
+            </div>
+
+            <div className="sb2-sum-col">
+              <h4>⚠️ 风险 / 假设
+                <span className="sb2-sum-acts">
+                  <button className="btn ghost xs" onClick={() => addRisk('risk')}>＋风险</button>
+                  <button className="btn ghost xs" onClick={() => addRisk('assumption')}>＋假设</button>
+                </span>
+              </h4>
+              {risks.length === 0 && <div className="sb2-dim">链路上会出事的、或推演依赖的前提</div>}
+              {risks.map((r) => (
+                <div className={`sb-risk k-${r.kind}`} key={r.id}>
+                  <div className="sb-risk-head">
+                    <span className="sb-risk-kind">{r.kind === 'risk' ? '风险' : '假设'}</span>
+                    <select className="sb-sev" value={r.severity || 'mid'} onChange={(e) => updateRisk(r.id, { severity: e.target.value as 'low' | 'mid' | 'high' })}>
+                      <option value="low">低</option><option value="mid">中</option><option value="high">高</option>
+                    </select>
+                    <button className="sb-del" title="删除" onClick={() => deleteRisk(r.id)}>✕</button>
                   </div>
+                  <input className="sb-risk-text" defaultValue={r.text} placeholder={r.kind === 'risk' ? '风险描述' : '依赖的前提假设'}
+                    onBlur={(e) => e.target.value !== r.text && updateRisk(r.id, { text: e.target.value })} />
                 </div>
               ))}
             </div>
-          )}
-          <div className="sb-cards">
-            {cards.length === 0 && fwdCands.length === 0 && <div className="sb-empty">还没有策略卡。从左侧缺口点「＋」、「新建」，或「✨ AI 顺推」让 AI 按缺口荐打法。</div>}
-            {cards.map((card) => {
-              const dispatched = (card.dispatchedActionIds?.length ?? 0) > 0;
-              return (
-                <div className="sb-card" key={card.id}>
-                  <div className="sb-card-head">
-                    <select className="sb-gapsel" value={card.gapItem || ''} onChange={(e) => updateCard(card.id, { gapItem: e.target.value })}>
-                      <option value="">（不挂缺口）</option>
-                      {GROUPS.map((grp) => (
-                        <optgroup key={grp} label={grp}>
-                          {itemKeys.filter((k) => ITEM_GROUP[k] === grp).map((k) => <option key={k} value={k}>{ITEM_LABEL[k]}</option>)}
-                        </optgroup>
-                      ))}
-                    </select>
-                    {card.gapItem && <span className="sb-card-score">{breakdown.items[card.gapItem as ItemKey]}/{ITEM_MAX[card.gapItem as ItemKey]}</span>}
-                    <button className="sb-del" title="删除" onClick={() => deleteCard(card.id)}>✕</button>
-                  </div>
-                  <input className="sb-card-title" defaultValue={card.title} placeholder="打法标题（如：借标杆案例撬动 D）"
-                    onBlur={(e) => e.target.value !== card.title && updateCard(card.id, { title: e.target.value })} />
-                  <textarea className="sb-card-basis" defaultValue={card.basis ?? ''} placeholder="依据 / 说明（为什么这么打）" rows={2}
-                    onBlur={(e) => e.target.value !== (card.basis ?? '') && updateCard(card.id, { basis: e.target.value })} />
-                  <select className="sb-card-person" value={card.personId || ''} onChange={(e) => updateCard(card.id, { personId: e.target.value || undefined })}>
-                    <option value="">（目标干系人 · 可选）</option>
+
+            <div className="sb2-sum-col">
+              <h4>🎒 弹药清单<span className="sb2-sum-acts"><button className="btn ghost xs" onClick={addResource}>＋</button></span></h4>
+              {resources.length === 0 && <div className="sb2-dim">可调用的牌：产品演示 / 标杆案例 / 高层关系 / 商务让步…</div>}
+              {resources.map((x) => (
+                <div className="sb-res" key={x.id}>
+                  <input className="sb-res-label" defaultValue={x.label} placeholder="弹药（如：CP3D 信创实测）"
+                    onBlur={(e) => e.target.value !== x.label && updateResource(x.id, { label: e.target.value })} />
+                  <input className="sb-res-kind" defaultValue={x.kind ?? ''} placeholder="类型"
+                    onBlur={(e) => e.target.value !== (x.kind ?? '') && updateResource(x.id, { kind: e.target.value })} />
+                  <button className="sb-del" title="删除" onClick={() => deleteResource(x.id)}>✕</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── 详情抽屉（点卡热切换 · Esc/空白关闭）── */}
+      {drawer && (
+        <div className="drawer sb2-drawer" onClick={(e) => e.stopPropagation()}>
+          {drawerCard && (
+            <>
+              <div className="drawer-head">
+                <span className="t">♟️ 策略卡</span>
+                <button className="x-btn" onClick={() => setDrawer(null)}>✕</button>
+              </div>
+              <div className="sb2-drawer-body">
+                <label className="sb-field"><span>挂靠缺口</span>
+                  <select value={drawerCard.gapItem || ''} onChange={(e) => updateCard(drawerCard.id, { gapItem: e.target.value })}>
+                    <option value="">（不挂缺口）</option>
+                    {GROUPS.map((grp) => (
+                      <optgroup key={grp} label={grp}>
+                        {itemKeys.filter((k) => ITEM_GROUP[k] === grp).map((k) => <option key={k} value={k}>{ITEM_LABEL[k]}（{breakdown.items[k]}/{ITEM_MAX[k]}）</option>)}
+                      </optgroup>
+                    ))}
+                  </select>
+                </label>
+                <label className="sb-field"><span>打法标题</span>
+                  <input defaultValue={drawerCard.title} key={`t${drawerCard.id}`} placeholder="如：借标杆案例撬动 D"
+                    onBlur={(e) => e.target.value !== drawerCard.title && updateCard(drawerCard.id, { title: e.target.value })} />
+                </label>
+                <label className="sb-field"><span>依据 / 说明</span>
+                  <textarea defaultValue={drawerCard.basis ?? ''} key={`b${drawerCard.id}`} rows={3} placeholder="为什么这么打"
+                    onBlur={(e) => e.target.value !== (drawerCard.basis ?? '') && updateCard(drawerCard.id, { basis: e.target.value })} />
+                </label>
+                <label className="sb-field"><span>备选打法</span>
+                  <textarea defaultValue={drawerCard.alternatives ?? ''} key={`a${drawerCard.id}`} rows={2} placeholder="此路不通时的 B 计划"
+                    onBlur={(e) => e.target.value !== (drawerCard.alternatives ?? '') && updateCard(drawerCard.id, { alternatives: e.target.value })} />
+                </label>
+                <label className="sb-field"><span>目标干系人</span>
+                  <select value={drawerCard.personId || ''} onChange={(e) => updateCard(drawerCard.id, { personId: e.target.value || undefined })}>
+                    <option value="">（可选）</option>
                     {account.persons.map((p) => <option key={p.id} value={p.id}>{p.name}{p.title ? ` · ${p.title}` : ''}</option>)}
                   </select>
-                  <div className="sb-card-foot">
-                    {dispatched
-                      ? <span className="sb-dispatched" title="已生成行动到行动计划">✓ 已派发 {card.dispatchedActionIds!.length} 个行动</span>
-                      : <button className="btn ghost sm" disabled={!card.title} title={card.title ? '生成行动，落到行动计划时间轴' : '先填打法标题'} onClick={() => dispatchToPlanner(card)}>📤 送行动策划</button>}
-                  </div>
+                </label>
+                <div className="sb2-drawer-acts">
+                  {(drawerCard.dispatchedActionIds?.length ?? 0) > 0
+                    ? <span className="sb2-dispatched">✓ 已派发 {drawerCard.dispatchedActionIds!.length} 个行动（见行动计划）</span>
+                    : <button className="btn primary sm" disabled={!drawerCard.title} onClick={() => dispatchToPlanner(drawerCard)}>📤 送行动策划</button>}
                 </div>
-              );
-            })}
-          </div>
-        </section>
-
-        {/* ③ 终局栏（目标 / 截止日 + 倒推里程碑 + 就绪度） */}
-        <section className="sandbox-col sb-goal">
-          <h3 className="sb-h">终局 · 目标</h3>
-          <label className="sb-field">
-            <span>单一销售目标</span>
-            <textarea defaultValue={opp.singleSalesGoal} placeholder="本商机要拿下的明确结果" rows={3}
-              onBlur={(e) => e.target.value !== opp.singleSalesGoal && updateGoal({ singleSalesGoal: e.target.value })} />
-          </label>
-          <label className="sb-field">
-            <span>预计签约日（倒排基准）</span>
-            <input type="date" defaultValue={opp.expectedSignDate || ''}
-              onChange={(e) => updateGoal({ expectedSignDate: e.target.value })} />
-          </label>
-
-          <h4 className="sb-sub">🚩 里程碑（倒排）
-            <span className="sb-sub-acts">
-              <button className="sb-mini-add" disabled={aiBusy === 'backward'} onClick={() => runSuggest('backward')}>{aiBusy === 'backward' ? '…' : '✨ AI 倒推'}</button>
-              <button className="sb-mini-add" onClick={addMilestone}>＋</button>
-            </span>
-          </h4>
-          {bwdCands.length > 0 && (
-            <div className="sb-cands">
-              <div className="sb-cands-h">✨ AI 倒推候选 · 采纳后入里程碑</div>
-              {bwdCands.map((c, i) => (
-                <div className="sb-cand" key={i}>
-                  <div className="sb-cand-title">{c.title}</div>
-                  <div className="sb-cand-basis">约 {c.offsetDays} 天后</div>
-                  <div className="sb-cand-acts">
-                    <button className="btn ghost xs" onClick={() => acceptBwd(i)}>采纳</button>
-                    <button className="sb-cand-ignore" onClick={() => setBwdCands((xs) => xs.filter((_, j) => j !== i))}>忽略</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-          <div className="sb-milestones">
-            {milestones.length === 0 && bwdCands.length === 0 && <div className="sb-empty-s">从终局倒排关键节点（开标 / 立项评审 / 签约…），直接落到行动计划时间轴</div>}
-            {milestones.map((m) => (
-              <div className="sb-ms" key={m.id}>
-                <input className="sb-ms-title" defaultValue={m.title} placeholder="里程碑（如：立项评审）"
-                  onBlur={(e) => e.target.value !== m.title && updateMilestone(m.id, { title: e.target.value })} />
-                <input className="sb-ms-date" type="date" defaultValue={m.startDate || ''}
-                  onChange={(e) => updateMilestone(m.id, { startDate: e.target.value, endDate: e.target.value })} />
-                <button className="sb-del" title="删除" onClick={() => deleteMilestone(m.id)}>✕</button>
+                {drawerCard.origin === 'ai' && <div className="sb2-origin">来源：AI 顺推（人审采纳）</div>}
+                <button className="sb2-drawer-del" onClick={() => deleteCard(drawerCard.id)}>🗑 删除该策略卡</button>
               </div>
-            ))}
-          </div>
-
-          <div className="sb-ready">
-            <h4 className="sb-sub">🎯 就绪度</h4>
-            <div className="sb-ready-row"><span>现状趋赢力</span><b style={{ color: tone }}>{pct}%</b></div>
-            <div className="sb-ready-row"><span>缺口覆盖</span><b>{coveredCount}/{gaps.length}（{coverage}%）</b></div>
-            <div className="sb-ready-bar"><div className="sb-ready-fill" style={{ width: `${Math.max(0, coverage)}%` }} /></div>
-            <div className="sb-ready-hint">缺口挂策略卡 →「送行动策划」落到行动计划时间轴。</div>
-          </div>
-        </section>
-      </div>
+            </>
+          )}
+          {drawerMs && (
+            <>
+              <div className="drawer-head">
+                <span className="t">🚩 里程碑</span>
+                <button className="x-btn" onClick={() => setDrawer(null)}>✕</button>
+              </div>
+              <div className="sb2-drawer-body">
+                <label className="sb-field"><span>里程碑名称</span>
+                  <input defaultValue={drawerMs.title} key={`m${drawerMs.id}`} placeholder="如：立项评审 / 开标"
+                    onBlur={(e) => e.target.value !== drawerMs.title && updateMilestone(drawerMs.id, { title: e.target.value })} />
+                </label>
+                <label className="sb-field"><span>最晚时间（倒排 deadline）</span>
+                  <input type="date" defaultValue={drawerMs.startDate || ''} key={`d${drawerMs.id}`}
+                    onChange={(e) => updateMilestone(drawerMs.id, { startDate: e.target.value, endDate: e.target.value })} />
+                </label>
+                <div className="sb2-origin">里程碑与「行动计划」时间轴共享，两边同步。</div>
+                <button className="sb2-drawer-del" onClick={() => deleteMilestone(drawerMs.id)}>🗑 删除该里程碑</button>
+              </div>
+            </>
+          )}
+          {drawer.kind === 'goal' && (
+            <>
+              <div className="drawer-head">
+                <span className="t">🎯 终局 · 目标</span>
+                <button className="x-btn" onClick={() => setDrawer(null)}>✕</button>
+              </div>
+              <div className="sb2-drawer-body">
+                <label className="sb-field"><span>单一销售目标</span>
+                  <textarea defaultValue={opp.singleSalesGoal} key={`g${opp.id}`} rows={3} placeholder="本商机要拿下的明确结果"
+                    onBlur={(e) => e.target.value !== opp.singleSalesGoal && updateGoal({ singleSalesGoal: e.target.value })} />
+                </label>
+                <label className="sb-field"><span>预计签约日（倒排基准）</span>
+                  <input type="date" defaultValue={opp.expectedSignDate || ''} key={`gd${opp.id}`}
+                    onChange={(e) => updateGoal({ expectedSignDate: e.target.value })} />
+                </label>
+                <div className="sb2-origin">设定截止日后，「✨ AI 倒推」可从终局反推里程碑。</div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
