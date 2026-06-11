@@ -259,3 +259,111 @@ export function buildScoringInput(account: Account, opp: Opportunity): ScoringIn
 export function scoreFromDomain(account: Account, opp: Opportunity, profile = DEFAULT_PROFILE): ScoreBreakdown {
   return scoreOpportunity(buildScoringInput(account, opp), profile);
 }
+
+// ───────────────────────── 逐人贡献分（牌桌视图展示层分解，docs/牌桌视图-设计方案.md §4） ─────────────────────────
+// 把「人维度分项」按归因规则分解到个人：nominal 名义贡献（可负）/ potential 满配潜力 / upside 可再挖。
+// 商机级分项（C3/C4/C5 与 C1 的角色齐备部分）不归人。名义与商机实计的偏差（多A/多D 取低、
+// P1 clamp、P4 仅计第一个标记者）在 parts.note 如实标注。只读分解，绝不改变 scoreOpportunity 的计分。
+
+export interface ContributionPart { item: ItemKey; value: number; note?: string }
+export interface PersonContribution {
+  nominal: number;   // 名义贡献合计（可为负 = 失血）
+  potential: number; // 满配潜力（该人全部适用分项满分之和）
+  upside: number;    // potential − nominal
+  parts: ContributionPart[];
+}
+
+export function personContributions(
+  account: Account, opp: Opportunity, profile = DEFAULT_PROFILE,
+): Map<string, PersonContribution> {
+  const map = new Map<string, PersonContribution>();
+  const ensure = (pid: string) => {
+    let e = map.get(pid);
+    if (!e) { e = { nominal: 0, potential: 0, upside: 0, parts: [] }; map.set(pid, e); }
+    return e;
+  };
+  const addPart = (pid: string, item: ItemKey, value: number, note?: string) => {
+    const e = ensure(pid);
+    e.parts.push(note ? { item, value, note } : { item, value });
+    e.nominal += value;
+  };
+  const addPotential = (pid: string, v: number) => { ensure(pid).potential += v; };
+
+  const personById = new Map(account.persons.map((p) => [p.id, p]));
+  const roles = opp.roles;
+  const dRoles = roles.filter((r) => r.role === 'D');
+  const aRoles = roles.filter((r) => r.role === 'A');
+  const primaryD = dRoles[0];
+
+  // P3 / 1K：每个 D / A 显名义态度分；多人时商机实计 = aggregateLow（取低中位），偏差标注
+  const p3Actual = aggregateLow(dRoles.map((r) => P3_1K_MAP[r.sentiment]));
+  for (const r of dRoles) {
+    const v = P3_1K_MAP[r.sentiment];
+    addPart(r.personId, 'P3', v, dRoles.length > 1 && v !== p3Actual ? `多D取低，商机实计 ${p3Actual}` : undefined);
+    addPotential(r.personId, 20);
+  }
+  const kActual = aggregateLow(aRoles.map((r) => P3_1K_MAP[r.sentiment]));
+  for (const r of aRoles) {
+    const v = P3_1K_MAP[r.sentiment];
+    addPart(r.personId, '1K', v, aRoles.length > 1 && v !== kActual ? `多A取低，商机实计 ${kActual}` : undefined);
+    addPotential(r.personId, 20);
+  }
+
+  // P4：引擎只取 roles.find 命中的第一个标记者，其余如实标注「已占用」（potential 不虚加）
+  const ki = roles.find((r) => r.isKeyInfluencer);
+  for (const r of roles) {
+    if (!r.isKeyInfluencer) continue;
+    if (r === ki) { addPart(r.personId, 'P4', P4_MAP[r.sentiment]); addPotential(r.personId, 10); }
+    else addPart(r.personId, 'P4', 0, 'P4 已由他人占用');
+  }
+
+  // P1：按角色条目（与引擎一致），明确及以上的 ☆/+ → +1、−/x → −1；每条角色 potential +1
+  for (const r of roles) {
+    addPotential(r.personId, 1);
+    if (!isConfirmed(r.confidence)) continue;
+    if (r.sentiment === 'star' || r.sentiment === 'plus') addPart(r.personId, 'P1', 1);
+    else if (r.sentiment === 'minus' || r.sentiment === 'x') addPart(r.personId, 'P1', -1);
+  }
+
+  // P2：有招采类型的角色按自身状态计（collude=权重 / verbal=1）；全 none 的整体 −5 是商机级失血，不归人
+  for (const r of roles) {
+    if (!r.procurementType) continue;
+    const w = P2_WEIGHT[r.procurementType];
+    const v = r.procurementStatus === 'collude' ? w : r.procurementStatus === 'verbal' ? 1 : 0;
+    addPart(r.personId, 'P2', v);
+    addPotential(r.personId, w);
+  }
+
+  // C1-FORM（0..3）：仅主 D（多 D 时其余不计），曲线随 profile 与 scoreC1 一致
+  if (primaryD) {
+    const dp = personById.get(primaryD.personId);
+    const filled = dp ? FAMILY_7Q.filter((q) => (dp.form.family7[q] ?? '').trim() !== '').length : 0;
+    const v = profile.formC1Curve === 'linear'
+      ? Math.round((3 * filled) / 7)
+      : Math.max(0, 3 - (7 - filled));
+    addPart(primaryD.personId, 'C1', v, 'D 的 FORM');
+    addPotential(primaryD.personId, 3);
+  }
+
+  // C2（0/5）：归第一个持有「明确及以上」BI 的 D；每个 D 都有 5 分潜力
+  const dIds = new Set(dRoles.map((r) => r.personId));
+  const c2Holder = opp.bis.find((bi) => dIds.has(bi.personId) && isConfirmed(bi.confidence))?.personId;
+  if (c2Holder) addPart(c2Holder, 'C2', 5);
+  for (const pid of dIds) addPotential(pid, 5);
+
+  // C6（0/3/5）：取针对 D 的 BI 的最佳 UCV 状态（与引擎同序），归该 BI 的持有 D；每个 D 有 5 分潜力
+  const dBiOwner = new Map(opp.bis.filter((bi) => dIds.has(bi.personId)).map((bi) => [bi.id, bi.personId]));
+  let c6Best: { v: number; pid: string } | null = null;
+  for (const u of opp.ucvs) {
+    const owner = dBiOwner.get(u.targetBiId);
+    if (!owner) continue;
+    const v = u.status === '已解决' ? 5 : u.status === '获认可' ? 3 : 0;
+    if (v > 0 && (!c6Best || v > c6Best.v)) c6Best = { v, pid: owner };
+    if (c6Best?.v === 5) break;
+  }
+  if (c6Best) addPart(c6Best.pid, 'C6', c6Best.v);
+  for (const pid of dIds) addPotential(pid, 5);
+
+  for (const e of map.values()) e.upside = e.potential - e.nominal;
+  return map;
+}

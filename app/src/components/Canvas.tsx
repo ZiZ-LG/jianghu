@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Account, Opportunity, Layer, Edge, OppRole, Person, EdgeShape } from '../types';
-import { ROLE_COLOR, SENTIMENT_CHAR, SENTIMENT_COLOR, FAMILY_7Q } from '../types';
+import { ROLE_COLOR, ROLE_LABEL, SENTIMENT_CHAR, SENTIMENT_COLOR, SENTIMENT_LABEL, FAMILY_7Q } from '../types';
+import { personContributions } from '../lib/g64111';
 
 const NODE_R = 30;
+// 牌桌形态：人物卡片尺寸（world 坐标，中心锚点与圆点一致 → 两形态坐标互通）
+const CARD_W = 168, CARD_H = 92, CHW = CARD_W / 2, CHH = CARD_H / 2;
+export type CanvasMode = 'topo' | 'cards';
 const ARROW_GAP = 4;          // 箭头与目标节点的留白
 const ANCHOR_GAP = 13;        // 锚点离节点边缘的距离
 const NEW_NODE_DIST = 150;    // 点锚点(非拖拽)沿方向生成新节点的距离
@@ -50,6 +54,39 @@ function edgeGeom(s: Pt, t: Pt, shape: EdgeShape, bend: number) {
   return { d: `M ${a.x} ${a.y} L ${b.x} ${b.y}`, a, b, mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } };
 }
 
+/** 牌桌形态：中心连线与卡片矩形边框的交点（borderPt），pad 为箭头留白 */
+function rectClip(c: Pt, toward: Pt, pad = 0): Pt {
+  const dx = toward.x - c.x, dy = toward.y - c.y;
+  if (!dx && !dy) return { x: c.x, y: c.y };
+  const sx = dx ? (CHW + pad) / Math.abs(dx) : Infinity;
+  const sy = dy ? (CHH + pad) / Math.abs(dy) : Infinity;
+  const s = Math.min(sx, sy);
+  return { x: c.x + dx * s, y: c.y + dy * s };
+}
+
+/** 牌桌形态的连线几何：端点按矩形边框裁剪（拓扑形态走原 edgeGeom，零回归） */
+function edgeGeomCard(s: Pt, t: Pt, shape: EdgeShape, bend: number) {
+  if (shape === 'orthogonal') {
+    const midY = (s.y + t.y) / 2 + bend;
+    const sy = s.y + Math.sign(midY - s.y || 1) * CHH;
+    const ty = t.y - Math.sign(t.y - midY || 1) * (CHH + ARROW_GAP);
+    return { d: `M ${s.x} ${sy} V ${midY} H ${t.x} V ${ty}`, a: { x: s.x, y: sy }, b: { x: t.x, y: ty }, mid: { x: (s.x + t.x) / 2, y: midY } };
+  }
+  const a = rectClip(s, t);
+  const b = rectClip(t, s, ARROW_GAP);
+  if (shape === 'curved') {
+    const dx = t.x - s.x, dy = t.y - s.y, len = Math.hypot(dx, dy) || 1;
+    const px = -dy / len, py = dx / len;
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    const cx = mx + px * bend, cy = my + py * bend;
+    const qx = 0.25 * a.x + 0.5 * cx + 0.25 * b.x, qy = 0.25 * a.y + 0.5 * cy + 0.25 * b.y;
+    return { d: `M ${a.x} ${a.y} Q ${cx} ${cy} ${b.x} ${b.y}`, a, b, mid: { x: qx, y: qy } };
+  }
+  return { d: `M ${a.x} ${a.y} L ${b.x} ${b.y}`, a, b, mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } };
+}
+
+const clipText = (s: string, n: number) => (s.length > n ? s.slice(0, n) + '…' : s);
+
 type Gesture =
   | { kind: 'pan'; csx: number; csy: number; tx: number; ty: number }
   | { kind: 'node'; id: string; csx: number; csy: number; ox: number; oy: number; moved: boolean }
@@ -65,7 +102,7 @@ export function Canvas({
   onSelectPerson, onSelectEdge, onOpenPerson, onOpenEdge,
   onMovePerson, onAddPersonAt, onAddConnectedNode, onConnect,
   onUpdateEdge, onDeleteEdge, onUpdatePerson, onDeletePerson, suggestions = [],
-  immersive = false, onToggleImmersive, secondTapOpens = false,
+  immersive = false, onToggleImmersive, secondTapOpens = false, mode = 'topo',
 }: {
   account: Account;
   opp: Opportunity;
@@ -88,6 +125,7 @@ export function Canvas({
   immersive?: boolean;
   onToggleImmersive?: () => void;
   secondTapOpens?: boolean;   // 选中后再次单击即进入详情（桌面+手机统一；双击仍兼容）
+  mode?: CanvasMode;          // 拓扑(圆点) | 牌桌(人物卡片)，坐标与交互互通
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState({ tx: 40, ty: 30, scale: 1 });
@@ -111,6 +149,13 @@ export function Canvas({
     for (const r of opp.roles) m.set(r.personId, r);
     return m;
   }, [opp]);
+
+  const isCards = mode === 'cards';
+  // 牌桌形态的节点外延（命中/连线裁剪/锚点/fit 统一用它，拓扑=圆半径）
+  const halfW = isCards ? CHW : NODE_R, halfH = isCards ? CHH : NODE_R;
+  const geomOf = isCards ? edgeGeomCard : edgeGeom;
+  // 逐人贡献分（仅牌桌形态消费；展示层分解，引擎口径见 docs/牌桌视图-设计方案.md §4）
+  const contributions = useMemo(() => (isCards ? personContributions(account, opp) : null), [isCards, account, opp]);
 
   // 商机级人物可见性：memberScoped 商机只显示成员集(含竞品)；存量商机(false/缺省)全员可见
   const visible = useMemo(
@@ -140,7 +185,9 @@ export function Canvas({
       const p = visible[i];
       if (p.id === exclude) continue;
       const pt = posOf(p);
-      if (Math.hypot(w.x - pt.x, w.y - pt.y) <= NODE_R + 4) return p.id;
+      if (isCards) {
+        if (Math.abs(w.x - pt.x) <= CHW + 4 && Math.abs(w.y - pt.y) <= CHH + 4) return p.id;
+      } else if (Math.hypot(w.x - pt.x, w.y - pt.y) <= NODE_R + 4) return p.id;
     }
     return null;
   };
@@ -294,7 +341,7 @@ export function Canvas({
       if (moved) {
         // 框内（节点完全在框内）→ 多选；竞品同样可框选；按 Shift 则并入已选
         const x0 = Math.min(g.x0, w.x), x1 = Math.max(g.x0, w.x), y0 = Math.min(g.y0, w.y), y1 = Math.max(g.y0, w.y);
-        const ids = visible.filter((p) => { const pt = posOf(p); return pt.x - NODE_R >= x0 && pt.x + NODE_R <= x1 && pt.y - NODE_R >= y0 && pt.y + NODE_R <= y1; }).map((p) => p.id);
+        const ids = visible.filter((p) => { const pt = posOf(p); return pt.x - halfW >= x0 && pt.x + halfW <= x1 && pt.y - halfH >= y0 && pt.y + halfH <= y1; }).map((p) => p.id);
         setSelectedIds((s) => (g.append ? new Set([...s, ...ids]) : new Set(ids))); onSelectPerson(null); onSelectEdge(null);
       } else if (!g.append) { setSelectedIds(new Set()); handleTap('empty', '', w); } // Shift 空点不清，保留已选
       setMarquee(null);
@@ -313,7 +360,8 @@ export function Canvas({
         const nid = onAddConnectedNode(g.sourceId, Math.round(w.x), Math.round(w.y)); beginEdit(nid);
       } else {
         const src = personById.get(g.sourceId)!; const v = DIR_VEC[g.dir];
-        const nid = onAddConnectedNode(g.sourceId, Math.round(src.x + v.x * NEW_NODE_DIST), Math.round(src.y + v.y * NEW_NODE_DIST)); beginEdit(nid);
+        const dist = isCards ? 240 : NEW_NODE_DIST;
+        const nid = onAddConnectedNode(g.sourceId, Math.round(src.x + v.x * dist), Math.round(src.y + v.y * dist)); beginEdit(nid);
       }
       setLinkPt(null); setHoverNode(null);
     } else if (g.kind === 'endpoint') {
@@ -354,14 +402,22 @@ export function Canvas({
     const r = wrapRef.current?.getBoundingClientRect();
     if (!ps.length || !r) { setView({ tx: 40, ty: 30, scale: 1 }); return; }
     const xs = ps.map((p) => p.x), ys = ps.map((p) => p.y);
-    const minX = Math.min(...xs) - NODE_R, maxX = Math.max(...xs) + NODE_R;
-    const minY = Math.min(...ys) - NODE_R, maxY = Math.max(...ys) + NODE_R + 24; // 下方留出节点标题
+    const minX = Math.min(...xs) - halfW, maxX = Math.max(...xs) + halfW;
+    const minY = Math.min(...ys) - halfH, maxY = Math.max(...ys) + halfH + (isCards ? 0 : 24); // 拓扑下方留节点标题
     const w = Math.max(1, maxX - minX), h = Math.max(1, maxY - minY);
     const padX = 24, padTop = 64, padBottom = 76;  // 避开顶部菜单 + 底部药丸/缩放
     const availW = Math.max(1, r.width - padX * 2), availH = Math.max(1, r.height - padTop - padBottom);
     const scale = Math.max(0.3, Math.min(2.5, Math.min(availW / w, availH / h)));
     setView({ scale, tx: padX + (availW - w * scale) / 2 - minX * scale, ty: padTop + (availH - h * scale) / 2 - minY * scale });
   };
+
+  // 形态切换 → 重新取景（卡片与圆点外延差异大，避免切换后过挤/过散）；首挂不动，保持进入视角
+  const modeMounted = useRef(false);
+  useEffect(() => {
+    if (!modeMounted.current) { modeMounted.current = true; return; }
+    fitAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
 
   const selEdge = selectedEdgeId ? edges.find((e) => e.id === selectedEdgeId) ?? null : null;
   const stop = (e: React.PointerEvent) => e.stopPropagation();
@@ -380,7 +436,7 @@ export function Canvas({
     const ps = visible.filter((p) => selectedIds.has(p.id));
     if (ps.length < 2) return null;
     const xs = ps.map((p) => p.x), ys = ps.map((p) => p.y);
-    return toScreen((Math.min(...xs) + Math.max(...xs)) / 2, Math.min(...ys) - NODE_R);
+    return toScreen((Math.min(...xs) + Math.max(...xs)) / 2, Math.min(...ys) - halfH);
   })();
 
   return (
@@ -411,7 +467,7 @@ export function Canvas({
             if (endpointPt && endpointPt.edgeId === e.id) { if (endpointPt.end === 'source') s = endpointPt; else t = endpointPt; }
             const shape = resolveShape(e);
             const bend = bendPreview && bendPreview.edgeId === e.id ? bendPreview.bend : resolveBend(e);
-            const geom = edgeGeom(s, t, shape, bend);
+            const geom = geomOf(s, t, shape, bend);
             const color = e.color || '#94a3b8';
             const useColor = ARROW_COLORS.includes(color) ? color : '#94a3b8';
             const marker = e.directed ? `url(#${markerId(useColor)})` : undefined;
@@ -445,9 +501,11 @@ export function Canvas({
             const a = posOf(sp), b = posOf(tp);
             const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1;
             const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+            const sa = isCards ? rectClip(a, b) : { x: a.x + (dx / len) * NODE_R, y: a.y + (dy / len) * NODE_R };
+            const sb = isCards ? rectClip(b, a) : { x: b.x - (dx / len) * NODE_R, y: b.y - (dy / len) * NODE_R };
             return (
               <g key={`sug${i}`} opacity={0.75} style={{ pointerEvents: 'none' }}>
-                <path d={`M ${a.x + (dx / len) * NODE_R} ${a.y + (dy / len) * NODE_R} L ${b.x - (dx / len) * NODE_R} ${b.y - (dy / len) * NODE_R}`}
+                <path d={`M ${sa.x} ${sa.y} L ${sb.x} ${sb.y}`}
                   fill="none" stroke="#94a3b8" strokeWidth={1.5} strokeDasharray="2,4" />
                 <circle cx={mid.x} cy={mid.y} r={8} fill="var(--node-fill)" stroke="#94a3b8" strokeWidth={1.5} />
                 <text x={mid.x} y={mid.y + 3.5} textAnchor="middle" fontSize={11} fontWeight={800} fill="#64748b">?</text>
@@ -460,6 +518,93 @@ export function Canvas({
             const role = roleByPerson.get(p.id);
             const selected = selectedId === p.id || selectedIds.has(p.id);
             const isHover = hoverNode === p.id;
+            const anchors = selected && !editing && (['top', 'right', 'bottom', 'left'] as Dir[]).map((dir) => {
+              const v = DIR_VEC[dir];
+              return (
+                <circle key={dir} data-anchor={dir} data-anchor-node={p.id}
+                  cx={v.x * (halfW + ANCHOR_GAP)} cy={v.y * (halfH + ANCHOR_GAP)} r={6}
+                  className="node-anchor" fill="var(--accent)" stroke="#fff" strokeWidth={2} style={{ cursor: 'crosshair' }} />
+              );
+            });
+
+            if (isCards) {
+              // ── 牌桌形态：拟物人物卡片（规格见 docs/牌桌视图-设计方案.md §3）──
+              const contrib = contributions?.get(p.id);
+              const gapAlert = !!role && (role.role === 'A' || role.role === 'D') && role.sentiment === 'unknown';
+              const unverified = !p.isCompetitor && (p.logs ?? []).some((l) => (l.content ?? '').includes('待核实'));
+              const bleeding = (contrib?.nominal ?? 0) < 0;
+              const badge = bleeding ? { text: '失血', color: '#b91c1c' }
+                : gapAlert ? { text: '缺口', color: '#dc2626' }
+                : unverified ? { text: '待核实', color: '#b45309' }
+                : role?.isKeyInfluencer ? { text: '★P4', color: '#b45309' } : null;
+              const badgeW = badge ? badge.text.replace('★', '').length * 9 + (badge.text.includes('★') ? 12 : 0) + 12 : 0;
+              const sentColor = role ? SENTIMENT_COLOR[role.sentiment] : 'var(--node-stroke)';
+              const nominal = contrib?.nominal ?? 0;
+              const nomText = contrib ? (nominal > 0 ? `+${nominal}` : String(nominal)) : '';
+              const nomColor = nominal > 0 ? '#16a34a' : nominal < 0 ? '#b91c1c' : 'var(--node-text)';
+              const isD = role?.role === 'D';
+              const formFilled = isD ? FAMILY_7Q.filter((q) => (p.form.family7[q] ?? '').trim() !== '').length : 0;
+              return (
+                <g key={p.id} data-node={p.id} transform={`translate(${pt.x},${pt.y})`} style={{ cursor: dragPt?.id === p.id ? 'grabbing' : 'pointer' }}>
+                  {p.isCompetitor ? (
+                    <>
+                      <rect x={-CHW} y={-CHH} width={CARD_W} height={CARD_H} rx={8} fill="#1f2937"
+                        stroke={selected || isHover ? 'var(--accent)' : 'var(--node-stroke)'} strokeWidth={selected || isHover ? 2.5 : 1.5} />
+                      <text textAnchor="middle" y={-8} fontSize={10.5} fill="#94a3b8">友商</text>
+                      <text textAnchor="middle" y={14} fontSize={15} fontWeight={600} fill="#fff">{clipText(p.name, 8)}</text>
+                    </>
+                  ) : (
+                    <>
+                      <rect x={-CHW} y={-CHH} width={CARD_W} height={CARD_H} rx={8} fill="var(--node-fill)"
+                        stroke={selected || isHover ? 'var(--accent)' : gapAlert ? '#dc2626' : (p.color || 'var(--node-stroke)')}
+                        strokeWidth={selected || isHover || gapAlert ? 2.5 : p.color ? 2 : 1.5}
+                        strokeDasharray={unverified ? '6,4' : undefined} />
+                      <rect x={-CHW} y={-CHH + 8} width={3.5} height={CARD_H - 16} rx={1.75} fill={sentColor} />
+                      {role ? (
+                        <>
+                          <g transform={`translate(-66,-31) rotate(-4)`}>
+                            <rect x={-12} y={-8.5} width={24} height={17} rx={3} fill="none" stroke={ROLE_COLOR[role.role]} strokeWidth={1.5} />
+                            <text textAnchor="middle" y={3.5} fontSize={10} fontWeight={700} fill={ROLE_COLOR[role.role]}>{role.role}</text>
+                          </g>
+                          <text x={-48} y={-27.5} fontSize={9.5} fill="var(--node-text)" opacity={0.55}>{ROLE_LABEL[role.role]}{role.role === 'R' && p.coachLevel ? ` L${p.coachLevel}` : ''}</text>
+                        </>
+                      ) : (
+                        <text x={-74} y={-27.5} fontSize={9.5} fill="var(--node-text)" opacity={0.45}>未指派角色</text>
+                      )}
+                      {badge && (
+                        <g transform={`translate(${CHW - 6 - badgeW},-39)`}>
+                          <rect width={badgeW} height={16} rx={3} fill={badge.color} opacity={0.12} />
+                          <rect width={badgeW} height={16} rx={3} fill="none" stroke={badge.color} strokeWidth={1} opacity={0.5} />
+                          <text x={badgeW / 2} y={11.5} textAnchor="middle" fontSize={9} fontWeight={700} fill={badge.color}>{badge.text}</text>
+                        </g>
+                      )}
+                      <text x={-74} y={-4} fontSize={15} fontWeight={600} fill="var(--node-text)">{clipText(p.name, 8)}</text>
+                      <text x={-74} y={12} fontSize={10.5} fill="var(--node-text)" opacity={0.55}>{clipText(p.title || '—', 13)}</text>
+                      {contrib ? (
+                        <>
+                          <text x={-74} y={30} fontSize={17} fontWeight={700} fill={nomColor}>{nomText}</text>
+                          <text x={-74 + nomText.length * 10 + 6} y={30} fontSize={9.5} fill="var(--node-text)" opacity={0.55}>
+                            / 满 {contrib.potential}{contrib.upside > 0 ? ` · 可再 +${contrib.upside}` : ''}
+                          </text>
+                        </>
+                      ) : (
+                        <text x={-74} y={30} fontSize={10} fill="var(--node-text)" opacity={0.45}>指派角色后参与计分</text>
+                      )}
+                      {role ? (
+                        <text x={-74} y={42} fontSize={10.5} fontWeight={700} fill={sentColor}>
+                          {SENTIMENT_CHAR[role.sentiment]} <tspan fontSize={9.5} fontWeight={400}>{SENTIMENT_LABEL[role.sentiment]}</tspan>
+                        </text>
+                      ) : null}
+                      <text x={74} y={42} textAnchor="end" fontSize={9.5} fill="var(--node-text)" opacity={0.55}>
+                        {isD ? `FORM ${formFilled}/7` : `完成度 ${completeness(p)}%`}
+                      </text>
+                    </>
+                  )}
+                  {anchors}
+                </g>
+              );
+            }
+
             return (
               <g key={p.id} data-node={p.id} transform={`translate(${pt.x},${pt.y})`} style={{ cursor: dragPt?.id === p.id ? 'grabbing' : 'pointer' }}>
                 <circle r={NODE_R} fill={p.isCompetitor ? '#1f2937' : (p.color || 'var(--node-fill)')}
@@ -488,14 +633,7 @@ export function Canvas({
                 <text textAnchor="middle" y={NODE_R + 22} className="node-title" stroke="var(--node-halo)" strokeWidth={3} style={{ paintOrder: 'stroke', pointerEvents: 'none' } as React.CSSProperties}>{p.title}</text>
 
                 {/* 选中 → 四周锚点：点/拖生成连线（关系） */}
-                {selected && !editing && (['top', 'right', 'bottom', 'left'] as Dir[]).map((dir) => {
-                  const v = DIR_VEC[dir];
-                  return (
-                    <circle key={dir} data-anchor={dir} data-anchor-node={p.id}
-                      cx={v.x * (NODE_R + ANCHOR_GAP)} cy={v.y * (NODE_R + ANCHOR_GAP)} r={6}
-                      className="node-anchor" fill="var(--accent)" stroke="#fff" strokeWidth={2} style={{ cursor: 'crosshair' }} />
-                  );
-                })}
+                {anchors}
               </g>
             );
           })}
@@ -508,7 +646,7 @@ export function Canvas({
             if (endpointPt && endpointPt.edgeId === selEdge.id) { if (endpointPt.end === 'source') s = endpointPt; else t = endpointPt; }
             const shp = resolveShape(selEdge);
             const bnd = bendPreview && bendPreview.edgeId === selEdge.id ? bendPreview.bend : resolveBend(selEdge);
-            const gm = edgeGeom(s, t, shp, bnd);
+            const gm = geomOf(s, t, shp, bnd);
             return (
               <g>
                 <circle data-edge-h={selEdge.id} data-endpoint="source" cx={gm.a.x} cy={gm.a.y} r={7}
@@ -544,7 +682,7 @@ export function Canvas({
       {selEdge && (() => {
         const sp = personById.get(selEdge.source), tp = personById.get(selEdge.target);
         if (!sp || !tp) return null;
-        const g = edgeGeom(posOf(sp), posOf(tp), resolveShape(selEdge), resolveBend(selEdge));
+        const g = geomOf(posOf(sp), posOf(tp), resolveShape(selEdge), resolveBend(selEdge));
         const sc = toScreen(g.mid.x, g.mid.y);
         const cur = resolveShape(selEdge);
         const SB = ({ s, label }: { s: EdgeShape; label: string }) => (
