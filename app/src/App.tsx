@@ -63,7 +63,6 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistentState('jianghu.sidebarCollapsed', false);
   const [winCollapsed, setWinCollapsed] = usePersistentState('jianghu.winCollapsed', false);
   const [view, setView] = usePersistentState<CustomerView>('jianghu.customerView', 'wall'); // 客户级镜头：关系地图 / 商机策划
-  const [canvasMode, setCanvasMode] = usePersistentState<'topo' | 'cards'>('jianghu.canvasMode', 'topo'); // 画布形态：拓扑圆点 / 牌桌卡片
   const [theme, toggleTheme] = useTheme();
   // 画布选中模型：单击=选中(节点出锚点/连线出控制点)，双击=打开右侧栏
   const [drawerPersonId, setDrawerPersonId] = useState<string | null>(null);
@@ -441,10 +440,6 @@ export default function App() {
                 <span className="mt-name">{opp.name}</span>
                 {!isMobile && <LayerTabs layer={layer} onChange={setLayer} />}
                 {!isMobile && (<>
-                  <button className="btn ghost xs" onClick={() => setCanvasMode(canvasMode === 'topo' ? 'cards' : 'topo')}
-                    title={canvasMode === 'topo' ? '切换到牌桌视图（人物卡片+贡献分）' : '切换到拓扑视图（圆点看全局连线）'}>
-                    {canvasMode === 'topo' ? '🃏 牌桌' : '⚪ 拓扑'}
-                  </button>
                   <button className="btn cta xs" onClick={() => setIntelOpen(true)}>🎙️ 录入情报</button>
                   <button className="btn ghost xs" onClick={() => setOppFormOpen(true)}>编辑商机</button>
                   <button className="btn ghost xs" onClick={() => setProfileOpen(true)}>📇 客户档案</button>
@@ -461,7 +456,6 @@ export default function App() {
                   <OverflowMenu align="left" label="⋯ 操作" items={[
                     { label: '🧠 AI 推演', primary: true, onClick: () => setConsoleOpen(true) },
                     { label: '🎙️ 录入情报', primary: true, onClick: () => setIntelOpen(true) },
-                    { label: canvasMode === 'topo' ? '🃏 切换牌桌视图' : '⚪ 切换拓扑视图', onClick: () => setCanvasMode(canvasMode === 'topo' ? 'cards' : 'topo') },
                     { label: '✏️ 编辑商机', onClick: () => setOppFormOpen(true) },
                     { label: '📇 客户档案', onClick: () => setProfileOpen(true) },
                     { label: '🔍 搜索情报', onClick: () => setEnrichOpen(true) },
@@ -485,7 +479,7 @@ export default function App() {
               onUpdateEdge={updateEdge} onDeleteEdge={deleteEdgeById}
               onUpdatePerson={updatePerson} onDeletePerson={deletePerson}
               immersive={immersive} onToggleImmersive={toggleImmersive} secondTapOpens={true}
-              suggestions={suggestions} mode={canvasMode} />
+              suggestions={suggestions} />
             {!immersive && breakdown && (
               (isMobile ? winMobileCollapsed : winCollapsed) ? (
                 <button className="win-fab" onClick={() => (isMobile ? setWinMobileCollapsed(false) : setWinCollapsed(false))} title="展开趋赢力" aria-label="展开趋赢力">
