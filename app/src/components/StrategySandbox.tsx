@@ -197,7 +197,7 @@ export function StrategySandbox({
 
       <div className="sb2-body" onClick={() => setDrawer(null)}>
         {/* ── 策略引擎局势栏（顶部：局势判断 → 打法 → 排期 → 健康度）── */}
-        <div onClick={(e) => e.stopPropagation()}><EngineBar account={account} opp={opp} breakdown={breakdown} /></div>
+        <div onClick={(e) => e.stopPropagation()}><EngineBar account={account} opp={opp} breakdown={breakdown} dispatch={dispatch} /></div>
         {/* ── 策略泳道（正推：现状 → 方向）── */}
         <div className="sb2-lane-head">
           <span className="sb2-lane-label">策略泳道 · 打法<i>正推：现状 → 方向</i></span>

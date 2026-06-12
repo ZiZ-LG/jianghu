@@ -1122,3 +1122,30 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 
 .eng-why { color: var(--muted); }
 .eng-ev-note { font-size: 11px; font-weight: 400; color: var(--faint); }
+
+/* ── 策略引擎方案包展开区（EngineBar · E1）── */
+.eng-bar.open { padding-bottom: 12px; }
+.eng-playbooks { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
+.eng-pb-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.eng-pb { border: 0.5px solid var(--line); border-radius: 9px; background: var(--panel-2); padding: 9px 11px; display: flex; flex-direction: column; gap: 6px; }
+.eng-pb.tone-raise { border-left: 3px solid #16a34a; }
+.eng-pb.tone-call { border-left: 3px solid #2563eb; }
+.eng-pb.tone-check { border-left: 3px solid #f59e0b; }
+.eng-pb.tone-fold { border-left: 3px solid #dc2626; }
+.eng-pb-head { display: flex; align-items: center; gap: 6px; }
+.eng-pb-title { font-size: 13px; font-weight: 700; color: var(--ink); }
+.eng-pb-cost { margin-left: auto; font-size: 10px; color: var(--muted); white-space: nowrap; }
+.eng-pb-why { margin: 0; font-size: 11px; color: var(--muted); line-height: 1.5; }
+.eng-pb-items { display: flex; flex-direction: column; gap: 5px; border-top: 0.5px solid var(--line); padding-top: 7px; }
+.eng-pick { display: flex; gap: 6px; align-items: flex-start; font-size: 12px; color: var(--ink); line-height: 1.45; cursor: pointer; }
+.eng-pick input { margin-top: 2px; flex-shrink: 0; }
+.eng-tag { font-style: normal; font-size: 10px; padding: 0 5px; margin-left: 5px; background: var(--accent-soft); color: var(--accent-ink); border-radius: 4px; white-space: nowrap; }
+.eng-kind { font-style: normal; font-size: 10px; margin-left: 5px; padding: 0 5px; border-radius: 4px; white-space: nowrap; }
+.eng-kind.gain { background: color-mix(in srgb, #16a34a 14%, var(--panel)); color: #16a34a; }
+.eng-kind.probe { background: color-mix(in srgb, #f59e0b 16%, var(--panel)); color: #b45309; }
+.eng-pb-foot { margin-top: auto; }
+.eng-pb-up { font-size: 11px; font-weight: 600; color: #16a34a; }
+.eng-pb-up.clarity { color: #b45309; }
+.eng-pb-bar { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+.eng-pb-hint { font-size: 11px; color: var(--faint); }
+.eng-pb-bar .btn { margin-left: auto; }
