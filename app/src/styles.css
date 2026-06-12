@@ -1094,3 +1094,8 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 .auth-join { font-size: 12px; line-height: 1.7; color: var(--ink-2); background: var(--accent-soft); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; }
 .auth-join b { color: var(--ink); }
 .auth-join a { color: var(--accent); cursor: pointer; text-decoration: underline; margin: 0 2px; }
+
+/* ── 团队面板 · 行内重置密码 ── */
+.member-reset { display: flex; align-items: center; gap: 8px; padding: 6px 10px 8px 42px; }
+.member-reset input { flex: 1; min-width: 0; font-size: 12px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
+.member-reset .reset-ok { font-size: 12px; color: #16a34a; font-weight: 600; }

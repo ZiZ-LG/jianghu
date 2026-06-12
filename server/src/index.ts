@@ -45,13 +45,19 @@ const corsOrigin = process.env.CORS_ORIGIN
     ? false
     : true;
 await app.register(cors, { origin: corsOrigin, credentials: true });
-await app.register(jwt, { secret: JWT_SECRET });
+// JWT 7 天过期（此前永不过期：删成员/令牌泄漏均无法收口）。前端 401 已有跳登录处理，到期重登即可。
+await app.register(jwt, { secret: JWT_SECRET, sign: { expiresIn: '7d' } });
 
 // 全局限流：每 IP 每分钟 300 次（兜底防滥用；认证接口在 auth.ts 内单独收紧）
 await app.register(rateLimit, { max: 300, timeWindow: '1 minute' });
 
 app.decorate('authenticate', async (req: any, reply: any) => {
-  try { await req.jwtVerify(); } catch { reply.code(401).send({ error: 'unauthorized' }); }
+  try { await req.jwtVerify(); } catch { reply.code(401).send({ error: 'unauthorized' }); return; }
+  // 验签后查库：①成员已被移除 → 旧会话立即失效 ②角色取库中最新（改权即生效，JWT 内 role 仅是签发时快照）。
+  // 主键查询亚毫秒级，正确性优先不加缓存；/api/mcp 走 mcpAuthenticate 已有同等校验。
+  const u = await prisma.user.findFirst({ where: { id: req.user.userId, tenantId: req.user.tenantId }, select: { role: true } });
+  if (!u) { reply.code(401).send({ error: 'unauthorized' }); return; }
+  req.user.role = u.role;
 });
 
 const requireRole = (req: any, reply: any, roles: string[]): boolean => {
@@ -157,6 +163,19 @@ app.delete('/api/members/:id', { preHandler: [app.authenticate] }, async (req: a
   if (target.role === 'owner') return reply.code(400).send({ error: '不能移除所有者' });
   if (target.id === req.user.userId) return reply.code(400).send({ error: '不能移除自己' });
   await prisma.user.delete({ where: { id: target.id } });
+  return { ok: true };
+});
+
+// 重置成员密码（忘记密码的产品内救济，替代「删了重加」）：owner/admin 可重置成员/管理员；
+// owner 的密码仅 owner 本人可重置（防 admin 越级夺权；owner 全忘走运维改库兜底）。
+app.patch('/api/members/:id/password', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+  if (!requireRole(req, reply, ['owner', 'admin'])) return;
+  const body = z.object({ password: z.string().min(6) }).safeParse(req.body);
+  if (!body.success) return reply.code(400).send({ error: '新密码至少 6 位' });
+  const target = await prisma.user.findFirst({ where: { id: req.params.id, tenantId: req.user.tenantId } });
+  if (!target) return reply.code(404).send({ error: '成员不存在' });
+  if (target.role === 'owner' && target.id !== req.user.userId) return reply.code(403).send({ error: '所有者的密码只能由本人重置' });
+  await prisma.user.update({ where: { id: target.id }, data: { passwordHash: await bcrypt.hash(body.data.password, 10) } });
   return { ok: true };
 });
 

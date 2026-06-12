@@ -13,6 +13,10 @@ export function TeamBilling({ role, onClose }: { role: string; onClose: () => vo
   const [donate, setDonate] = useState<Donate | null>(null);
   const [err, setErr] = useState('');
   const [nm, setNm] = useState({ phone: '', email: '', name: '', password: '', role: 'member' });
+  // 行内重置密码（忘记密码的产品内救济）：resetId=展开的成员行
+  const [resetId, setResetId] = useState<string | null>(null);
+  const [resetPw, setResetPw] = useState('');
+  const [resetMsg, setResetMsg] = useState('');
 
   const load = async () => {
     try {
@@ -31,6 +35,15 @@ export function TeamBilling({ role, onClose }: { role: string; onClose: () => vo
     } catch (e: any) { setErr(e.message); }
   };
   const remove = async (id: string) => { try { await api.removeMember(id); await load(); } catch (e: any) { setErr(e.message); } };
+  const doReset = async () => {
+    if (!resetId) return;
+    setErr('');
+    try {
+      await api.resetMemberPassword(resetId, resetPw);
+      setResetMsg('✓ 已重置，请将新密码告知该成员'); setResetPw('');
+      setTimeout(() => { setResetId(null); setResetMsg(''); }, 3000);
+    } catch (e: any) { setErr(e.message); }
+  };
 
   const full = billing ? billing.memberCount >= billing.seatLimit : false;
   const canSubmit = nm.name && nm.password.length >= 6 && (nm.phone || nm.email);
@@ -64,13 +77,31 @@ export function TeamBilling({ role, onClose }: { role: string; onClose: () => vo
       <div className="section-t" style={{ marginTop: 14 }}>成员（{members.length}）</div>
       <div className="member-list">
         {members.map((m) => (
-          <div key={m.id} className="member-row">
-            <div className="avatar sm">{m.name[0]}</div>
-            <div style={{ flex: 1 }}>
-              <div className="m-name">{m.name} <span className={`role-tag ${m.role}`}>{m.role}</span></div>
-              <div className="m-email">{m.phone || m.email}</div>
+          <div key={m.id}>
+            <div className="member-row">
+              <div className="avatar sm">{m.name[0]}</div>
+              <div style={{ flex: 1 }}>
+                <div className="m-name">{m.name} <span className={`role-tag ${m.role}`}>{m.role}</span></div>
+                <div className="m-email">{m.phone || m.email}</div>
+              </div>
+              {/* owner 行仅 owner 本人可重置（一个工作区只有一个 owner，故 role===owner 时该行必为本人） */}
+              {canManage && (m.role !== 'owner' || role === 'owner') && (
+                <button className="row-del" title="重置密码" onClick={() => { setResetId(resetId === m.id ? null : m.id); setResetPw(''); setResetMsg(''); }}>🔑</button>
+              )}
+              {canManage && m.role !== 'owner' && <button className="row-del" onClick={() => remove(m.id)}>🗑</button>}
             </div>
-            {canManage && m.role !== 'owner' && <button className="row-del" onClick={() => remove(m.id)}>🗑</button>}
+            {resetId === m.id && (
+              <div className="member-reset">
+                {resetMsg
+                  ? <span className="reset-ok">{resetMsg}</span>
+                  : (<>
+                    <input value={resetPw} onChange={(e) => setResetPw(e.target.value)} placeholder="新密码（≥6 位，重置后告知对方）"
+                      onKeyDown={(e) => e.key === 'Enter' && resetPw.length >= 6 && doReset()} />
+                    <button className="btn primary xs" disabled={resetPw.length < 6} onClick={doReset}>确认重置</button>
+                    <button className="btn ghost xs" onClick={() => setResetId(null)}>取消</button>
+                  </>)}
+              </div>
+            )}
           </div>
         ))}
       </div>

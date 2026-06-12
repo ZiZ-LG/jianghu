@@ -56,6 +56,7 @@ export const api = {
   members: (): Promise<{ members: { id: string; phone: string | null; email: string | null; name: string; role: string; createdAt: string }[] }> => req('/api/members'),
   addMember: (b: { phone?: string; email?: string; name: string; password: string; role: string }) => req('/api/members', { method: 'POST', body: JSON.stringify(b) }),
   removeMember: (id: string) => req(`/api/members/${id}`, { method: 'DELETE' }),
+  resetMemberPassword: (id: string, password: string) => req(`/api/members/${id}/password`, { method: 'PATCH', body: JSON.stringify({ password }) }),
   // AI 模型（BYO-key）
   aiConfig: (): Promise<{ configured: boolean; provider: string; baseUrl: string; model: string; hasKey: boolean }> => req('/api/ai/config'),
   aiSaveConfig: (b: { provider: string; baseUrl?: string; model?: string; apiKey?: string }) => req('/api/ai/config', { method: 'PUT', body: JSON.stringify(b) }),
