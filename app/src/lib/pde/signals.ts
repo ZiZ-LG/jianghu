@@ -24,6 +24,9 @@ export const SIGNAL_CATALOG: SignalDef[] = [
   { key: 'competitor_lean', label: '明显倾向竞品', direction: -1, behavioral: true, delta: { weak: 1, mid: 2, strong: 2.5 } },
   { key: 'competitor_quote', label: '主动索要竞品对比', direction: 0, behavioral: true, delta: { weak: 1, mid: 1.5, strong: 2 }, hint: '可能是流程要求，也可能是倒戈信号——录入时人工定向' },
   { key: 'internal_blocker', label: '透露内部反对声音', direction: 0, behavioral: true, delta: { weak: 1, mid: 1.5, strong: 2 }, hint: '既可能是负信号，也可能是"队友递牌"——人工定向' },
+  // 行动结果回填专用（行动计划勾完成时录入，闭合「执行→证据→局势」飞轮）
+  { key: 'positive_interaction', label: '互动后态度转积极', direction: 1, behavioral: true, delta: { weak: 0.5, mid: 1, strong: 1.5 }, hint: '行动结果回填：这次接触后更支持' },
+  { key: 'negative_interaction', label: '互动后态度转消极', direction: -1, behavioral: true, delta: { weak: 0.5, mid: 1, strong: 1.5 }, hint: '行动结果回填：这次接触后更抵触' },
 ];
 
 export const SIGNAL_BY_KEY = new Map(SIGNAL_CATALOG.map((s) => [s.key, s]));

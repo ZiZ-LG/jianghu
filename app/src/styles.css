@@ -1174,3 +1174,10 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 .eng-ev-raw { color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
 .eng-ev-del { margin-left: auto; width: 22px; height: 22px; border: none; background: none; color: var(--muted); cursor: pointer; border-radius: 5px; flex-shrink: 0; }
 .eng-ev-del:hover { background: var(--hover); color: #dc2626; }
+
+/* 行动结果回填（DealPlanner 编辑器，闭合执行→证据→局势飞轮） */
+.dp-outcome { margin-top: 10px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
+.dp-outcome-q { font-size: 12px; color: var(--ink-2); display: block; margin-bottom: 6px; }
+.dp-outcome .dp-pick button.on.up { background: color-mix(in srgb, #16a34a 16%, var(--panel)); border-color: #16a34a; color: #16a34a; }
+.dp-outcome .dp-pick button.on.down { background: color-mix(in srgb, #dc2626 16%, var(--panel)); border-color: #dc2626; color: #dc2626; }
+.dp-outcome-hint { margin: 7px 0 0; font-size: 11px; color: var(--accent); line-height: 1.5; }

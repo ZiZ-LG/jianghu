@@ -4,7 +4,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import type { Account, Half } from '../types';
 import type { Action } from '../store';
-import { newPlanAction, newMilestone, newOppStage } from '../store';
+import { newPlanAction, newMilestone, newOppStage, newEvidence } from '../store';
 import { ViewTabs, type CustomerView } from './ViewTabs';
 import { usePersistentState } from '../ui';
 
@@ -64,7 +64,7 @@ function weekDays(cur: string) { const mon = addDays(cur, -dowMon(D(cur))); retu
 
 const HALVES: { id: Half; label: string }[] = [{ id: 'am', label: '🌅 上午' }, { id: 'pm', label: '🌇 下午' }, { id: 'eve', label: '🌙 晚上' }];
 
-interface EditorState { mode: 'create' | 'edit'; kind: Kind; editId?: string; oppId: string; title: string; start: string; end: string; half: Half; done: boolean; }
+interface EditorState { mode: 'create' | 'edit'; kind: Kind; editId?: string; oppId: string; title: string; start: string; end: string; half: Half; done: boolean; personId?: string; wasDone?: boolean; outcome?: 'up' | 'flat' | 'down' }
 
 const laneH = 22, headH = 24, padB = 6;
 
@@ -108,7 +108,11 @@ export function DealPlanner({ account, dispatch, view, onChangeView, theme, onTo
     if (e.kind === 'action') dispatch({ type: 'UPDATE_PLAN_ACTION', accId: account.id, actionId: e.id, patch: { startDate: start, endDate: end } });
     else if (e.kind === 'milestone') dispatch({ type: 'UPDATE_MILESTONE', accId: account.id, milestoneId: e.id, patch: { startDate: start, endDate: end } });
   };
-  const openEdit = (e: CalEvent) => { const [s, en] = dispEv(e); setSel(e.id); setEditor({ mode: 'edit', kind: e.kind, editId: e.id, oppId: e.oppId, title: e.title.startsWith('(') ? '' : e.title, start: s, end: en, half: e.half, done: !!e.done }); };
+  const openEdit = (e: CalEvent) => {
+    const [s, en] = dispEv(e); setSel(e.id);
+    const pa = e.kind === 'action' ? (account.planActions ?? []).find((a) => a.id === e.id) : undefined;
+    setEditor({ mode: 'edit', kind: e.kind, editId: e.id, oppId: e.oppId, title: e.title.startsWith('(') ? '' : e.title, start: s, end: en, half: e.half, done: !!e.done, personId: pa?.personId, wasDone: !!e.done });
+  };
   const openCreate = (date: string, half: Half = 'am') => { setSel(null); setEditor({ mode: 'create', kind: 'action', oppId: visOpps[0]?.id ?? opps[0]?.id ?? '', title: '', start: date, end: date, half, done: false }); };
   const clickEvent = (id: string) => { const e = events.find((x) => x.id === id); if (!e) return; if (!EDITABLE(e.kind)) { setSel((s) => (s === id ? null : id)); return; } if (sel === id) openEdit(e); else setSel(id); };
   const commitHalf = (e: CalEvent, half: Half) => {
@@ -172,6 +176,12 @@ export function DealPlanner({ account, dispatch, view, onChangeView, theme, onTo
     } else if (d.editId) {
       if (d.kind === 'action') dispatch({ type: 'UPDATE_PLAN_ACTION', accId: account.id, actionId: d.editId, patch: { title, startDate: start, endDate: end, half: d.half, done: d.done, doneAt: d.done ? TODAY : undefined } });
       else dispatch({ type: 'UPDATE_MILESTONE', accId: account.id, milestoneId: d.editId, patch: { title, startDate: start, endDate: end, half: d.half } });
+    }
+    // 结果回填：完成且关联干系人、选了态度变化 → 录一条互动证据喂策略引擎 E2（闭合执行→证据→局势飞轮）
+    if (d.kind === 'action' && d.done && d.personId && (d.outcome === 'up' || d.outcome === 'down')) {
+      const ev = newEvidence(account.id, d.oppId, d.personId, d.outcome === 'up' ? 'positive_interaction' : 'negative_interaction', d.outcome === 'up' ? 1 : -1, 'mid');
+      ev.rawContent = `行动结果回填：${title}`; ev.occurredAt = TODAY;
+      dispatch({ type: 'ADD_EVIDENCE', accId: account.id, oppId: d.oppId, evidence: ev });
     }
     setEditor(null); setSel(null);
   };
@@ -389,6 +399,17 @@ export function DealPlanner({ account, dispatch, view, onChangeView, theme, onTo
               <div className="dp-row2"><div className="dp-fld"><span>开始</span><input type="date" value={editor.start} onChange={(e) => setEditor({ ...editor, start: e.target.value })} /></div><div className="dp-fld"><span>结束</span><input type="date" value={editor.end} onChange={(e) => setEditor({ ...editor, end: e.target.value })} /></div></div>
               <div className="dp-fld"><span>时段</span><div className="dp-pick">{HALVES.map((h) => <button key={h.id} className={editor.half === h.id ? 'on' : ''} onClick={() => setEditor({ ...editor, half: h.id })}>{h.label}</button>)}</div></div>
               {editor.kind === 'action' && <label className="dp-done"><input type="checkbox" checked={editor.done} onChange={(e) => setEditor({ ...editor, done: e.target.checked })} /> 标记为已完成（仅行动）</label>}
+              {editor.kind === 'action' && editor.done && editor.personId && !editor.wasDone && (
+                <div className="dp-outcome">
+                  <span className="dp-outcome-q">这次接触后，{account.persons.find((p) => p.id === editor.personId)?.name ?? '对方'}的态度：</span>
+                  <div className="dp-pick">
+                    <button className={editor.outcome === 'up' ? 'on up' : ''} onClick={() => setEditor({ ...editor, outcome: 'up' })}>↑ 更积极</button>
+                    <button className={editor.outcome === 'flat' ? 'on' : ''} onClick={() => setEditor({ ...editor, outcome: 'flat' })}>— 没变化</button>
+                    <button className={editor.outcome === 'down' ? 'on down' : ''} onClick={() => setEditor({ ...editor, outcome: 'down' })}>↓ 更消极</button>
+                  </div>
+                  {(editor.outcome === 'up' || editor.outcome === 'down') && <p className="dp-outcome-hint">将作为一条证据喂入策略引擎，更新局势分布</p>}
+                </div>
+              )}
               <div className="dp-ed-foot">
                 {editor.mode === 'edit' && <button className="dp-del" onClick={delEditor}>🗑 删除</button>}
                 <button className="dp-btn ghost" onClick={() => { setEditor(null); setSel(null); }}>取消</button>
