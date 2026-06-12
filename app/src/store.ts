@@ -2,7 +2,7 @@
 // 抽象在此层，未来切换到后端 API 只需替换 load/save 与 dispatch 的落地方式。
 import type {
   Account, Opportunity, Person, OppRole, Edge, BurningIssue, UCV, InteractionLog, CustomerType, VisitNote, PlanAction, OppMilestone, OppStage, Half,
-  StrategyCard, StrategyRisk, StrategyResource,
+  StrategyCard, StrategyRisk, StrategyResource, EvidenceEvent,
 } from './types';
 import { seedAccount } from './data/seed';
 
@@ -61,6 +61,9 @@ export function newStrategyRisk(accountId: string, opportunityId: string, kind: 
 export function newStrategyResource(accountId: string, opportunityId: string): StrategyResource {
   return { id: uid('sx'), accountId, opportunityId, label: '', kind: '', note: '' };
 }
+export function newEvidence(accountId: string, opportunityId: string, personId: string, signalKey: string, direction: number, tier: 'weak' | 'mid' | 'strong'): EvidenceEvent {
+  return { id: uid('ev'), accountId, opportunityId, personId, signalKey, direction, tier, rawContent: '', occurredAt: '' };
+}
 
 // ── Actions ──
 export type Action =
@@ -110,6 +113,8 @@ export type Action =
   | { type: 'ADD_STRATEGY_RESOURCE'; accId: string; oppId: string; resource: StrategyResource }
   | { type: 'UPDATE_STRATEGY_RESOURCE'; accId: string; resourceId: string; patch: Partial<StrategyResource> }
   | { type: 'DELETE_STRATEGY_RESOURCE'; accId: string; resourceId: string }
+  | { type: 'ADD_EVIDENCE'; accId: string; oppId: string; evidence: EvidenceEvent }
+  | { type: 'DELETE_EVIDENCE'; accId: string; oppId: string; evidenceId: string }
   | { type: 'LOAD_DEMO' }
   | { type: 'RESET' }
   | { type: 'HYDRATE'; accounts: Account[] };
@@ -268,6 +273,10 @@ export function reducer(s: StoreState, action: Action): StoreState {
       return mapAcc(s, action.accId, (a) => ({ ...a, strategyResources: (a.strategyResources ?? []).map((x) => (x.id === action.resourceId ? { ...x, ...action.patch } : x)) }));
     case 'DELETE_STRATEGY_RESOURCE':
       return mapAcc(s, action.accId, (a) => ({ ...a, strategyResources: (a.strategyResources ?? []).filter((x) => x.id !== action.resourceId) }));
+    case 'ADD_EVIDENCE':
+      return mapOpp(s, action.accId, action.oppId, (o) => ({ ...o, evidenceEvents: [...(o.evidenceEvents ?? []), action.evidence] }));
+    case 'DELETE_EVIDENCE':
+      return mapOpp(s, action.accId, action.oppId, (o) => ({ ...o, evidenceEvents: (o.evidenceEvents ?? []).filter((e) => e.id !== action.evidenceId) }));
 
     case 'LOAD_DEMO': {
       if (s.accounts.some((a) => a.id === seedAccount.id)) return s;
@@ -323,6 +332,8 @@ export function computeInverse(a: Action, s: StoreState): Action[] | null {
     case 'UPDATE_STRATEGY_RISK': { const r = acc(a.accId)?.strategyRisks?.find((x) => x.id === a.riskId); return r ? [{ type: 'UPDATE_STRATEGY_RISK', accId: a.accId, riskId: a.riskId, patch: pick(r, Object.keys(a.patch)) }] : null; }
     case 'ADD_STRATEGY_RESOURCE': return [{ type: 'DELETE_STRATEGY_RESOURCE', accId: a.accId, resourceId: a.resource.id }];
     case 'DELETE_STRATEGY_RESOURCE': { const x = acc(a.accId)?.strategyResources?.find((y) => y.id === a.resourceId); return x ? [{ type: 'ADD_STRATEGY_RESOURCE', accId: a.accId, oppId: x.opportunityId, resource: x }] : null; }
+    case 'ADD_EVIDENCE': return [{ type: 'DELETE_EVIDENCE', accId: a.accId, oppId: a.oppId, evidenceId: a.evidence.id }];
+    case 'DELETE_EVIDENCE': { const o = acc(a.accId)?.opportunities.find((x) => x.id === a.oppId); const e = o?.evidenceEvents?.find((x) => x.id === a.evidenceId); return e ? [{ type: 'ADD_EVIDENCE', accId: a.accId, oppId: a.oppId, evidence: e }] : null; }
     case 'UPDATE_STRATEGY_RESOURCE': { const x = acc(a.accId)?.strategyResources?.find((y) => y.id === a.resourceId); return x ? [{ type: 'UPDATE_STRATEGY_RESOURCE', accId: a.accId, resourceId: a.resourceId, patch: pick(x, Object.keys(a.patch)) }] : null; }
     default: return null;
   }

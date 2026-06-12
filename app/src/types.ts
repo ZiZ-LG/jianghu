@@ -156,7 +156,22 @@ export interface Opportunity {
   edges: Edge[]; // 增量边 L2/L3/L4
   memberScoped?: boolean;  // true=只显示 memberIds 的人(含竞品)；false/缺省=全员可见(存量兼容)
   memberIds?: string[];    // 该商机可见的干系人 id 集(缺省视为空；仅 memberScoped 时生效)
+  evidenceEvents?: EvidenceEvent[]; // 策略引擎证据事件(E2，喂局势分布)
   version?: number;        // 乐观锁版本（后端带出；UPDATE_OPP 时回传作 baseVersion）
+}
+
+/** 策略引擎 · 证据事件（E2）：每条证据喂局势分布 */
+export interface EvidenceEvent {
+  id: string;
+  accountId: string;
+  opportunityId: string;
+  personId: string;
+  signalKey: string;
+  direction: number;       // +1 利好 / -1 不利
+  tier: 'weak' | 'mid' | 'strong';
+  rawContent?: string;
+  occurredAt?: string;
+  createdAt?: string;
 }
 
 /**

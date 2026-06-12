@@ -1149,3 +1149,28 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 .eng-pb-bar { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
 .eng-pb-hint { font-size: 11px; color: var(--faint); }
 .eng-pb-bar .btn { margin-left: auto; }
+
+/* 方案包行动 · 缺口 code 标（聚焦「补哪个缺口」策略维度） */
+.eng-gapcode { font-style: normal; font-size: 10px; font-family: ui-monospace, monospace; margin-left: 5px; padding: 0 5px; border-radius: 4px; background: var(--hover); color: var(--muted); }
+
+/* ── 策略引擎 E2 · 证据闭环 ── */
+.eng-shift { display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 7px 11px; border: 1px solid color-mix(in srgb, #f59e0b 40%, var(--line)); border-radius: 8px; background: color-mix(in srgb, #f59e0b 8%, var(--panel)); font-size: 12px; flex-wrap: wrap; }
+.eng-shift-icon { flex-shrink: 0; }
+.eng-shift-text { flex: 1; min-width: 160px; color: var(--ink-2); line-height: 1.5; }
+.eng-shift-text b { color: var(--ink); }
+.eng-evidence { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
+.eng-ev-form { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.eng-ev-form select, .eng-ev-form input { font-size: 12px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); font-family: inherit; }
+.eng-ev-form input { flex: 1; min-width: 140px; }
+.eng-ev-hint { margin: 7px 0 0; font-size: 11px; color: var(--faint); line-height: 1.5; }
+.eng-ev-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.eng-ev-item { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 4px 8px; background: var(--panel-2); border-radius: 6px; }
+.eng-ev-dir { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 4px; flex-shrink: 0; }
+.eng-ev-dir.up { background: color-mix(in srgb, #16a34a 14%, var(--panel)); color: #16a34a; }
+.eng-ev-dir.down { background: color-mix(in srgb, #dc2626 14%, var(--panel)); color: #dc2626; }
+.eng-ev-sig { color: var(--ink); }
+.eng-ev-who { color: var(--ink-2); }
+.eng-ev-tier { font-size: 10px; color: var(--muted); }
+.eng-ev-raw { color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
+.eng-ev-del { margin-left: auto; width: 22px; height: 22px; border: none; background: none; color: var(--muted); cursor: pointer; border-radius: 5px; flex-shrink: 0; }
+.eng-ev-del:hover { background: var(--hover); color: #dc2626; }

@@ -96,6 +96,14 @@ export async function assembleState(tenantId: string) {
     arr.push(strategyResourceView(x));
     resourcesByAccount.set(x.accountId, arr);
   }
+  // 证据事件（E2）按 opportunityId 分组，挂到对应商机
+  const evidences = await prisma.evidenceEvent.findMany({ where: { tenantId }, orderBy: { createdAt: 'asc' } });
+  const evByOpp = new Map<string, any[]>();
+  for (const e of evidences) {
+    const arr = evByOpp.get(e.opportunityId) ?? [];
+    arr.push({ id: e.id, accountId: e.accountId, opportunityId: e.opportunityId, personId: e.personId, signalKey: e.signalKey, direction: e.direction, tier: e.tier, rawContent: e.rawContent, occurredAt: e.occurredAt });
+    evByOpp.set(e.opportunityId, arr);
+  }
 
   return {
     accounts: accounts.map((a) => ({
@@ -140,6 +148,7 @@ export async function assembleState(tenantId: string) {
         ucvs: o.ucvs.map((u) => ({ id: u.id, targetBiId: u.targetBiId, description: u.description, competitorCannot: u.competitorCannot, status: u.status })),
         memberScoped: o.memberScoped,
         memberIds: o.members.map((m) => m.personId),
+        evidenceEvents: evByOpp.get(o.id) ?? [],
         version: o.version,
       })),
     })),

@@ -359,6 +359,20 @@ export async function applyAction(tenantId: string, action: any): Promise<void> 
       await prisma.strategyResource.deleteMany({ where: { id: action.resourceId, tenantId } });
       return;
 
+    case 'ADD_EVIDENCE': {
+      await assertOpp(action.oppId);
+      const x = action.evidence;
+      await prisma.evidenceEvent.create({ data: {
+        id: x.id, tenantId, accountId: action.accId, opportunityId: action.oppId, personId: x.personId,
+        signalKey: x.signalKey, direction: x.direction ?? 0, tier: x.tier ?? 'mid',
+        rawContent: x.rawContent ?? '', occurredAt: x.occurredAt ?? '',
+      } });
+      return;
+    }
+    case 'DELETE_EVIDENCE':
+      await prisma.evidenceEvent.deleteMany({ where: { id: action.evidenceId, tenantId } });
+      return;
+
     default:
       throw new Error(`unknown action: ${t}`);
   }

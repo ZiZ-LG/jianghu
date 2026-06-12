@@ -415,3 +415,24 @@ model StrategyResource {
   @@index([accountId])
   @@index([opportunityId])
 }
+
+// 策略引擎 · 证据事件（E2）。每条证据 → 三态伪计数增量，喂局势分布。
+// E2 简化：录入即生效（录入者即审核者）；status/审核轨迹（pending_review）留 E2.5。
+// 不级联删除（审计资产）；signalKey 取自前端信号库常量（租户表化 SignalCatalog 留后续）。
+model EvidenceEvent {
+  id            String   @id // ev_xxx
+  tenantId      String
+  accountId     String   // 冗余存：照 PlanAction 按 accountId 挂载
+  opportunityId String
+  personId      String
+  signalKey     String   // intro_referral / spec_alignment ...
+  direction     Int      @default(0)  // +1 利好 / -1 不利（中性信号录入时人工定向）
+  tier          String   @default("mid") // weak | mid | strong
+  rawContent    String   @default("")    // 原文/纪要片段，可追溯
+  occurredAt    String   @default("")    // YYYY-MM-DD
+  createdBy     String   @default("")
+  createdAt     DateTime @default(now())
+
+  @@index([accountId])
+  @@index([opportunityId])
+}

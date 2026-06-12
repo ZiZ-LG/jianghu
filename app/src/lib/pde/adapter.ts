@@ -4,6 +4,7 @@ import type { Account, Opportunity, Sentiment, Confidence, PipelineStage } from 
 import type { ScoreBreakdown, Band741 } from '../g64111';
 import { personContributions } from '../g64111';
 import { computePde, type PdeInput, type PdeOutput, type Stance, type Clarity } from './core';
+import { evidenceAlpha } from './signals';
 
 // 六档支持度 → 三态概率质量比例（方向）。把握深度 confidence → 等效样本量 n₀。
 const DIR: Record<Sentiment, [number, number, number]> = {
@@ -18,11 +19,23 @@ export const DEFAULT_PDE_PARAMS = { lambda: 1.3, k: 4, s0: 0.15, competition: 1,
 
 const num = (v: unknown): number | undefined => (typeof v === 'number' && !Number.isNaN(v) ? v : undefined);
 
-/** 江湖领域 → PdeInput（仅评估有角色的非友商干系人；权重 = 贡献分 potential） */
+/** 每人已录证据 → 累积三态伪计数增量（E2，喂分布演化） */
+function evidenceAlphaByPerson(opp: Opportunity): Map<string, [number, number, number]> {
+  const m = new Map<string, [number, number, number]>();
+  for (const ev of opp.evidenceEvents ?? []) {
+    const d = evidenceAlpha(ev.signalKey, ev.direction, ev.tier);
+    const cur = m.get(ev.personId) ?? [0, 0, 0];
+    m.set(ev.personId, [cur[0] + d[0], cur[1] + d[1], cur[2] + d[2]]);
+  }
+  return m;
+}
+
+/** 江湖领域 → PdeInput（仅评估有角色的非友商干系人；权重 = 贡献分 potential；叠加已录证据 Δα） */
 export function buildPdeInput(account: Account, opp: Opportunity, breakdown: ScoreBreakdown): PdeInput {
   void breakdown; // 预留：E2 联动缺口
   const contrib = personContributions(account, opp);
   const personById = new Map(account.persons.map((p) => [p.id, p]));
+  const evAlpha = evidenceAlphaByPerson(opp);
 
   const stakeholders = opp.roles
     .map((r) => {
@@ -31,9 +44,11 @@ export function buildPdeInput(account: Account, opp: Opportunity, breakdown: Sco
       const dir = DIR[r.sentiment];
       const n0 = SAMPLE[r.confidence];
       const c = contrib.get(r.personId);
+      const ev = evAlpha.get(r.personId) ?? [0, 0, 0];
       return {
         id: r.personId,
-        alpha: [dir[0] * n0, dir[1] * n0, dir[2] * n0] as [number, number, number],
+        // 基线（sentiment×confidence 派生）+ 已录证据 Δα → 分布随证据演化
+        alpha: [dir[0] * n0 + ev[0], dir[1] * n0 + ev[1], dir[2] * n0 + ev[2]] as [number, number, number],
         weight: Math.max(0.5, c?.potential ?? 1),
       };
     })
@@ -96,6 +111,14 @@ function jointReading(band: Band741, stance: Stance): string {
   return `${lead}，${tail[stance]}`;
 }
 
+/** 支持度变更提案（E2）：证据让分布主导方向背离人审 sentiment 时生成；人审采纳才改 OppRole（守铁律②） */
+export interface StanceShift {
+  personId: string;
+  name: string;
+  fromSentiment: Sentiment;
+  toSentiment: Sentiment;     // 建议值（粗粒度：plus / minus / neutral）
+  reason: string;
+}
 export interface JianghuPdeResult extends PdeOutput {
   stanceLabel: string;
   stanceTone: 'success' | 'info' | 'warning' | 'danger';
@@ -103,9 +126,38 @@ export interface JianghuPdeResult extends PdeOutput {
   jointReading: string;
   confidenceText: string;     // 赢面旁的把握度小字
   leverageNamed: { id: string; name: string; score: number }[];
+  stanceShifts: StanceShift[]; // 证据驱动的支持度变更提案
 }
 
-/** 江湖入口：领域对象 → 量化结果 + G64111 文案 */
+// 人审 sentiment 的「方向」：+1 支持 / 0 中立 / -1 反对
+const SENT_DIR: Record<Sentiment, number> = { star: 1, plus: 1, neutral: 0, unknown: 0, minus: -1, x: -1 };
+
+/** 检测分布与人审 sentiment 的背离 → 支持度变更提案 */
+function detectShifts(account: Account, opp: Opportunity, out: PdeOutput): StanceShift[] {
+  const hasEvidence = new Set((opp.evidenceEvents ?? []).map((e) => e.personId));
+  const sentByPerson = new Map(opp.roles.map((r) => [r.personId, r.sentiment]));
+  const nameById = new Map(account.persons.map((p) => [p.id, p.name]));
+  const shifts: StanceShift[] = [];
+  for (const s of out.stakeholders) {
+    if (!hasEvidence.has(s.id)) continue;          // 仅对有证据累积的人
+    if (s.n < 6) continue;                          // 样本不足不提（防过敏）
+    const sent = sentByPerson.get(s.id);
+    if (!sent) continue;
+    const domDir = s.pS > s.pO && s.pS > s.pN ? 1 : s.pO > s.pS && s.pO > s.pN ? -1 : 0;
+    const cur = SENT_DIR[sent];
+    if (domDir === cur || domDir === 0) continue;   // 方向一致 / 分布中立 → 不提
+    const conf = Math.max(s.pS, s.pO);
+    if (conf < 0.5) continue;                        // 主导方向需过半 → 不提（防过敏）
+    const to: Sentiment = domDir > 0 ? 'plus' : domDir < 0 ? 'minus' : 'neutral';
+    shifts.push({
+      personId: s.id, name: nameById.get(s.id) ?? '干系人', fromSentiment: sent, toSentiment: to,
+      reason: domDir > 0 ? '近期证据偏利好，分布已转向支持' : '近期证据偏不利，分布已转向反对',
+    });
+  }
+  return shifts;
+}
+
+/** 江湖入口：领域对象 → 量化结果 + G64111 文案 + 证据驱动的支持度变更提案 */
 export function analyzeDeal(account: Account, opp: Opportunity, breakdown: ScoreBreakdown): JianghuPdeResult {
   const out = computePde(buildPdeInput(account, opp, breakdown));
   const nameById = new Map(account.persons.map((p) => [p.id, p.name]));
@@ -118,5 +170,6 @@ export function analyzeDeal(account: Account, opp: Opportunity, breakdown: Score
     jointReading: jointReading(breakdown.band, out.stance),
     confidenceText: out.lowConfidence ? '把握偏低 · 样本少' : '把握中等',
     leverageNamed: out.leverage.map((l) => ({ id: l.id, name: nameById.get(l.id) ?? '未知', score: l.score })),
+    stanceShifts: detectShifts(account, opp, out),
   };
 }
