@@ -81,6 +81,12 @@ export function Auth({ onAuthed }: { onAuthed: (r: AuthResult) => void }) {
               <button className={mode === 'login' ? 'on' : ''} onClick={() => setMode('login')}>登录</button>
             </div>
 
+            {mode === 'register' && (
+              <div className="auth-join">
+                💡 要加入同事已有的工作区？<b>无需注册</b>——请工作区管理员在「👥 团队 → 邀请成员」中为你添加账号，拿到凭据后直接<a onClick={() => { setMode('login'); setErr(''); }}>登录</a>即可。注册会创建一个全新的独立工作区。
+              </div>
+            )}
+
             <div className="method-toggle">
               <button className={method === 'phone' ? 'on' : ''} onClick={() => setMethod('phone')}>📱 手机号</button>
               <button className={method === 'email' ? 'on' : ''} onClick={() => setMethod('email')}>✉️ 邮箱</button>

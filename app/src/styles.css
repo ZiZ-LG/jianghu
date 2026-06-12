@@ -1089,3 +1089,8 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 .orient-gate h3 { margin: 0; font-size: 18px; font-weight: 800; color: var(--ink); }
 .orient-gate p { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.7; max-width: 280px; }
 .orient-skip { border: none; background: none; color: var(--faint); font-size: 12px; cursor: pointer; margin-top: 6px; text-decoration: underline; }
+
+/* ── 注册页「加入已有工作区」引导（防误开孤岛工作区）── */
+.auth-join { font-size: 12px; line-height: 1.7; color: var(--ink-2); background: var(--accent-soft); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; }
+.auth-join b { color: var(--ink); }
+.auth-join a { color: var(--accent); cursor: pointer; text-decoration: underline; margin: 0 2px; }
