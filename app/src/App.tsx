@@ -10,12 +10,10 @@ import { CustomerHub } from './components/CustomerHub';
 import { Sidebar } from './components/Sidebar';
 import { LayerTabs } from './components/LayerTabs';
 import { Canvas } from './components/Canvas';
-import { ViewTabs, type CustomerView } from './components/ViewTabs';
-import { DealPlanner } from './components/DealPlanner';
-import { StrategySandbox } from './components/StrategySandbox';
+import { type CustomerView } from './components/ViewTabs';
+import { DeliberationDock } from './components/DeliberationDock';
 import { DetailDrawer } from './components/DetailDrawer';
 import { EdgeDrawer } from './components/EdgeDrawer';
-import { WinTendencyPanel } from './components/WinTendencyPanel';
 import { OpportunityForm } from './components/OpportunityForm';
 import { CustomerProfile } from './components/CustomerProfile';
 import { IntelCapture } from './components/IntelCapture';
@@ -62,15 +60,13 @@ export default function App() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [mcpAccessOpen, setMcpAccessOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistentState('jianghu.sidebarCollapsed', false);
-  const [winCollapsed, setWinCollapsed] = usePersistentState('jianghu.winCollapsed', false);
-  const [view, setView] = usePersistentState<CustomerView>('jianghu.customerView', 'wall'); // 客户级镜头：关系地图 / 商机策划
+  const [view, setView] = usePersistentState<CustomerView>('jianghu.customerView', 'wall'); // 客户级镜头：关系地图 / 行动计划
   const [theme, toggleTheme] = useTheme();
   // 画布选中模型：单击=选中(节点出锚点/连线出控制点)，双击=打开右侧栏
   const [drawerPersonId, setDrawerPersonId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [drawerEdgeId, setDrawerEdgeId] = useState<string | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [winMobileCollapsed, setWinMobileCollapsed] = usePersistentState('jianghu.winMobileCollapsed', true);
   const [immersive, setImmersive] = useState(false);
   const { isMobile, isLandscape } = useViewport();
 
@@ -247,6 +243,8 @@ export default function App() {
   const openEdge = (id: string) => { setDrawerPersonId(null); setDrawerEdgeId(id); };
   // 切客户/商机时清空一切选中
   useEffect(() => { setSelectedId(null); setSelectedEdgeId(null); setDrawerPersonId(null); setDrawerEdgeId(null); }, [accId, oppId]);
+  // 策略沙盘并入地图推演坞、行动计划网格退役：旧持久态（sandbox/planner）一律归一到关系地图
+  useEffect(() => { if (view !== 'wall') setView('wall'); }, [view, setView]);
 
   const addPersonAt = (x: number, y: number): string => {
     if (!account) return '';
@@ -440,7 +438,6 @@ export default function App() {
           <>
             {view === 'wall' && !immersive && (
               <div className="module-top wall-top">
-                <ViewTabs view={view} onChange={setView} />
                 <span className="mt-account">{account.name}</span>
                 <span className="mt-name">{opp.name}</span>
                 {!isMobile && <LayerTabs layer={layer} onChange={setLayer} />}
@@ -449,7 +446,8 @@ export default function App() {
                   <button className="btn ghost xs" onClick={() => setOppFormOpen(true)}>编辑商机</button>
                   <button className="btn ghost xs" onClick={() => setProfileOpen(true)}>📇 客户档案</button>
                   <button className="btn ghost xs" onClick={() => setEnrichOpen(true)}>🔍 搜索情报</button>
-                  <button className="btn ghost xs" onClick={() => setSuggestOpen(true)}>🔮 荐关系{suggestions.length + personSuggs.length > 0 ? ` (${suggestions.length + personSuggs.length})` : ''}</button>
+                  <button className="btn ghost xs" onClick={() => setSuggestOpen(true)}>📥 收件箱{suggestions.length + personSuggs.length > 0 ? ` (${suggestions.length + personSuggs.length})` : ''}</button>
+                  <span className="mt-heartbeat" title="AI 后台持续监测：荐关系 / 局势 / 缺口">● 监测中</span>
                   <button className="btn ghost xs" onClick={() => setReportOpen(true)}>📊 报表</button>
                   <button className="btn ghost xs" onClick={() => setMcpAccessOpen(true)}>🔌 接入 AI</button>
                   <button className="btn ghost xs" onClick={() => setHelpOpen(true)}>❓ 帮助</button>
@@ -464,7 +462,7 @@ export default function App() {
                     { label: '✏️ 编辑商机', onClick: () => setOppFormOpen(true) },
                     { label: '📇 客户档案', onClick: () => setProfileOpen(true) },
                     { label: '🔍 搜索情报', onClick: () => setEnrichOpen(true) },
-                    { label: '🔮 荐关系', badge: suggestions.length + personSuggs.length > 0 ? String(suggestions.length + personSuggs.length) : undefined, onClick: () => setSuggestOpen(true) },
+                    { label: '📥 收件箱', badge: suggestions.length + personSuggs.length > 0 ? String(suggestions.length + personSuggs.length) : undefined, onClick: () => setSuggestOpen(true) },
                     { label: '📊 报表', onClick: () => setReportOpen(true) },
                     { label: '🔌 接入 AI', onClick: () => setMcpAccessOpen(true) },
                     { label: '❓ 帮助', onClick: () => setHelpOpen(true) },
@@ -473,7 +471,6 @@ export default function App() {
                 <button className="theme-toggle mt-theme" onClick={toggleTheme} title={theme === 'dark' ? '切换到白天模式' : '切换到黑夜模式'}>{theme === 'dark' ? '☀️' : '🌙'}</button>
               </div>
             )}
-            {view === 'wall' ? (
             <>
             <Canvas account={account} opp={opp} layer={layer}
               selectedId={selectedId} selectedEdgeId={selectedEdgeId}
@@ -486,27 +483,10 @@ export default function App() {
               immersive={immersive} onToggleImmersive={toggleImmersive} secondTapOpens={true}
               suggestions={suggestions} />
             {!immersive && breakdown && (
-              (isMobile ? winMobileCollapsed : winCollapsed) ? (
-                <button className="win-fab" onClick={() => (isMobile ? setWinMobileCollapsed(false) : setWinCollapsed(false))} title="展开趋赢力" aria-label="展开趋赢力">
-                  <span className="wf-arr">⌃</span>
-                  <span className="wf-pct" style={{ color: breakdown.total < 0 ? '#f87171' : undefined }}>{Math.round(breakdown.percent * 100)}%</span>
-                  <span className="wf-label">趋赢力</span>
-                </button>
-              ) : (
-                <WinTendencyPanel breakdown={breakdown} collapsed={false} grabber
-                  onToggle={() => (isMobile ? setWinMobileCollapsed(true) : setWinCollapsed(true))} />
-              )
+              <DeliberationDock account={account} opp={opp} breakdown={breakdown} dispatch={act}
+                selectedPersonId={selectedId} onSelectPerson={selectPerson} />
             )}
             </>
-            ) : view === 'sandbox' ? (
-              breakdown ? (
-                <StrategySandbox account={account} opp={opp} breakdown={breakdown} dispatch={act}
-                  view={view} onChangeView={setView} onOpenConsole={() => setConsoleOpen(true)}
-                  theme={theme} onToggleTheme={toggleTheme} onSelectOpp={setOppId} />
-              ) : null
-            ) : (
-              <DealPlanner account={account} dispatch={act} view={view} onChangeView={setView} theme={theme} onToggleTheme={toggleTheme} />
-            )}
           </>
         ) : (
           <div className="no-opp">

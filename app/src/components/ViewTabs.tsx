@@ -1,9 +1,9 @@
-// 客户级「镜头」切换：关系地图 → 策略沙盘 → 商机策划（商机推进三段式）。与关系地图内 LayerTabs(L1-L4) 切「层」区分。
+// 客户级「镜头」切换：关系地图 ↔ 行动计划。策略沙盘已并入关系地图底部「推演坞」，不再是独立镜头。
+// 'sandbox' 保留在类型里仅为兼容旧持久态（App 会归一到 'wall'）。与关系地图内 LayerTabs(L1-L4) 切「层」区分。
 export type CustomerView = 'wall' | 'sandbox' | 'planner';
 
 const VIEWS: { id: CustomerView; icon: string; label: string }[] = [
   { id: 'wall', icon: '🗺️', label: '关系地图' },
-  { id: 'sandbox', icon: '♟️', label: '策略沙盘' },
   { id: 'planner', icon: '📅', label: '行动计划' },
 ];
 
