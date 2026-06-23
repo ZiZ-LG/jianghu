@@ -1,4 +1,3 @@
-import { Fragment } from 'react';
 import type { Layer } from '../types';
 
 const TABS: { id: Layer; label: string; sub: string }[] = [
@@ -8,16 +7,16 @@ const TABS: { id: Layer; label: string; sub: string }[] = [
   { id: 'L4', label: 'L4', sub: '战略本质' },
 ];
 
-export function LayerTabs({ layer, onChange }: { layer: Layer; onChange: (l: Layer) => void }) {
+// 关系层级 = 点亮/熄灭多选（可层叠并显，而非单选只看一层）。亮着的层的连线一并显示在画布。
+export function LayerTabs({ visible, onToggle }: { visible: Set<Layer>; onToggle: (l: Layer) => void }) {
   return (
-    <div className="topbar">
-      {TABS.map((t, i) => (
-        <Fragment key={t.id}>
-          {i > 0 && <span className="tab-sep" aria-hidden>›</span>}
-          <button className={`tab${layer === t.id ? ' active' : ''}`} onClick={() => onChange(t.id)}>
-            {t.label} <small>{t.sub}</small>
-          </button>
-        </Fragment>
+    <div className="topbar layer-toggles">
+      {TABS.map((t) => (
+        <button key={t.id} className={`tab lay-toggle${visible.has(t.id) ? ' on' : ''}`}
+          onClick={() => onToggle(t.id)} aria-pressed={visible.has(t.id)}
+          title={`${visible.has(t.id) ? '熄灭' : '点亮'} ${t.label} ${t.sub}`}>
+          {t.label} <small>{t.sub}</small>
+        </button>
       ))}
     </div>
   );

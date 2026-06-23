@@ -22,9 +22,7 @@ import { nextFreeSlot } from './lib/layout';
 import { PersonForm } from './components/PersonForm';
 import { TeamBilling } from './components/TeamBilling';
 import { AiSettings } from './components/AiSettings';
-import { StrategyConsole } from './components/StrategyConsole';
 import { SuggestionPanel } from './components/SuggestionPanel';
-import { EnrichPanel } from './components/EnrichPanel';
 import { ReportPanel } from './components/ReportPanel';
 import { HelpManual } from './components/HelpManual';
 import { McpAccess } from './components/McpAccess';
@@ -42,7 +40,8 @@ export default function App() {
   const [accId, setAccId] = useState<string | null>(null);
   const [oppId, setOppId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [layer, setLayer] = useState<Layer>('L1');
+  const [visibleLayers, setVisibleLayers] = useState<Set<Layer>>(() => new Set<Layer>(['L1'])); // 关系层级=点亮/熄灭多选(可层叠)
+  const toggleLayer = (l: Layer) => setVisibleLayers((s) => { const n = new Set(s); n.has(l) ? n.delete(l) : n.add(l); if (n.size === 0) n.add(l); return n; });
   const [oppFormOpen, setOppFormOpen] = useState(false);
   const [personFormOpen, setPersonFormOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -50,12 +49,10 @@ export default function App() {
   const [newOppOpen, setNewOppOpen] = useState(false);
   const [teamOpen, setTeamOpen] = useState(false);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
-  const [consoleOpen, setConsoleOpen] = useState(false);
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [personSuggs, setPersonSuggs] = useState<PersonSuggestion[]>([]);
   const [generating, setGenerating] = useState(false);
-  const [enrichOpen, setEnrichOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [mcpAccessOpen, setMcpAccessOpen] = useState(false);
@@ -193,12 +190,12 @@ export default function App() {
 
   const openAccount = (id: string) => {
     const a = state.accounts.find((x) => x.id === id);
-    setAccId(id); setOppId(a?.opportunities[0]?.id ?? null); setSelectedId(null); setLayer('L1');
+    setAccId(id); setOppId(a?.opportunities[0]?.id ?? null); setSelectedId(null); setVisibleLayers(new Set(['L1']));
   };
   const createAccount = (name: string, ctype: CustomerType) => {
     const a = newAccount(name, ctype);
     act({ type: 'ADD_ACCOUNT', account: a });
-    setAccId(a.id); setOppId(null); setSelectedId(null); setLayer('L1');
+    setAccId(a.id); setOppId(null); setSelectedId(null); setVisibleLayers(new Set(['L1']));
   };
   const loadDemo = async () => {
     setSyncErr('');
@@ -208,7 +205,7 @@ export default function App() {
       const st = await api.getState();
       dispatch({ type: 'HYDRATE', accounts: st.accounts });
       const added = st.accounts.find((a) => !prev.has(a.id)) ?? st.accounts[st.accounts.length - 1];
-      if (added) { setAccId(added.id); setOppId(added.opportunities[0]?.id ?? null); setSelectedId(null); setLayer('L1'); }
+      if (added) { setAccId(added.id); setOppId(added.opportunities[0]?.id ?? null); setSelectedId(null); setVisibleLayers(new Set(['L1'])); }
     } catch (e: any) { setSyncErr('载入示例失败：' + e.message); }
   };
   const addOpp = () => { if (account) setNewOppOpen(true); };
@@ -218,7 +215,7 @@ export default function App() {
     try {
       const { opportunityId } = await api.cloneOpportunity({ accountId: account.id, ...params });
       const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts });
-      setOppId(opportunityId); setSelectedId(null); setLayer('L1');
+      setOppId(opportunityId); setSelectedId(null); setVisibleLayers(new Set(['L1']));
     } catch (e: any) { setSyncErr('新建商机失败：' + e.message); }
   };
   const deleteOpp = (id: string) => {
@@ -255,7 +252,7 @@ export default function App() {
     return p.id;
   };
   const makeEdge = (source: string, target: string): Edge => ({
-    id: uid('e'), source, target, layer, label: '', color: '#94a3b8', style: 'solid', directed: true, origin: 'manual',
+    id: uid('e'), source, target, layer: [...visibleLayers][0] ?? 'L1', label: '', color: '#94a3b8', style: 'solid', directed: true, origin: 'manual',
   });
   const connectNodes = (source: string, target: string) => {
     if (!account || !opp || source === target) return;
@@ -338,21 +335,6 @@ export default function App() {
     catch (e: any) { setSyncErr('忽略失败：' + e.message); }
   };
 
-  // ── 企查查自动建图：导入发现的关键人为节点（带溯源日志，待验证）──
-  const importPersons = (persons: { name: string; title: string; source: string }[]) => {
-    if (!account) return;
-    const occupied = account.persons.filter((p) => !p.isCompetitor).map((p) => ({ x: p.x, y: p.y }));
-    const today = new Date().toISOString().slice(0, 10);
-    const label = (src: string) => (src === 'qcc' ? '企查查导入' : src === 'web' ? '🔍 搜索引擎·待核实' : src === 'ai' ? 'AI 推测·待核实' : '角色待补齐');
-    for (const dp of persons) {
-      const { x, y } = nextFreeSlot(occupied); occupied.push({ x, y });
-      const p = newPerson(dp.name, dp.title, x, y, false);
-      p.logs = [{ date: today, content: `📥 ${label(dp.source)}（${account.name}）`, visibility: 'team' }];
-      act({ type: 'ADD_PERSON', accId: account.id, person: p });
-      if (opp?.memberScoped) act({ type: 'ADD_OPP_MEMBER', accId: account.id, oppId: opp.id, personId: p.id });
-    }
-  };
-
   if (booting) return <div className="boot">加载中…</div>;
   if (!auth) return <Auth onAuthed={onAuthed} />;
 
@@ -380,7 +362,7 @@ export default function App() {
                 const st = await api.getState();
                 dispatch({ type: 'HYDRATE', accounts: st.accounts });
                 const a = st.accounts.find((x) => x.id === id);
-                setAccId(id); setOppId(a?.opportunities[0]?.id ?? null); setSelectedId(null); setLayer('L1');
+                setAccId(id); setOppId(a?.opportunities[0]?.id ?? null); setSelectedId(null); setVisibleLayers(new Set(['L1']));
               } catch { setAccId(id); }
             }}
           />
@@ -403,12 +385,12 @@ export default function App() {
     : null;
   const sidebarEl = (
     <Sidebar
-      account={account} currentOppId={oppId} onSelectOpp={(id) => { setOppId(id); selectPerson(null); setMobileNavOpen(false); }}
-      selectedPersonId={selectedId} onSelectPerson={(id) => { openPerson(id); setMobileNavOpen(false); }}
-      onBack={() => { setAccId(null); selectPerson(null); }} onAddOpp={addOpp} onDeleteOpp={deleteOpp}
-      onAddPerson={() => setPersonFormOpen(true)} roleByPerson={roleByPerson}
+      account={account} opp={opp} breakdown={breakdown}
+      onSelectOpp={(id) => { setOppId(id); selectPerson(null); setMobileNavOpen(false); }}
+      onAddOpp={addOpp}
+      onBack={() => { setAccId(null); selectPerson(null); }}
       onCollapse={() => (isMobile ? setMobileNavOpen(false) : setSidebarCollapsed(true))}
-      theme={theme} onToggleTheme={toggleTheme}
+      onChatDone={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); } catch { /* 静默：保存已成功，仅刷新失败 */ } }}
     />
   );
 
@@ -438,33 +420,23 @@ export default function App() {
           <>
             {view === 'wall' && !immersive && (
               <div className="module-top wall-top">
-                <span className="mt-account">{account.name}</span>
-                <span className="mt-name">{opp.name}</span>
-                {!isMobile && <LayerTabs layer={layer} onChange={setLayer} />}
+                {!isMobile && <LayerTabs visible={visibleLayers} onToggle={toggleLayer} />}
                 {!isMobile && (<>
-                  <button className="btn cta xs" onClick={() => setIntelOpen(true)}>🎙️ 录入情报</button>
                   <button className="btn ghost xs" onClick={() => setOppFormOpen(true)}>编辑商机</button>
                   <button className="btn ghost xs" onClick={() => setProfileOpen(true)}>📇 客户档案</button>
-                  <button className="btn ghost xs" onClick={() => setEnrichOpen(true)}>🔍 搜索情报</button>
                   <button className="btn ghost xs" onClick={() => setSuggestOpen(true)}>📥 收件箱{suggestions.length + personSuggs.length > 0 ? ` (${suggestions.length + personSuggs.length})` : ''}</button>
                   <span className="mt-heartbeat" title="AI 后台持续监测：荐关系 / 局势 / 缺口">● 监测中</span>
                   <button className="btn ghost xs" onClick={() => setReportOpen(true)}>📊 报表</button>
-                  <button className="btn ghost xs" onClick={() => setMcpAccessOpen(true)}>🔌 接入 AI</button>
                   <button className="btn ghost xs" onClick={() => setHelpOpen(true)}>❓ 帮助</button>
-                  <button className="btn primary xs" onClick={() => setConsoleOpen(true)}>🧠 AI 推演</button>
                 </>)}
                 {isMobile && (<>
-                  <OverflowMenu align="left" label={`▾ ${LAYER_LABEL[layer]}`}
-                    items={(['L1', 'L2', 'L3', 'L4'] as Layer[]).map((l) => ({ label: LAYER_LABEL[l], active: l === layer, onClick: () => setLayer(l) }))} />
+                  <OverflowMenu align="left" label={`▾ 层级 (${visibleLayers.size})`}
+                    items={(['L1', 'L2', 'L3', 'L4'] as Layer[]).map((l) => ({ label: LAYER_LABEL[l], active: visibleLayers.has(l), onClick: () => toggleLayer(l) }))} />
                   <OverflowMenu align="left" label="⋯ 操作" items={[
-                    { label: '🧠 AI 推演', primary: true, onClick: () => setConsoleOpen(true) },
-                    { label: '🎙️ 录入情报', primary: true, onClick: () => setIntelOpen(true) },
                     { label: '✏️ 编辑商机', onClick: () => setOppFormOpen(true) },
                     { label: '📇 客户档案', onClick: () => setProfileOpen(true) },
-                    { label: '🔍 搜索情报', onClick: () => setEnrichOpen(true) },
                     { label: '📥 收件箱', badge: suggestions.length + personSuggs.length > 0 ? String(suggestions.length + personSuggs.length) : undefined, onClick: () => setSuggestOpen(true) },
                     { label: '📊 报表', onClick: () => setReportOpen(true) },
-                    { label: '🔌 接入 AI', onClick: () => setMcpAccessOpen(true) },
                     { label: '❓ 帮助', onClick: () => setHelpOpen(true) },
                   ]} />
                 </>)}
@@ -472,7 +444,7 @@ export default function App() {
               </div>
             )}
             <>
-            <Canvas account={account} opp={opp} layer={layer}
+            <Canvas account={account} opp={opp} visibleLayers={visibleLayers}
               selectedId={selectedId} selectedEdgeId={selectedEdgeId}
               onSelectPerson={selectPerson} onSelectEdge={selectEdge}
               onOpenPerson={openPerson} onOpenEdge={openEdge}
@@ -529,14 +501,7 @@ export default function App() {
       )}
       {personFormOpen && <PersonForm onCreate={addPerson} onClose={() => setPersonFormOpen(false)} />}
       {teamOpen && <TeamBilling role={auth.user.role} onClose={() => setTeamOpen(false)} />}
-      {consoleOpen && opp && breakdown && (
-        <StrategyConsole account={account} opp={opp} breakdown={breakdown}
-          onClose={() => setConsoleOpen(false)} onOpenSettings={() => setAiSettingsOpen(true)} />
-      )}
       {aiSettingsOpen && <AiSettings role={auth.user.role} onClose={() => setAiSettingsOpen(false)} />}
-      {enrichOpen && account && (
-        <EnrichPanel accountName={account.name} role={auth.user.role} onImport={importPersons} onClose={() => setEnrichOpen(false)} />
-      )}
       {reportOpen && opp && (
         <ReportPanel account={account} opp={opp} onClose={() => setReportOpen(false)} />
       )}

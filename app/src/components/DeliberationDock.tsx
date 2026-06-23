@@ -10,7 +10,6 @@ import { newStrategyCard, newStrategyRisk, newStrategyResource, newPlanAction, n
 import type { ScoreBreakdown, ItemKey, Band741 } from '../lib/g64111';
 import { ITEM_MAX, ITEM_LABEL, ITEM_GROUP, BAND_LABEL, BAND_STRATEGY } from '../lib/g64111';
 import { EngineBar } from './EngineBar';
-import { WinTendencyPanel } from './WinTendencyPanel';
 import { usePersistentState } from '../ui';
 import { api } from '../api';
 import { buildAiContext } from '../aiContext';
@@ -469,12 +468,6 @@ export function DeliberationDock({
             </div>
           )}
 
-          {/* 趋赢力明细：全展开时折入坞内（替代原底部 WinTendencyPanel） */}
-          {height === 'full' && (
-            <div className="dock-wintendency" onClick={(e) => e.stopPropagation()}>
-              <WinTendencyPanel breakdown={breakdown} collapsed={false} />
-            </div>
-          )}
         </div>
       )}
 

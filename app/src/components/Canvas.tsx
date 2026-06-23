@@ -74,7 +74,7 @@ type Gesture =
   | { kind: 'pinch' };
 
 export function Canvas({
-  account, opp, layer, selectedId, selectedEdgeId,
+  account, opp, visibleLayers, selectedId, selectedEdgeId,
   onSelectPerson, onSelectEdge, onOpenPerson, onOpenEdge,
   onMovePerson, onAddPersonAt, onAddConnectedNode, onConnect,
   onUpdateEdge, onDeleteEdge, onUpdatePerson, onDeletePerson, suggestions = [],
@@ -82,7 +82,7 @@ export function Canvas({
 }: {
   account: Account;
   opp: Opportunity;
-  layer: Layer;
+  visibleLayers: Set<Layer>;
   selectedId: string | null;
   selectedEdgeId: string | null;
   onSelectPerson: (id: string | null) => void;
@@ -136,8 +136,8 @@ export function Canvas({
   const visibleIds = useMemo(() => new Set(visible.map((p) => p.id)), [visible]);
 
   const edges: Edge[] = useMemo(
-    () => [...account.baseEdges, ...opp.edges].filter((e) => e.layer === layer && visibleIds.has(e.source) && visibleIds.has(e.target)),
-    [account.baseEdges, opp.edges, layer, visibleIds],
+    () => [...account.baseEdges, ...opp.edges].filter((e) => visibleLayers.has(e.layer) && visibleIds.has(e.source) && visibleIds.has(e.target)),
+    [account.baseEdges, opp.edges, visibleLayers, visibleIds],
   );
   const personById = useMemo(() => {
     const m = new Map<string, Person>();
@@ -166,7 +166,7 @@ export function Canvas({
     if (editing && editInputRef.current) { editInputRef.current.focus(); editInputRef.current.select(); }
   }, [editing?.id]);
   // 切层 / 商机 / 客户 → 清空框选多选
-  useEffect(() => { setSelectedIds(new Set()); setMarquee(null); }, [layer, opp.id, account.id]);
+  useEffect(() => { setSelectedIds(new Set()); setMarquee(null); }, [visibleLayers, opp.id, account.id]);
 
   const commitEdit = () => {
     if (!editing) return;
