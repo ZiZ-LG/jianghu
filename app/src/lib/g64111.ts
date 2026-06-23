@@ -97,7 +97,7 @@ export interface ScoringInput {
 // ───────────────────────── 单项计分函数（规格 §3-§5） ─────────────────────────
 
 export function scoreC1(i: ScoringInput, profile = DEFAULT_PROFILE): number {
-  const anyRoleMissing = (['A', 'D', 'U', 'TB', 'R'] as Role[]).some((r) => !i.rolesPresent[r]);
+  const anyRoleMissing = (['A', 'D', 'U', 'R', 'C'] as Role[]).some((r) => !i.rolesPresent[r]);
   const roleScore = Math.max(0, 6 - (anyRoleMissing ? 3 : 0) - i.nonAUnknownCount);
   const procureScore = (i.procurementTypesIdentified / 3) * 1;
   const adur = Math.min(7, roleScore + procureScore);
@@ -188,7 +188,7 @@ export function buildScoringInput(account: Account, opp: Opportunity): ScoringIn
   const roles = opp.roles;
   const personById = new Map(account.persons.map((p) => [p.id, p]));
 
-  const rolesPresent = { A: false, D: false, U: false, TB: false, R: false } as Record<Role, boolean>;
+  const rolesPresent = { A: false, D: false, U: false, R: false, C: false } as Record<Role, boolean>;
   for (const r of roles) rolesPresent[r.role] = true;
 
   const nonAUnknownCount = roles.filter((r) => r.role !== 'A' && r.sentiment === 'unknown').length;

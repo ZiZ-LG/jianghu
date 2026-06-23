@@ -14,7 +14,7 @@ import { applyAction } from './mutate.js';
 import { nextFreeSlot } from './layout.js';
 
 const PIPELINE = ['线索', '需求引导', '方案认可', '客户立项', '招投标', '合同谈判', '合同双签'];
-const VALID_ROLE = ['A', 'D', 'U', 'TB', 'R'];
+const VALID_ROLE = ['A', 'D', 'U', 'R', 'C'];
 const VALID_SENT = ['star', 'plus', 'neutral', 'unknown', 'minus', 'x'];
 const VALID_UCV_STATUS = ['建议', '获认可', '已解决'];
 
@@ -38,16 +38,16 @@ const EXTRACT_SYSTEM = `你是销售情报结构化助手，精通 G64111 销售
 - 凡是你"推测/猜测/根据常识补充"的项，必须标 "kind":"inferred"；销售明说的标 "kind":"explicit"。
 - 销售明说的人就建，没提到的人绝不凭空造。
 
-【术语】角色 A批准人 D拍板人 U使用者 TB技术选型/招采把关 R影响者/教练（竞争对手不是角色）。
+【术语】角色 A批准人 D拍板人 U使用者 R影响者/技术选型/招采把关 C教练（竞争对手不是角色）。
 支持度 star排他支持 plus明确支持 neutral中立 unknown未知 minus负面 x倒向对手。
 关系分层 L1组织架构 L2决策权力 L3情感阵营 L4战略本质。
 燃眉之急 BI=干系人最迫切的难题/压力；独特价值 UCV=我方能解决该 BI 而竞品给不了的差异化价值（必对应某条 BI）。
 
 【只输出 JSON】不要任何解释文字。结构：
 {
-  "account": {"name":"客户全称或简称","customerType":1或2或3,"region":"大区","kind":"explicit|inferred","evidence":"原话片段"} 或 null,
+  "account": {"name":"客户全称或简称","customerType":1或2或3或4,"region":"大区","kind":"explicit|inferred","evidence":"原话片段"} 或 null,
   "opportunity": {"name":"商机名","pipelineStage":"七阶段之一","competitor":"主要友商","kind":"...","evidence":"..."} 或 null,
-  "persons": [{"name":"姓名","title":"职务","orgLevel":1到4,"suggestedRole":"A|D|U|TB|R","suggestedSentiment":"star|plus|neutral|unknown|minus|x","kind":"explicit|inferred","confidence":0到1,"evidence":"原话"}],
+  "persons": [{"name":"姓名","title":"职务","orgLevel":1到4,"suggestedRole":"A|D|U|R|C","suggestedSentiment":"star|plus|neutral|unknown|minus|x","kind":"explicit|inferred","confidence":0到1,"evidence":"原话"}],
   "relationships": [{"source":"人名","target":"人名","layer":"L1|L2|L3|L4","label":"关系描述","kind":"...","confidence":0到1,"evidence":"..."}],
   "burningIssues": [{"person":"姓名","description":"燃眉之急","category":"类别","kind":"..."}],
   "ucvs": [{"person":"该价值针对谁的BI","biCategory":"对应BI的类别","description":"我方独特价值","competitorCannot":"竞品给不了什么","status":"建议|获认可|已解决","kind":"explicit|inferred","evidence":"原话"}],

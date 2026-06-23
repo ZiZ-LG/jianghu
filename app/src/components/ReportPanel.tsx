@@ -63,7 +63,7 @@ export function ReportPanel({
     if (fRole !== 'all') rs = rs.filter((r) => r.role === fRole);
     if (fSentiment !== 'all') rs = rs.filter((r) => r.sentiment === fSentiment);
     if (onlyKeyInfluencer) rs = rs.filter((r) => r.isKeyInfluencer);
-    const ROLE_ORDER: Record<string, number> = { A: 0, D: 1, U: 2, TB: 3, R: 4 };
+    const ROLE_ORDER: Record<string, number> = { A: 0, D: 1, U: 2, R: 3, C: 4 };
     const sorters: Record<SortBy, (a: Row, b: Row) => number> = {
       name: (a, b) => a.name.localeCompare(b.name, 'zh'),
       completeness: (a, b) => b.completeness - a.completeness,
@@ -134,7 +134,7 @@ export function ReportPanel({
         <label className="rep-ctl"><span>角色筛选</span>
           <select value={fRole} onChange={(e) => setFRole(e.target.value as any)}>
             <option value="all">全部角色</option>
-            {(['A', 'D', 'U', 'TB', 'R'] as Role[]).map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
+            {(['A', 'D', 'U', 'R', 'C'] as Role[]).map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
           </select>
         </label>
         <label className="rep-ctl"><span>支持度筛选</span>

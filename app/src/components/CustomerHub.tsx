@@ -117,7 +117,7 @@ export function CustomerHub({
           <label className="fld">
             <span>客户类型</span>
             <select value={ctype} onChange={(e) => setCtype(Number(e.target.value) as CustomerType)}>
-              {([1, 2, 3] as CustomerType[]).map((t) => <option key={t} value={t}>{CUSTOMER_TYPE_LABEL[t]}</option>)}
+              {([1, 2, 3, 4] as CustomerType[]).map((t) => <option key={t} value={t}>{CUSTOMER_TYPE_LABEL[t]}</option>)}
             </select>
           </label>
         </Modal>

@@ -98,8 +98,8 @@ describe('personContributions · P1 / P2 规则', () => {
 
   it('P2：purchasing collude=+4 / agency verbal=+1，潜力按类型权重', () => {
     const opp = makeOpp([
-      role('p1', 'TB', 'neutral', { procurementType: 'purchasing', procurementStatus: 'collude' }),
-      role('p2', 'TB', 'neutral', { procurementType: 'agency', procurementStatus: 'verbal' }),
+      role('p1', 'R', 'neutral', { procurementType: 'purchasing', procurementStatus: 'collude' }),
+      role('p2', 'R', 'neutral', { procurementType: 'agency', procurementStatus: 'verbal' }),
     ]);
     const acc = makeAccount([person('p1'), person('p2')], opp);
     expect(part(get(acc, opp, 'p1'), 'P2')!.value).toBe(4);

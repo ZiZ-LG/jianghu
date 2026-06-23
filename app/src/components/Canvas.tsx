@@ -525,7 +525,7 @@ export function Canvas({
                             <rect x={-12} y={-8.5} width={24} height={17} rx={3} fill="none" stroke={ROLE_COLOR[role.role]} strokeWidth={1.5} />
                             <text textAnchor="middle" y={3.5} fontSize={10} fontWeight={700} fill={ROLE_COLOR[role.role]}>{role.role}</text>
                           </g>
-                          <text x={-48} y={-27.5} fontSize={9.5} fill="var(--node-text)" opacity={0.55}>{ROLE_LABEL[role.role]}{role.role === 'R' && p.coachLevel ? ` L${p.coachLevel}` : ''}</text>
+                          <text x={-48} y={-27.5} fontSize={9.5} fill="var(--node-text)" opacity={0.55}>{ROLE_LABEL[role.role]}{role.role === 'C' && p.coachLevel ? ` L${p.coachLevel}` : ''}</text>
                         </>
                       ) : (
                         <text x={-74} y={-27.5} fontSize={9.5} fill="var(--node-text)" opacity={0.45}>未指派角色</text>

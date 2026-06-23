@@ -1,7 +1,7 @@
 // 江湖 · 领域类型（对应 docs/产品设计方案.md §3 与 G64111-评分规格.md）
 
-/** 角色：A批准人 / D拍板人 / U使用者 / TB技术选型 / R影响者·教练（竞争对手不是角色） */
-export type Role = 'A' | 'D' | 'U' | 'TB' | 'R';
+/** 角色：A批准人 / D拍板人 / U使用者 / R影响者·技术把关 / C教练（竞争对手不是角色） */
+export type Role = 'A' | 'D' | 'U' | 'R' | 'C';
 
 /** 支持度符号：☆排他支持 / +明确支持 / =中立 / ?未知(不计分) / −负面 / x倒向对手 */
 export type Sentiment = 'star' | 'plus' | 'neutral' | 'unknown' | 'minus' | 'x';
@@ -12,8 +12,8 @@ export type Confidence = '共识' | '明确' | '推理' | '不清';
 /** 关系分层：L1组织架构 / L2决策权力 / L3情感阵营 / L4战略本质 */
 export type Layer = 'L1' | 'L2' | 'L3' | 'L4';
 
-/** 三类客户 */
-export type CustomerType = 1 | 2 | 3;
+/** 四类客户（数字能源 v1.1） */
+export type CustomerType = 1 | 2 | 3 | 4;
 
 /** 商机管线阶段（与 C4 介入阶段是两回事） */
 export type PipelineStage =
@@ -61,7 +61,7 @@ export interface Person {
   title: string;
   orgLevel: number;
   form: Form;
-  coachLevel?: number; // 仅 R：教练五级 1-5
+  coachLevel?: number; // 仅 C：教练五级 1-5
   logs: InteractionLog[];
   isCompetitor?: boolean; // 友商（不是角色，样式预设=深色，不可改色）
   color?: string; // 节点高亮色（手动样式，仅非友商可改；空=默认）
@@ -325,16 +325,16 @@ export interface Account {
   strategyResources?: StrategyResource[]; // 策略沙盘 · 轻量弹药
 }
 
-// 角色显示色（设计方案 §4.1，5 色含 TB）
+// 角色显示色（设计方案 §4.1，5 色 A/D/U/R/C）
 export const ROLE_COLOR: Record<Role, string> = {
   A: '#9333ea', // 紫 批准人
   D: '#dc2626', // 红 拍板人
   U: '#2563eb', // 蓝 使用者
-  TB: '#0891b2', // 青 技术选型
-  R: '#16a34a', // 绿 影响者/教练
+  R: '#0891b2', // 青 影响者·技术把关（承接原 TB 色）
+  C: '#16a34a', // 绿 教练（承接原 R 色）
 };
 export const ROLE_LABEL: Record<Role, string> = {
-  A: '批准人', D: '拍板人', U: '使用者', TB: '技术选型', R: '影响者/教练',
+  A: '批准人', D: '拍板人', U: '使用者', R: '影响者·技术把关', C: '教练',
 };
 
 // 支持度显示
@@ -354,7 +354,7 @@ export const LAYER_LABEL: Record<Layer, string> = {
 
 // 表单用常量
 export const CUSTOMER_TYPE_LABEL: Record<CustomerType, string> = {
-  1: '五大六小央企能源集团', 2: '央国企电力建设集团', 3: '地方/民营能源投资建设企业',
+  1: '央企发电集团（五大六小）', 2: '地方能源国企', 3: '分布式头部民企', 4: 'EPC总承包商',
 };
 export const PIPELINE_STAGES: PipelineStage[] = ['线索', '需求引导', '方案认可', '客户立项', '招投标', '合同谈判', '合同双签'];
 export const ENGAGE_STAGES: EngageStage[] = ['需求调研立项', '方案可研', '预算批复', '招标论证', '招采执行'];

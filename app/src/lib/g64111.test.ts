@@ -6,7 +6,7 @@ import {
 
 // 构造一个「满分要素齐全」的基准输入，再逐项扰动
 const base: ScoringInput = {
-  rolesPresent: { A: true, D: true, U: true, TB: true, R: true },
+  rolesPresent: { A: true, D: true, U: true, R: true, C: true },
   nonAUnknownCount: 0,
   procurementTypesIdentified: 3,
   dFamily7Filled: 7,
@@ -54,7 +54,7 @@ describe('C1（组织图 + D的FORM）', () => {
     expect(scoreC1(base)).toBe(10); // adur=min(7,6+1)=7, form=3
   });
   it('缺角色(-3) + 2个非A未知(-2) + 招采1/3 + 家庭5/7', () => {
-    const i = { ...base, rolesPresent: { ...base.rolesPresent, TB: false }, nonAUnknownCount: 2, procurementTypesIdentified: 1, dFamily7Filled: 5 };
+    const i = { ...base, rolesPresent: { ...base.rolesPresent, C: false }, nonAUnknownCount: 2, procurementTypesIdentified: 1, dFamily7Filled: 5 };
     // roleScore=max(0,6-3-2)=1, procure=1/3≈0.333, adur≈1.333, form=max(0,3-2)=1
     expect(scoreC1(i)).toBeCloseTo(1 + 1 / 3 + 1, 5);
   });
@@ -130,7 +130,7 @@ describe('scoreOpportunity（总分/百分比/带）', () => {
 
   it('趋赢力可为负（极端劣势）', () => {
     const i: ScoringInput = {
-      rolesPresent: { A: false, D: false, U: false, TB: false, R: false },
+      rolesPresent: { A: false, D: false, U: false, R: false, C: false },
       nonAUnknownCount: 0, procurementTypesIdentified: 0, dFamily7Filled: 0, dHasBI: false,
       c3KnownCount: 0, engageStage: '招采执行', c5KnownCount: 0, ucvStatus: 'none',
       p1PlusCount: 0, p1MinusCount: 5,

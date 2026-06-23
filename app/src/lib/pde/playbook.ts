@@ -21,7 +21,7 @@ export interface Playbook {
 }
 
 // 角色 → 主攻 gapItem（与 g64111 归因一致）
-const ROLE_GAP: Record<Role, string> = { D: 'P3', A: '1K', U: 'P1', TB: 'P1', R: 'P1' };
+const ROLE_GAP: Record<Role, string> = { D: 'P3', A: '1K', U: 'P1', R: 'P1', C: 'P1' };
 // gain 行动模板（{name} 占位）
 const GAIN_TMPL: Record<string, { t: string; scene: string }> = {
   P3: { t: '与{name}单独深谈，摸清燃眉之急与政绩诉求', scene: '带可上报的降本/样板数据，争取"密谋级"支持' },

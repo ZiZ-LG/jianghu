@@ -5,7 +5,7 @@
 
 // ───────────────────────── 领域类型（与组装态对齐的最小子集） ─────────────────────────
 
-export type Role = 'A' | 'D' | 'U' | 'TB' | 'R';
+export type Role = 'A' | 'D' | 'U' | 'R' | 'C';
 export type Sentiment = 'star' | 'plus' | 'neutral' | 'unknown' | 'minus' | 'x';
 export type Confidence = '共识' | '明确' | '推理' | '不清';
 export type EngageStage = '需求调研立项' | '方案可研' | '预算批复' | '招标论证' | '招采执行';
@@ -129,9 +129,9 @@ export function scoreFromState(account: SAccount, opp: SOpportunity): ScoreBreak
   const personById = new Map(account.persons.map((p) => [p.id, p]));
 
   // —— C1：ADUR 图分(满7) + D家庭FORM分(满3) ——
-  const rolesPresent: Record<Role, boolean> = { A: false, D: false, U: false, TB: false, R: false };
+  const rolesPresent: Record<Role, boolean> = { A: false, D: false, U: false, R: false, C: false };
   for (const r of roles) rolesPresent[r.role] = true;
-  const anyRoleMissing = (['A', 'D', 'U', 'TB', 'R'] as Role[]).some((r) => !rolesPresent[r]);
+  const anyRoleMissing = (['A', 'D', 'U', 'R', 'C'] as Role[]).some((r) => !rolesPresent[r]);
   const nonAUnknownCount = roles.filter((r) => r.role !== 'A' && r.sentiment === 'unknown').length;
   const roleScore = Math.max(0, 6 - (anyRoleMissing ? 3 : 0) - nonAUnknownCount);
   const procurementTypesIdentified = new Set(roles.filter((r) => r.procurementType).map((r) => r.procurementType)).size;

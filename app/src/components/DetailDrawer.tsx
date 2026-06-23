@@ -6,7 +6,7 @@ import {
 } from '../types';
 import { type Action, uid } from '../store';
 
-const ROLES: Role[] = ['A', 'D', 'U', 'TB', 'R'];
+const ROLES: Role[] = ['A', 'D', 'U', 'R', 'C'];
 const SENTIMENTS: Sentiment[] = ['star', 'plus', 'neutral', 'unknown', 'minus', 'x'];
 
 export function DetailDrawer({

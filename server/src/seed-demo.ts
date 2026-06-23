@@ -11,7 +11,7 @@ export async function createDemoForTenant(tenantId: string): Promise<void> {
   const today = new Date();
   const ymd = (off: number) => { const d = new Date(today); d.setDate(d.getDate() + off); return d.toISOString().slice(0, 10); };
 
-  await prisma.account.create({ data: { id: accId, tenantId, name: '西部电力建设集团（示例）', customerType: 2, unifiedCreditCode: '91510000XXXXXXXXXX' } });
+  await prisma.account.create({ data: { id: accId, tenantId, name: '西部电力建设集团（示例）', customerType: 4, unifiedCreditCode: '91510000XXXXXXXXXX' } });
 
   const persons = [
     { k: 'zhao', name: '赵建国', title: '集团分管副总', orgLevel: 1, x: 430, y: 90, form: { family: '独子在国外读研', occupation: '工程口出身，技术转管理', recreation: '书法、太极', moneyMotivation: '任内做出数字化标杆，安全着陆', family7: { 籍贯: '陕西', 年纪: '57', 毕业院校: '河海大学', 配偶: '同系统退休', 子女: '独子·留学', 父母: '老家高龄' } } },
@@ -47,7 +47,7 @@ export async function createDemoForTenant(tenantId: string): Promise<void> {
   ];
   // 先建商机（连线/角色等引用它，须先存在）
   await prisma.opportunity.create({ data: {
-    id: oppId, tenantId, accountId: accId, name: '西部风光储基地数字化管控平台', customerType: 2,
+    id: oppId, tenantId, accountId: accId, name: '西部风光储基地数字化管控平台', customerType: 4,
     pipelineStage: '客户立项', engageStage: '方案可研', changeMode: 'T',
     singleSalesGoal: '中标西部基地一体化管控平台并建成局级样板', customerBusinessGoal: '多个新能源EPC项目降本增效 + 投标数字化加分',
     buyingMotivation: '集团数字化转型考核 + 多项目亏损预警倒逼',
@@ -60,10 +60,10 @@ export async function createDemoForTenant(tenantId: string): Promise<void> {
 
   const roles: any[] = [
     ['zhao', 'A', 'plus', 2, '明确', false, null, null], ['qian', 'D', 'plus', 3, '明确', false, null, null],
-    ['sun', 'R', 'star', 5, '共识', true, null, null], ['li', 'U', 'plus', 3, '明确', false, 'ownerRep', 'collude'],
-    ['zhou', 'TB', 'neutral', null, '明确', false, null, null], ['zheng', 'U', 'plus', 2, '明确', false, null, null],
-    ['wang', 'R', 'neutral', null, '推理', false, null, null], ['wu', 'TB', 'x', -5, '明确', false, 'purchasing', 'none'],
-    ['agent', 'TB', 'neutral', null, '推理', false, 'agency', 'verbal'],
+    ['sun', 'C', 'star', 5, '共识', true, null, null], ['li', 'U', 'plus', 3, '明确', false, 'ownerRep', 'collude'],
+    ['zhou', 'R', 'neutral', null, '明确', false, null, null], ['zheng', 'U', 'plus', 2, '明确', false, null, null],
+    ['wang', 'C', 'neutral', null, '推理', false, null, null], ['wu', 'R', 'x', -5, '明确', false, 'purchasing', 'none'],
+    ['agent', 'R', 'neutral', null, '推理', false, 'agency', 'verbal'],
   ];
   await prisma.oppRole.createMany({ data: roles.map((r) => ({ tenantId, opportunityId: oppId, personId: id(r[0]), role: r[1], sentiment: r[2], sentimentValue: r[3], confidence: r[4], isKeyInfluencer: r[5], procurementType: r[6], procurementStatus: r[7] })) });
 

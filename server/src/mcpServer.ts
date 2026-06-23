@@ -96,7 +96,7 @@ const TOOL_DEFS = [
         evidence: { type: 'string', description: '依据/来源摘要（建议填写，便于人审）' },
         sourceUrl: { type: 'string', description: '可选：调研来源链接' },
         confidence: { type: 'number', description: '可选：置信度 0-1' },
-        suggestedRole: { type: 'string', description: '可选：建议 ADUR 角色 A/D/U/TB/R——采纳为正式干系人时一并落该商机的角色（需配合 opportunityId）' },
+        suggestedRole: { type: 'string', description: '可选：建议 ADURC 角色 A/D/U/R/C——采纳为正式干系人时一并落该商机的角色（需配合 opportunityId）' },
         suggestedSentiment: { type: 'string', description: '可选：建议支持度 star/plus/neutral/unknown/minus/x' },
       },
       required: ['accountId', 'name'],
@@ -153,7 +153,7 @@ const TOOL_DEFS = [
         externalRef: { type: 'string', description: '销售包 customer_id（幂等主锚）。与 unifiedCreditCode 至少提供一个' },
         unifiedCreditCode: { type: 'string', description: '统一社会信用代码 USCC（幂等副锚）。与 externalRef 至少提供一个' },
         name: { type: 'string', description: '客户全称（新建时必填）' },
-        customerType: { type: 'number', description: '客户类型 1/2/3（1=五大六小央企能源集团，2=央国企电力建设集团，3=地方/民营能源投资建设企业）' },
+        customerType: { type: 'number', description: '客户类型 1/2/3/4（1=央企发电集团/五大六小，2=地方能源国企，3=分布式头部民企，4=EPC总承包商）' },
         region: { type: 'string', description: '大区' },
         group: { type: 'string', description: '集团/母公司' },
         primaryOwner: { type: 'string', description: '主负责人' },
@@ -218,7 +218,7 @@ const TOOL_DEFS = [
   {
     name: 'set_opportunity_roles',
     description:
-      '【写·评分状态】为某商机批量设置 ADUR 决策链角色（A批准人/D拍板人/U使用者/TB技术选型/R影响者教练）。⚠️ 只能对【已存在的正式干系人】设角色——候选人物须先经 propose_person + 用户人审采纳（或用 propose_person 带 suggestedRole，采纳时自动落角色）。G64111 趋赢力由江湖引擎据此实时算，不接收/不存死分。商机定位：opportunityId，或 opportunityExternalRef + 父客户。',
+      '【写·评分状态】为某商机批量设置 ADURC 决策链角色（A批准人/D拍板人/U使用者/R影响者·技术把关/C教练）。⚠️ 只能对【已存在的正式干系人】设角色——候选人物须先经 propose_person + 用户人审采纳（或用 propose_person 带 suggestedRole，采纳时自动落角色）。G64111 趋赢力由江湖引擎据此实时算，不接收/不存死分。商机定位：opportunityId，或 opportunityExternalRef + 父客户。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -234,7 +234,7 @@ const TOOL_DEFS = [
             properties: {
               personId: { type: 'string', description: '正式干系人 ID（或用 personName）' },
               personName: { type: 'string', description: '正式干系人姓名（在父客户下匹配）' },
-              role: { type: 'string', description: 'A/D/U/TB/R' },
+              role: { type: 'string', description: 'A/D/U/R/C' },
               sentiment: { type: 'string', description: 'star/plus/neutral/unknown/minus/x' },
               isKeyInfluencer: { type: 'boolean', description: '是否 P4 关键影响人' },
               procurementType: { type: 'string', description: 'purchasing/agency/ownerRep' },
@@ -299,15 +299,16 @@ const TOOL_DEFS = [
 ] as const;
 
 const CUSTOMER_TYPE_LABEL: Record<number, string> = {
-  1: '五大六小央企能源集团',
-  2: '央国企电力建设集团',
-  3: '地方/民营能源投资建设企业',
+  1: '央企发电集团（五大六小）',
+  2: '地方能源国企',
+  3: '分布式头部民企',
+  4: 'EPC总承包商',
 };
 const LAYER_LABEL: Record<string, string> = {
   L1: 'L1 组织架构', L2: 'L2 决策权力', L3: 'L3 情感阵营', L4: 'L4 战略本质',
 };
 const ROLE_LABEL: Record<string, string> = {
-  A: '批准人', D: '拍板人', U: '使用者', TB: '技术选型', R: '影响者/教练',
+  A: '批准人', D: '拍板人', U: '使用者', R: '影响者·技术把关', C: '教练',
 };
 const SENTIMENT_LABEL: Record<string, string> = {
   star: '排他性支持', plus: '明确支持', neutral: '中立', unknown: '未知', minus: '负面/抗拒', x: '倒向对手',
@@ -473,7 +474,7 @@ async function proposePerson(tenantId: string, userId: string, args: Record<stri
   const evidence = str(args.evidence, 500);
   const sourceUrl = str(args.sourceUrl, 500) || null;
   const confidence = Math.max(0, Math.min(1, num(args.confidence) ?? 0.5));
-  const suggestedRole = ['A', 'D', 'U', 'TB', 'R'].includes(str(args.suggestedRole)) ? str(args.suggestedRole) : null;
+  const suggestedRole = ['A', 'D', 'U', 'R', 'C'].includes(str(args.suggestedRole)) ? str(args.suggestedRole) : null;
   const suggestedSentiment = ['star', 'plus', 'neutral', 'unknown', 'minus', 'x'].includes(str(args.suggestedSentiment)) ? str(args.suggestedSentiment) : null;
 
   // 容量上限（防滥用）
@@ -794,7 +795,7 @@ async function findPersonInAccount(tenantId: string, accountId: string, personId
   return null;
 }
 
-const VALID_ROLE = ['A', 'D', 'U', 'TB', 'R'];
+const VALID_ROLE = ['A', 'D', 'U', 'R', 'C'];
 const VALID_SENT = ['star', 'plus', 'neutral', 'unknown', 'minus', 'x'];
 const VALID_CONF = ['共识', '明确', '推理', '不清'];
 
@@ -815,7 +816,7 @@ async function setOpportunityRoles(tenantId: string, _userId: string, args: Reco
     if (!person) { skipped.push({ personId: pid || undefined, personName: pname || undefined, reason: '未找到正式干系人（候选须先 propose_person 采纳）' }); continue; }
     if (person.isCompetitor) { skipped.push({ personId: person.id, reason: '竞争对手不分配角色' }); continue; }
     const role = VALID_ROLE.includes(str(r?.role)) ? str(r?.role) : undefined;
-    if (!role) { skipped.push({ personId: person.id, reason: '缺少有效 role(A/D/U/TB/R)' }); continue; }
+    if (!role) { skipped.push({ personId: person.id, reason: '缺少有效 role(A/D/U/R/C)' }); continue; }
     const patch: Record<string, unknown> = { role };
     if (VALID_SENT.includes(str(r?.sentiment))) patch.sentiment = str(r?.sentiment);
     if (typeof r?.isKeyInfluencer === 'boolean') patch.isKeyInfluencer = r.isKeyInfluencer;

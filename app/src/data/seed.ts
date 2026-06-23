@@ -5,7 +5,7 @@ import type { Account } from '../types';
 export const seedAccount: Account = {
   id: 'acc_powerbuild',
   name: '西部电力建设集团',
-  customerType: 2, // 央国企电力建设集团
+  customerType: 4, // EPC总承包商（v1.1，原"央国企电力建设集团"）
   unifiedCreditCode: '91510000XXXXXXXXXX',
   persons: [
     {
@@ -98,7 +98,7 @@ export const seedAccount: Account = {
       id: 'opp_west',
       accountId: 'acc_powerbuild',
       name: '西部风光储基地数字化管控平台',
-      customerType: 2,
+      customerType: 4,
       pipelineStage: '客户立项',
       engageStage: '方案可研', // C4 → 4
       changeMode: 'T',
@@ -110,13 +110,13 @@ export const seedAccount: Account = {
       roles: [
         { personId: 'zhao', role: 'A', sentiment: 'plus', sentimentValue: 2, confidence: '明确' },
         { personId: 'qian', role: 'D', sentiment: 'plus', sentimentValue: 3, confidence: '明确' },
-        { personId: 'sun', role: 'R', sentiment: 'star', sentimentValue: 5, confidence: '共识', isKeyInfluencer: true },
+        { personId: 'sun', role: 'C', sentiment: 'star', sentimentValue: 5, confidence: '共识', isKeyInfluencer: true },
         { personId: 'li', role: 'U', sentiment: 'plus', sentimentValue: 3, confidence: '明确', procurementType: 'ownerRep', procurementStatus: 'collude' },
-        { personId: 'zhou', role: 'TB', sentiment: 'neutral', confidence: '明确' },
+        { personId: 'zhou', role: 'R', sentiment: 'neutral', confidence: '明确' },
         { personId: 'zheng', role: 'U', sentiment: 'plus', sentimentValue: 2, confidence: '明确' },
-        { personId: 'wang', role: 'R', sentiment: 'neutral', confidence: '推理' },
-        { personId: 'wu', role: 'TB', sentiment: 'x', sentimentValue: -5, confidence: '明确', procurementType: 'purchasing', procurementStatus: 'none' },
-        { personId: 'agent', role: 'TB', sentiment: 'neutral', confidence: '推理', procurementType: 'agency', procurementStatus: 'verbal' },
+        { personId: 'wang', role: 'C', sentiment: 'neutral', confidence: '推理' },
+        { personId: 'wu', role: 'R', sentiment: 'x', sentimentValue: -5, confidence: '明确', procurementType: 'purchasing', procurementStatus: 'none' },
+        { personId: 'agent', role: 'R', sentiment: 'neutral', confidence: '推理', procurementType: 'agency', procurementStatus: 'verbal' },
       ],
       bis: [
         {
