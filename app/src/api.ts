@@ -76,6 +76,8 @@ export const api = {
   personSuggestList: (accountId: string): Promise<{ suggestions: PersonSuggestion[] }> => req(`/api/suggest/persons?accountId=${encodeURIComponent(accountId)}`),
   personSuggestAccept: (id: string): Promise<{ person: any; accId: string }> => req(`/api/suggest/persons/${id}/accept`, { method: 'POST' }),
   personSuggestReject: (id: string): Promise<{ ok: true }> => req(`/api/suggest/persons/${id}/reject`, { method: 'POST' }),
+  // Hub 级审核收件箱：聚合当前租户所有 pending 候选（关系 + 人物），带 account/opp 上下文
+  inboxList: (): Promise<{ rels: InboxRel[]; persons: InboxPerson[]; total: number }> => req('/api/inbox'),
   // 企查查 MCP / 自动建图
   qccConfig: (): Promise<{ configured: boolean; mode: string; endpoint: string; hasToken: boolean }> => req('/api/qcc/config'),
   qccSaveConfig: (b: { mcpJson: string }): Promise<{ ok: true; endpoint: string }> => req('/api/qcc/config', { method: 'PUT', body: JSON.stringify(b) }),
@@ -117,3 +119,7 @@ export interface PersonSuggestion {
   origin: string; evidence: string; sourceUrl?: string; confidence: number;
   existingPersonId?: string; // 该客户下已有同名正式干系人时给出，供"合并/新建"提示
 }
+
+// 收件箱聚合视图：关系/人物候选附带 account/opp 上下文（供 Hub 级跨客户分组 + 采纳后定位）
+export interface InboxRel extends Suggestion { opportunityId: string; oppName: string; accountId: string; accountName: string }
+export interface InboxPerson extends PersonSuggestion { accountName: string }

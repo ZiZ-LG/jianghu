@@ -259,4 +259,27 @@ export function suggestRoutes(app: FastifyInstance) {
     if (!r.count) return reply.code(404).send({ error: '候选不存在或已处理' });
     return { ok: true };
   });
+
+  // ── Hub 级审核收件箱：聚合当前租户所有 pending 候选（关系 + 人物），带 account/opp 上下文 ──
+  // 「机器写初稿·人审」主线 v1：零 schema，复用 RelSuggestion/PersonSuggestion 表 + withNames。
+  // 多租户红线：全程 tenantId 过滤（参考 state.ts 的 assembleState）。采纳/驳回沿用现有 /api/suggest[/persons]/:id/accept|reject。
+  app.get('/api/inbox', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    const tenantId = req.user.tenantId;
+    const [relRows, psRows, persons, opps, accounts] = await Promise.all([
+      prisma.relSuggestion.findMany({ where: { tenantId, status: 'pending' }, orderBy: { confidence: 'desc' } }),
+      prisma.personSuggestion.findMany({ where: { tenantId, status: 'pending' }, orderBy: { confidence: 'desc' } }),
+      prisma.person.findMany({ where: { tenantId }, select: { id: true, name: true } }),
+      prisma.opportunity.findMany({ where: { tenantId }, select: { id: true, name: true, accountId: true } }),
+      prisma.account.findMany({ where: { tenantId }, select: { id: true, name: true } }),
+    ]);
+    const accName = new Map(accounts.map((a) => [a.id, a.name]));
+    const oppById = new Map(opps.map((o) => [o.id, o]));
+    const named = await withNames(tenantId, relRows, persons); // 复用：补端点人名（含候选人「（候选）」）
+    const rels = named.map((r, i) => {
+      const o = oppById.get(relRows[i].opportunityId);
+      return { ...r, opportunityId: relRows[i].opportunityId, oppName: o?.name ?? '?', accountId: o?.accountId ?? '', accountName: o ? (accName.get(o.accountId) ?? '?') : '?' };
+    });
+    const personsOut = psRows.map((r) => ({ id: r.id, accountId: r.accountId, accountName: accName.get(r.accountId) ?? '?', name: r.name, title: r.title, orgLevel: r.orgLevel, origin: r.origin, evidence: r.evidence, sourceUrl: r.sourceUrl ?? undefined, confidence: r.confidence }));
+    return { rels, persons: personsOut, total: rels.length + personsOut.length };
+  });
 }
