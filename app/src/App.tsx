@@ -498,7 +498,7 @@ export default function App() {
         <CustomerProfile account={account} onClose={() => setProfileOpen(false)}
           onSave={(patch) => act({ type: 'UPDATE_ACCOUNT', accId: account.id, patch })} />
       )}
-      {mdDocOpen && <MdDocPanel account={account} onClose={() => setMdDocOpen(false)} />}
+      {mdDocOpen && <MdDocPanel account={account} onApply={(actions) => actions.forEach(act)} onClose={() => setMdDocOpen(false)} />}
       {intelOpen && (
         <IntelCapture account={account} opportunity={opp}
           onClose={() => setIntelOpen(false)}
