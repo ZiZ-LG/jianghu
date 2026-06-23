@@ -60,6 +60,7 @@ export function SuggestionPanel({
         <div className="sc-empty" style={{ padding: '28px 0' }}>
           <div style={{ fontSize: 30 }}>🔮</div>
           <div>{generating ? '正在用图算法 + AI 挖掘潜在关系…' : '暂无候选关系。点「重新扫描」让 AI 基于共同联系人、籍贯/校友等挖掘。'}</div>
+          {generating && <div className="sc-typing"><span /><span /><span /></div>}
           {!generating && <button className="btn primary sm" onClick={onRegenerate}>🔍 开始扫描</button>}
         </div>
       ) : suggestions.length === 0 ? (
