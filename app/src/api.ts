@@ -44,7 +44,7 @@ export const api = {
   getState: (): Promise<{ accounts: Account[] }> => req('/api/state'),
   mutate: (action: Action): Promise<{ ok: true }> => req('/api/mutate', { method: 'POST', body: JSON.stringify({ action }) }),
   // 录入情报：口述文字 → 后端 LLM 抽取 + 双轨落库 → 回执
-  voiceExtract: (b: { text: string; accountId?: string; opportunityId?: string; priorText?: string }): Promise<any> =>
+  voiceExtract: (b: { text: string; accountId?: string; opportunityId?: string; priorText?: string; sourceVisitId?: string }): Promise<any> =>
     req('/api/voice/extract', { method: 'POST', body: JSON.stringify(b) }),
   // 新建商机：空白(personIds 空) 或 从 fromOppId 克隆选定人物(+角色，可选关系线)
   cloneOpportunity: (b: { accountId: string; name: string; fromOppId?: string; personIds: string[]; withEdges: boolean }): Promise<{ opportunityId: string; memberCount: number }> =>

@@ -57,7 +57,7 @@ function Item({ k, score, open, onToggle }: { k: ItemKey; score: number; open: b
   );
 }
 
-export function Sidebar({ account, opp, breakdown, onSelectOpp, onAddOpp, onBack, onCollapse, onChatDone }: {
+export function Sidebar({ account, opp, breakdown, onSelectOpp, onAddOpp, onBack, onCollapse, onChatDone, gapCount = 0, onOpenGaps }: {
   account: Account;
   opp: Opportunity | null;
   breakdown: ScoreBreakdown | null;
@@ -66,6 +66,8 @@ export function Sidebar({ account, opp, breakdown, onSelectOpp, onAddOpp, onBack
   onBack: () => void;
   onCollapse: () => void;
   onChatDone: () => void;
+  gapCount?: number;          // M3 缺口数（>0 时趋赢力台显示「补分」入口）
+  onOpenGaps?: () => void;    // M3 打开缺口刷卡
 }) {
   const [open, setOpen] = useState<Set<ItemKey>>(() => new Set());
   const toggle = (k: ItemKey) => setOpen((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
@@ -111,6 +113,12 @@ export function Sidebar({ account, opp, breakdown, onSelectOpp, onAddOpp, onBack
             <div className="diag-top">
               <span className="diag-cap">趋赢力</span>
               <span className="diag-pct" style={{ color: breakdown.total < 0 ? '#b91c1c' : 'var(--ink)' }}>{pct}<small>%</small></span>
+              {onOpenGaps && gapCount > 0 && (
+                <button onClick={onOpenGaps} title="按得分缺口逐项刷卡补分（M3）"
+                  style={{ marginLeft: 'auto', fontSize: 11, padding: '3px 9px', borderRadius: 12, border: '1px solid var(--accent)', background: 'transparent', color: 'var(--accent)', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                  📋 补分·{gapCount}
+                </button>
+              )}
             </div>
             <div className="diag-band" style={{ background: BAND_COLOR[breakdown.band] }}>{BAND_LABEL[breakdown.band]}</div>
             {GROUPS.map((g) => (
