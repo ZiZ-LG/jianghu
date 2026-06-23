@@ -16,6 +16,7 @@ import { DetailDrawer } from './components/DetailDrawer';
 import { EdgeDrawer } from './components/EdgeDrawer';
 import { OpportunityForm } from './components/OpportunityForm';
 import { CustomerProfile } from './components/CustomerProfile';
+import { MdDocPanel } from './components/MdDocPanel';
 import { IntelCapture } from './components/IntelCapture';
 import { NewOpportunityDialog } from './components/NewOpportunityDialog';
 import { nextFreeSlot } from './lib/layout';
@@ -45,6 +46,7 @@ export default function App() {
   const [oppFormOpen, setOppFormOpen] = useState(false);
   const [personFormOpen, setPersonFormOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [mdDocOpen, setMdDocOpen] = useState(false);
   const [intelOpen, setIntelOpen] = useState(false);
   const [newOppOpen, setNewOppOpen] = useState(false);
   const [teamOpen, setTeamOpen] = useState(false);
@@ -424,6 +426,7 @@ export default function App() {
                 {!isMobile && (<>
                   <button className="btn ghost xs" onClick={() => setOppFormOpen(true)}>编辑商机</button>
                   <button className="btn ghost xs" onClick={() => setProfileOpen(true)}>📇 客户档案</button>
+                  <button className="btn ghost xs" onClick={() => setMdDocOpen(true)}>📄 .md 档案</button>
                   <button className="btn ghost xs" onClick={() => setSuggestOpen(true)}>📥 收件箱{suggestions.length + personSuggs.length > 0 ? ` (${suggestions.length + personSuggs.length})` : ''}</button>
                   <span className="mt-heartbeat" title="AI 后台持续监测：荐关系 / 局势 / 缺口">● 监测中</span>
                   <button className="btn ghost xs" onClick={() => setReportOpen(true)}>📊 报表</button>
@@ -435,6 +438,7 @@ export default function App() {
                   <OverflowMenu align="left" label="⋯ 操作" items={[
                     { label: '✏️ 编辑商机', onClick: () => setOppFormOpen(true) },
                     { label: '📇 客户档案', onClick: () => setProfileOpen(true) },
+                    { label: '📄 .md 档案', onClick: () => setMdDocOpen(true) },
                     { label: '📥 收件箱', badge: suggestions.length + personSuggs.length > 0 ? String(suggestions.length + personSuggs.length) : undefined, onClick: () => setSuggestOpen(true) },
                     { label: '📊 报表', onClick: () => setReportOpen(true) },
                     { label: '❓ 帮助', onClick: () => setHelpOpen(true) },
@@ -494,6 +498,7 @@ export default function App() {
         <CustomerProfile account={account} onClose={() => setProfileOpen(false)}
           onSave={(patch) => act({ type: 'UPDATE_ACCOUNT', accId: account.id, patch })} />
       )}
+      {mdDocOpen && <MdDocPanel account={account} onClose={() => setMdDocOpen(false)} />}
       {intelOpen && (
         <IntelCapture account={account} opportunity={opp}
           onClose={() => setIntelOpen(false)}
