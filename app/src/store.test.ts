@@ -50,6 +50,10 @@ describe('乐观锁 · injectBaseVersion（dispatch 前取当前版本）', () =
     const action: Action = { type: 'DELETE_PERSON', accId: 'acc1', personId: 'p1' };
     expect(injectBaseVersion(baseState(), action)).toBe(action);
   });
+  it('块C：action 已显式带 baseVersion 则尊重之，不被当前 state 覆盖（保 MD 编辑期并发防护）', () => {
+    const a = injectBaseVersion(baseState(), { type: 'UPDATE_OPP', accId: 'acc1', oppId: 'opp1', patch: { name: 'X' }, baseVersion: 2 });
+    expect((a as Extract<Action, { type: 'UPDATE_OPP' }>).baseVersion).toBe(2); // 取 MD 埋的 2，而非当前 9
+  });
 });
 
 describe('乐观锁 · reducer 乐观自增 version', () => {

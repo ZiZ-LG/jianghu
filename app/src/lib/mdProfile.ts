@@ -87,7 +87,7 @@ export function renderCustomerMd(account: Account, log: VersionLogEntry[] = []):
   for (const p of keyPersons) {
     const r = primaryRole(account, p.id);
     L.push(`### ${p.name} · ${r ? ROLE_LABEL[r.role] : ''}`, '');
-    L.push(`<!-- f:person.form:${p.id} -->`);
+    L.push(`<!-- f:person.form:${p.id} v=${p.version ?? 0} -->`); // v=N：块C 回写 baseVersion（乐观锁）
     L.push('| FORM 维度 | 内容 |', '|-----------|------|');
     for (const q of FAMILY_7Q) L.push(`| ${q} | ${v(p.form.family7?.[q])} |`);
     L.push(`| 职业经历 | ${v(p.form.occupation)} |`);
@@ -150,7 +150,7 @@ export function renderOpportunityMd(account: Account, opp: Opportunity, log: Ver
   const L: string[] = [];
 
   L.push(`# ${opp.name}（商机档案）`, '');
-  L.push('<!-- f:opp.meta -->');
+  L.push(`<!-- f:opp.meta v=${opp.version ?? 0} -->`); // v=N：块C 回写 baseVersion（乐观锁）
   L.push(`> **所属客户**：${account.name}　|　**管线阶段**：${opp.pipelineStage}　|　**介入阶段(C4)**：${opp.engageStage}`);
   L.push(`> **单一销售目标**：${v(opp.singleSalesGoal)}`);
   L.push(`> **客户业务目标**：${v(opp.customerBusinessGoal)}　|　**购买动机**：${v(opp.buyingMotivation)}`);

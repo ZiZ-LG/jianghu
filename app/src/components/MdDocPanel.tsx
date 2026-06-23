@@ -4,6 +4,8 @@
 import { useMemo, useState } from 'react';
 import type { Account } from '../types';
 import { renderCustomerMd, renderOpportunityMd, renderVisitMd, type VersionLogEntry } from '../lib/mdProfile';
+import { diffCustomer, diffOpportunity, diffVisit, type MdApplyResult } from '../lib/mdParse';
+import type { Action } from '../store';
 import { usePersistentState } from '../ui';
 import { Modal } from './Modal';
 
@@ -13,12 +15,14 @@ const today = () => new Date().toISOString().slice(0, 10);
 const bumpVersion = (log: VersionLogEntry[]) =>
   log.length ? `v${(parseFloat(log[log.length - 1].version.replace(/^v/, '')) + 0.1).toFixed(1)}` : 'v1.0';
 
-export function MdDocPanel({ account, onClose }: { account: Account; onClose: () => void }) {
+export function MdDocPanel({ account, onApply, onClose }: { account: Account; onApply: (actions: Action[]) => void; onClose: () => void }) {
   const [sel, setSel] = useState<DocSel>({ kind: 'customer' });
   // 版本日志：按客户隔离，map 文档 key → 日志数组（localStorage 持久化，决策 b）
   const [logs, setLogs] = usePersistentState<Record<string, VersionLogEntry[]>>(`jianghu.mdlog.${account.id}`, {});
   const [drafts, setDrafts] = useState<Record<string, string>>({}); // 会话级编辑草稿
   const [copied, setCopied] = useState(false);
+  const [pending, setPending] = useState<MdApplyResult | null>(null); // 回写确认队列（diff 预览）
+  const [writeMsg, setWriteMsg] = useState('');
 
   const visits = account.visitNotes ?? [];
   const docKey = keyOf(sel);
@@ -51,6 +55,27 @@ export function MdDocPanel({ account, onClose }: { account: Account; onClose: ()
     setDrafts((d) => { const n = { ...d }; delete n[docKey]; return n; });
   };
 
+  // 回写系统（块C）：解析当前草稿 → diff 出改动 → 确认 → 走既有 UPDATE_* Action 落库（仅文本/勾选白名单）
+  const writeBack = () => {
+    const o = sel.kind === 'opp' ? account.opportunities.find((x) => x.id === sel.id) : undefined;
+    const vn = sel.kind === 'visit' ? visits.find((x) => x.id === sel.id) : undefined;
+    const d: MdApplyResult = sel.kind === 'customer' ? diffCustomer(account, content)
+      : sel.kind === 'opp' ? (o ? diffOpportunity(account, o, content) : { actions: [], changes: [] })
+        : (vn ? diffVisit(account, vn, content) : { actions: [], changes: [] });
+    if (!d.changes.length) { setWriteMsg('未检测到可回写改动（打分表/角色表/行动计划为只读，不回写）'); setTimeout(() => setWriteMsg(''), 3500); return; }
+    setPending(d);
+  };
+  const confirmWrite = () => {
+    if (!pending) return;
+    onApply(pending.actions);
+    if (!isVisit) {
+      const cur = logs[docKey] ?? [];
+      setLogs({ ...logs, [docKey]: [...cur, { version: bumpVersion(cur), date: today(), editor: '', summary: `从 .md 回写 ${pending.changes.length} 处`, trigger: 'MD 双向回写' }] });
+    }
+    setDrafts((d) => { const n = { ...d }; delete n[docKey]; return n; }); // 清草稿，回写后以系统为准重新生成
+    setPending(null);
+  };
+
   const exportMd = () => {
     const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -75,13 +100,14 @@ export function MdDocPanel({ account, onClose }: { account: Account; onClose: ()
     <Modal title="📄 档案（.md）" width={920} onClose={onClose}
       footer={<>
         <span className="hint-text" style={{ marginRight: 'auto', fontSize: 12, opacity: 0.7 }}>
-          {dirty ? '✏️ 已编辑（本地草稿）· 回写系统将在下一版支持' : '系统 → MD 实时生成 · 数据以系统页面为准'}
+          {writeMsg || (dirty ? '✏️ 已编辑（本地草稿）· 可回写系统，或更新档案丢弃草稿' : '系统 → MD 实时生成 · 编辑后可回写系统')}
         </span>
+        {dirty && <button className="btn" onClick={writeBack} title="解析草稿改动，确认后写回系统（仅文本字段/勾选；打分表、角色表、行动计划为只读不回写）">✍️ 回写系统</button>}
         {!isVisit && <button className="btn ghost" onClick={refresh} title="丢弃草稿，从系统当前数据重生成，并在更新日志记一版">🔄 更新档案</button>}
         <button className="btn ghost" onClick={copy}>{copied ? '✓ 已复制' : '📋 复制'}</button>
         <button className="btn primary" onClick={exportMd}>⬇ 导出 .md</button>
       </>}>
-      <div style={{ display: 'flex', gap: 12, height: 'min(64vh, 560px)' }}>
+      <div style={{ display: 'flex', gap: 12, height: 'min(64vh, 560px)', position: 'relative' }}>
         {/* 左侧导航 */}
         <div style={{ width: 220, flexShrink: 0, overflowY: 'auto', borderRight: '1px solid var(--line)', paddingRight: 8 }}>
           <div className="sb-label" style={{ margin: '4px 0' }}>客户档案</div>
@@ -107,6 +133,26 @@ export function MdDocPanel({ account, onClose }: { account: Account; onClose: ()
             background: 'var(--panel)', color: 'var(--ink)', whiteSpace: 'pre', overflow: 'auto',
           }}
         />
+
+        {/* 回写确认 overlay：逐条列出将写回系统的改动（from → to） */}
+        {pending && (
+          <div style={{ position: 'absolute', inset: 0, background: 'var(--panel)', border: '1px solid var(--line)', borderRadius: 8, padding: 16, display: 'flex', flexDirection: 'column', zIndex: 5 }}>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>确认回写系统 · {pending.changes.length} 处改动</div>
+            <div className="hint-text" style={{ fontSize: 12, opacity: 0.65, marginBottom: 8 }}>仅以下字段写回（走乐观锁，若期间被他人改动会提示刷新）；打分表 / 角色表 / 行动计划不在内。</div>
+            <div style={{ flex: 1, overflowY: 'auto', fontSize: 13, border: '1px solid var(--line)', borderRadius: 6, padding: '4px 10px' }}>
+              {pending.changes.map((c, i) => (
+                <div key={i} style={{ padding: '7px 0', borderBottom: i < pending.changes.length - 1 ? '1px solid var(--line)' : 'none' }}>
+                  <div style={{ opacity: 0.6, fontSize: 12, marginBottom: 2 }}>{c.section}</div>
+                  <div><span style={{ color: 'var(--faint)', textDecoration: 'line-through', opacity: 0.7 }}>{c.from || '（空）'}</span>　→　<span style={{ color: 'var(--accent)', fontWeight: 500 }}>{c.to || '（空）'}</span></div>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
+              <button className="btn ghost" onClick={() => setPending(null)}>取消</button>
+              <button className="btn primary" onClick={confirmWrite}>确认回写 {pending.changes.length} 处</button>
+            </div>
+          </div>
+        )}
       </div>
     </Modal>
   );
