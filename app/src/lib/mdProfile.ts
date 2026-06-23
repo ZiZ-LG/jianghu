@@ -2,7 +2,7 @@
 // 纯函数、无副作用：把 Account/Opportunity/VisitNote 按 v1.1 母版结构渲染成 .md 文本。
 // 与 docs/templates/ 的两份母版对齐。来源标记/版本日志为 .md 侧元数据（决策 b，系统不存）。
 // 字段级 HTML 注释 <!-- f:xxx --> 作为结构锚点，供块C「MD→系统」回写解析定位。
-import type { Account, Opportunity, VisitNote, Person, OppRole } from '../types';
+import type { Account, Opportunity, VisitNote, Person, OppRole, AccountProfile } from '../types';
 import {
   CUSTOMER_TYPE_LABEL, ROLE_LABEL, SENTIMENT_CHAR, FAMILY_7Q, C3_ITEMS, C5_ITEMS,
   PROCUREMENT_TYPE_LABEL, PROCUREMENT_STATUS_LABEL, CHANGE_MODES,
@@ -87,7 +87,7 @@ export function renderCustomerMd(account: Account, log: VersionLogEntry[] = []):
   for (const p of keyPersons) {
     const r = primaryRole(account, p.id);
     L.push(`### ${p.name} · ${r ? ROLE_LABEL[r.role] : ''}`, '');
-    L.push(`<!-- f:person.form:${p.id} v=${p.version ?? 0} -->`); // v=N：块C 回写 baseVersion（乐观锁）
+    L.push(`<!-- f:person.form:${p.id} -->`);
     L.push('| FORM 维度 | 内容 |', '|-----------|------|');
     for (const q of FAMILY_7Q) L.push(`| ${q} | ${v(p.form.family7?.[q])} |`);
     L.push(`| 职业经历 | ${v(p.form.occupation)} |`);
@@ -150,7 +150,7 @@ export function renderOpportunityMd(account: Account, opp: Opportunity, log: Ver
   const L: string[] = [];
 
   L.push(`# ${opp.name}（商机档案）`, '');
-  L.push(`<!-- f:opp.meta v=${opp.version ?? 0} -->`); // v=N：块C 回写 baseVersion（乐观锁）
+  L.push('<!-- f:opp.meta -->');
   L.push(`> **所属客户**：${account.name}　|　**管线阶段**：${opp.pipelineStage}　|　**介入阶段(C4)**：${opp.engageStage}`);
   L.push(`> **单一销售目标**：${v(opp.singleSalesGoal)}`);
   L.push(`> **客户业务目标**：${v(opp.customerBusinessGoal)}　|　**购买动机**：${v(opp.buyingMotivation)}`);
@@ -236,3 +236,66 @@ export function renderVisitMd(account: Account, visit: VisitNote): string {
 }
 
 const round1 = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+
+// ═════════════════════════ MD → 系统（块C 回写解析） ═════════════════════════
+// 与上面的 render* 严格对称：只解析「可靠双向」字段（文本/勾选）。
+// 打分(opp.score)、角色映射(account.roles)、客户名/类型 一律【只读】不回写——见设计取舍。
+// round-trip 红线：parse(render(x)) 对可回写字段还原 x（占位符 ⏳ ↔ 空值）。
+
+const PLACEHOLDER = /^(⏳ 待补充|⏳|—|\[.*\])$/;
+/** 逆 v()：占位符 → 空串；其余 trim。 */
+const unv = (s: string): string => { const t = s.trim(); return PLACEHOLDER.test(t) ? '' : t; };
+const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** 取 markdown 表格行 `| 键 | 值 |` 的值（首个匹配，按行锚定） */
+function cell(md: string, key: string): string | undefined {
+  const m = md.match(new RegExp(`^\\|\\s*${esc(key)}\\s*\\|\\s*(.+?)\\s*\\|`, 'm'));
+  return m ? m[1] : undefined;
+}
+/** 取引用块 `**键**：值`（截断于 全角分隔　/ 竖线 / 行尾） */
+function meta(md: string, key: string): string | undefined {
+  const m = md.match(new RegExp(`\\*\\*${esc(key)}\\*\\*：([^　\\n|]+)`));
+  return m ? m[1].trim() : undefined;
+}
+const truthyMark = (s: string) => /已掌握|✅/.test(s);
+
+/** 客户档案 MD → Account patch（仅可靠双向字段；名称/类型/角色只读） */
+export function parseCustomerMd(md: string, account: Account): Partial<Account> {
+  const patch: Partial<Account> = {};
+  const region = meta(md, '大区'); if (region !== undefined) patch.region = unv(region);
+  const group = meta(md, '集团/母公司'); if (group !== undefined) patch.group = unv(group);
+  const owner = meta(md, '主负责人'); if (owner !== undefined) patch.primaryOwner = unv(owner);
+  const prof: AccountProfile = { ...(account.profile ?? {}) };
+  const fields: [string, keyof AccountProfile][] = [
+    ['工商基础', 'business'], ['集团关系', 'group'], ['招投标', 'bidding'],
+    ['风险信号', 'risk'], ['我方现有合作', 'ourCooperation'], ['销售背景', 'salesNote'],
+  ];
+  let profChanged = false;
+  for (const [label, k] of fields) { const c = cell(md, label); if (c !== undefined) { prof[k] = unv(c); profChanged = true; } }
+  if (profChanged) patch.profile = prof;
+  return patch;
+}
+
+/** 商机档案 MD → Opportunity patch（文本字段 + C3/C5 勾选；打分/态势只读） */
+export function parseOpportunityMd(md: string, opp: Opportunity): Partial<Opportunity> {
+  const patch: Partial<Opportunity> = {};
+  const sg = meta(md, '单一销售目标'); if (sg !== undefined) patch.singleSalesGoal = unv(sg);
+  const cbg = meta(md, '客户业务目标'); if (cbg !== undefined) patch.customerBusinessGoal = unv(cbg);
+  const bm = meta(md, '购买动机'); if (bm !== undefined) patch.buyingMotivation = unv(bm);
+  const comp = meta(md, '主要对手'); if (comp !== undefined) patch.competitor = unv(comp);
+  const c3: Record<string, boolean> = { ...opp.c3Items };
+  for (const k of C3_ITEMS) { const c = cell(md, k); if (c !== undefined) c3[k] = truthyMark(c); }
+  patch.c3Items = c3;
+  const c5: Record<string, boolean> = { ...opp.c5Items };
+  for (const k of C5_ITEMS) { const c = cell(md, k); if (c !== undefined) c5[k] = truthyMark(c); }
+  patch.c5Items = c5;
+  return patch;
+}
+
+/** 拜访记录 MD → VisitNote patch（主题 + 纪要正文） */
+export function parseVisitMd(md: string): Partial<VisitNote> {
+  const patch: Partial<VisitNote> = {};
+  const topic = meta(md, '主题'); if (topic !== undefined) patch.topic = unv(topic);
+  const m = md.match(/## 纪要正文\s*\n(?:<!--[\s\S]*?-->\s*\n)?([\s\S]*?)\s*$/);
+  if (m) patch.summary = unv(m[1]);
+  return patch;
+}

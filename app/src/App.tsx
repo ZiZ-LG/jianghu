@@ -424,21 +424,17 @@ export default function App() {
               <div className="module-top wall-top">
                 {!isMobile && <LayerTabs visible={visibleLayers} onToggle={toggleLayer} />}
                 {!isMobile && (<>
-                  <button className="btn ghost xs" onClick={() => setOppFormOpen(true)}>编辑商机</button>
-                  <button className="btn ghost xs" onClick={() => setProfileOpen(true)}>📇 客户档案</button>
-                  <button className="btn ghost xs" onClick={() => setMdDocOpen(true)}>📄 .md 档案</button>
+                  <button className="btn ghost xs" onClick={() => setMdDocOpen(true)} title="客户档案 / 商机档案 / 拜访记录（.md 文档）">📋 作战档案</button>
                   <button className="btn ghost xs" onClick={() => setSuggestOpen(true)}>📥 收件箱{suggestions.length + personSuggs.length > 0 ? ` (${suggestions.length + personSuggs.length})` : ''}</button>
-                  <span className="mt-heartbeat" title="AI 后台持续监测：荐关系 / 局势 / 缺口">● 监测中</span>
                   <button className="btn ghost xs" onClick={() => setReportOpen(true)}>📊 报表</button>
                   <button className="btn ghost xs" onClick={() => setHelpOpen(true)}>❓ 帮助</button>
+                  <span className="mt-heartbeat" style={{ marginLeft: 'auto' }} title="AI 后台持续监测：荐关系 / 局势 / 缺口">● 监测中</span>
                 </>)}
                 {isMobile && (<>
                   <OverflowMenu align="left" label={`▾ 层级 (${visibleLayers.size})`}
                     items={(['L1', 'L2', 'L3', 'L4'] as Layer[]).map((l) => ({ label: LAYER_LABEL[l], active: visibleLayers.has(l), onClick: () => toggleLayer(l) }))} />
                   <OverflowMenu align="left" label="⋯ 操作" items={[
-                    { label: '✏️ 编辑商机', onClick: () => setOppFormOpen(true) },
-                    { label: '📇 客户档案', onClick: () => setProfileOpen(true) },
-                    { label: '📄 .md 档案', onClick: () => setMdDocOpen(true) },
+                    { label: '📋 作战档案', onClick: () => setMdDocOpen(true) },
                     { label: '📥 收件箱', badge: suggestions.length + personSuggs.length > 0 ? String(suggestions.length + personSuggs.length) : undefined, onClick: () => setSuggestOpen(true) },
                     { label: '📊 报表', onClick: () => setReportOpen(true) },
                     { label: '❓ 帮助', onClick: () => setHelpOpen(true) },
@@ -470,7 +466,7 @@ export default function App() {
             <div className="no-opp-t">这个客户还没有商机</div>
             <div style={{ display: 'flex', gap: 10 }}>
               <button className="btn primary" onClick={addOpp}>＋ 新建商机</button>
-              <button className="btn ghost" onClick={() => setProfileOpen(true)}>📇 客户档案</button>
+              <button className="btn ghost" onClick={() => setMdDocOpen(true)}>📋 作战档案</button>
             </div>
           </div>
         )}
@@ -498,7 +494,7 @@ export default function App() {
         <CustomerProfile account={account} onClose={() => setProfileOpen(false)}
           onSave={(patch) => act({ type: 'UPDATE_ACCOUNT', accId: account.id, patch })} />
       )}
-      {mdDocOpen && <MdDocPanel account={account} onApply={(actions) => actions.forEach(act)} onClose={() => setMdDocOpen(false)} />}
+      {mdDocOpen && <MdDocPanel account={account} dispatch={act} onClose={() => setMdDocOpen(false)} />}
       {intelOpen && (
         <IntelCapture account={account} opportunity={opp}
           onClose={() => setIntelOpen(false)}

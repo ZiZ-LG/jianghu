@@ -344,9 +344,6 @@ export function computeInverse(a: Action, s: StoreState): Action[] | null {
  * 集中在此，免去每个调用点手填；其余 action 原样返回。后端据 baseVersion 校验并发冲突（不匹配→409）。
  */
 export function injectBaseVersion(s: StoreState, action: Action): Action {
-  // 块C：调用方已显式带 baseVersion（如 MD 回写埋在锚点的版本）则尊重之，不用当前 state 覆盖——
-  // 否则会丢失用户编辑 .md 期间的并发保护（期间被改→后端 409→重拉，正是要的）。
-  if ('baseVersion' in action && action.baseVersion !== undefined) return action;
   switch (action.type) {
     case 'UPDATE_PERSON': {
       const p = s.accounts.find((a) => a.id === action.accId)?.persons.find((x) => x.id === action.personId);
