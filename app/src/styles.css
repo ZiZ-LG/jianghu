@@ -1348,3 +1348,17 @@ html[data-theme="dark"] .modal { box-shadow: 0 24px 60px rgba(0,0,0,.6), 0 0 44p
 @media (prefers-reduced-motion: reduce) {
   *, ::before, ::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
+
+/* ═══ 审核收件箱（Hub 级聚合 · 机器写初稿·人审 主线 v1）═══ */
+.inbox-chip { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.inbox-filters { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.inbox-acct { padding: 5px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); font-size: 13px; max-width: 240px; }
+.inbox-types { display: flex; gap: 6px; }
+.inbox-type { padding: 4px 12px; border-radius: 14px; border: 1px solid var(--line); background: transparent; color: var(--ink); font-size: 12px; cursor: pointer; transition: background .12s ease, color .12s ease, border-color .12s ease; }
+.inbox-type.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.inbox-group { margin-bottom: 16px; }
+.inbox-group-h { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--ink); margin-bottom: 6px; padding: 4px 0; position: sticky; top: 0; background: var(--panel); z-index: 1; }
+.inbox-group-n { font-size: 11px; opacity: .55; font-weight: 400; }
+.inbox-ck { margin: 3px 8px 0 0; flex-shrink: 0; cursor: pointer; align-self: flex-start; }
+.sug-row.inbox-sel { background: var(--hover); border-radius: 8px; }
+.inbox-tag { font-size: 10px; padding: 1px 6px; border-radius: 8px; background: var(--hover); color: var(--ink); opacity: .7; margin-right: 4px; white-space: nowrap; }

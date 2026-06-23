@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'r
 import type { Layer, Role, CustomerType, Edge, Person } from './types';
 import { LAYER_LABEL } from './types';
 import { reducer, computeInverse, injectBaseVersion, newAccount, newPerson, uid, type Action } from './store';
-import { api, type AuthResult, type Suggestion, type PersonSuggestion } from './api';
+import { api, type AuthResult, type Suggestion, type PersonSuggestion, type InboxRel, type InboxPerson } from './api';
 import { scoreFromDomain } from './lib/g64111';
 import { usePersistentState, useTheme, useViewport } from './ui';
 import { Auth } from './components/Auth';
@@ -27,6 +27,7 @@ import { PersonForm } from './components/PersonForm';
 import { TeamBilling } from './components/TeamBilling';
 import { AiSettings } from './components/AiSettings';
 import { SuggestionPanel } from './components/SuggestionPanel';
+import { InboxPanel } from './components/InboxPanel';
 import { ReportPanel } from './components/ReportPanel';
 import { HelpManual } from './components/HelpManual';
 import { McpAccess } from './components/McpAccess';
@@ -58,6 +59,9 @@ export default function App() {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [personSuggs, setPersonSuggs] = useState<PersonSuggestion[]>([]);
   const [generating, setGenerating] = useState(false);
+  // 审核收件箱（Hub 级聚合，全租户 pending 候选）
+  const [inboxOpen, setInboxOpen] = useState(false);
+  const [inbox, setInbox] = useState<{ rels: InboxRel[]; persons: InboxPerson[]; total: number }>({ rels: [], persons: [], total: 0 });
   const [gapsOpen, setGapsOpen] = useState(false); // M3 缺口刷卡补分（enrichOpen 随重构删 EnrichPanel 移除）
   const [reportOpen, setReportOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -102,6 +106,7 @@ export default function App() {
         const st = await api.getState();
         dispatch({ type: 'HYDRATE', accounts: st.accounts });
         setAuth({ token: api.getToken()!, user: me.user, tenant: me.tenant });
+        api.inboxList().then(setInbox).catch(() => { /* 收件箱角标，失败忽略 */ });
       } catch { api.setToken(null); } finally { setBooting(false); }
     })();
   }, []);
@@ -110,6 +115,7 @@ export default function App() {
     const st = await api.getState();
     dispatch({ type: 'HYDRATE', accounts: st.accounts });
     setAuth(res);
+    api.inboxList().then(setInbox).catch(() => { /* 收件箱角标 */ });
   };
   const logout = () => { api.setToken(null); setAuth(null); setAccId(null); setSelectedId(null); dispatch({ type: 'HYDRATE', accounts: [] }); };
 
@@ -352,6 +358,17 @@ export default function App() {
     catch (e: any) { setSyncErr('忽略失败：' + e.message); }
   };
 
+  // ── 审核收件箱（Hub 级）：复用既有候选采纳/驳回链路；采纳会改对应客户的树 → getState 重拉整树保证跨客户一致 ──
+  const loadInbox = async () => { try { setInbox(await api.inboxList()); } catch { /* 角标失败忽略 */ } };
+  const refreshAfterAccept = async () => {
+    try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); } catch { /* 重拉失败下次同步 */ }
+    await loadInbox();
+  };
+  const inboxAcceptRel = async (id: string) => { try { await api.suggestAccept(id); await refreshAfterAccept(); } catch (e: any) { setSyncErr('采纳失败：' + e.message); } };
+  const inboxRejectRel = async (id: string) => { try { await api.suggestReject(id); await loadInbox(); } catch (e: any) { setSyncErr('忽略失败：' + e.message); } };
+  const inboxAcceptPerson = async (id: string) => { try { await api.personSuggestAccept(id); await refreshAfterAccept(); } catch (e: any) { setSyncErr('采纳失败：' + e.message); } };
+  const inboxRejectPerson = async (id: string) => { try { await api.personSuggestReject(id); await loadInbox(); } catch (e: any) { setSyncErr('忽略失败：' + e.message); } };
+
   if (booting) return <div className="boot">加载中…</div>;
   if (!auth) return <Auth onAuthed={onAuthed} />;
 
@@ -367,8 +384,10 @@ export default function App() {
           theme={theme} onToggleTheme={toggleTheme} onOpenHelp={() => setHelpOpen(true)}
           onOpenMcpAccess={() => setMcpAccessOpen(true)}
           onOpenIntel={() => setIntelOpen(true)}
+          onOpenInbox={() => setInboxOpen(true)} inboxCount={inbox.total}
         />
         {syncErr && <div className="sync-toast">{syncErr}</div>}
+        {inboxOpen && <InboxPanel rels={inbox.rels} persons={inbox.persons} onAccept={inboxAcceptRel} onReject={inboxRejectRel} onAcceptPerson={inboxAcceptPerson} onRejectPerson={inboxRejectPerson} onClose={() => setInboxOpen(false)} />}
         {intelOpen && (
           <IntelCapture
             onClose={() => setIntelOpen(false)}

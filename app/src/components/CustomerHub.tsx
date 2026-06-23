@@ -6,7 +6,7 @@ import { OverflowMenu } from './OverflowMenu';
 
 export function CustomerHub({
   accounts, onOpen, onCreate, onLoadDemo, onDeleteAccount,
-  tenantName, userName, plan, onOpenTeam, onLogout, onOpenAiSettings, theme, onToggleTheme, onOpenHelp, onOpenMcpAccess, onOpenIntel,
+  tenantName, userName, plan, onOpenTeam, onLogout, onOpenAiSettings, theme, onToggleTheme, onOpenHelp, onOpenMcpAccess, onOpenIntel, onOpenInbox, inboxCount = 0,
 }: {
   accounts: Account[];
   onOpen: (accId: string) => void;
@@ -24,6 +24,8 @@ export function CustomerHub({
   onOpenHelp: () => void;
   onOpenMcpAccess: () => void;
   onOpenIntel: () => void; // 从零口述建客户
+  onOpenInbox: () => void;     // 打开 Hub 级审核收件箱
+  inboxCount?: number;         // 待审候选数（角标）
 }) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
@@ -46,6 +48,7 @@ export function CustomerHub({
         {/* 桌面：整排操作 */}
         <div className="hub-actions-desktop">
           <button className="theme-toggle" onClick={onToggleTheme} title={theme === 'dark' ? '切换到白天模式' : '切换到黑夜模式'}>{theme === 'dark' ? '☀️' : '🌙'}</button>
+          <button className="team-chip inbox-chip" onClick={onOpenInbox} title="审核机器写入的候选（关系 / 人物），采纳后才落库">📥 收件箱{inboxCount > 0 ? ` · ${inboxCount}` : ''}</button>
           <button className="team-chip" onClick={onOpenMcpAccess}>🔌 接入 AI</button>
           <button className="team-chip" onClick={onOpenHelp}>❓ 帮助</button>
           <button className="team-chip" onClick={onOpenAiSettings}>🧠 AI 模型</button>
@@ -61,6 +64,7 @@ export function CustomerHub({
           <button className="theme-toggle" onClick={onToggleTheme} title="切换主题">{theme === 'dark' ? '☀️' : '🌙'}</button>
           <button className="btn primary xs" onClick={() => setCreating(true)}>＋ 新建</button>
           <OverflowMenu align="right" items={[
+            { label: '📥 收件箱', badge: inboxCount > 0 ? String(inboxCount) : undefined, onClick: onOpenInbox },
             { label: '🎙️ 录入情报', primary: true, onClick: onOpenIntel },
             { label: '📋 载入示例', onClick: onLoadDemo },
             { label: '🔌 接入 AI', onClick: onOpenMcpAccess },
