@@ -4,7 +4,7 @@ import { useRef, useState } from 'react';
 import type { Account, Opportunity } from '../types';
 import type { ScoreBreakdown, ItemKey } from '../lib/g64111';
 import { ITEM_MAX, ITEM_LABEL, ITEM_GROUP, BAND_LABEL } from '../lib/g64111';
-import { usePersistentState } from '../ui';
+import { usePersistentState, useCountUp } from '../ui';
 import { ChatPanel } from './ChatPanel';
 
 const ITEMS: ItemKey[] = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'P1', 'P2', 'P3', 'P4', '1K'];
@@ -84,7 +84,7 @@ export function Sidebar({ account, opp, breakdown, onSelectOpp, onAddOpp, onBack
     window.addEventListener('pointerup', onUp);
   };
 
-  const pct = breakdown ? Math.round(breakdown.percent * 100) : 0;
+  const pct = useCountUp(breakdown ? Math.round(breakdown.percent * 100) : 0); // 动效：趋赢力数字滚动入场
   const groupScore: Record<string, number> = breakdown
     ? { '6必清': breakdown.clears, '4优势': breakdown.priorities, '1决胜': breakdown.key }
     : { '6必清': 0, '4优势': 0, '1决胜': 0 };

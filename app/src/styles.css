@@ -1304,3 +1304,47 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 .mdv-field:focus { border-color: var(--accent); background: var(--panel-2); outline: none; }
 .mdv-area { resize: vertical; min-height: 38px; line-height: 1.5; }
 .mdv-check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+
+/* ═════════════════════════════════════════════════════════════
+   动效与质感（通用动效基建 · 移植自 practical-murdock 第一批，适配 v1.1 诊断台/牌桌）
+   纯 CSS；尊重 prefers-reduced-motion；不碰画布 SVG（牌桌卡片动效留待）。
+   ═════════════════════════════════════════════════════════════ */
+:root { --ease-spring: cubic-bezier(.16,1,.3,1); --dur: .24s; }
+@keyframes viewIn    { from { opacity: 0; } to { opacity: 1; } }
+@keyframes drawerIn  { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes overlayIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes modalIn   { from { transform: translateY(10px) scale(.98); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes bandPop   { from { transform: scale(.96); } to { transform: scale(1); } }
+@keyframes scTyping  { 0%,100% { opacity: .3; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-4px); } }
+/* 转场：工作台 / Hub 渐显（仅透明度，不扰画布）*/
+.app-shell { animation: viewIn .28s ease; }
+.hub { animation: viewIn .28s ease; }
+/* 浮层：抽屉 / 弹窗（Modal 是全弹窗统一容器 → 一处生效）*/
+.drawer { animation: drawerIn var(--dur) var(--ease-spring); }
+.modal-overlay { animation: overlayIn .18s ease; backdrop-filter: blur(3px) saturate(1.1); -webkit-backdrop-filter: blur(3px) saturate(1.1); }
+.modal { animation: modalIn .26s var(--ease-spring); }
+/* 数据反馈：进度条平滑（适配诊断台 .wt-bar）+ band 弹入（.diag-band）*/
+.bar > i, .wt-bar > i { transition: width var(--dur) var(--ease-spring); }
+.diag-band { animation: bandPop .32s var(--ease-spring); transition: background-color .4s ease; }
+/* 微交互：按压 + hover 光晕 */
+.btn:active { transform: scale(.97); }
+.nav-item, .sc-chip, .team-chip, .zoom-controls button, .acc-card, .md-nav-item, .wt-item {
+  transition: background .15s ease, box-shadow .18s ease, color .15s ease, transform .12s var(--ease-spring); }
+.nav-item:hover, .sc-chip:hover, .acc-card:hover { box-shadow: 0 2px 12px var(--shadow); }
+.zoom-controls button:active { transform: scale(.93); }
+/* 玻璃拟态：顶部浮层更通透 */
+.topbar, .maintoolbar, .module-top { backdrop-filter: blur(10px) saturate(1.3); -webkit-backdrop-filter: blur(10px) saturate(1.3); }
+/* 暗色辉光（仅暗色 · accent 柔光 · 克制）*/
+html[data-theme="dark"] .btn.primary { box-shadow: 0 0 18px rgba(59,130,246,.30); }
+html[data-theme="dark"] .btn.primary:hover { box-shadow: 0 0 24px rgba(59,130,246,.42); }
+html[data-theme="dark"] .acc-card:hover { box-shadow: 0 8px 28px rgba(0,0,0,.5), 0 0 22px rgba(59,130,246,.16); }
+html[data-theme="dark"] .modal { box-shadow: 0 24px 60px rgba(0,0,0,.6), 0 0 44px rgba(59,130,246,.08); }
+/* SuggestionPanel 生成态打字动画 */
+.sc-typing { display: flex; gap: 5px; justify-content: center; margin-top: 12px; }
+.sc-typing span { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); opacity: .5; animation: scTyping 1s var(--ease-spring) infinite; }
+.sc-typing span:nth-child(2) { animation-delay: .15s; }
+.sc-typing span:nth-child(3) { animation-delay: .3s; }
+/* reduced-motion：一刀切兜底（count-up 另由 useReducedMotion 落定）*/
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}
