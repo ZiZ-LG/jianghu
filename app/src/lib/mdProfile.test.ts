@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { renderCustomerMd, renderOpportunityMd, renderVisitMd, type VersionLogEntry } from './mdProfile';
+import { renderCustomerMd, renderOpportunityMd, renderVisitMd, parseCustomerMd, parseOpportunityMd, parseVisitMd, type VersionLogEntry } from './mdProfile';
 import { seedAccount } from '../data/seed';
 import type { VisitNote } from '../types';
 
@@ -76,5 +76,50 @@ describe('mdProfile · 拜访记录渲染 + 版本日志递增', () => {
     const md = renderOpportunityMd(seedAccount, seedAccount.opportunities[0], log);
     expect(md).toContain('v1.1');
     expect(md).toContain('补全招采');
+  });
+});
+
+describe('mdProfile · 往返保真（系统→MD→parse，块C 红线）', () => {
+  it('客户字段 round-trip：大区/集团/主负责人/profile', () => {
+    const acc: typeof seedAccount = {
+      ...seedAccount, region: '西北', group: '某能源集团', primaryOwner: '李销售',
+      profile: { business: '注册资本 5 亿', risk: '有一笔诉讼', ourCooperation: '已签框架' },
+    };
+    const patch = parseCustomerMd(renderCustomerMd(acc, []), acc);
+    expect(patch.region).toBe('西北');
+    expect(patch.group).toBe('某能源集团');
+    expect(patch.primaryOwner).toBe('李销售');
+    expect(patch.profile?.business).toBe('注册资本 5 亿');
+    expect(patch.profile?.risk).toBe('有一笔诉讼');
+    expect(patch.profile?.ourCooperation).toBe('已签框架');
+  });
+
+  it('空字段占位 ⏳ round-trip 还原为空串', () => {
+    const patch = parseCustomerMd(renderCustomerMd(seedAccount, []), seedAccount); // seed 无 region
+    expect(patch.region).toBe('');
+  });
+
+  it('商机 round-trip：单一目标 + C3/C5 勾选状态', () => {
+    const opp = seedAccount.opportunities[0];
+    const patch = parseOpportunityMd(renderOpportunityMd(seedAccount, opp, []), opp);
+    expect(patch.singleSalesGoal).toBe(opp.singleSalesGoal);
+    expect(patch.c3Items?.['立项原因']).toBe(true);   // seed=true
+    expect(patch.c3Items?.['项目排序']).toBe(false);  // seed=false
+    expect(patch.c5Items?.['评标规则']).toBe(false);  // seed=false
+  });
+
+  it('拜访 round-trip：主题 + 纪要正文', () => {
+    const visit: VisitNote = { id: 'v', accountId: seedAccount.id, date: '2026-06-01', topic: '技术交流', summary: '就一体化平台达成共识，下一步排期 POC', participants: [] };
+    const patch = parseVisitMd(renderVisitMd(seedAccount, visit));
+    expect(patch.topic).toBe('技术交流');
+    expect(patch.summary).toBe('就一体化平台达成共识，下一步排期 POC');
+  });
+
+  it('只读字段不进 patch：打分 / 客户类型 不被回写', () => {
+    const opp = seedAccount.opportunities[0];
+    const patch = parseOpportunityMd(renderOpportunityMd(seedAccount, opp, []), opp);
+    expect('customerType' in patch).toBe(false);
+    expect('winProbability' in patch).toBe(false);
+    expect('competitiveSituation' in patch).toBe(false);
   });
 });

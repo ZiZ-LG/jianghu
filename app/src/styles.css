@@ -1265,3 +1265,22 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 .diag-resizer { flex-shrink: 0; height: 12px; display: flex; align-items: center; justify-content: center; cursor: ns-resize; border-top: 1px solid var(--line); background: var(--panel-2); touch-action: none; }
 .diag-resizer:hover { background: var(--hover); }
 .diag-resizer-grip { font-size: 11px; color: var(--faint); line-height: 1; }
+
+/* 作战档案 · 文档视图（MdDocView 字段内联编辑） */
+.mdv { font-size: 13px; line-height: 1.7; color: var(--ink); padding-bottom: 12px; }
+.mdv h1 { font-size: 18px; margin: 14px 0 10px; }
+.mdv h2 { font-size: 15px; margin: 18px 0 8px; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
+.mdv h3 { font-size: 13.5px; margin: 12px 0 4px; color: var(--accent); }
+.mdv blockquote { margin: 8px 0; padding: 8px 12px; border-left: 3px solid var(--accent); background: var(--hover); border-radius: 0 6px 6px 0; }
+.mdv blockquote > div { margin: 3px 0; }
+.mdv-ro { font-size: 11px; color: var(--faint); margin-left: 6px; font-weight: 400; }
+.mdv-empty { color: var(--faint); font-size: 12px; margin: 4px 0; }
+.mdv-table { border-collapse: collapse; width: 100%; margin: 6px 0; font-size: 12.5px; }
+.mdv-table th, .mdv-table td { border: 1px solid var(--line); padding: 5px 9px; text-align: left; vertical-align: top; }
+.mdv-table th { background: var(--hover); font-weight: 600; white-space: nowrap; width: 1%; }
+.mdv-table .mdv-total td { background: var(--hover); }
+.mdv-field { width: 100%; border: 1px solid transparent; background: transparent; color: var(--ink); font: inherit; padding: 2px 4px; border-radius: 4px; }
+.mdv-field:hover { border-color: var(--line); }
+.mdv-field:focus { border-color: var(--accent); background: var(--panel-2); outline: none; }
+.mdv-area { resize: vertical; min-height: 38px; line-height: 1.5; }
+.mdv-check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
