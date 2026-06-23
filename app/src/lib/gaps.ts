@@ -35,7 +35,7 @@ export function computeGaps(account: Account, opp: Opportunity): Gap[] {
     }
   }
   // C1 角色缺失 → 引导（缺任一角色扣 3 分）
-  (['A', 'D', 'U', 'TB', 'R'] as const).forEach((role) => {
+  (['A', 'D', 'U', 'R', 'C'] as const).forEach((role) => {
     if (!input.rolesPresent[role]) gaps.push({ id: 'role-' + role, item: 'C1', deficit: 3, title: `决策链缺「${role}」角色`, hint: '在画布上新建或指认该角色', action: { kind: 'guide', to: '画布' } });
   });
   // C2 拍板人 BI（需自由文本）
