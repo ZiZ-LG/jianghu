@@ -1362,3 +1362,10 @@ html[data-theme="dark"] .modal { box-shadow: 0 24px 60px rgba(0,0,0,.6), 0 0 44p
 .inbox-ck { margin: 3px 8px 0 0; flex-shrink: 0; cursor: pointer; align-self: flex-start; }
 .sug-row.inbox-sel { background: var(--hover); border-radius: 8px; }
 .inbox-tag { font-size: 10px; padding: 1px 6px; border-radius: 8px; background: var(--hover); color: var(--ink); opacity: .7; margin-right: 4px; white-space: nowrap; }
+
+/* ── 收件箱字段提案（v2.0）：diff + 影响预览 + 改后采纳 ── */
+.inbox-diff { display: inline-flex; align-items: center; gap: 4px; }
+.inbox-diff .diff-old { text-decoration: line-through; opacity: .55; }
+.inbox-diff .diff-new { color: var(--accent); font-weight: 600; }
+.inbox-impact { font-size: 10px; padding: 1px 7px; border-radius: 8px; color: #fff; white-space: nowrap; margin-left: 4px; font-weight: 600; }
+.inbox-override { padding: 3px 6px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); font-size: 11px; }
