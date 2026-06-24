@@ -265,21 +265,30 @@ export function suggestRoutes(app: FastifyInstance) {
   // 多租户红线：全程 tenantId 过滤（参考 state.ts 的 assembleState）。采纳/驳回沿用现有 /api/suggest[/persons]/:id/accept|reject。
   app.get('/api/inbox', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     const tenantId = req.user.tenantId;
-    const [relRows, psRows, persons, opps, accounts] = await Promise.all([
+    const [relRows, psRows, cpRows, persons, opps, accounts] = await Promise.all([
       prisma.relSuggestion.findMany({ where: { tenantId, status: 'pending' }, orderBy: { confidence: 'desc' } }),
       prisma.personSuggestion.findMany({ where: { tenantId, status: 'pending' }, orderBy: { confidence: 'desc' } }),
+      prisma.changeProposal.findMany({ where: { tenantId, status: 'pending' }, orderBy: { createdAt: 'desc' } }), // v2.0 字段更新提案
       prisma.person.findMany({ where: { tenantId }, select: { id: true, name: true } }),
       prisma.opportunity.findMany({ where: { tenantId }, select: { id: true, name: true, accountId: true } }),
       prisma.account.findMany({ where: { tenantId }, select: { id: true, name: true } }),
     ]);
     const accName = new Map(accounts.map((a) => [a.id, a.name]));
     const oppById = new Map(opps.map((o) => [o.id, o]));
+    const personName = new Map(persons.map((p) => [p.id, p.name]));
     const named = await withNames(tenantId, relRows, persons); // 复用：补端点人名（含候选人「（候选）」）
     const rels = named.map((r, i) => {
       const o = oppById.get(relRows[i].opportunityId);
       return { ...r, opportunityId: relRows[i].opportunityId, oppName: o?.name ?? '?', accountId: o?.accountId ?? '', accountName: o ? (accName.get(o.accountId) ?? '?') : '?' };
     });
     const personsOut = psRows.map((r) => ({ id: r.id, accountId: r.accountId, accountName: accName.get(r.accountId) ?? '?', name: r.name, title: r.title, orgLevel: r.orgLevel, origin: r.origin, evidence: r.evidence, sourceUrl: r.sourceUrl ?? undefined, confidence: r.confidence }));
-    return { rels, persons: personsOut, total: rels.length + personsOut.length };
+    const proposals = cpRows.map((cp) => ({
+      id: cp.id, accountId: cp.accountId, accountName: accName.get(cp.accountId) ?? '?',
+      opportunityId: cp.opportunityId ?? undefined, oppName: cp.opportunityId ? (oppById.get(cp.opportunityId)?.name ?? '?') : '',
+      entityKind: cp.entityKind, entityId: cp.entityId,
+      entityName: cp.entityKind === 'oppRole' ? (personName.get(cp.entityId) ?? cp.entityId) : cp.entityId,
+      field: cp.field, oldValue: cp.oldValue, newValue: cp.newValue, origin: cp.origin, evidence: cp.evidence, confidence: cp.confidence,
+    }));
+    return { rels, persons: personsOut, proposals, total: rels.length + personsOut.length + proposals.length };
   });
 }

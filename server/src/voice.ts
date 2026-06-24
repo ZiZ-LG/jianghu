@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { prisma } from './prisma.js';
 import { loadAiConfig, callLLM } from './ai.js';
 import { applyAction } from './mutate.js';
+import { createFieldProposal } from './proposals.js';
 import { nextFreeSlot } from './layout.js';
 
 const PIPELINE = ['线索', '需求引导', '方案认可', '客户立项', '招投标', '合同谈判', '合同双签'];
@@ -158,11 +159,21 @@ export function voiceRoutes(app: FastifyInstance) {
     for (const per of acc.persons) formalId.set(per.name, per.id);
     const occupied = acc.persons.filter((pp) => !pp.isCompetitor).map((pp) => ({ x: pp.x, y: pp.y })); // 新节点避让：已有非竞品节点坐标
 
-    const setRoleIf = async (personId: string, per: any, name: string) => {
-      if (opp && VALID_ROLE.includes(S(per.suggestedRole))) {
-        await applyAction(tenantId, { type: 'SET_ROLE', accId: acc!.id, oppId: opp.id, personId, patch: { role: S(per.suggestedRole), sentiment: VALID_SENT.includes(S(per.suggestedSentiment)) ? S(per.suggestedSentiment) : 'unknown', confidence: '推理' } });
-        receipt.rolesSet.push({ name, role: S(per.suggestedRole) });
+    const setRoleIf = async (personId: string, per: any, name: string, isExisting = false) => {
+      if (!opp || !VALID_ROLE.includes(S(per.suggestedRole))) return;
+      const newSent = VALID_SENT.includes(S(per.suggestedSentiment)) ? S(per.suggestedSentiment) : 'unknown';
+      // v2.0 提案层：机器改【已有干系人的已有支持度】→ 进 ChangeProposal 待人审（不静默改分，守差距分析红线）；
+      // 新建/首次设角色 → 直写（无"覆盖人改"问题）。role 不在 v2.0 提案范围，已有角色保持不动。
+      if (isExisting && newSent !== 'unknown') {
+        const cur = await prisma.oppRole.findUnique({ where: { opportunityId_personId: { opportunityId: opp.id, personId } } });
+        if (cur && cur.sentiment !== newSent) {
+          await createFieldProposal(tenantId, { accountId: acc!.id, opportunityId: opp.id, entityKind: 'oppRole', entityId: personId, field: 'sentiment', oldValue: cur.sentiment, newValue: newSent, origin: 'voice', evidence: `口述纪要推断：${name} 的支持度疑似变化`, confidence: 0.6, proposedBy: userId });
+          receipt.proposals = (receipt.proposals ?? 0) + 1;
+          return;
+        }
       }
+      await applyAction(tenantId, { type: 'SET_ROLE', accId: acc!.id, oppId: opp.id, personId, patch: { role: S(per.suggestedRole), sentiment: newSent, confidence: '推理' } });
+      receipt.rolesSet.push({ name, role: S(per.suggestedRole) });
     };
 
     for (const per of ex.persons ?? []) {
@@ -171,7 +182,7 @@ export function voiceRoutes(app: FastifyInstance) {
       const existingId = formalId.get(name);
       if (existingId) { // 已存在正式干系人 → 复用（销售自己说的，默认同一人）
         receipt.personsReused.push({ id: existingId, name });
-        if (isExplicit(per)) await setRoleIf(existingId, per, name);
+        if (isExplicit(per)) await setRoleIf(existingId, per, name, true); // 已有干系人：支持度变化走提案而非直写
         continue;
       }
       if (isExplicit(per)) { // 明说 → 直落正式 Person（form 留空：敏感隐私不落；logs 带🎙️溯源）

@@ -436,3 +436,27 @@ model EvidenceEvent {
   @@index([accountId])
   @@index([opportunityId])
 }
+
+// 统一变更提案（机器写初稿·人审 v2.0）：机器对【已有实体字段】的更新先进此表（非静默覆盖），
+// 人在收件箱看 改前→改后 diff + 趋赢力影响预览后采纳/改后采纳/驳回。采纳走既有 applyAction 落库。
+// 跨库可移植：值一律 String 字符串化，不用原生 enum/json。
+model ChangeProposal {
+  id            String   @id
+  tenantId      String
+  accountId     String              // 归属客户（收件箱分组 + 隔离）
+  opportunityId String?             // oppRole/商机字段提案带上
+  entityKind    String              // oppRole | bi | opportunity | person（v2.0 先 oppRole）
+  entityId      String              // 目标定位：oppRole 用 personId（配合 opportunityId）
+  field         String              // 字段名，如 sentiment / confidence
+  oldValue      String   @default("") // 改前值（字符串化，diff 展示）
+  newValue      String              // 改后值
+  origin        String   @default("voice") // voice | mcp | ai | qcc | engine
+  evidence      String   @default("")
+  confidence    Float    @default(0.5)
+  status        String   @default("pending") // pending | accepted | rejected
+  proposedBy    String   @default("")
+  createdAt     DateTime @default(now())
+
+  @@index([accountId])
+  @@index([tenantId, status])
+}
