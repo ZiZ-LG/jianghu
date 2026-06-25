@@ -121,6 +121,17 @@ docker exec jianghu-db-1 pg_dump -U jianghu jianghu > /data/backup-$(date +%F).s
 # 红线：绝不执行 docker compose down -v（-v 会删 pgdata 数据卷）
 ```
 
+## 8. 版本更新（就地·日常）
+
+服务器上 `/data/jianghu/update.sh`（源已入库 = 仓库根 `deploy-company-update.sh`）：备份库（保留 14 份，落 `/data/jianghu-backups/`）→ `git pull`（main）→ `docker compose up -d --build` 滚动更新 → 健康自检 → 清理悬空镜像。`pgdata` 不动。
+
+```bash
+cd /data/jianghu && sudo bash update.sh
+```
+
+> ⚠️ 拉的是 **main**；功能分支（如 `feat/*`）的改动必须先合 main，`update.sh` 才会部署到。
+> 首次把脚本放上去：`scp deploy-company-update.sh <用户>@10.0.171.152:/data/jianghu/update.sh`。
+
 ## 已知注意项
 
 1. **schema 变更的版本更新**：server 容器 entrypoint 启动时自动 `prisma db push`；若某次更新含表结构收缩，push 会安全中止——参照 `docs/Mac mini 内网部署与团队访问.md` 的迁移经验处理，先备份再放行。
