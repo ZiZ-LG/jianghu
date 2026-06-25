@@ -392,6 +392,7 @@ async function getAccountDetail(tenantId: string, accountId: string) {
     opportunities: account.opportunities.map((o) => ({
       id: o.id,
       name: o.name,
+      externalRef: o.externalRef ?? undefined, // 供 WorkBuddy 按 {customer_id}#opp 反查商机 id（propose_person 的 opportunityId）
       pipelineStage: o.pipelineStage,
       engageStage: o.engageStage,
     })),
