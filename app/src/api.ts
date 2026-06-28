@@ -90,6 +90,11 @@ export const api = {
     req('/api/qcc/resolve', { method: 'POST', body: JSON.stringify({ query }) }),
   enrichCompany: (name: string, mode: 'auto' | 'web' = 'auto'): Promise<{ source: string; company: string; persons: { name: string; title: string }[]; note: string }> =>
     req('/api/enrich/company', { method: 'POST', body: JSON.stringify({ name, mode }) }),
+  // 江湖自算：后台入队 enrich 任务（企查查/AI 发现干系人 → 候选进收件箱人审）
+  enrichEnqueue: (accountId: string, mode: 'auto' | 'web' = 'auto'): Promise<{ id: string; enqueued: boolean; accountId: string }> =>
+    req('/api/enrich/enqueue', { method: 'POST', body: JSON.stringify({ accountId, mode }) }),
+  enrichJobs: (accountId: string): Promise<{ jobs: { id: string; accountId: string; type: string; status: string; result: string; error: string; createdAt: string }[] }> =>
+    req('/api/enrich/jobs?accountId=' + encodeURIComponent(accountId)),
   // 企查查 股权/对外投资（只读·仅供参考，不写库）。name 须为完整登记名（先经 qccResolve 锚定）。
   qccCompanyData: (name: string): Promise<CompanyEquityData> =>
     req('/api/qcc/company-data', { method: 'POST', body: JSON.stringify({ name }) }),

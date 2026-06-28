@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
 import { loadAiConfig, callLLM } from './ai.js';
+import { enqueueEnrichJob } from './jobs.js';
 import { applyAction } from './mutate.js';
 import { createFieldProposal } from './proposals.js';
 import { nextFreeSlot } from './layout.js';
@@ -133,6 +134,9 @@ export function voiceRoutes(app: FastifyInstance) {
         acc = await prisma.account.findFirst({ where: { id, tenantId }, include: { persons: true, opportunities: true } });
         receipt.account = { id, name, status: 'created' };
         if (sim) receipt.dupWarnings.push({ kind: 'account', name, similarTo: sim.name });
+        // 江湖自算：语音建客户后后台入队 enrich（企查查/AI 补充发现关键干系人 → 候选进收件箱人审）。
+        // 与口述明说的干系人互补、按名去重；不阻塞回执、失败不影响建客户。
+        try { await enqueueEnrichJob(tenantId, id, 'auto'); } catch { /* 超上限等，忽略 */ }
       }
     }
     if (!acc) return { ...receipt, note: '未能确定客户：请在某个客户/商机里录入，或在口述中说明客户名称。', raw: S(ex.rawNote, 4000) || text };
