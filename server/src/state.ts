@@ -11,6 +11,9 @@ function roleView(r: any) {
 function visitView(v: any) {
   return { id: v.id, accountId: v.accountId, opportunityId: v.opportunityId ?? undefined, externalRef: v.externalRef ?? undefined, date: v.date, topic: v.topic, summary: v.summary, participants: J(v.participants, []), origin: v.origin, createdBy: v.createdBy || undefined, createdAt: v.createdAt.toISOString() };
 }
+function noteView(n: any) {
+  return { id: n.id, accountId: n.accountId ?? undefined, opportunityId: n.opportunityId ?? undefined, personId: n.personId ?? undefined, content: n.content, source: n.source || undefined, tags: J(n.tags, []), createdBy: n.createdBy || undefined, createdAt: n.createdAt.toISOString() };
+}
 function planActionView(a: any) {
   return { id: a.id, accountId: a.accountId, opportunityId: a.opportunityId, gapItem: a.gapItem || undefined, personId: a.personId ?? undefined, title: a.title, scene: a.scene || undefined, scripts: a.scripts || undefined, target: a.target || undefined, ownerId: a.ownerId || undefined, startDate: a.startDate, endDate: a.endDate, half: a.half, done: a.done, doneAt: a.doneAt ?? undefined, review: a.review || undefined, origin: a.origin, createdBy: a.createdBy || undefined, createdAt: a.createdAt.toISOString() };
 }
@@ -49,6 +52,20 @@ export async function assembleState(tenantId: string) {
     const arr = visitsByAccount.get(v.accountId) ?? [];
     arr.push(visitView(v));
     visitsByAccount.set(v.accountId, arr);
+  }
+
+  // Note（自由文本层）：accountId 非空 → 按客户挂载；accountId 空 → 顶层「未归类」
+  const notes = await prisma.note.findMany({ where: { tenantId }, orderBy: { createdAt: 'desc' } });
+  const notesByAccount = new Map<string, ReturnType<typeof noteView>[]>();
+  const unfiledNotes: ReturnType<typeof noteView>[] = [];
+  for (const n of notes) {
+    if (n.accountId) {
+      const arr = notesByAccount.get(n.accountId) ?? [];
+      arr.push(noteView(n));
+      notesByAccount.set(n.accountId, arr);
+    } else {
+      unfiledNotes.push(noteView(n));
+    }
   }
 
   // PlanAction / OppMilestone 同 VisitNote：无 Account relation，单独查后按 accountId 挂载
@@ -126,6 +143,7 @@ export async function assembleState(tenantId: string) {
       })),
       baseEdges: a.edges.filter((e) => !e.opportunityId).map(edgeView),
       visitNotes: visitsByAccount.get(a.id) ?? [],
+      notes: notesByAccount.get(a.id) ?? [],
       planActions: plansByAccount.get(a.id) ?? [],
       milestones: milestonesByAccount.get(a.id) ?? [],
       oppStages: stagesByAccount.get(a.id) ?? [],
@@ -152,5 +170,6 @@ export async function assembleState(tenantId: string) {
         version: o.version,
       })),
     })),
+    unfiledNotes,
   };
 }

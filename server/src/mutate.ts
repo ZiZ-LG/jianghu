@@ -232,6 +232,26 @@ export async function applyAction(tenantId: string, action: any): Promise<void> 
       await prisma.visitNote.deleteMany({ where: { id: action.visitId, tenantId } });
       return;
 
+    // ── 自由文本层 · 通用笔记（Note，挂载对象可空）──
+    case 'ADD_NOTE': {
+      const n = action.note;
+      await prisma.note.create({ data: {
+        id: n.id, tenantId, accountId: n.accountId ?? null, opportunityId: n.opportunityId ?? null,
+        personId: n.personId ?? null, content: n.content ?? '', source: n.source ?? 'manual',
+        tags: S(n.tags ?? []), createdBy: n.createdBy ?? '',
+      } });
+      return;
+    }
+    case 'UPDATE_NOTE': {
+      const d = pick(action.patch, ['accountId', 'opportunityId', 'personId', 'content', 'source']);
+      if (action.patch?.tags !== undefined) d.tags = S(action.patch.tags);
+      await prisma.note.updateMany({ where: { id: action.noteId, tenantId }, data: d });
+      return;
+    }
+    case 'DELETE_NOTE':
+      await prisma.note.deleteMany({ where: { id: action.noteId, tenantId } });
+      return;
+
     // ── 商机策划 · 行动计划（PlanAction）──
     case 'ADD_PLAN_ACTION': {
       await assertOpp(action.oppId);
