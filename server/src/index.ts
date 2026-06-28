@@ -18,6 +18,7 @@ import { strategyRoutes } from './strategy.js';
 import { enrichRoutes } from './enrich.js';
 import { jobRoutes, startJobWorker } from './jobs.js';
 import { voiceRoutes } from './voice.js';
+import { recordingRoutes } from './recording.js';
 import { opportunityRoutes } from './opp.js';
 import { handleMcpBody } from './mcpServer.js';
 import { accessTokenRoutes, mcpAuthenticate } from './accessToken.js';
@@ -77,6 +78,7 @@ strategyRoutes(app);
 enrichRoutes(app);
 jobRoutes(app);
 voiceRoutes(app);
+recordingRoutes(app);
 opportunityRoutes(app);
 accessTokenRoutes(app);
 

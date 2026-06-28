@@ -51,6 +51,24 @@ export async function enqueueSuggestJob(tenantId: string, accountId: string, opp
   return { id, enqueued: true };
 }
 
+/**
+ * 入队一个 pull_recording 任务（后台从录音源拉转写 → 加密存 Transcript，供"定时/真实源自动拉取"用）。
+ * 幂等：同租户+同源已有 pending/processing 则复用（mode 复用存 source）。accountId 可空（全局拉=''）。
+ */
+export async function enqueuePullRecordingJob(tenantId: string, source: string, accountId?: string): Promise<{ id: string; enqueued: boolean }> {
+  const active = await prisma.enrichJob.findFirst({
+    where: { tenantId, type: 'pull_recording', mode: source, status: { in: ['pending', 'processing'] } },
+  });
+  if (active) return { id: active.id, enqueued: false };
+
+  const activeCount = await prisma.enrichJob.count({ where: { tenantId, status: { in: ['pending', 'processing'] } } });
+  if (activeCount >= MAX_ACTIVE_JOBS_PER_TENANT) throw new Error(`在途自算任务已达上限（${MAX_ACTIVE_JOBS_PER_TENANT}），请稍候`);
+
+  const id = 'job_' + randomUUID().slice(0, 12);
+  await prisma.enrichJob.create({ data: { id, tenantId, type: 'pull_recording', accountId: accountId || '', mode: source, status: 'pending' } });
+  return { id, enqueued: true };
+}
+
 /** 把发现的关键人写入 PersonSuggestion 候选（带去重 + 容量上限）。返回 {created, deduped, skipped}。 */
 async function writeCandidates(tenantId: string, accountId: string, source: string, persons: { name: string; title: string }[]): Promise<{ created: number; deduped: number; skipped: number }> {
   const origin = source === 'qcc' ? 'qcc' : 'ai'; // web 本质也是 AI 联网
@@ -115,7 +133,16 @@ async function runSuggestJob(job: { id: string; tenantId: string; opportunityId:
 /** 按 type 分派任务执行。 */
 async function runJob(job: { id: string; tenantId: string; type: string; accountId: string; opportunityId: string | null; mode: string }): Promise<void> {
   if (job.type === 'suggest_relations') return runSuggestJob(job);
+  if (job.type === 'pull_recording') return runPullRecordingJob(job);
   return runEnrichJob(job);
+}
+
+/** 执行一个 pull_recording 任务：从录音源拉转写 → 加密存 Transcript（不自动抽取，抽取由人触发，守铁律②）。 */
+async function runPullRecordingJob(job: { id: string; tenantId: string; accountId: string; mode: string }): Promise<void> {
+  // 动态 import 打破 jobs → recording → voice → jobs 的顶层循环依赖。
+  const { pullAndSave } = await import('./recording.js');
+  const r = await pullAndSave(job.tenantId, '', (job.mode || 'mock') as any, { accountId: job.accountId || undefined });
+  await finish(job.id, 'done', JSON.stringify(r), '');
 }
 
 async function finish(id: string, status: 'done' | 'failed', result: string, error: string): Promise<void> {

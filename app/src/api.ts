@@ -28,6 +28,14 @@ export interface AuthResult {
 export interface Credentials { phone?: string; email?: string; password: string }
 // 登录命中「同一手机号/邮箱在多个工作区都有账号」时，后端返回候选工作区让用户选（而非直接发 token）
 export interface WorkspaceChoice { needWorkspace: true; workspaces: { tenantId: string; tenantName: string }[] }
+// 录音转写（列表脱敏：不含正文，只有元数据 + hasContent 标志）
+export interface Transcript {
+  id: string; source: string; title: string;
+  accountId: string | null; opportunityId: string | null;
+  durationSec: number; status: string;
+  recordedAt: string | null; extractedAt: string | null; createdAt: string;
+  hasContent: boolean;
+}
 
 export const api = {
   getToken: () => token,
@@ -97,6 +105,17 @@ export const api = {
     req('/api/suggest/enqueue', { method: 'POST', body: JSON.stringify({ opportunityId }) }),
   enrichJobs: (accountId: string): Promise<{ jobs: { id: string; accountId: string; type: string; status: string; result: string; error: string; createdAt: string }[] }> =>
     req('/api/enrich/jobs?accountId=' + encodeURIComponent(accountId)),
+  // 录音接入：拉转写(加密存)/列表(脱敏·不返正文)/抽取(解密→voice 双轨落库·候选人审)/降解/删除
+  recordingPull: (b: { source?: 'mock' | 'getnote' | 'feishu' | 'dingtalk'; accountId?: string; opportunityId?: string }): Promise<{ source: string; saved: number; skipped: number; note: string }> =>
+    req('/api/recording/pull', { method: 'POST', body: JSON.stringify(b) }),
+  recordingTranscripts: (accountId?: string): Promise<{ transcripts: Transcript[] }> =>
+    req('/api/recording/transcripts' + (accountId ? '?accountId=' + encodeURIComponent(accountId) : '')),
+  recordingExtract: (transcriptId: string): Promise<any> =>
+    req('/api/recording/extract', { method: 'POST', body: JSON.stringify({ transcriptId }) }),
+  recordingRedact: (transcriptId: string): Promise<{ ok: true; id: string; status: string }> =>
+    req('/api/recording/redact', { method: 'POST', body: JSON.stringify({ transcriptId }) }),
+  recordingDelete: (transcriptId: string): Promise<{ ok: true; id: string }> =>
+    req(`/api/recording/transcripts/${transcriptId}`, { method: 'DELETE' }),
   // 企查查 股权/对外投资（只读·仅供参考，不写库）。name 须为完整登记名（先经 qccResolve 锚定）。
   qccCompanyData: (name: string): Promise<CompanyEquityData> =>
     req('/api/qcc/company-data', { method: 'POST', body: JSON.stringify({ name }) }),
