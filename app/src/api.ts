@@ -134,6 +134,13 @@ export const api = {
     req('/api/recording/credential/getnote', { method: 'PUT', body: JSON.stringify(b) }),
   recordingDeleteCredential: (source: string): Promise<{ ok: true }> =>
     req(`/api/recording/credential/${source}`, { method: 'DELETE' }),
+  // AI 梳理层（P3）：懒生成综述 / 人编辑(锁定 human-wins) / 强制重梳理
+  curatedGet: (entityKind: 'account' | 'opportunity', entityId: string): Promise<{ content: string; status: string; editedByHuman: boolean; updatedAt?: string }> =>
+    req(`/api/curated?entityKind=${entityKind}&entityId=${encodeURIComponent(entityId)}`),
+  curatedSave: (entityKind: 'account' | 'opportunity', entityId: string, content: string): Promise<{ ok: true }> =>
+    req('/api/curated', { method: 'PUT', body: JSON.stringify({ entityKind, entityId, content }) }),
+  curatedRegen: (entityKind: 'account' | 'opportunity', entityId: string): Promise<{ content: string; status: string; editedByHuman: boolean; error?: string }> =>
+    req('/api/curated/regenerate', { method: 'POST', body: JSON.stringify({ entityKind, entityId }) }),
   // 企查查 股权/对外投资（只读·仅供参考，不写库）。name 须为完整登记名（先经 qccResolve 锚定）。
   qccCompanyData: (name: string): Promise<CompanyEquityData> =>
     req('/api/qcc/company-data', { method: 'POST', body: JSON.stringify({ name }) }),

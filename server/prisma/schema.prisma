@@ -561,3 +561,24 @@ model RecordingCredential {
   @@unique([tenantId, userId, source]) // 一个销售一个源一条凭据（幂等覆盖）
   @@index([tenantId, userId])
 }
+
+// ── AI 梳理层（P3）─────────────────────────────────────────────────────
+// 「三层信息」的【梳理 curated】层：AI 把原始(笔记/拜访纪要/录音转写/人物动态)按模板整理成有条理叙述。
+// 红线：不覆盖原始(只加一层) · 不写分(趋赢力仍由 g64111 算) · 标"AI 整理·待核" · tenantId 隔离。
+// 懒生成+按实体缓存：basedOnAt=梳理所基于的原始层最新时间，打开时与原始最新时间比较决定是否重梳理。
+// human-wins：editedByHuman=true(人改过)→锁定，AI 不再重生成覆盖。跨库可移植：无 enum/json。
+model CuratedSummary {
+  id            String    @id // cs_xxx
+  tenantId      String
+  entityKind    String    // account | opportunity
+  entityId      String
+  content       String    @default("") // 梳理叙述(markdown 段)
+  model         String    @default("") // 生成所用模型(溯源)
+  basedOnAt     DateTime?              // 所基于的原始层最新时间戳(懒生成判过期)
+  editedByHuman Boolean   @default(false) // 人改过→锁定，AI 不覆盖(human-wins)
+  editedBy      String    @default("")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([tenantId, entityKind, entityId])
+}

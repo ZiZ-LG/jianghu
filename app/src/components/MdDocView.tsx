@@ -7,6 +7,7 @@ import {
 } from '../types';
 import { scoreFromDomain, BAND_LABEL, ITEM_MAX, type ItemKey } from '../lib/g64111';
 import type { Action } from '../store';
+import { CuratedSummary } from './CuratedSummary';
 
 /** 失焦提交的内联字段：本地编辑、值变了才 dispatch（避免每键写库）。 */
 function Field({ value, onSave, ph, area }: { value: string; onSave: (v: string) => void; ph?: string; area?: boolean }) {
@@ -73,6 +74,7 @@ function CustomerDoc({ account, dispatch }: { account: Account; dispatch: (a: Ac
   return (
     <div className="mdv">
       <h1>{account.name} · 客户档案</h1>
+      <CuratedSummary entityKind="account" entityId={account.id} />
       <blockquote>
         <div><b>客户类型</b>：{CUSTOMER_TYPE_LABEL[account.customerType]} <span className="mdv-ro">只读</span></div>
         <div><b>大区</b>：<Field value={account.region ?? ''} ph="如 华北" onSave={(v) => set({ region: v })} /></div>
@@ -143,6 +145,7 @@ function OppDoc({ account, opp, dispatch }: { account: Account; opp: Opportunity
   return (
     <div className="mdv">
       <h1>{opp.name} · 商机档案</h1>
+      <CuratedSummary entityKind="opportunity" entityId={opp.id} />
       <blockquote>
         <div><b>所属客户</b>：{account.name} ｜ <b>阶段</b>：{opp.pipelineStage} / {opp.engageStage} <span className="mdv-ro">只读</span></div>
         <div><b>单一销售目标</b>：<Field value={opp.singleSalesGoal} area onSave={(v) => set({ singleSalesGoal: v })} /></div>
