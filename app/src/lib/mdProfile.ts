@@ -133,8 +133,15 @@ export function renderCustomerMd(account: Account, log: VersionLogEntry[] = []):
     }
   } else L.push('> ⏳ 暂无拜访记录。', '');
 
-  // 八、更新日志
-  L.push('## 八、更新日志（账户级 · .md 侧维护）', '');
+  // 八、笔记 · 情报（自由文本层 · 挂客户的零散信息，全量导出）
+  L.push('## 八、笔记 · 情报', '');
+  const cNotes = (account.notes ?? []).filter((n) => !n.personId && !n.opportunityId);
+  if (cNotes.length) for (const n of cNotes) L.push(`- ${n.content}${n.source && n.source !== 'manual' ? `（来源：${n.source}）` : ''}`);
+  else L.push('> ⏳ 暂无笔记。');
+  L.push('');
+
+  // 九、更新日志
+  L.push('## 九、更新日志（账户级 · .md 侧维护）', '');
   L.push(renderVersionLog(log, '客户档案'), '');
 
   return L.join('\n');
@@ -211,8 +218,15 @@ export function renderOpportunityMd(account: Account, opp: Opportunity, log: Ver
   } else L.push('> ⏳ 暂无行动计划。');
   L.push('');
 
+  // 六、笔记 · 情报（自由文本层 · 挂本商机的零散信息，全量导出）
+  L.push('## 六、笔记 · 情报', '');
+  const oNotes = (account.notes ?? []).filter((n) => n.opportunityId === opp.id);
+  if (oNotes.length) for (const n of oNotes) L.push(`- ${n.content}${n.source && n.source !== 'manual' ? `（来源：${n.source}）` : ''}`);
+  else L.push('> ⏳ 暂无笔记。');
+  L.push('');
+
   // 七、更新日志
-  L.push('## 六、更新日志（商机级 · .md 侧维护）', '');
+  L.push('## 七、更新日志（商机级 · .md 侧维护）', '');
   L.push(renderVersionLog(log, '商机档案'), '');
 
   return L.join('\n');
