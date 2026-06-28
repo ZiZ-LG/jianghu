@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
 import { discoverPersons } from './enrich.js';
+import { generateRelSuggestions } from './suggest.js';
 
 // 江湖自算 · 轻量后台任务队列（DB-backed）。
 // 设计取舍（对齐架构纲领「加轻量 job 队列」）：单实例 setInterval 消费，原子 claim；
@@ -29,6 +30,24 @@ export async function enqueueEnrichJob(tenantId: string, accountId: string, mode
 
   const id = 'job_' + randomUUID().slice(0, 12);
   await prisma.enrichJob.create({ data: { id, tenantId, type: 'enrich_account', accountId, mode, status: 'pending' } });
+  return { id, enqueued: true };
+}
+
+/**
+ * 入队一个 suggest_relations 自算任务（图算法 + LLM 推断商机内关系候选）。
+ * 幂等：同商机已有 pending/processing 任务则复用。accountId 一并存便于隔离/分组。
+ */
+export async function enqueueSuggestJob(tenantId: string, accountId: string, opportunityId: string): Promise<{ id: string; enqueued: boolean }> {
+  const active = await prisma.enrichJob.findFirst({
+    where: { tenantId, opportunityId, type: 'suggest_relations', status: { in: ['pending', 'processing'] } },
+  });
+  if (active) return { id: active.id, enqueued: false };
+
+  const activeCount = await prisma.enrichJob.count({ where: { tenantId, status: { in: ['pending', 'processing'] } } });
+  if (activeCount >= MAX_ACTIVE_JOBS_PER_TENANT) throw new Error(`在途自算任务已达上限（${MAX_ACTIVE_JOBS_PER_TENANT}），请稍候`);
+
+  const id = 'job_' + randomUUID().slice(0, 12);
+  await prisma.enrichJob.create({ data: { id, tenantId, type: 'suggest_relations', accountId, opportunityId, status: 'pending' } });
   return { id, enqueued: true };
 }
 
@@ -85,6 +104,20 @@ async function runEnrichJob(job: { id: string; tenantId: string; accountId: stri
   await finish(job.id, 'done', JSON.stringify({ source: r.source, ...stat, note: r.note }), '');
 }
 
+/** 执行一个 suggest_relations 任务：图算法 + LLM 推断商机内关系 → RelSuggestion 候选。 */
+async function runSuggestJob(job: { id: string; tenantId: string; opportunityId: string | null }): Promise<void> {
+  if (!job.opportunityId) { await finish(job.id, 'failed', '', '缺少 opportunityId'); return; }
+  const r = await generateRelSuggestions(job.tenantId, job.opportunityId);
+  if (!r) { await finish(job.id, 'failed', '', '目标商机不存在或已删除'); return; }
+  await finish(job.id, 'done', JSON.stringify({ added: r.added, total: r.total }), '');
+}
+
+/** 按 type 分派任务执行。 */
+async function runJob(job: { id: string; tenantId: string; type: string; accountId: string; opportunityId: string | null; mode: string }): Promise<void> {
+  if (job.type === 'suggest_relations') return runSuggestJob(job);
+  return runEnrichJob(job);
+}
+
 async function finish(id: string, status: 'done' | 'failed', result: string, error: string): Promise<void> {
   await prisma.enrichJob.update({ where: { id }, data: { status, result, error } });
 }
@@ -103,7 +136,7 @@ async function tick(): Promise<void> {
     const claim = await prisma.enrichJob.updateMany({ where: { id: next.id, status: 'pending' }, data: { status: 'processing', attempts: { increment: 1 } } });
     if (claim.count !== 1) return; // 被别处抢走
     try {
-      await runEnrichJob(next);
+      await runJob(next);
     } catch (e: any) {
       await prisma.enrichJob.update({ where: { id: next.id }, data: { status: 'failed', error: String(e?.message || e).slice(0, 500) } }).catch(() => {});
     }
@@ -133,6 +166,19 @@ export function jobRoutes(app: FastifyInstance): void {
     try {
       const r = await enqueueEnrichJob(req.user.tenantId, acc.id, p.data.mode);
       return { ...r, accountId: acc.id };
+    } catch (e: any) { return reply.code(429).send({ error: e?.message || '入队失败' }); }
+  });
+
+  // 入队关系推断任务（对当前商机：图算法 + LLM 推断关系候选）。viewer 只读不可触发。
+  app.post('/api/suggest/enqueue', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (req.user.role === 'viewer') return reply.code(403).send({ error: '只读成员不可发起自算' });
+    const p = z.object({ opportunityId: z.string().min(1) }).safeParse(req.body);
+    if (!p.success) return reply.code(400).send({ error: '缺少 opportunityId' });
+    const opp = await prisma.opportunity.findFirst({ where: { id: p.data.opportunityId, tenantId: req.user.tenantId } });
+    if (!opp) return reply.code(404).send({ error: '商机不存在' });
+    try {
+      const r = await enqueueSuggestJob(req.user.tenantId, opp.accountId, opp.id);
+      return { ...r, opportunityId: opp.id };
     } catch (e: any) { return reply.code(429).send({ error: e?.message || '入队失败' }); }
   });
 
