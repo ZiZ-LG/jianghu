@@ -19,7 +19,7 @@ function Field({ value, onSave, ph, area }: { value: string; onSave: (v: string)
 }
 
 /** 自由文本层 · 笔记区（显示挂某实体的 note + 记一条 + 删；零 schema，复用 ADD/DELETE_NOTE） */
-function NotesSection({ notes, onAdd, onDelete }: { notes: Note[]; onAdd: (content: string) => void; onDelete: (id: string) => void }) {
+export function NotesSection({ notes, onAdd, onDelete }: { notes: Note[]; onAdd: (content: string) => void; onDelete: (id: string) => void }) {
   const [draft, setDraft] = useState('');
   const add = () => { const c = draft.trim(); if (c) { onAdd(c); setDraft(''); } };
   return (
@@ -167,6 +167,13 @@ function OppDoc({ account, opp, dispatch }: { account: Account; opp: Opportunity
         {groups.map(([g, ks]) => ks.map((k) => <tr key={k}><td>{g}</td><td>{k}</td><td>{ITEM_MAX[k]}</td><td>{b.items[k]}</td></tr>))}
         <tr className="mdv-total"><td colSpan={3}><b>趋赢力总分</b></td><td><b>{b.total} / 100</b></td></tr>
       </tbody></table>
+
+      <h2>四、笔记 · 情报 <span className="mdv-ro">自由文本层 · 本商机</span></h2>
+      <NotesSection
+        notes={(account.notes ?? []).filter((n) => n.opportunityId === opp.id)}
+        onAdd={(content) => dispatch({ type: 'ADD_NOTE', accId: account.id, note: { id: newId('note'), accountId: account.id, opportunityId: opp.id, content, source: 'manual' } })}
+        onDelete={(id) => dispatch({ type: 'DELETE_NOTE', accId: account.id, noteId: id })}
+      />
     </div>
   );
 }
