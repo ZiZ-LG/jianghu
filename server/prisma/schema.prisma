@@ -487,7 +487,7 @@ model ChangeProposal {
 model EnrichJob {
   id            String   @id
   tenantId      String
-  type          String   @default("enrich_account") // enrich_account | suggest_relations
+  type          String   @default("enrich_account") // enrich_account | suggest_relations | pull_recording
   accountId     String                              // 目标客户（两类任务都带，便于隔离/分组）
   opportunityId String?                             // suggest_relations 的目标商机
   mode          String   @default("auto")           // auto | web（enrich 数据源）
@@ -498,6 +498,33 @@ model EnrichJob {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  @@index([tenantId, status])
+  @@index([accountId])
+}
+
+// ── 录音转写原始层（PIPL 红线 · P2 录音接入）─────────────────────────────
+// 从录音源（得到大脑 MCP / 飞书妙记 · 钉钉听记 OpenAPI / mock）拉来的转写文字。
+// 「三层信息」里的【原始 raw】层：保真、不可变、带溯源；抽取出的结构化字段一律走提案人审（铁律②）。
+// PIPL 配套：contentEnc = AES-256-GCM 密文（绝不明文落库）；status 控制最小留存（抽取后可降解/删除）；
+// 全程 tenantId 强隔离。跨库可移植：全 String/Int/DateTime，无 enum/json。
+model Transcript {
+  id            String    @id // tr_xxx
+  tenantId      String
+  accountId     String?   // 可空挂载（拜访录音通常挂客户/商机；未归类可空）
+  opportunityId String?
+  personId      String?
+  source        String    @default("mock") // 录音源：getnote(得到大脑) | feishu | dingtalk | manual | mock
+  externalRef   String?   // 外部录音/笔记 id（幂等去重，避免重复拉取；空=本地/mock 不去重）
+  title         String    @default("")      // 录音/会议标题（非隐私，可明文，列表展示用）
+  contentEnc    String    @default("")      // 转写全文密文（AES-256-GCM base64）—— PIPL 加密，绝不明文落库
+  durationSec   Int       @default(0)       // 录音时长（秒，溯源）
+  recordedAt    DateTime?                   // 录音发生时间（溯源：何时）
+  status        String    @default("active") // active(待抽取) | extracted(已抽取) | redacted(原文已降解/删除)
+  extractedAt   DateTime?                   // 抽取时间（用完即可降解原文）
+  createdBy     String    @default("")      // 拉取/导入者 userId（溯源：谁）
+  createdAt     DateTime  @default(now())
+
+  @@unique([tenantId, source, externalRef]) // 同租户同源同外部id 幂等（externalRef 为 NULL 时 distinct，不约束多行）
   @@index([tenantId, status])
   @@index([accountId])
 }

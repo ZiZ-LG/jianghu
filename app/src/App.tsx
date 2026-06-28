@@ -28,6 +28,7 @@ import { TeamBilling } from './components/TeamBilling';
 import { AiSettings } from './components/AiSettings';
 import { SuggestionPanel } from './components/SuggestionPanel';
 import { InboxPanel } from './components/InboxPanel';
+import { RecordingPanel } from './components/RecordingPanel';
 import { ReportPanel } from './components/ReportPanel';
 import { HelpManual } from './components/HelpManual';
 import { McpAccess } from './components/McpAccess';
@@ -64,6 +65,7 @@ export default function App() {
   const [inbox, setInbox] = useState<{ rels: InboxRel[]; persons: InboxPerson[]; proposals: InboxProposal[]; total: number }>({ rels: [], persons: [], proposals: [], total: 0 });
   const [gapsOpen, setGapsOpen] = useState(false); // M3 缺口刷卡补分（enrichOpen 随重构删 EnrichPanel 移除）
   const [selfComputeBusy, setSelfComputeBusy] = useState(false); // 江湖自算·补全干系人 进行中
+  const [recordingOpen, setRecordingOpen] = useState(false); // 录音接入面板
   const [reportOpen, setReportOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [mcpAccessOpen, setMcpAccessOpen] = useState(false);
@@ -504,6 +506,7 @@ export default function App() {
                 {!isMobile && (<>
                   <button className="btn ghost xs" onClick={() => setMdDocOpen(true)} title="客户档案 / 商机档案 / 拜访记录（.md 文档）">📋 作战档案</button>
                   <button className="btn ghost xs" onClick={selfCompute} disabled={selfComputeBusy} title="江湖自算：后台用企查查/AI 发现关键干系人 + 推断当前商机内关系，候选进收件箱待人审">{selfComputeBusy ? '⏳ 自算中…' : '🔍 自算补全'}</button>
+                  <button className="btn ghost xs" onClick={() => setRecordingOpen(true)} title="录音接入：从录音源拉转写 → 抽取成图，候选进收件箱人审">🎧 录音接入</button>
                   <button className="btn ghost xs" onClick={() => setSuggestOpen(true)}>📥 收件箱{suggestions.length + personSuggs.length > 0 ? ` (${suggestions.length + personSuggs.length})` : ''}</button>
                   <button className="btn ghost xs" onClick={() => setReportOpen(true)}>📊 报表</button>
                   <button className="btn ghost xs" onClick={() => setHelpOpen(true)}>❓ 帮助</button>
@@ -515,6 +518,7 @@ export default function App() {
                   <OverflowMenu align="left" label="⋯ 操作" items={[
                     { label: '📋 作战档案', onClick: () => setMdDocOpen(true) },
                     { label: selfComputeBusy ? '⏳ 自算中…' : '🔍 自算补全', onClick: selfCompute },
+                    { label: '🎧 录音接入', onClick: () => setRecordingOpen(true) },
                     { label: '📥 收件箱', badge: suggestions.length + personSuggs.length > 0 ? String(suggestions.length + personSuggs.length) : undefined, onClick: () => setSuggestOpen(true) },
                     { label: '📊 报表', onClick: () => setReportOpen(true) },
                     { label: '❓ 帮助', onClick: () => setHelpOpen(true) },
@@ -576,6 +580,7 @@ export default function App() {
           onDone={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); } catch { /* 静默：保存已成功，仅刷新失败 */ } }} />
       )}
       {mdDocOpen && <MdDocPanel account={account} dispatch={act} onClose={() => setMdDocOpen(false)} />}
+      {recordingOpen && <RecordingPanel accountId={account.id} onClose={() => setRecordingOpen(false)} onExtracted={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); await loadInbox(); } catch { /* 静默：抽取已成功，仅刷新失败 */ } }} />}
       {intelOpen && (
         <IntelCapture account={account} opportunity={opp}
           onClose={() => setIntelOpen(false)}
