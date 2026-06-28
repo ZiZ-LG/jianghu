@@ -11,6 +11,8 @@ import { prisma } from './prisma.js';
 import { enc, dec } from './ai.js';
 import { ingestVoiceText, type IngestResult } from './voice.js';
 import { buildFeishuAuthUrl, exchangeFeishuCode, refreshFeishuToken, listFeishuMinutes, getFeishuTranscript, type FeishuApp } from './feishu.js';
+import mammoth from 'mammoth';
+import { extractText, getDocumentProxy } from 'unpdf';
 
 export type RecordingSource = 'getnote' | 'feishu' | 'dingtalk' | 'mock' | 'manual' | 'upload';
 
@@ -256,18 +258,34 @@ export function recordingRoutes(app: FastifyInstance): void {
     return { ok: true, id: tr.id };
   });
 
-  // ── 文件上传（替代钉钉听记）：md/txt 文本（前端 FileReader 读为文本传来）→ 存 Transcript（加密）→ 可抽取 ──
+  // ── 文件上传（替代钉钉听记）：md/txt/docx/pdf 文件 → 服务端解析提取文字 → 存 Transcript（加密）→ 可抽取 ──
+  // multipart 文件，accountId/opportunityId 走 query。docx=mammoth、pdf=unpdf、md/txt=直读。
   app.post('/api/recording/upload', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (req.user.role === 'viewer') return reply.code(403).send({ error: '只读成员不可上传' });
-    const p = z.object({ title: z.string().optional(), text: z.string().min(1), accountId: z.string().optional(), opportunityId: z.string().optional() }).safeParse(req.body);
-    if (!p.success) return reply.code(400).send({ error: '缺少文件文本内容' });
-    if (p.data.accountId) {
-      const acc = await prisma.account.findFirst({ where: { id: p.data.accountId, tenantId: req.user.tenantId } });
+    const data = await req.file();
+    if (!data) return reply.code(400).send({ error: '缺少上传文件' });
+    const buf = await data.toBuffer();
+    const name = (data.filename || '上传文件').slice(0, 200);
+    const ext = (name.split('.').pop() || '').toLowerCase();
+    let text = '';
+    try {
+      if (ext === 'md' || ext === 'txt') text = buf.toString('utf8');
+      else if (ext === 'docx') text = (await mammoth.extractRawText({ buffer: buf })).value;
+      else if (ext === 'pdf') {
+        const pdf = await getDocumentProxy(new Uint8Array(buf));
+        const r = await extractText(pdf, { mergePages: true });
+        text = Array.isArray(r.text) ? r.text.join('\n') : r.text;
+      } else return reply.code(400).send({ error: `不支持的格式「.${ext}」（支持 md/txt/docx/pdf）` });
+    } catch (e: any) { return reply.code(400).send({ error: '文件解析失败：' + (e?.message || e) }); }
+    text = text.trim();
+    if (!text) return reply.code(400).send({ error: ext === 'pdf' ? '没从 PDF 提取到文字（可能是扫描版/图片型 PDF，无文本层）' : '文件没有可提取的文字' });
+    const accountId = typeof req.query?.accountId === 'string' ? req.query.accountId : undefined;
+    const opportunityId = typeof req.query?.opportunityId === 'string' ? req.query.opportunityId : undefined;
+    if (accountId) {
+      const acc = await prisma.account.findFirst({ where: { id: accountId, tenantId: req.user.tenantId } });
       if (!acc) return reply.code(404).send({ error: '客户不存在' });
     }
-    const stat = await saveTranscripts(req.user.tenantId, req.user.id || '', 'upload',
-      [{ externalRef: '', title: (p.data.title || '上传的拜访记录').slice(0, 200), text: p.data.text }],
-      { accountId: p.data.accountId, opportunityId: p.data.opportunityId });
+    const stat = await saveTranscripts(req.user.tenantId, req.user.id || '', 'upload', [{ externalRef: '', title: name, text }], { accountId, opportunityId });
     return { source: 'upload', ...stat };
   });
 

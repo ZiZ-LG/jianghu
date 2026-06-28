@@ -89,8 +89,7 @@ export function RecordingPanel({ accountId, role, onClose, onExtracted }: {
     const f = e.target.files?.[0]; if (!f) return;
     setBusy(true); setMsg('');
     try {
-      const text = await f.text();
-      const r = await api.recordingUpload({ title: f.name, text, accountId });
+      const r = await api.recordingUpload(f, accountId);
       setMsg(`已上传「${f.name}」：新增 ${r.saved} 条，可在下方点「抽取成图」。`);
       await load();
     } catch (err: any) { setMsg('上传失败：' + (err?.message || err)); }
@@ -156,8 +155,8 @@ export function RecordingPanel({ accountId, role, onClose, onExtracted }: {
 
         {source === 'upload' && (
           <label className="btn primary sm" style={{ cursor: 'pointer', display: 'inline-block' }}>
-            📄 选择 md / txt 文件
-            <input type="file" accept=".md,.txt,text/plain,text/markdown" onChange={onFile} style={{ display: 'none' }} />
+            📄 选择文件（md / txt / docx / pdf）
+            <input type="file" accept=".md,.txt,.docx,.pdf" onChange={onFile} style={{ display: 'none' }} />
           </label>
         )}
 

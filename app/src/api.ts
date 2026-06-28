@@ -12,8 +12,9 @@ async function req(path: string, opts: RequestInit = {}): Promise<any> {
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...((opts.headers as Record<string, string>) || {}),
   };
-  // 仅在确有请求体时声明 JSON content-type，否则 Fastify 会因空 body 报 400
-  if (opts.body) headers['Content-Type'] = 'application/json';
+  // 仅在确有请求体时声明 JSON content-type，否则 Fastify 会因空 body 报 400。
+  // FormData（文件上传）例外：让浏览器自动带 multipart boundary，不能手动设。
+  if (opts.body && !(opts.body instanceof FormData)) headers['Content-Type'] = 'application/json';
   const res = await fetch(BASE + path, { ...opts, headers });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(data.error || `请求失败（HTTP ${res.status}）`), { status: res.status });
@@ -117,8 +118,10 @@ export const api = {
   recordingDelete: (transcriptId: string): Promise<{ ok: true; id: string }> =>
     req(`/api/recording/transcripts/${transcriptId}`, { method: 'DELETE' }),
   // 录音源（P2-b）：文件上传 / per-user 凭据状态 / 飞书 App 配置(租户级) / 飞书 OAuth / 得到大脑 token
-  recordingUpload: (b: { title?: string; text: string; accountId?: string; opportunityId?: string }): Promise<{ source: string; saved: number; skipped: number }> =>
-    req('/api/recording/upload', { method: 'POST', body: JSON.stringify(b) }),
+  recordingUpload: (file: File, accountId?: string): Promise<{ source: string; saved: number; skipped: number }> => {
+    const fd = new FormData(); fd.append('file', file);
+    return req('/api/recording/upload' + (accountId ? '?accountId=' + encodeURIComponent(accountId) : ''), { method: 'POST', body: fd });
+  },
   recordingCredentials: (): Promise<{ credentials: { source: string; status: string; expiresAt: string | null; updatedAt: string }[] }> =>
     req('/api/recording/credentials'),
   recordingFeishuConfig: (): Promise<{ configured: boolean; appId: string; hasSecret: boolean; enabled: boolean; redirectUri: string }> =>

@@ -4,6 +4,7 @@ import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
+import multipart from '@fastify/multipart';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
@@ -53,6 +54,8 @@ await app.register(jwt, { secret: JWT_SECRET, sign: { expiresIn: '7d' } });
 
 // 全局限流：每 IP 每分钟 300 次（兜底防滥用；认证接口在 auth.ts 内单独收紧）
 await app.register(rateLimit, { max: 300, timeWindow: '1 minute' });
+// 录音接入·文件上传（docx/pdf/md/txt）。单文件 ≤15MB，1 个/次。
+await app.register(multipart, { limits: { fileSize: 15 * 1024 * 1024, files: 1 } });
 
 app.decorate('authenticate', async (req: any, reply: any) => {
   try { await req.jwtVerify(); } catch { reply.code(401).send({ error: 'unauthorized' }); return; }
