@@ -481,20 +481,22 @@ model ChangeProposal {
 }
 
 // 江湖自算 · 轻量后台任务队列（DB-backed，单实例 setInterval worker 消费）。
-// P1 首类任务 = enrich_account：建客户后后台调企查查/AI 发现干系人 → 写 PersonSuggestion 候选（走人审，铁律②）。
-// 不用原生 enum/json，全 String 跨库可移植；result 存 JSON 字符串摘要。
+// 任务类型：enrich_account（建客户后企查查/AI 发现干系人 → PersonSuggestion 候选）；
+//          suggest_relations（建/选商机后图算法+LLM 推断关系 → RelSuggestion 候选）。
+// 产物一律走候选人审（铁律②）。不用原生 enum/json，全 String 跨库可移植；result 存 JSON 摘要。
 model EnrichJob {
-  id        String   @id
-  tenantId  String
-  type      String   @default("enrich_account") // 预留扩展：将来可加更多自算任务类型
-  accountId String                              // 目标客户（enrich_account）
-  mode      String   @default("auto")           // auto | web（对齐 /api/enrich/company 数据源）
-  status    String   @default("pending")        // pending | processing | done | failed
-  attempts  Int      @default(0)
-  result    String   @default("")               // JSON 摘要：{source, created, deduped, note}
-  error     String   @default("")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id            String   @id
+  tenantId      String
+  type          String   @default("enrich_account") // enrich_account | suggest_relations
+  accountId     String                              // 目标客户（两类任务都带，便于隔离/分组）
+  opportunityId String?                             // suggest_relations 的目标商机
+  mode          String   @default("auto")           // auto | web（enrich 数据源）
+  status        String   @default("pending")        // pending | processing | done | failed
+  attempts      Int      @default(0)
+  result        String   @default("")               // JSON 摘要：{source, created, deduped, note} 或 {added}
+  error         String   @default("")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   @@index([tenantId, status])
   @@index([accountId])

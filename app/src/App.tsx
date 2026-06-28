@@ -359,28 +359,40 @@ export default function App() {
     catch (e: any) { setSyncErr('忽略失败：' + e.message); }
   };
 
-  // ── 江湖自算·补全干系人：后台入队 enrich 任务 → 轮询任务态 → 完成后刷新候选(收件箱)。产物走人审，铁律② ──
+  // ── 江湖自算·补全：后台入队 enrich(客户·发现干系人) + suggest_relations(当前商机·推断关系) → 轮询 → 刷新候选。产物走人审，铁律② ──
   const selfCompute = async () => {
     if (!account || selfComputeBusy) return;
     setSelfComputeBusy(true);
     try {
-      const r = await api.enrichEnqueue(account.id, 'auto');
-      setSyncErr(r.enqueued ? '🔍 已启动自算·企查查/AI 发现干系人，完成后进收件箱…' : '🔍 该客户已有自算任务在进行中…');
-      // 轮询任务终态（worker 每 5s 一次，最多等 ~40s）
-      for (let i = 0; i < 20; i++) {
+      const tasks: string[] = [];
+      const er = await api.enrichEnqueue(account.id, 'auto');
+      tasks.push(er.enqueued ? '发现干系人' : '发现干系人(进行中)');
+      if (opp) {
+        const sr = await api.suggestEnqueue(opp.id);
+        tasks.push(sr.enqueued ? '推断关系' : '推断关系(进行中)');
+      }
+      setSyncErr(`🔍 已启动自算·${tasks.join(' + ')}，完成后进收件箱…`);
+      // 轮询：等该客户名下所有任务跑完（worker 每 5s 一次，最多 ~50s）
+      for (let i = 0; i < 25; i++) {
         await new Promise((s) => setTimeout(s, 2000));
         const { jobs } = await api.enrichJobs(account.id);
-        const job = jobs[0];
-        if (!job || job.status === 'pending' || job.status === 'processing') continue;
-        if (job.status === 'failed') { setSyncErr('自算失败：' + (job.error || '未知错误')); break; }
-        // done：解析结果摘要并刷新候选
-        let created = 0, source = '';
-        try { const res = JSON.parse(job.result || '{}'); created = res.created ?? 0; source = res.source ?? ''; } catch { /* 摘要解析失败忽略 */ }
-        try { setPersonSuggs((await api.personSuggestList(account.id)).suggestions); } catch { /* 候选刷新失败下次同步 */ }
+        const active = jobs.filter((j) => j.status === 'pending' || j.status === 'processing');
+        if (active.length) continue;
+        // 全部终态：汇总结果并刷新候选
+        let persons = 0, rels = 0, onlyMock = true;
+        for (const j of jobs.slice(0, 4)) {
+          try {
+            const res = JSON.parse(j.result || '{}');
+            if (j.type === 'enrich_account') { persons += res.created ?? 0; if (res.source && res.source !== 'mock') onlyMock = false; }
+            if (j.type === 'suggest_relations') { rels += res.added ?? 0; onlyMock = false; }
+          } catch { /* 摘要解析失败忽略 */ }
+        }
+        try { setPersonSuggs((await api.personSuggestList(account.id)).suggestions); } catch { /* 下次同步 */ }
+        if (opp) { try { setSuggestions((await api.suggestList(opp.id)).suggestions); } catch { /* 下次同步 */ } }
         await loadInbox();
-        setSyncErr(source === 'mock'
-          ? '🔍 自算完成：当前未配置企查查 MCP / AI 模型，暂无可发现的干系人（可在设置里配置数据源）。'
-          : `🔍 自算完成：发现 ${created} 位候选干系人，请到收件箱人审采纳。`);
+        setSyncErr(onlyMock && persons === 0 && rels === 0
+          ? '🔍 自算完成：未配置企查查 MCP / AI 模型，暂无可发现内容（可在设置里配置数据源）。'
+          : `🔍 自算完成：发现 ${persons} 位候选干系人 + ${rels} 条候选关系，请到收件箱人审。`);
         break;
       }
     } catch (e: any) { setSyncErr('自算失败：' + (e?.message || e)); }
@@ -491,7 +503,7 @@ export default function App() {
                 {!isMobile && <LayerTabs visible={visibleLayers} onToggle={toggleLayer} />}
                 {!isMobile && (<>
                   <button className="btn ghost xs" onClick={() => setMdDocOpen(true)} title="客户档案 / 商机档案 / 拜访记录（.md 文档）">📋 作战档案</button>
-                  <button className="btn ghost xs" onClick={selfCompute} disabled={selfComputeBusy} title="江湖自算：后台用企查查/AI 发现关键干系人，候选进收件箱待人审">{selfComputeBusy ? '⏳ 自算中…' : '🔍 自算补全'}</button>
+                  <button className="btn ghost xs" onClick={selfCompute} disabled={selfComputeBusy} title="江湖自算：后台用企查查/AI 发现关键干系人 + 推断当前商机内关系，候选进收件箱待人审">{selfComputeBusy ? '⏳ 自算中…' : '🔍 自算补全'}</button>
                   <button className="btn ghost xs" onClick={() => setSuggestOpen(true)}>📥 收件箱{suggestions.length + personSuggs.length > 0 ? ` (${suggestions.length + personSuggs.length})` : ''}</button>
                   <button className="btn ghost xs" onClick={() => setReportOpen(true)}>📊 报表</button>
                   <button className="btn ghost xs" onClick={() => setHelpOpen(true)}>❓ 帮助</button>

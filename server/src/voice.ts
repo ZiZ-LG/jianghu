@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
 import { loadAiConfig, callLLM } from './ai.js';
-import { enqueueEnrichJob } from './jobs.js';
+import { enqueueEnrichJob, enqueueSuggestJob } from './jobs.js';
 import { applyAction } from './mutate.js';
 import { createFieldProposal } from './proposals.js';
 import { nextFreeSlot } from './layout.js';
@@ -154,6 +154,8 @@ export function voiceRoutes(app: FastifyInstance) {
         opp = { id, name: oname } as any;
         receipt.opportunity = { id, name: oname, status: 'created' };
         if (simOpp) receipt.dupWarnings.push({ kind: 'opportunity', name: oname, similarTo: simOpp.name });
+        // 江湖自算：语音建商机后后台入队关系推断（worker 数秒后跑，届时本次口述的人/边已落库，图已完整）。
+        try { await enqueueSuggestJob(tenantId, acc.id, id); } catch { /* 超上限等，忽略 */ }
       } else receipt.opportunity = { id: opp.id, name: opp.name, status: 'matched' };
     } else if (opp) receipt.opportunity = { id: opp.id, name: opp.name, status: 'matched' };
 

@@ -124,14 +124,44 @@ async function llmCandidates(cfg: any, persons: any[], edges: any[], nameOf: (id
   return out.slice(0, 6);
 }
 
-export function suggestRoutes(app: FastifyInstance) {
-  async function loadGraph(tenantId: string, oppId: string) {
-    const opp = await prisma.opportunity.findFirst({ where: { id: oppId, tenantId } });
-    if (!opp) return null;
-    const persons = await prisma.person.findMany({ where: { tenantId, accountId: opp.accountId } });
-    const edges = await prisma.edge.findMany({ where: { tenantId, accountId: opp.accountId, OR: [{ opportunityId: null }, { opportunityId: oppId }] } });
-    return { opp, persons, edges };
+async function loadGraph(tenantId: string, oppId: string) {
+  const opp = await prisma.opportunity.findFirst({ where: { id: oppId, tenantId } });
+  if (!opp) return null;
+  const persons = await prisma.person.findMany({ where: { tenantId, accountId: opp.accountId } });
+  const edges = await prisma.edge.findMany({ where: { tenantId, accountId: opp.accountId, OR: [{ opportunityId: null }, { opportunityId: oppId }] } });
+  return { opp, persons, edges };
+}
+
+/**
+ * 生成某商机的关系候选（图算法共同邻居 + LLM/mock 启发）→ 写 RelSuggestion（pending，走人审，铁律②）。
+ * 路由 /api/suggest/generate 与后台 suggest_relations job 共用此核心。返回 { added, total } 或 null（商机不存在）。
+ * 效率护栏：非竞品干系人 < 2 时无可推断，直接返回（避免空图也烧 LLM token）。
+ */
+export async function generateRelSuggestions(tenantId: string, opportunityId: string): Promise<{ added: number; total: number } | null> {
+  const g = await loadGraph(tenantId, opportunityId);
+  if (!g) return null;
+  const nameOf = (id: string) => g.persons.find((x) => x.id === id)?.name || id;
+  const connected = new Set(g.edges.map((e) => pairKey(e.source, e.target)));
+
+  let added = 0;
+  if (g.persons.filter((p) => !p.isCompetitor).length >= 2) {
+    // 去重：排除已连接 + 该商机下所有历史候选（含已采纳/已忽略，避免重复打扰）
+    const existing = await prisma.relSuggestion.findMany({ where: { opportunityId, tenantId } });
+    const seen = new Set<string>([...connected, ...existing.map((s) => pairKey(s.sourcePersonId, s.targetPersonId))]);
+    let cands: Cand[] = graphCandidates(g.persons, g.edges, nameOf);
+    const cfg = await loadAiConfig(tenantId);
+    if (cfg) cands = cands.concat(cfg.provider === 'mock' || !cfg.baseUrl || !cfg.model ? mockLlmCandidates(g.persons, connected) : await llmCandidates(cfg, g.persons, g.edges, nameOf));
+    const fresh = cands.filter((c) => { const k = pairKey(c.source, c.target); if (c.source === c.target || seen.has(k)) return false; seen.add(k); return true; });
+    if (fresh.length) {
+      await prisma.relSuggestion.createMany({ data: fresh.map((c) => ({ id: 'rs_' + randomUUID().slice(0, 12), tenantId, opportunityId, sourcePersonId: c.source, targetPersonId: c.target, layer: c.layer, label: c.label, confidence: c.confidence, origin: c.origin, evidence: c.evidence })) });
+    }
+    added = fresh.length;
   }
+  const total = await prisma.relSuggestion.count({ where: { opportunityId, tenantId, status: 'pending' } });
+  return { added, total };
+}
+
+export function suggestRoutes(app: FastifyInstance) {
   // 解析候选关系端点名（正式人从 persons 取，候选人从 PersonSuggestion 取），并带上 kind 供前端区分。
   const withNames = async (tenantId: string, rows: any[], persons: any[]) => {
     const nm = new Map(persons.map((p) => [p.id, p.name]));
@@ -160,25 +190,11 @@ export function suggestRoutes(app: FastifyInstance) {
     const p = z.object({ opportunityId: z.string() }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '缺少 opportunityId' });
     const tenantId = req.user.tenantId;
+    const r = await generateRelSuggestions(tenantId, p.data.opportunityId);
+    if (!r) return reply.code(404).send({ error: '商机不存在' });
     const g = await loadGraph(tenantId, p.data.opportunityId);
-    if (!g) return reply.code(404).send({ error: '商机不存在' });
-    const nameOf = (id: string) => g.persons.find((x) => x.id === id)?.name || id;
-    const connected = new Set(g.edges.map((e) => pairKey(e.source, e.target)));
-
-    // 去重：排除已连接的边 + 该商机下所有历史候选（含已采纳/已忽略，避免重复打扰）
-    const existing = await prisma.relSuggestion.findMany({ where: { opportunityId: p.data.opportunityId, tenantId } });
-    const seen = new Set<string>([...connected, ...existing.map((s) => pairKey(s.sourcePersonId, s.targetPersonId))]);
-
-    let cands: Cand[] = graphCandidates(g.persons, g.edges, nameOf);
-    const cfg = await loadAiConfig(tenantId);
-    if (cfg) cands = cands.concat(cfg.provider === 'mock' || !cfg.baseUrl || !cfg.model ? mockLlmCandidates(g.persons, connected) : await llmCandidates(cfg, g.persons, g.edges, nameOf));
-
-    const fresh = cands.filter((c) => { const k = pairKey(c.source, c.target); if (c.source === c.target || seen.has(k)) return false; seen.add(k); return true; });
-    if (fresh.length) {
-      await prisma.relSuggestion.createMany({ data: fresh.map((c) => ({ id: 'rs_' + randomUUID().slice(0, 12), tenantId, opportunityId: p.data.opportunityId, sourcePersonId: c.source, targetPersonId: c.target, layer: c.layer, label: c.label, confidence: c.confidence, origin: c.origin, evidence: c.evidence })) });
-    }
     const all = await prisma.relSuggestion.findMany({ where: { opportunityId: p.data.opportunityId, tenantId, status: 'pending' }, orderBy: { confidence: 'desc' } });
-    return { added: fresh.length, suggestions: await withNames(req.user.tenantId, all, g.persons) };
+    return { added: r.added, suggestions: await withNames(tenantId, all, g!.persons) };
   });
 
   // 采纳候选关系：级联事务——若端点是候选人物先落正式 Person，再建 Edge。

@@ -15,7 +15,7 @@ import { prisma } from './prisma.js';
 import { applyAction } from './mutate.js';
 import { scoreFromState, ITEM_LABEL, ITEM_MAX, type ItemKey } from './g64111.js';
 import { createFieldProposal } from './proposals.js';
-import { enqueueEnrichJob } from './jobs.js';
+import { enqueueEnrichJob, enqueueSuggestJob } from './jobs.js';
 
 // 每租户 pending 候选容量上限（防外部 agent 刷爆）
 const MAX_PENDING_PERSON_SUGG = 200;
@@ -712,7 +712,10 @@ async function upsertOpportunity(tenantId: string, _userId: string, args: Record
       ...fields,
     },
   });
-  return { id, accountId: account.id, created: true, origin: 'workbuddy', note: `已在客户「${account.name}」下新建商机「${name}」。` };
+  // 江湖自算：新建商机后后台入队关系推断（图算法+LLM 推断商机内关系 → 候选进收件箱人审）。不阻塞、失败不影响落库。
+  let selfCompute = false;
+  try { selfCompute = (await enqueueSuggestJob(tenantId, account.id, id)).enqueued; } catch { /* 超上限等，忽略 */ }
+  return { id, accountId: account.id, created: true, origin: 'workbuddy', note: `已在客户「${account.name}」下新建商机「${name}」。${selfCompute ? '已启动后台关系推断，候选见收件箱。' : ''}` };
 }
 
 /** append_visit_note：定位父客户(+可选商机) → 按 externalRef 幂等 upsert 拜访记录。 */
