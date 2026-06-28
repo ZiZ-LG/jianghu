@@ -63,6 +63,7 @@ export default function App() {
   const [inboxOpen, setInboxOpen] = useState(false);
   const [inbox, setInbox] = useState<{ rels: InboxRel[]; persons: InboxPerson[]; proposals: InboxProposal[]; total: number }>({ rels: [], persons: [], proposals: [], total: 0 });
   const [gapsOpen, setGapsOpen] = useState(false); // M3 缺口刷卡补分（enrichOpen 随重构删 EnrichPanel 移除）
+  const [selfComputeBusy, setSelfComputeBusy] = useState(false); // 江湖自算·补全干系人 进行中
   const [reportOpen, setReportOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [mcpAccessOpen, setMcpAccessOpen] = useState(false);
@@ -358,6 +359,34 @@ export default function App() {
     catch (e: any) { setSyncErr('忽略失败：' + e.message); }
   };
 
+  // ── 江湖自算·补全干系人：后台入队 enrich 任务 → 轮询任务态 → 完成后刷新候选(收件箱)。产物走人审，铁律② ──
+  const selfCompute = async () => {
+    if (!account || selfComputeBusy) return;
+    setSelfComputeBusy(true);
+    try {
+      const r = await api.enrichEnqueue(account.id, 'auto');
+      setSyncErr(r.enqueued ? '🔍 已启动自算·企查查/AI 发现干系人，完成后进收件箱…' : '🔍 该客户已有自算任务在进行中…');
+      // 轮询任务终态（worker 每 5s 一次，最多等 ~40s）
+      for (let i = 0; i < 20; i++) {
+        await new Promise((s) => setTimeout(s, 2000));
+        const { jobs } = await api.enrichJobs(account.id);
+        const job = jobs[0];
+        if (!job || job.status === 'pending' || job.status === 'processing') continue;
+        if (job.status === 'failed') { setSyncErr('自算失败：' + (job.error || '未知错误')); break; }
+        // done：解析结果摘要并刷新候选
+        let created = 0, source = '';
+        try { const res = JSON.parse(job.result || '{}'); created = res.created ?? 0; source = res.source ?? ''; } catch { /* 摘要解析失败忽略 */ }
+        try { setPersonSuggs((await api.personSuggestList(account.id)).suggestions); } catch { /* 候选刷新失败下次同步 */ }
+        await loadInbox();
+        setSyncErr(source === 'mock'
+          ? '🔍 自算完成：当前未配置企查查 MCP / AI 模型，暂无可发现的干系人（可在设置里配置数据源）。'
+          : `🔍 自算完成：发现 ${created} 位候选干系人，请到收件箱人审采纳。`);
+        break;
+      }
+    } catch (e: any) { setSyncErr('自算失败：' + (e?.message || e)); }
+    finally { setSelfComputeBusy(false); }
+  };
+
   // ── 审核收件箱（Hub 级）：复用既有候选采纳/驳回链路；采纳会改对应客户的树 → getState 重拉整树保证跨客户一致 ──
   const loadInbox = async () => { try { setInbox(await api.inboxList()); } catch { /* 角标失败忽略 */ } };
   const refreshAfterAccept = async () => {
@@ -462,6 +491,7 @@ export default function App() {
                 {!isMobile && <LayerTabs visible={visibleLayers} onToggle={toggleLayer} />}
                 {!isMobile && (<>
                   <button className="btn ghost xs" onClick={() => setMdDocOpen(true)} title="客户档案 / 商机档案 / 拜访记录（.md 文档）">📋 作战档案</button>
+                  <button className="btn ghost xs" onClick={selfCompute} disabled={selfComputeBusy} title="江湖自算：后台用企查查/AI 发现关键干系人，候选进收件箱待人审">{selfComputeBusy ? '⏳ 自算中…' : '🔍 自算补全'}</button>
                   <button className="btn ghost xs" onClick={() => setSuggestOpen(true)}>📥 收件箱{suggestions.length + personSuggs.length > 0 ? ` (${suggestions.length + personSuggs.length})` : ''}</button>
                   <button className="btn ghost xs" onClick={() => setReportOpen(true)}>📊 报表</button>
                   <button className="btn ghost xs" onClick={() => setHelpOpen(true)}>❓ 帮助</button>
@@ -472,6 +502,7 @@ export default function App() {
                     items={(['L1', 'L2', 'L3', 'L4'] as Layer[]).map((l) => ({ label: LAYER_LABEL[l], active: visibleLayers.has(l), onClick: () => toggleLayer(l) }))} />
                   <OverflowMenu align="left" label="⋯ 操作" items={[
                     { label: '📋 作战档案', onClick: () => setMdDocOpen(true) },
+                    { label: selfComputeBusy ? '⏳ 自算中…' : '🔍 自算补全', onClick: selfCompute },
                     { label: '📥 收件箱', badge: suggestions.length + personSuggs.length > 0 ? String(suggestions.length + personSuggs.length) : undefined, onClick: () => setSuggestOpen(true) },
                     { label: '📊 报表', onClick: () => setReportOpen(true) },
                     { label: '❓ 帮助', onClick: () => setHelpOpen(true) },
