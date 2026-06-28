@@ -209,6 +209,19 @@ export interface VisitNote {
   createdAt?: string;         // ISO
 }
 
+/** 自由文本层 · 通用笔记（零散/长尾，三挂载对象皆可空；挂 person/opp 时冗余 accountId） */
+export interface Note {
+  id: string;
+  accountId?: string;         // 主挂载(冗余)；未归类则空
+  opportunityId?: string;
+  personId?: string;
+  content: string;            // 自由文本(原始零散信息)
+  source?: string;            // manual/voice/ai/import
+  tags?: string[];
+  createdBy?: string;
+  createdAt?: string;
+}
+
 /** 时段（周视图定位用） */
 export type Half = 'am' | 'pm' | 'eve';
 
@@ -317,6 +330,7 @@ export interface Account {
   baseEdges: Edge[]; // 存量边 L1 + 基础 L3
   opportunities: Opportunity[];
   visitNotes?: VisitNote[]; // 拜访记录（WorkBuddy 同步）
+  notes?: Note[]; // 自由文本层：挂在该客户(及其商机/人)的笔记
   planActions?: PlanAction[]; // 商机策划 · 行动计划
   milestones?: OppMilestone[]; // 商机策划 · 里程碑
   oppStages?: OppStage[]; // 商机策划 · 阶段段（年视图）

@@ -1,7 +1,7 @@
 // 江湖 · 数据层：状态 + reducer + localStorage 持久化 + 实体工厂
 // 抽象在此层，未来切换到后端 API 只需替换 load/save 与 dispatch 的落地方式。
 import type {
-  Account, Opportunity, Person, OppRole, Edge, BurningIssue, UCV, InteractionLog, CustomerType, VisitNote, PlanAction, OppMilestone, OppStage, Half,
+  Account, Opportunity, Person, OppRole, Edge, BurningIssue, UCV, InteractionLog, CustomerType, VisitNote, Note, PlanAction, OppMilestone, OppStage, Half,
   StrategyCard, StrategyRisk, StrategyResource, EvidenceEvent,
 } from './types';
 import { seedAccount } from './data/seed';
@@ -94,6 +94,9 @@ export type Action =
   | { type: 'ADD_VISIT'; accId: string; visit: VisitNote }
   | { type: 'UPDATE_VISIT'; accId: string; visitId: string; patch: Partial<VisitNote> }
   | { type: 'DELETE_VISIT'; accId: string; visitId: string }
+  | { type: 'ADD_NOTE'; accId: string; note: Note }
+  | { type: 'UPDATE_NOTE'; accId: string; noteId: string; patch: Partial<Note> }
+  | { type: 'DELETE_NOTE'; accId: string; noteId: string }
   | { type: 'ADD_PLAN_ACTION'; accId: string; oppId: string; planAction: PlanAction }
   | { type: 'UPDATE_PLAN_ACTION'; accId: string; actionId: string; patch: Partial<PlanAction> }
   | { type: 'DELETE_PLAN_ACTION'; accId: string; actionId: string }
@@ -230,6 +233,13 @@ export function reducer(s: StoreState, action: Action): StoreState {
       return mapAcc(s, action.accId, (a) => ({ ...a, visitNotes: (a.visitNotes ?? []).map((v) => (v.id === action.visitId ? { ...v, ...action.patch } : v)) }));
     case 'DELETE_VISIT':
       return mapAcc(s, action.accId, (a) => ({ ...a, visitNotes: (a.visitNotes ?? []).filter((v) => v.id !== action.visitId) }));
+
+    case 'ADD_NOTE':
+      return mapAcc(s, action.accId, (a) => ({ ...a, notes: [action.note, ...(a.notes ?? [])] }));
+    case 'UPDATE_NOTE':
+      return mapAcc(s, action.accId, (a) => ({ ...a, notes: (a.notes ?? []).map((n) => (n.id === action.noteId ? { ...n, ...action.patch } : n)) }));
+    case 'DELETE_NOTE':
+      return mapAcc(s, action.accId, (a) => ({ ...a, notes: (a.notes ?? []).filter((n) => n.id !== action.noteId) }));
 
     // ── 商机策划 · 行动计划 / 里程碑（挂 account 级，同 visitNotes）──
     case 'ADD_PLAN_ACTION':

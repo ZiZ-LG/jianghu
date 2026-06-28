@@ -116,6 +116,27 @@ app.post('/api/mcp', { preHandler: [mcpAuthenticate] }, async (req, reply) => {
   return out;
 });
 
+// streamable-HTTP 的 server→client 通道（GET）：江湖无服务端主动推送的消息，但严格按 streamable-HTTP
+// 规范握手的客户端（WorkBuddy/CodeBuddy 等）会打开此 SSE 流——缺了它（旧版只挂 POST）→ GET 返 404
+// → 客户端整个连接握手失败。这里回 200 text/event-stream 并以心跳保持流，让握手通过。
+app.get('/api/mcp', { preHandler: [mcpAuthenticate] }, async (req, reply) => {
+  reply.hijack(); // 接管原始响应，绕过 Fastify 的 JSON 序列化/onSend，自己写 SSE
+  const raw = reply.raw;
+  raw.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+    'X-Accel-Buffering': 'no', // 关掉反代缓冲，SSE 实时下发
+  });
+  raw.write(': mcp stream open\n\n'); // 初始注释帧，确认流已建立
+  const hb = setInterval(() => { try { raw.write(': ping\n\n'); } catch { /* 流已关 */ } }, 25000);
+  req.raw.on('close', () => { clearInterval(hb); try { raw.end(); } catch { /* 已结束 */ } });
+});
+
+// streamable-HTTP 的会话终止（DELETE）：江湖无状态、不维护 session，直接回 204。
+app.delete('/api/mcp', { preHandler: [mcpAuthenticate] }, async (_req, reply) => reply.code(204).send());
+
 // ── 计费 / 席位 ──
 app.get('/api/billing', { preHandler: [app.authenticate] }, async (req) => {
   const tenant = await prisma.tenant.findUnique({ where: { id: req.user.tenantId } });

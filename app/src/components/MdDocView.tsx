@@ -1,7 +1,7 @@
 // 作战档案 · 文档视图（路 A · 字段级内联编辑）：把客户/商机/拜访渲染成文档样式，
 // 可编辑字段原地 input/勾选、失焦即 dispatch 写回系统。打分与角色只读（在画布/抽屉改）。
 import { useEffect, useState } from 'react';
-import type { Account, Opportunity, VisitNote, AccountProfile } from '../types';
+import type { Account, Opportunity, VisitNote, AccountProfile, Note } from '../types';
 import {
   CUSTOMER_TYPE_LABEL, ROLE_LABEL, SENTIMENT_CHAR, FAMILY_7Q, C3_ITEMS, C5_ITEMS,
 } from '../types';
@@ -17,6 +17,32 @@ function Field({ value, onSave, ph, area }: { value: string; onSave: (v: string)
     ? <textarea className="mdv-field mdv-area" value={v} placeholder={ph ?? '—'} onChange={(e) => setV(e.target.value)} onBlur={commit} rows={2} />
     : <input className="mdv-field" value={v} placeholder={ph ?? '—'} onChange={(e) => setV(e.target.value)} onBlur={commit} />;
 }
+
+/** 自由文本层 · 笔记区（显示挂某实体的 note + 记一条 + 删；零 schema，复用 ADD/DELETE_NOTE） */
+export function NotesSection({ notes, onAdd, onDelete }: { notes: Note[]; onAdd: (content: string) => void; onDelete: (id: string) => void }) {
+  const [draft, setDraft] = useState('');
+  const add = () => { const c = draft.trim(); if (c) { onAdd(c); setDraft(''); } };
+  return (
+    <div className="mdv-notes">
+      <div className="mdv-note-add">
+        <input className="mdv-field" value={draft} placeholder="记一条零散信息，回车保存…"
+          onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') add(); }} />
+        <button className="mdv-note-btn" onClick={add} disabled={!draft.trim()}>记一条</button>
+      </div>
+      {notes.length === 0 && <p className="mdv-empty">暂无笔记</p>}
+      {notes.map((n) => (
+        <blockquote key={n.id} className="mdv-note">
+          <span className="mdv-note-text">{n.content}</span>
+          {n.source && n.source !== 'manual' && <span className="mdv-note-src">· {n.source}</span>}
+          <button className="mdv-note-del" onClick={() => onDelete(n.id)} aria-label="删除笔记">✕</button>
+        </blockquote>
+      ))}
+    </div>
+  );
+}
+
+/** 前端临时 id（不依赖 secure context，避开 crypto.randomUUID 在 http 主机名下失效） */
+const newId = (prefix: string) => `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 
 type DocSel = { kind: 'customer' } | { kind: 'opp'; id: string } | { kind: 'visit'; id: string };
 
@@ -97,6 +123,13 @@ function CustomerDoc({ account, dispatch }: { account: Account; dispatch: (a: Ac
       <h2>五、拜访记录 <span className="mdv-ro">只读 · 在拜访档案改</span></h2>
       {(account.visitNotes ?? []).length === 0 && <p className="mdv-empty">暂无拜访</p>}
       {(account.visitNotes ?? []).map((v) => <blockquote key={v.id}><b>{v.date || '⏳'} {v.topic}</b>：{v.summary || '—'}</blockquote>)}
+
+      <h2>六、笔记 · 情报 <span className="mdv-ro">自由文本层 · 零散信息</span></h2>
+      <NotesSection
+        notes={(account.notes ?? []).filter((n) => !n.personId && !n.opportunityId)}
+        onAdd={(content) => dispatch({ type: 'ADD_NOTE', accId: account.id, note: { id: newId('note'), accountId: account.id, content, source: 'manual' } })}
+        onDelete={(id) => dispatch({ type: 'DELETE_NOTE', accId: account.id, noteId: id })}
+      />
     </div>
   );
 }
@@ -134,6 +167,13 @@ function OppDoc({ account, opp, dispatch }: { account: Account; opp: Opportunity
         {groups.map(([g, ks]) => ks.map((k) => <tr key={k}><td>{g}</td><td>{k}</td><td>{ITEM_MAX[k]}</td><td>{b.items[k]}</td></tr>))}
         <tr className="mdv-total"><td colSpan={3}><b>趋赢力总分</b></td><td><b>{b.total} / 100</b></td></tr>
       </tbody></table>
+
+      <h2>四、笔记 · 情报 <span className="mdv-ro">自由文本层 · 本商机</span></h2>
+      <NotesSection
+        notes={(account.notes ?? []).filter((n) => n.opportunityId === opp.id)}
+        onAdd={(content) => dispatch({ type: 'ADD_NOTE', accId: account.id, note: { id: newId('note'), accountId: account.id, opportunityId: opp.id, content, source: 'manual' } })}
+        onDelete={(id) => dispatch({ type: 'DELETE_NOTE', accId: account.id, noteId: id })}
+      />
     </div>
   );
 }

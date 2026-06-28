@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto';
 import { prisma } from './prisma.js';
 import { applyAction } from './mutate.js';
 import { scoreFromState, ITEM_LABEL, ITEM_MAX, type ItemKey } from './g64111.js';
+import { createFieldProposal } from './proposals.js';
 
 // 每租户 pending 候选容量上限（防外部 agent 刷爆）
 const MAX_PENDING_PERSON_SUGG = 200;
@@ -331,6 +332,7 @@ async function listAccounts(tenantId: string) {
       name: a.name,
       customerType: a.customerType,
       customerTypeLabel: CUSTOMER_TYPE_LABEL[a.customerType] ?? `类型${a.customerType}`,
+      externalRef: a.externalRef ?? undefined, // 为空 = 江湖原生建、WorkBuddy 尚未加工（认领判据）
       unifiedCreditCode: a.unifiedCreditCode ?? undefined,
       personCount: a._count.persons,
       opportunityCount: a._count.opportunities,
@@ -368,7 +370,7 @@ async function getAccountDetail(tenantId: string, accountId: string) {
   }
 
   return {
-    account: { id: account.id, name: account.name, customerType: account.customerType, customerTypeLabel: CUSTOMER_TYPE_LABEL[account.customerType] ?? `类型${account.customerType}` },
+    account: { id: account.id, name: account.name, externalRef: account.externalRef ?? undefined, customerType: account.customerType, customerTypeLabel: CUSTOMER_TYPE_LABEL[account.customerType] ?? `类型${account.customerType}` },
     persons: account.persons.map((p) => ({
       id: p.id,
       name: p.name,
@@ -390,6 +392,7 @@ async function getAccountDetail(tenantId: string, accountId: string) {
     opportunities: account.opportunities.map((o) => ({
       id: o.id,
       name: o.name,
+      externalRef: o.externalRef ?? undefined, // 供 WorkBuddy 按 {customer_id}#opp 反查商机 id（propose_person 的 opportunityId）
       pipelineStage: o.pipelineStage,
       engageStage: o.engageStage,
     })),
@@ -808,6 +811,7 @@ async function setOpportunityRoles(tenantId: string, _userId: string, args: Reco
   const byId = new Map(persons.map((p) => [p.id, p]));
   const byName = new Map(persons.map((p) => [p.name, p]));
   const applied: any[] = [];
+  const proposed: any[] = []; // 已有干系人的支持度变更 → 转 ChangeProposal 待人审（human-wins，不静默改分）
   const skipped: any[] = [];
   for (const r of rolesIn) {
     const pid = str(r?.personId, 40).trim();
@@ -817,16 +821,33 @@ async function setOpportunityRoles(tenantId: string, _userId: string, args: Reco
     if (person.isCompetitor) { skipped.push({ personId: person.id, reason: '竞争对手不分配角色' }); continue; }
     const role = VALID_ROLE.includes(str(r?.role)) ? str(r?.role) : undefined;
     if (!role) { skipped.push({ personId: person.id, reason: '缺少有效 role(A/D/U/R/C)' }); continue; }
+    // 非 sentiment 字段（role/isKeyInfluencer/procurement*/confidence）不在 human-wins 范围 → 直写。
     const patch: Record<string, unknown> = { role };
-    if (VALID_SENT.includes(str(r?.sentiment))) patch.sentiment = str(r?.sentiment);
     if (typeof r?.isKeyInfluencer === 'boolean') patch.isKeyInfluencer = r.isKeyInfluencer;
     if (['purchasing', 'agency', 'ownerRep'].includes(str(r?.procurementType))) patch.procurementType = str(r?.procurementType);
     if (['collude', 'verbal', 'none'].includes(str(r?.procurementStatus))) patch.procurementStatus = str(r?.procurementStatus);
     if (VALID_CONF.includes(str(r?.confidence))) patch.confidence = str(r?.confidence);
+    // human-wins（对齐 voice.ts）：sentiment 是趋赢力最大权重输入——已有干系人的支持度变更 → 进收件箱待人审，
+    // 不静默改分；首次设置 → 直写；unknown/无效 → 不动既有 sentiment（防机器用"未知"覆盖人审过的支持度）。
+    const newSent = VALID_SENT.includes(str(r?.sentiment)) ? str(r?.sentiment) : undefined;
+    const cur = await prisma.oppRole.findUnique({ where: { opportunityId_personId: { opportunityId: opp.id, personId: person.id } } });
+    let sentimentProposed = false;
+    if (newSent && newSent !== 'unknown') {
+      if (cur && cur.sentiment !== newSent) {
+        await createFieldProposal(tenantId, { accountId: opp.accountId, opportunityId: opp.id, entityKind: 'oppRole', entityId: person.id, field: 'sentiment', oldValue: cur.sentiment, newValue: newSent, origin: 'workbuddy', evidence: str(r?.evidence, 500) || `WorkBuddy 同步：${person.name} 支持度疑似 ${cur.sentiment}→${newSent}`, confidence: 0.6, proposedBy: 'workbuddy' });
+        proposed.push({ personId: person.id, name: person.name, from: cur.sentiment, to: newSent });
+        sentimentProposed = true;
+      } else if (!cur) {
+        patch.sentiment = newSent; // 首次设置该商机该人角色，无既有支持度可覆盖 → 直写
+      }
+    }
     await applyAction(tenantId, { type: 'SET_ROLE', accId: opp.accountId, oppId: opp.id, personId: person.id, patch });
-    applied.push({ personId: person.id, name: person.name, role, sentiment: (patch.sentiment as string) ?? 'unknown' });
+    if (!sentimentProposed) applied.push({ personId: person.id, name: person.name, role, sentiment: (patch.sentiment as string) ?? cur?.sentiment ?? 'unknown' });
   }
-  return { opportunityId: opp.id, applied, skipped, origin: 'workbuddy', note: `已设 ${applied.length} 个角色${skipped.length ? `，跳过 ${skipped.length} 个（见 skipped，多为候选未采纳）` : ''}。趋赢力由江湖引擎实时算。` };
+  const parts = [`已设 ${applied.length} 个角色`];
+  if (proposed.length) parts.push(`${proposed.length} 个支持度变更转入收件箱待人审`);
+  if (skipped.length) parts.push(`跳过 ${skipped.length} 个（见 skipped，多为候选未采纳）`);
+  return { opportunityId: opp.id, applied, proposed, skipped, origin: 'workbuddy', note: parts.join('；') + '。趋赢力由江湖引擎实时算（同步状态不同步分数）。' };
 }
 
 /** set_burning_issue：记某干系人的 BI（按 商机+人+category 幂等）。 */

@@ -299,6 +299,25 @@ model VisitNote {
   @@index([opportunityId])
 }
 
+// 通用「自由文本层」载体（P0 · 架构纲领 §4.2）：零散/长尾信息的家。
+// 三挂载对象皆可空——可挂客户/商机/人，也可先不挂(未归类)；挂 person/opp 时冗余存 accountId 便于按客户聚合。
+model Note {
+  id            String   @id // note_xxx
+  tenantId      String
+  accountId     String?  // 主挂载(冗余)：挂客户/商机/人时填该客户；未归类则空
+  opportunityId String?
+  personId      String?
+  content       String   @default("") // 自由文本(原始零散信息·保真层)
+  source        String   @default("manual") // 来源溯源：manual/voice/ai/import
+  tags          String   @default("[]") // JSON 字符串数组(跨库可移植，不用原生 array)
+  createdBy     String   @default("")
+  createdAt     DateTime @default(now())
+
+  @@index([accountId])
+  @@index([opportunityId])
+  @@index([personId])
+}
+
 // 商机策划 · 行动计划（🎯）。与 Account 不建 relation，state.ts 按 accountId 挂载（同 VisitNote）。
 // 字段全 String/Float/DateTime/Boolean，无 enum/json（跨库可移植）。
 model PlanAction {
