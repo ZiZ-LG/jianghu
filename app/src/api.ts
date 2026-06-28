@@ -116,6 +116,21 @@ export const api = {
     req('/api/recording/redact', { method: 'POST', body: JSON.stringify({ transcriptId }) }),
   recordingDelete: (transcriptId: string): Promise<{ ok: true; id: string }> =>
     req(`/api/recording/transcripts/${transcriptId}`, { method: 'DELETE' }),
+  // 录音源（P2-b）：文件上传 / per-user 凭据状态 / 飞书 App 配置(租户级) / 飞书 OAuth / 得到大脑 token
+  recordingUpload: (b: { title?: string; text: string; accountId?: string; opportunityId?: string }): Promise<{ source: string; saved: number; skipped: number }> =>
+    req('/api/recording/upload', { method: 'POST', body: JSON.stringify(b) }),
+  recordingCredentials: (): Promise<{ credentials: { source: string; status: string; expiresAt: string | null; updatedAt: string }[] }> =>
+    req('/api/recording/credentials'),
+  recordingFeishuConfig: (): Promise<{ configured: boolean; appId: string; hasSecret: boolean; enabled: boolean; redirectUri: string }> =>
+    req('/api/recording/provider/feishu'),
+  recordingSaveFeishuConfig: (b: { appId: string; appSecret?: string }): Promise<{ ok: true; redirectUri: string }> =>
+    req('/api/recording/provider/feishu', { method: 'PUT', body: JSON.stringify(b) }),
+  recordingFeishuOauthStart: (): Promise<{ authUrl: string }> =>
+    req('/api/recording/oauth/feishu/start'),
+  recordingSaveGetnote: (b: { token: string; endpoint?: string }): Promise<{ ok: true }> =>
+    req('/api/recording/credential/getnote', { method: 'PUT', body: JSON.stringify(b) }),
+  recordingDeleteCredential: (source: string): Promise<{ ok: true }> =>
+    req(`/api/recording/credential/${source}`, { method: 'DELETE' }),
   // 企查查 股权/对外投资（只读·仅供参考，不写库）。name 须为完整登记名（先经 qccResolve 锚定）。
   qccCompanyData: (name: string): Promise<CompanyEquityData> =>
     req('/api/qcc/company-data', { method: 'POST', body: JSON.stringify({ name }) }),

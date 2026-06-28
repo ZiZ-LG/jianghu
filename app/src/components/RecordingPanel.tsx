@@ -1,7 +1,8 @@
-// 录音接入面板（薄入口）：从录音源拉转写（加密存）→ 列表 → 抽取成图（复用 voice 双轨，候选进收件箱人审）。
-// 第一刀：mock 源端到端；得到大脑 MCP / 飞书 · 钉钉 OpenAPI 真实源待 BYO 凭据接入。
-// PIPL：转写原文加密存储、按工作区隔离、可降解（清原文留记录）、可删。
+// 录音接入面板：多源(飞书妙记 / 上传文件 / 得到大脑 / 演示) → 加密存 Transcript → 抽取成图(复用 voice 双轨，候选进收件箱)。
+// 飞书=OAuth 授权后拉妙记转写(transcript:export)；上传=md/txt 文本(替代钉钉，钉钉听记无转写 API)；得到大脑=per-user token。
+// PIPL：转写原文加密存储、按工作区隔离、可降解/删。租户级飞书 App 凭据由管理员配(加密，不回明文)。
 import { useEffect, useState } from 'react';
+import type { ChangeEvent, CSSProperties } from 'react';
 import { api, type Transcript } from '../api';
 import { Modal } from './Modal';
 import { IntelReceipt } from './IntelReceipt';
@@ -9,31 +10,91 @@ import { IntelReceipt } from './IntelReceipt';
 const STATUS_LABEL: Record<string, string> = { active: '待抽取', extracted: '已抽取', redacted: '已降解' };
 const fmtDur = (s: number) => (s > 0 ? `${Math.floor(s / 60)}分${s % 60}秒` : '');
 
-export function RecordingPanel({ accountId, onClose, onExtracted }: {
+type Source = 'feishu' | 'upload' | 'getnote' | 'mock';
+const SOURCES: { key: Source; label: string }[] = [
+  { key: 'feishu', label: '飞书妙记' },
+  { key: 'upload', label: '上传文件' },
+  { key: 'getnote', label: '得到大脑' },
+  { key: 'mock', label: '演示' },
+];
+
+const inputStyle: CSSProperties = {
+  padding: '6px 8px', border: '1px solid var(--line)', borderRadius: 4,
+  background: 'var(--panel)', color: 'var(--ink)', fontSize: 13, marginBottom: 6, width: '100%', boxSizing: 'border-box',
+};
+
+export function RecordingPanel({ accountId, role, onClose, onExtracted }: {
   accountId?: string;
+  role: string;
   onClose: () => void;
   onExtracted: () => void; // 抽取成功后回调：刷新整树 + 收件箱
 }) {
+  const [source, setSource] = useState<Source>('feishu');
   const [list, setList] = useState<Transcript[]>([]);
+  const [creds, setCreds] = useState<Record<string, string>>({}); // source → status
+  const [feishuCfg, setFeishuCfg] = useState<{ configured: boolean; appId: string; hasSecret: boolean; redirectUri: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [receipt, setReceipt] = useState<any>(null);
   const [extractingId, setExtractingId] = useState<string | null>(null);
+  const [showCfg, setShowCfg] = useState(false);
+  const [cfgAppId, setCfgAppId] = useState('');
+  const [cfgSecret, setCfgSecret] = useState('');
+  const [getnoteToken, setGetnoteToken] = useState('');
+
+  const isAdmin = role === 'owner' || role === 'admin';
 
   const load = async () => {
-    try { setList((await api.recordingTranscripts(accountId)).transcripts); }
-    catch (e: any) { setMsg('加载失败：' + (e?.message || e)); }
+    try { setList((await api.recordingTranscripts(accountId)).transcripts); } catch (e: any) { setMsg('加载失败：' + (e?.message || e)); }
   };
-  useEffect(() => { void load(); /* eslint-disable-next-line */ }, [accountId]);
+  const loadCreds = async () => {
+    try { const r = await api.recordingCredentials(); const m: Record<string, string> = {}; r.credentials.forEach((c) => { m[c.source] = c.status; }); setCreds(m); } catch { /* 忽略 */ }
+  };
+  const loadFeishuCfg = async () => {
+    try { const c = await api.recordingFeishuConfig(); setFeishuCfg(c); setCfgAppId(c.appId); } catch { /* 忽略 */ }
+  };
+  useEffect(() => { void load(); void loadCreds(); void loadFeishuCfg(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [accountId]);
 
-  const pull = async () => {
+  const pull = async (src: Source) => {
     setBusy(true); setMsg('');
     try {
-      const r = await api.recordingPull({ source: 'mock', accountId });
+      const r = await api.recordingPull({ source: src as any, accountId });
       setMsg(`已拉取：新增 ${r.saved} 条、已存在 ${r.skipped} 条（${r.note}）`);
       await load();
     } catch (e: any) { setMsg('拉取失败：' + (e?.message || e)); }
     finally { setBusy(false); }
+  };
+
+  const connectFeishu = async () => {
+    setMsg('');
+    try { const { authUrl } = await api.recordingFeishuOauthStart(); window.open(authUrl, '_blank'); setMsg('已打开飞书授权页，授权完成后回来点「拉取飞书妙记」。'); }
+    catch (e: any) { setMsg('发起授权失败：' + (e?.message || e)); }
+  };
+
+  const saveFeishuCfg = async () => {
+    setBusy(true); setMsg('');
+    try { const r = await api.recordingSaveFeishuConfig({ appId: cfgAppId.trim(), appSecret: cfgSecret.trim() || undefined }); setCfgSecret(''); setShowCfg(false); await loadFeishuCfg(); setMsg(`飞书应用已保存。回调地址：${r.redirectUri}（请确认已在飞书后台「重定向 URL」填入）`); }
+    catch (e: any) { setMsg('保存失败：' + (e?.message || e)); }
+    finally { setBusy(false); }
+  };
+
+  const saveGetnote = async () => {
+    setBusy(true); setMsg('');
+    try { await api.recordingSaveGetnote({ token: getnoteToken.trim() }); setGetnoteToken(''); await loadCreds(); setMsg('得到大脑 token 已保存（加密）。拉取能力接入中。'); }
+    catch (e: any) { setMsg('保存失败：' + (e?.message || e)); }
+    finally { setBusy(false); }
+  };
+
+  const onFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]; if (!f) return;
+    setBusy(true); setMsg('');
+    try {
+      const text = await f.text();
+      const r = await api.recordingUpload({ title: f.name, text, accountId });
+      setMsg(`已上传「${f.name}」：新增 ${r.saved} 条，可在下方点「抽取成图」。`);
+      await load();
+    } catch (err: any) { setMsg('上传失败：' + (err?.message || err)); }
+    finally { setBusy(false); e.target.value = ''; }
   };
 
   const extract = async (t: Transcript) => {
@@ -41,12 +102,11 @@ export function RecordingPanel({ accountId, onClose, onExtracted }: {
     try {
       const rc = await api.recordingExtract(t.id);
       setReceipt(rc);
-      onExtracted();   // 刷新整树 + 收件箱（候选人审）
-      await load();    // transcript 状态转 extracted
+      onExtracted();
+      await load();
     } catch (e: any) { setMsg('抽取失败：' + (e?.message || e)); }
     finally { setExtractingId(null); }
   };
-
   const redact = async (t: Transcript) => {
     if (!window.confirm('降解后将清除该转写原文（保留记录元数据），不可再抽取。继续？')) return;
     try { await api.recordingRedact(t.id); await load(); } catch (e: any) { setMsg('降解失败：' + (e?.message || e)); }
@@ -57,30 +117,74 @@ export function RecordingPanel({ accountId, onClose, onExtracted }: {
   };
 
   const badge = (status: string) => (
-    <span style={{
-      fontSize: 11, padding: '1px 6px', borderRadius: 4,
-      border: '1px solid var(--line)', color: 'var(--muted)',
-    }}>{STATUS_LABEL[status] || status}</span>
+    <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 4, border: '1px solid var(--line)', color: 'var(--muted)' }}>{STATUS_LABEL[status] || status}</span>
   );
 
   return (
-    <Modal title="🎧 录音接入" onClose={onClose} width={560}
+    <Modal title="🎧 录音接入" onClose={onClose} width={580}
       footer={<span style={{ fontSize: 12, color: 'var(--muted)' }}>转写原文加密存储、严格按工作区隔离，可随时降解 / 删除（PIPL 合规）。</span>}>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
-        <button className="btn primary sm" onClick={pull} disabled={busy}>{busy ? '⏳ 拉取中…' : '⬇️ 拉取拜访录音'}</button>
-        <span style={{ fontSize: 12, color: 'var(--muted)' }}>来源：演示（mock）· 得到大脑 / 飞书 / 钉钉待配置凭据接入</span>
+      {/* 源选择 */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+        {SOURCES.map((s) => (
+          <button key={s.key} className={`btn ${source === s.key ? 'primary' : 'ghost'} sm`} onClick={() => { setSource(s.key); setMsg(''); }}>
+            {s.label}{creds[s.key] === 'active' && (s.key === 'feishu' || s.key === 'getnote') ? ' ✓' : ''}
+          </button>
+        ))}
       </div>
+
+      {/* 操作区（按源） */}
+      <div style={{ marginBottom: 10 }}>
+        {source === 'feishu' && (<>
+          {!feishuCfg?.configured ? (
+            <div style={{ fontSize: 13, color: 'var(--muted)' }}>工作区还没配置飞书应用。{isAdmin ? '点下方「配置飞书应用」填 App ID/Secret。' : '请工作区管理员先配置飞书应用。'}</div>
+          ) : creds.feishu === 'active' ? (
+            <button className="btn primary sm" onClick={() => pull('feishu')} disabled={busy}>{busy ? '⏳ 拉取中…' : '⬇️ 拉取飞书妙记'}</button>
+          ) : (
+            <button className="btn primary sm" onClick={connectFeishu}>🔗 连接飞书（授权我的妙记）</button>
+          )}
+          {isAdmin && <button className="btn ghost sm" style={{ marginLeft: 6 }} onClick={() => setShowCfg(!showCfg)}>⚙️ 配置飞书应用</button>}
+          {showCfg && isAdmin && (
+            <div style={{ marginTop: 8, padding: 10, border: '1px solid var(--line)', borderRadius: 6 }}>
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>飞书开放平台「企业自建应用」凭证（App Secret 加密存、不回显）。回调地址需在飞书后台「重定向 URL」填入：</div>
+              <div style={{ fontSize: 12, color: 'var(--ink)', marginBottom: 8, wordBreak: 'break-all' }}><code>{feishuCfg?.redirectUri}</code></div>
+              <input placeholder="App ID（cli_...）" value={cfgAppId} onChange={(e) => setCfgAppId(e.target.value)} style={inputStyle} />
+              <input placeholder={feishuCfg?.hasSecret ? 'App Secret（留空=不修改）' : 'App Secret'} value={cfgSecret} onChange={(e) => setCfgSecret(e.target.value)} type="password" style={inputStyle} />
+              <button className="btn primary sm" onClick={saveFeishuCfg} disabled={busy || !cfgAppId.trim()}>保存</button>
+            </div>
+          )}
+        </>)}
+
+        {source === 'upload' && (
+          <label className="btn primary sm" style={{ cursor: 'pointer', display: 'inline-block' }}>
+            📄 选择 md / txt 文件
+            <input type="file" accept=".md,.txt,text/plain,text/markdown" onChange={onFile} style={{ display: 'none' }} />
+          </label>
+        )}
+
+        {source === 'getnote' && (
+          creds.getnote === 'active'
+            ? <span style={{ fontSize: 13, color: 'var(--muted)' }}>得到大脑 token 已配置 ✓（自动拉取能力接入中）</span>
+            : (<div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <input placeholder="得到大脑 token" value={getnoteToken} onChange={(e) => setGetnoteToken(e.target.value)} type="password" style={{ ...inputStyle, marginBottom: 0 }} />
+                <button className="btn primary sm" onClick={saveGetnote} disabled={busy || !getnoteToken.trim()}>保存</button>
+              </div>)
+        )}
+
+        {source === 'mock' && (
+          <button className="btn primary sm" onClick={() => pull('mock')} disabled={busy}>{busy ? '⏳ 拉取中…' : '⬇️ 拉取演示转写'}</button>
+        )}
+      </div>
+
       {msg && <div style={{ fontSize: 13, color: 'var(--ink)', margin: '6px 0' }}>{msg}</div>}
       {receipt && <div style={{ margin: '8px 0' }}><IntelReceipt receipt={receipt} /></div>}
+
+      {/* 转写列表 */}
       {list.length === 0 ? (
-        <div style={{ fontSize: 13, color: 'var(--muted)', padding: '12px 0' }}>还没有录音转写。点「拉取拜访录音」从录音源同步转写文字。</div>
+        <div style={{ fontSize: 13, color: 'var(--muted)', padding: '12px 0' }}>还没有录音转写。选来源后拉取 / 上传转写文字。</div>
       ) : (
         <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
           {list.map((t) => (
-            <li key={t.id} style={{
-              display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px',
-              border: '1px solid var(--line)', borderRadius: 6, background: 'var(--panel)',
-            }}>
+            <li key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', border: '1px solid var(--line)', borderRadius: 6, background: 'var(--panel)' }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.title || '(无标题)'}</div>
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>

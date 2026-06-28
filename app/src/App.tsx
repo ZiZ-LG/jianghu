@@ -580,7 +580,7 @@ export default function App() {
           onDone={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); } catch { /* 静默：保存已成功，仅刷新失败 */ } }} />
       )}
       {mdDocOpen && <MdDocPanel account={account} dispatch={act} onClose={() => setMdDocOpen(false)} />}
-      {recordingOpen && <RecordingPanel accountId={account.id} onClose={() => setRecordingOpen(false)} onExtracted={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); await loadInbox(); } catch { /* 静默：抽取已成功，仅刷新失败 */ } }} />}
+      {recordingOpen && <RecordingPanel accountId={account.id} role={auth.user.role} onClose={() => setRecordingOpen(false)} onExtracted={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); await loadInbox(); } catch { /* 静默：抽取已成功，仅刷新失败 */ } }} />}
       {intelOpen && (
         <IntelCapture account={account} opportunity={opp}
           onClose={() => setIntelOpen(false)}

@@ -528,3 +528,36 @@ model Transcript {
   @@index([tenantId, status])
   @@index([accountId])
 }
+
+// ── 录音源凭据（P2-b · BYO + OAuth）─────────────────────────────────────
+// 凭据分两层（铁律④：全 AES-256-GCM 加密，绝不明文落库/外发）：
+//   · 租户级 RecordingProviderConfig：企业应用 App 凭据（飞书 App ID/Secret），管理员配一次。
+//   · per-user RecordingCredential：每个销售自己的授权（飞书 OAuth user token / 得到大脑 token）。
+// 钉钉听记无转写开放 API → 改「文件上传(md/txt)」入口，不走凭据。跨库可移植：无 enum/json。
+model RecordingProviderConfig {
+  tenantId     String
+  provider     String   // feishu（企业应用 OAuth 源）
+  appId        String   @default("") // 飞书 App ID（非密钥，可明文）
+  appSecretEnc String   @default("") // App Secret 密文（AES-256-GCM，绝不明文）
+  enabled      Boolean  @default(true)
+  updatedAt    DateTime @updatedAt
+
+  @@id([tenantId, provider])
+}
+
+model RecordingCredential {
+  id              String    @id // rc_xxx
+  tenantId        String
+  userId          String    // per-user：授权的销售本人
+  source          String    // feishu（OAuth user token） | getnote（得到大脑·手填 token）
+  accessTokenEnc  String    @default("") // access/user token 密文
+  refreshTokenEnc String    @default("") // refresh token 密文（飞书续期用）
+  expiresAt       DateTime?              // access token 过期时间（用于自动 refresh）
+  meta            String    @default("") // JSON：源特定信息（如得到大脑 endpoint）
+  status          String    @default("active") // active | expired | revoked
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([tenantId, userId, source]) // 一个销售一个源一条凭据（幂等覆盖）
+  @@index([tenantId, userId])
+}

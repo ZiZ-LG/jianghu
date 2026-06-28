@@ -10,8 +10,9 @@ import { z } from 'zod';
 import { prisma } from './prisma.js';
 import { enc, dec } from './ai.js';
 import { ingestVoiceText, type IngestResult } from './voice.js';
+import { buildFeishuAuthUrl, exchangeFeishuCode, refreshFeishuToken, listFeishuMinutes, getFeishuTranscript, type FeishuApp } from './feishu.js';
 
-export type RecordingSource = 'getnote' | 'feishu' | 'dingtalk' | 'mock' | 'manual';
+export type RecordingSource = 'getnote' | 'feishu' | 'dingtalk' | 'mock' | 'manual' | 'upload';
 
 // 从录音源 API 拉到的一条原始转写。江湖只取转写文字（不碰音频）。
 export interface PulledTranscript {
@@ -53,10 +54,12 @@ const MOCK_TRANSCRIPTS: PulledTranscript[] = [
  * 从录音源拉转写。第一刀仅 mock 可用；得到大脑/飞书/钉钉留接入点（需 BYO 凭据，未配置时抛友好错误）。
  * 真实源接入（P2-b）：得到大脑复用 qccMcp.ts 的 streamable-HTTP 模式；飞书·钉钉走开放平台 OpenAPI。
  */
-async function pullFromSource(_tenantId: string, source: RecordingSource): Promise<{ items: PulledTranscript[]; note: string }> {
+async function pullFromSource(tenantId: string, userId: string, source: RecordingSource): Promise<{ items: PulledTranscript[]; note: string }> {
   if (source === 'mock') return { items: MOCK_TRANSCRIPTS, note: 'mock 演示转写（2 条）' };
-  // TODO(P2-b)：得到大脑 MCP（getnote）/ 飞书妙记 / 钉钉听记 OpenAPI —— BYO 凭据 + OAuth，拉转写文字。
-  throw new Error(`录音源「${source}」尚未接入：需先配置该来源的授权凭据（第一刀仅支持 mock 演示）`);
+  if (source === 'feishu') return pullFeishu(tenantId, userId);
+  // 得到大脑(getnote)：per-user token 已可存（凭据表），MCP 拉取复用 qccMcp 模式接入点留待；
+  // 钉钉听记无转写开放 API → 改文件上传(/api/recording/upload)，不走此路径。
+  throw new Error(`录音源「${source}」暂未接入：请改用文件上传，或在录音接入里先完成该来源的授权/配置`);
 }
 
 /** 把拉到的转写加密存 Transcript。幂等：同租户+源+externalRef 已存在则跳过。返回 {saved, skipped}。 */
@@ -102,7 +105,7 @@ export async function pullAndSave(
   source: RecordingSource,
   mount: { accountId?: string; opportunityId?: string },
 ): Promise<{ source: RecordingSource; saved: number; skipped: number; note: string }> {
-  const { items, note } = await pullFromSource(tenantId, source);
+  const { items, note } = await pullFromSource(tenantId, userId, source);
   const stat = await saveTranscripts(tenantId, userId, source, items, mount);
   return { source, ...stat, note };
 }
@@ -129,6 +132,58 @@ export async function extractTranscript(tenantId: string, userId: string, transc
     await prisma.transcript.update({ where: { id: tr.id }, data: { status: 'extracted', extractedAt: new Date() } });
   }
   return r;
+}
+
+// ── 凭据 / 配置存取（铁律④：全 AES 加密，复用 ai.ts enc/dec）─────────────
+// OAuth 回调地址：公网部署域名（飞书服务器要能回调到此）。生产经 PUBLIC_BASE_URL 注入。
+const FEISHU_REDIRECT = (process.env.PUBLIC_BASE_URL || 'https://nova-jianghu.glodon.com') + '/api/recording/oauth/feishu/callback';
+
+/** 读租户级飞书应用凭据（解密 App Secret）。无配置返回 null。 */
+async function getFeishuApp(tenantId: string): Promise<FeishuApp | null> {
+  const c = await prisma.recordingProviderConfig.findUnique({ where: { tenantId_provider: { tenantId, provider: 'feishu' } } });
+  if (!c || !c.appId || !c.appSecretEnc) return null;
+  return { appId: c.appId, appSecret: dec(c.appSecretEnc) };
+}
+
+/** 读 per-user 录音源凭据（解密 token）。非 active 或无 token 返回 null。 */
+async function getCredential(tenantId: string, userId: string, source: string): Promise<{ accessToken: string; refreshToken: string; expiresAt: Date | null } | null> {
+  const c = await prisma.recordingCredential.findUnique({ where: { tenantId_userId_source: { tenantId, userId, source } } });
+  if (!c || c.status !== 'active' || !c.accessTokenEnc) return null;
+  return { accessToken: dec(c.accessTokenEnc), refreshToken: dec(c.refreshTokenEnc), expiresAt: c.expiresAt };
+}
+
+/** 写 per-user 凭据（加密 upsert）。 */
+async function saveCredential(tenantId: string, userId: string, source: string, tok: { accessToken: string; refreshToken: string; expiresAt: Date | null }): Promise<void> {
+  const data = { accessTokenEnc: enc(tok.accessToken), refreshTokenEnc: enc(tok.refreshToken || ''), expiresAt: tok.expiresAt ?? null, status: 'active' };
+  await prisma.recordingCredential.upsert({
+    where: { tenantId_userId_source: { tenantId, userId, source } },
+    update: data,
+    create: { id: 'rc_' + randomUUID().slice(0, 12), tenantId, userId, source, ...data },
+  });
+}
+
+/** 飞书拉取：读 per-user 凭据(过期则 refresh) → 列妙记 → 逐篇拉转写正文。 */
+async function pullFeishu(tenantId: string, userId: string): Promise<{ items: PulledTranscript[]; note: string }> {
+  const cred = await getCredential(tenantId, userId, 'feishu');
+  if (!cred) throw new Error('尚未授权飞书妙记：请先在录音接入里点「连接飞书」完成授权');
+  let token = cred.accessToken;
+  if (cred.expiresAt && cred.expiresAt.getTime() < Date.now() + 60_000) { // 提前 1 分钟续期
+    const appCfg = await getFeishuApp(tenantId);
+    if (!appCfg) throw new Error('工作区未配置飞书应用（请管理员先配置 App ID/Secret）');
+    if (!cred.refreshToken) throw new Error('飞书授权已过期，请重新授权');
+    const fresh = await refreshFeishuToken(appCfg, cred.refreshToken);
+    await saveCredential(tenantId, userId, 'feishu', fresh);
+    token = fresh.accessToken;
+  }
+  const minutes = await listFeishuMinutes(token);
+  const items: PulledTranscript[] = [];
+  for (const m of minutes) {
+    try {
+      const text = await getFeishuTranscript(token, m.token);
+      if (text) items.push({ externalRef: `feishu:${m.token}`, title: m.title, text, durationSec: m.durationSec });
+    } catch { /* 单篇失败跳过，不阻塞整体 */ }
+  }
+  return { items, note: `飞书妙记 ${items.length}/${minutes.length} 篇（无转写的已跳过）` };
 }
 
 export function recordingRoutes(app: FastifyInstance): void {
@@ -199,5 +254,95 @@ export function recordingRoutes(app: FastifyInstance): void {
     if (!tr) return reply.code(404).send({ error: '转写不存在或无权访问' });
     await prisma.transcript.delete({ where: { id: tr.id } });
     return { ok: true, id: tr.id };
+  });
+
+  // ── 文件上传（替代钉钉听记）：md/txt 文本（前端 FileReader 读为文本传来）→ 存 Transcript（加密）→ 可抽取 ──
+  app.post('/api/recording/upload', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (req.user.role === 'viewer') return reply.code(403).send({ error: '只读成员不可上传' });
+    const p = z.object({ title: z.string().optional(), text: z.string().min(1), accountId: z.string().optional(), opportunityId: z.string().optional() }).safeParse(req.body);
+    if (!p.success) return reply.code(400).send({ error: '缺少文件文本内容' });
+    if (p.data.accountId) {
+      const acc = await prisma.account.findFirst({ where: { id: p.data.accountId, tenantId: req.user.tenantId } });
+      if (!acc) return reply.code(404).send({ error: '客户不存在' });
+    }
+    const stat = await saveTranscripts(req.user.tenantId, req.user.id || '', 'upload',
+      [{ externalRef: '', title: (p.data.title || '上传的拜访记录').slice(0, 200), text: p.data.text }],
+      { accountId: p.data.accountId, opportunityId: p.data.opportunityId });
+    return { source: 'upload', ...stat };
+  });
+
+  // ── 租户级飞书应用配置（owner/admin 配 App ID/Secret，Secret 加密存、读不回明文）──
+  app.get('/api/recording/provider/feishu', { preHandler: [app.authenticate] }, async (req: any) => {
+    const c = await prisma.recordingProviderConfig.findUnique({ where: { tenantId_provider: { tenantId: req.user.tenantId, provider: 'feishu' } } });
+    return { configured: Boolean(c?.appId && c?.appSecretEnc), appId: c?.appId || '', hasSecret: Boolean(c?.appSecretEnc), enabled: c?.enabled ?? true, redirectUri: FEISHU_REDIRECT };
+  });
+  app.put('/api/recording/provider/feishu', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (!['owner', 'admin'].includes(req.user.role)) return reply.code(403).send({ error: '仅管理员可配置飞书应用' });
+    const p = z.object({ appId: z.string().min(1), appSecret: z.string().optional() }).safeParse(req.body);
+    if (!p.success) return reply.code(400).send({ error: '缺少 App ID' });
+    const cur = await prisma.recordingProviderConfig.findUnique({ where: { tenantId_provider: { tenantId: req.user.tenantId, provider: 'feishu' } } });
+    const appSecretEnc = p.data.appSecret ? enc(p.data.appSecret) : (cur?.appSecretEnc || ''); // 留空=保留原密文
+    await prisma.recordingProviderConfig.upsert({
+      where: { tenantId_provider: { tenantId: req.user.tenantId, provider: 'feishu' } },
+      update: { appId: p.data.appId, appSecretEnc },
+      create: { tenantId: req.user.tenantId, provider: 'feishu', appId: p.data.appId, appSecretEnc },
+    });
+    return { ok: true, redirectUri: FEISHU_REDIRECT };
+  });
+
+  // ── per-user 凭据状态：我授权/配置了哪些源 ──
+  app.get('/api/recording/credentials', { preHandler: [app.authenticate] }, async (req: any) => {
+    const rows = await prisma.recordingCredential.findMany({
+      where: { tenantId: req.user.tenantId, userId: req.user.id },
+      select: { source: true, status: true, expiresAt: true, updatedAt: true },
+    });
+    return { credentials: rows };
+  });
+
+  // ── 飞书 OAuth：生成授权 URL（前端跳转）。state 加密含 tenantId+userId，回调按它定位授权人 ──
+  app.get('/api/recording/oauth/feishu/start', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (req.user.role === 'viewer') return reply.code(403).send({ error: '只读成员不可授权' });
+    const appCfg = await getFeishuApp(req.user.tenantId);
+    if (!appCfg) return reply.code(400).send({ error: '工作区未配置飞书应用，请管理员先在录音设置里配置 App ID/Secret' });
+    const state = enc(JSON.stringify({ t: req.user.tenantId, u: req.user.id, ts: Date.now() }));
+    return { authUrl: buildFeishuAuthUrl(appCfg.appId, FEISHU_REDIRECT, state) };
+  });
+
+  // ── 飞书 OAuth 回调：换 token 存 per-user 凭据。无需登录态（飞书服务器回调），靠 state 加密自证 ──
+  app.get('/api/recording/oauth/feishu/callback', async (req: any, reply) => {
+    const code = req.query?.code, state = req.query?.state;
+    if (!code || !state) return reply.type('text/html').send('<p>授权失败：缺少 code/state</p>');
+    let st: any;
+    try { st = JSON.parse(dec(String(state))); } catch { return reply.type('text/html').send('<p>授权失败：state 无效</p>'); }
+    if (!st?.t || !st?.u) return reply.type('text/html').send('<p>授权失败：state 缺字段</p>');
+    const appCfg = await getFeishuApp(st.t);
+    if (!appCfg) return reply.type('text/html').send('<p>授权失败：工作区未配置飞书应用</p>');
+    try {
+      const tok = await exchangeFeishuCode(appCfg, String(code), FEISHU_REDIRECT);
+      await saveCredential(st.t, st.u, 'feishu', tok);
+      return reply.type('text/html').send('<p>✅ 飞书妙记已授权。请回到江湖，在「录音接入」点「拉取拜访录音」。本页可关闭。</p>');
+    } catch (e: any) {
+      return reply.type('text/html').send(`<p>授权失败：${e?.message || e}</p>`);
+    }
+  });
+
+  // ── 得到大脑：手填 per-user token（已自行跑通者纳入凭据）──
+  app.put('/api/recording/credential/getnote', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (req.user.role === 'viewer') return reply.code(403).send({ error: '只读成员不可配置' });
+    const p = z.object({ token: z.string().min(1), endpoint: z.string().optional() }).safeParse(req.body);
+    if (!p.success) return reply.code(400).send({ error: '缺少 token' });
+    await prisma.recordingCredential.upsert({
+      where: { tenantId_userId_source: { tenantId: req.user.tenantId, userId: req.user.id, source: 'getnote' } },
+      update: { accessTokenEnc: enc(p.data.token), meta: JSON.stringify({ endpoint: p.data.endpoint || '' }), status: 'active' },
+      create: { id: 'rc_' + randomUUID().slice(0, 12), tenantId: req.user.tenantId, userId: req.user.id, source: 'getnote', accessTokenEnc: enc(p.data.token), meta: JSON.stringify({ endpoint: p.data.endpoint || '' }) },
+    });
+    return { ok: true };
+  });
+
+  // ── 撤销某源授权（per-user）──
+  app.delete('/api/recording/credential/:source', { preHandler: [app.authenticate] }, async (req: any) => {
+    const source = (req.params as any)?.source;
+    await prisma.recordingCredential.deleteMany({ where: { tenantId: req.user.tenantId, userId: req.user.id, source } });
+    return { ok: true };
   });
 }
