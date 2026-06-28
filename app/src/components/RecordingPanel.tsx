@@ -40,7 +40,8 @@ export function RecordingPanel({ accountId, role, onClose, onExtracted }: {
   const [showCfg, setShowCfg] = useState(false);
   const [cfgAppId, setCfgAppId] = useState('');
   const [cfgSecret, setCfgSecret] = useState('');
-  const [getnoteToken, setGetnoteToken] = useState('');
+  const [getnoteApiKey, setGetnoteApiKey] = useState('');
+  const [getnoteClientId, setGetnoteClientId] = useState('');
 
   const isAdmin = role === 'owner' || role === 'admin';
 
@@ -80,7 +81,7 @@ export function RecordingPanel({ accountId, role, onClose, onExtracted }: {
 
   const saveGetnote = async () => {
     setBusy(true); setMsg('');
-    try { await api.recordingSaveGetnote({ token: getnoteToken.trim() }); setGetnoteToken(''); await loadCreds(); setMsg('得到大脑 token 已保存（加密）。拉取能力接入中。'); }
+    try { await api.recordingSaveGetnote({ apiKey: getnoteApiKey.trim(), clientId: getnoteClientId.trim() }); setGetnoteApiKey(''); setGetnoteClientId(''); await loadCreds(); setMsg('得到大脑凭据已保存（加密）。可点「拉取得到大脑」。'); }
     catch (e: any) { setMsg('保存失败：' + (e?.message || e)); }
     finally { setBusy(false); }
   };
@@ -162,10 +163,15 @@ export function RecordingPanel({ accountId, role, onClose, onExtracted }: {
 
         {source === 'getnote' && (
           creds.getnote === 'active'
-            ? <span style={{ fontSize: 13, color: 'var(--muted)' }}>得到大脑 token 已配置 ✓（自动拉取能力接入中）</span>
-            : (<div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                <input placeholder="得到大脑 token" value={getnoteToken} onChange={(e) => setGetnoteToken(e.target.value)} type="password" style={{ ...inputStyle, marginBottom: 0 }} />
-                <button className="btn primary sm" onClick={saveGetnote} disabled={busy || !getnoteToken.trim()}>保存</button>
+            ? (<div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <button className="btn primary sm" onClick={() => pull('getnote')} disabled={busy}>{busy ? '⏳ 拉取中…' : '⬇️ 拉取得到大脑'}</button>
+                <button className="btn ghost sm" onClick={async () => { await api.recordingDeleteCredential('getnote'); await loadCreds(); setMsg('已断开得到大脑，可重新配置。'); }}>重新配置</button>
+              </div>)
+            : (<div>
+                <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>得到大脑开放平台（biji.com/openapi）的 API Key + Client ID，加密存储。</div>
+                <input placeholder="API Key（gk_live_...）" value={getnoteApiKey} onChange={(e) => setGetnoteApiKey(e.target.value)} type="password" style={inputStyle} />
+                <input placeholder="Client ID（cli_...）" value={getnoteClientId} onChange={(e) => setGetnoteClientId(e.target.value)} style={inputStyle} />
+                <button className="btn primary sm" onClick={saveGetnote} disabled={busy || !getnoteApiKey.trim() || !getnoteClientId.trim()}>保存</button>
               </div>)
         )}
 

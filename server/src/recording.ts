@@ -13,6 +13,7 @@ import { ingestVoiceText, type IngestResult } from './voice.js';
 import { buildFeishuAuthUrl, exchangeFeishuCode, refreshFeishuToken, listFeishuMinutes, getFeishuTranscript, type FeishuApp } from './feishu.js';
 import mammoth from 'mammoth';
 import { extractText, getDocumentProxy } from 'unpdf';
+import { listGetnoteNotes, getGetnoteTranscript } from './getnote.js';
 
 export type RecordingSource = 'getnote' | 'feishu' | 'dingtalk' | 'mock' | 'manual' | 'upload';
 
@@ -59,7 +60,7 @@ const MOCK_TRANSCRIPTS: PulledTranscript[] = [
 async function pullFromSource(tenantId: string, userId: string, source: RecordingSource): Promise<{ items: PulledTranscript[]; note: string }> {
   if (source === 'mock') return { items: MOCK_TRANSCRIPTS, note: 'mock 演示转写（2 条）' };
   if (source === 'feishu') return pullFeishu(tenantId, userId);
-  // 得到大脑(getnote)：per-user token 已可存（凭据表），MCP 拉取复用 qccMcp 模式接入点留待；
+  if (source === 'getnote') return pullGetnote(tenantId, userId);
   // 钉钉听记无转写开放 API → 改文件上传(/api/recording/upload)，不走此路径。
   throw new Error(`录音源「${source}」暂未接入：请改用文件上传，或在录音接入里先完成该来源的授权/配置`);
 }
@@ -186,6 +187,26 @@ async function pullFeishu(tenantId: string, userId: string): Promise<{ items: Pu
     } catch { /* 单篇失败跳过，不阻塞整体 */ }
   }
   return { items, note: `飞书妙记 ${items.length}/${minutes.length} 篇（无转写的已跳过）` };
+}
+
+/** 得到大脑拉取：读 per-user 凭据(apiKey+clientId) → 列笔记 → 拉录音/会议类的转写正文(audio.original)。 */
+async function pullGetnote(tenantId: string, userId: string): Promise<{ items: PulledTranscript[]; note: string }> {
+  const c = await prisma.recordingCredential.findUnique({ where: { tenantId_userId_source: { tenantId, userId, source: 'getnote' } } });
+  if (!c || c.status !== 'active' || !c.accessTokenEnc) throw new Error('尚未配置得到大脑：请先在录音接入填 API Key + Client ID');
+  let meta: any = {}; try { meta = JSON.parse(c.meta || '{}'); } catch { /* ignore */ }
+  const cred = { apiKey: dec(c.accessTokenEnc), clientId: meta.clientId || '', baseUrl: meta.baseUrl || undefined };
+  if (!cred.clientId) throw new Error('得到大脑凭据缺 Client ID，请重新配置');
+  const notes = await listGetnoteNotes(cred);
+  // 优先录音/会议类；type 缺失也尝试(detail 取不到转写会被跳过)
+  const cand = notes.filter((n) => !n.type || ['meeting', 'recorder_audio', 'audio'].includes(n.type));
+  const items: PulledTranscript[] = [];
+  for (const n of cand.slice(0, 30)) {
+    try {
+      const det = await getGetnoteTranscript(cred, n.id);
+      if (det.transcript) items.push({ externalRef: `getnote:${n.id}`, title: det.title || n.title, text: det.transcript, durationSec: det.durationSec });
+    } catch { /* 单条失败跳过 */ }
+  }
+  return { items, note: `得到大脑 ${items.length} 条转写（候选 ${cand.length} 条，无转写的已跳过）` };
 }
 
 export function recordingRoutes(app: FastifyInstance): void {
@@ -344,15 +365,16 @@ export function recordingRoutes(app: FastifyInstance): void {
     }
   });
 
-  // ── 得到大脑：手填 per-user token（已自行跑通者纳入凭据）──
+  // ── 得到大脑：手填 per-user 凭据（API Key + Client ID；apiKey 加密存 accessTokenEnc，clientId 存 meta）──
   app.put('/api/recording/credential/getnote', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (req.user.role === 'viewer') return reply.code(403).send({ error: '只读成员不可配置' });
-    const p = z.object({ token: z.string().min(1), endpoint: z.string().optional() }).safeParse(req.body);
-    if (!p.success) return reply.code(400).send({ error: '缺少 token' });
+    const p = z.object({ apiKey: z.string().min(1), clientId: z.string().min(1), baseUrl: z.string().optional() }).safeParse(req.body);
+    if (!p.success) return reply.code(400).send({ error: '缺少 API Key 或 Client ID' });
+    const meta = JSON.stringify({ clientId: p.data.clientId, baseUrl: p.data.baseUrl || '' });
     await prisma.recordingCredential.upsert({
       where: { tenantId_userId_source: { tenantId: req.user.tenantId, userId: req.user.id, source: 'getnote' } },
-      update: { accessTokenEnc: enc(p.data.token), meta: JSON.stringify({ endpoint: p.data.endpoint || '' }), status: 'active' },
-      create: { id: 'rc_' + randomUUID().slice(0, 12), tenantId: req.user.tenantId, userId: req.user.id, source: 'getnote', accessTokenEnc: enc(p.data.token), meta: JSON.stringify({ endpoint: p.data.endpoint || '' }) },
+      update: { accessTokenEnc: enc(p.data.apiKey), meta, status: 'active' },
+      create: { id: 'rc_' + randomUUID().slice(0, 12), tenantId: req.user.tenantId, userId: req.user.id, source: 'getnote', accessTokenEnc: enc(p.data.apiKey), meta },
     });
     return { ok: true };
   });
