@@ -15,6 +15,7 @@ import { prisma } from './prisma.js';
 import { applyAction } from './mutate.js';
 import { scoreFromState, ITEM_LABEL, ITEM_MAX, type ItemKey } from './g64111.js';
 import { createFieldProposal } from './proposals.js';
+import { enqueueEnrichJob } from './jobs.js';
 
 // 每租户 pending 候选容量上限（防外部 agent 刷爆）
 const MAX_PENDING_PERSON_SUGG = 200;
@@ -636,7 +637,11 @@ async function upsertAccount(tenantId: string, _userId: string, args: Record<str
       profile: profile ?? {},
     },
   });
-  return { id, created: true, origin: 'workbuddy', note: `已新建客户「${name}」。` };
+  // 江湖自算：新建客户后后台入队 enrich 任务（企查查/AI 发现干系人 → 候选进收件箱人审，铁律②）。
+  // 仅新建触发、不阻塞 upsert 返回；入队失败不影响客户落库。
+  let selfCompute = false;
+  try { selfCompute = (await enqueueEnrichJob(tenantId, id, 'auto')).enqueued; } catch { /* 超上限等，忽略 */ }
+  return { id, created: true, origin: 'workbuddy', note: `已新建客户「${name}」。${selfCompute ? '已启动后台自算补全干系人，完成后见收件箱。' : ''}` };
 }
 
 /** upsert_opportunity：定位父客户 → 按商机 externalRef 幂等 upsert。守"winProbability 不由 WB 推/覆盖"。 */

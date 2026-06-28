@@ -44,6 +44,37 @@ function mockProfile(): DiscoveredPerson[] {
   ];
 }
 
+export interface DiscoverResult { source: 'qcc' | 'ai' | 'web' | 'mock'; persons: DiscoveredPerson[]; note: string; }
+
+/**
+ * 发现某公司的关键人（企查查 MCP → AI 联想 → 演示兜底）。
+ * 路由 /api/enrich/company（前端预览）与后台自算 job（jobs.ts）共用此核心，避免逻辑两份。
+ * 全程按 tenantId 取配置；红线②：结果均为候选，由调用方决定如何落候选/预览，绝不自动写正式表。
+ */
+export async function discoverPersons(tenantId: string, name: string, mode: 'auto' | 'web' = 'auto'): Promise<DiscoverResult> {
+  // 搜索引擎源：复用 AI 模型联网搜索（需模型支持）
+  if (mode === 'web') {
+    const ai = await loadAiConfig(tenantId);
+    if (!ai || ai.provider === 'mock' || !ai.baseUrl || !ai.model) return { source: 'mock', persons: [], note: '搜索引擎源需先配置 AI 模型（且模型需支持联网搜索）' };
+    const persons = await webProfile({ baseUrl: ai.baseUrl, model: ai.model, apiKey: ai.apiKey }, name);
+    return { source: 'web', persons, note: persons.length ? '搜索引擎(AI 联网)·均为待核实，请勾选后导入' : '未搜到关键人，可换关键词或改用其他数据源' };
+  }
+
+  let persons: DiscoveredPerson[] = [];
+  let note = '';
+  const qcc = await prisma.qccConfig.findUnique({ where: { tenantId } });
+  if (qcc?.appKey === 'mcp' && qcc?.secretKeyEnc) {
+    try { persons = await qccMcpFetch({ url: qcc.baseUrl, token: dec(qcc.secretKeyEnc) }, name); if (persons.length) return { source: 'qcc', persons, note: '' }; }
+    catch (e: any) { note = `企查查 MCP 调用失败（${e.message}），已回退 AI 推测`; }
+  }
+  const ai = await loadAiConfig(tenantId);
+  if (ai && ai.provider !== 'mock' && ai.baseUrl && ai.model) {
+    persons = await llmProfile(ai, name);
+    if (persons.length) return { source: 'ai', persons, note: note || 'AI 联想·质量有限，请后续核实' };
+  }
+  return { source: 'mock', persons: mockProfile(), note: note || (ai ? 'AI 未给出结果，已用角色清单兜底' : '未配置企查查 MCP 与 AI 模型，先给 G64111 典型角色清单') };
+}
+
 // QccConfig 复用约定（避免改 schema）：appKey='mcp' 标记 MCP 模式；
 //   baseUrl = company-stream 端点；secretKeyEnc = 加密后的 Bearer Token。
 export function enrichRoutes(app: FastifyInstance) {
@@ -113,29 +144,12 @@ export function enrichRoutes(app: FastifyInstance) {
     const p = z.object({ name: z.string().min(1), mode: z.enum(['auto', 'web']).default('auto') }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '请输入公司名称' });
     const name = p.data.name.trim();
-    const tenantId = req.user.tenantId;
-
-    let persons: DiscoveredPerson[] = [];
-    let source = '', note = '';
-
-    // 搜索引擎源：复用 AI 模型联网搜索（红线②：结果均待核实，用户勾选导入，不自动写库）
+    // web 源缺模型时回 400 + needConfig（前端据此引导配置）；其余走统一发现核心
     if (p.data.mode === 'web') {
-      const ai = await loadAiConfig(tenantId);
+      const ai = await loadAiConfig(req.user.tenantId);
       if (!ai || ai.provider === 'mock' || !ai.baseUrl || !ai.model) return reply.code(400).send({ error: '搜索引擎源需先配置 AI 模型（且模型需支持联网搜索）', needConfig: true });
-      persons = await webProfile({ baseUrl: ai.baseUrl, model: ai.model, apiKey: ai.apiKey }, name);
-      return { source: 'web', company: name, persons, note: persons.length ? '搜索引擎(AI 联网)·均为待核实，请勾选后导入' : '未搜到关键人，可换关键词或改用其他数据源' };
     }
-
-    const qcc = await prisma.qccConfig.findUnique({ where: { tenantId } });
-    if (qcc?.appKey === 'mcp' && qcc?.secretKeyEnc) {
-      try { persons = await qccMcpFetch({ url: qcc.baseUrl, token: dec(qcc.secretKeyEnc) }, name); source = 'qcc'; }
-      catch (e: any) { note = `企查查 MCP 调用失败（${e.message}），已回退 AI 推测`; }
-    }
-    if (!persons.length) {
-      const ai = await loadAiConfig(tenantId);
-      if (ai && ai.provider !== 'mock' && ai.baseUrl && ai.model) { persons = await llmProfile(ai, name); source = 'ai'; note = note || 'AI 联想·质量有限，请后续核实'; }
-      if (!persons.length) { persons = mockProfile(); source = 'mock'; note = note || (ai ? 'AI 未给出结果，已用角色清单兜底' : '未配置企查查 MCP 与 AI 模型，先给 G64111 典型角色清单'); }
-    }
-    return { source, company: name, persons, note };
+    const r = await discoverPersons(req.user.tenantId, name, p.data.mode);
+    return { source: r.source, company: name, persons: r.persons, note: r.note };
   });
 }

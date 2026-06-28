@@ -16,6 +16,7 @@ import { suggestRoutes } from './suggest.js';
 import { proposalRoutes } from './proposals.js';
 import { strategyRoutes } from './strategy.js';
 import { enrichRoutes } from './enrich.js';
+import { jobRoutes, startJobWorker } from './jobs.js';
 import { voiceRoutes } from './voice.js';
 import { opportunityRoutes } from './opp.js';
 import { handleMcpBody } from './mcpServer.js';
@@ -74,6 +75,7 @@ suggestRoutes(app);
 proposalRoutes(app);
 strategyRoutes(app);
 enrichRoutes(app);
+jobRoutes(app);
 voiceRoutes(app);
 opportunityRoutes(app);
 accessTokenRoutes(app);
@@ -205,4 +207,5 @@ app.patch('/api/members/:id/password', { preHandler: [app.authenticate] }, async
 const port = Number(process.env.PORT || 3001);
 app.listen({ port, host: '0.0.0.0' }).then(() => {
   console.log(`江湖 API listening on http://localhost:${port}`);
+  startJobWorker(); // 江湖自算后台 worker（消费 EnrichJob 队列）
 }).catch((e) => { console.error(e); process.exit(1); });
