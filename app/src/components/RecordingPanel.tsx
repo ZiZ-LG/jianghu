@@ -42,6 +42,7 @@ export function RecordingPanel({ accountId, role, onClose, onExtracted }: {
   const [cfgSecret, setCfgSecret] = useState('');
   const [getnoteApiKey, setGetnoteApiKey] = useState('');
   const [getnoteClientId, setGetnoteClientId] = useState('');
+  const [feishuUrl, setFeishuUrl] = useState('');
 
   const isAdmin = role === 'owner' || role === 'admin';
 
@@ -68,8 +69,18 @@ export function RecordingPanel({ accountId, role, onClose, onExtracted }: {
 
   const connectFeishu = async () => {
     setMsg('');
-    try { const { authUrl } = await api.recordingFeishuOauthStart(); window.open(authUrl, '_blank'); setMsg('已打开飞书授权页，授权完成后回来点「拉取飞书妙记」。'); }
+    try { const { authUrl } = await api.recordingFeishuOauthStart(); window.open(authUrl, '_blank'); setMsg('已打开飞书授权页，授权完成后回来粘贴妙记链接拉取。'); }
     catch (e: any) { setMsg('发起授权失败：' + (e?.message || e)); }
+  };
+  const pullFeishuOne = async () => {
+    setBusy(true); setMsg('');
+    try {
+      const r = await api.recordingFeishuPull(feishuUrl.trim(), accountId);
+      setMsg(`已拉取：${r.note}（新增 ${r.saved} 条），可在下方点「抽取成图」。`);
+      setFeishuUrl('');
+      await load();
+    } catch (e: any) { setMsg('拉取失败：' + (e?.message || e)); }
+    finally { setBusy(false); }
   };
 
   const saveFeishuCfg = async () => {
@@ -138,7 +149,10 @@ export function RecordingPanel({ accountId, role, onClose, onExtracted }: {
           {!feishuCfg?.configured ? (
             <div style={{ fontSize: 13, color: 'var(--muted)' }}>工作区还没配置飞书应用。{isAdmin ? '点下方「配置飞书应用」填 App ID/Secret。' : '请工作区管理员先配置飞书应用。'}</div>
           ) : creds.feishu === 'active' ? (
-            <button className="btn primary sm" onClick={() => pull('feishu')} disabled={busy}>{busy ? '⏳ 拉取中…' : '⬇️ 拉取飞书妙记'}</button>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+              <input placeholder="粘贴飞书妙记链接…" value={feishuUrl} onChange={(e) => setFeishuUrl(e.target.value)} style={{ ...inputStyle, marginBottom: 0, flex: 1, minWidth: 180 }} />
+              <button className="btn primary sm" onClick={pullFeishuOne} disabled={busy || !feishuUrl.trim()}>{busy ? '⏳ 拉取中…' : '⬇️ 拉取这篇'}</button>
+            </div>
           ) : (
             <button className="btn primary sm" onClick={connectFeishu}>🔗 连接飞书（授权我的妙记）</button>
           )}

@@ -79,47 +79,51 @@ function pickList(d: any, keys: string[]): any[] {
   return [];
 }
 
-/**
- * 列出该用户的妙记（用 user_access_token）。
- * ⚠️ TODO(真机校准)：飞书妙记列表/搜索端点与分页字段需用真实 token 核实；
- *    现按 minutes/v1 + search:read 推断，失败时返回空（不阻塞，前端提示去飞书确认权限）。
- */
-export async function listFeishuMinutes(accessToken: string): Promise<FeishuMinute[]> {
-  const res = await fetch(`${FEISHU_OPEN}/open-apis/minutes/v1/minutes?page_size=20`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  const d: any = await res.json().catch(() => ({}));
-  if (!res.ok || (typeof d.code === 'number' && d.code !== 0)) {
-    throw new Error(`飞书妙记列表失败：${d.msg || d.error_description || `HTTP ${res.status}`}（端点待真机校准）`);
-  }
-  const list = pickList(d, ['data.minutes', 'data.items', 'data.list', 'minutes']);
-  return list.map((m: any) => ({
-    token: m.minute_token || m.token || m.id || '',
-    title: m.title || m.topic || '(无标题妙记)',
-    startTime: Number(m.start_time || m.create_time || 0),
-    durationSec: Number(m.duration || 0),
-  })).filter((m: FeishuMinute) => m.token);
+/** 从妙记链接或直接 token 提取 minute_token（URL 形如 https://xxx.feishu.cn/minutes/obcnxxxx?…，取最后一段路径）。 */
+export function extractFeishuMinuteToken(input: string): string {
+  const s = (input || '').trim();
+  const m = s.match(/\/minutes\/([A-Za-z0-9_-]+)/);
+  if (m) return m[1];
+  return s.replace(/[?#].*$/, '').trim(); // 用户直接粘的就是 token
 }
 
+export interface FeishuMinuteData { title: string; durationSec: number; transcript: string }
+
 /**
- * 拉取一篇妙记的转写正文（transcript:export，user_access_token）。
- * ⚠️ TODO(真机校准)：导出转写的确切端点/返回格式(纯文本 or 分段 JSON)需真机核实；
- *    现按 minutes/v1/{token}/transcript 推断，尽力拼出纯文本。
+ * 按 minute_token 拉一篇妙记：先 minute/get 取元信息（端点已确认可用），再拉转写正文（transcript:export）。
+ * ⚠️ 飞书妙记无「列表」开放 API（设计如此），须已知 token——从妙记链接提取。
+ * transcript 端点/返回格式按文档推断，失败时回显飞书原始响应，便于真机精确校准。
  */
-export async function getFeishuTranscript(accessToken: string, minuteToken: string): Promise<string> {
-  const res = await fetch(`${FEISHU_OPEN}/open-apis/minutes/v1/minutes/${encodeURIComponent(minuteToken)}/transcript`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  const ct = res.headers.get('content-type') || '';
-  if (!res.ok) throw new Error(`飞书转写导出失败：HTTP ${res.status}（端点待真机校准）`);
-  // 可能直接返回纯文本/SRT，或返回 JSON 含分段
-  if (ct.includes('application/json')) {
-    const d: any = await res.json().catch(() => ({}));
-    if (typeof d.code === 'number' && d.code !== 0) throw new Error(`飞书转写导出失败：${d.msg || d.error_description}`);
-    const segs = pickList(d, ['data.sentences', 'data.paragraphs', 'data.transcript', 'data.contents']);
-    if (segs.length) return segs.map((s: any) => (typeof s === 'string' ? s : s.text || s.content || '')).join('\n').trim();
-    const text = d.data?.text || d.data?.content || '';
-    return String(text).trim();
+export async function getFeishuMinute(accessToken: string, minuteToken: string): Promise<FeishuMinuteData> {
+  const auth = { Authorization: `Bearer ${accessToken}` };
+  // 1) 元信息：确认 token 有效 + 拿标题/时长（GET /minutes/v1/minutes/:token 已确认可用）
+  const metaRes = await fetch(`${FEISHU_OPEN}/open-apis/minutes/v1/minutes/${encodeURIComponent(minuteToken)}`, { headers: auth });
+  const meta: any = await metaRes.json().catch(() => ({}));
+  if (!metaRes.ok || (typeof meta.code === 'number' && meta.code !== 0)) {
+    throw new Error(`获取妙记信息失败：${meta.msg || meta.error_description || `HTTP ${metaRes.status}`}（请确认链接正确、且该妙记属于授权账号）`);
   }
-  return (await res.text()).trim();
+  const m = meta.data?.minute || meta.data || {};
+  const title = m.title || '飞书妙记';
+  const durRaw = Number(m.duration || 0);
+  const durationSec = durRaw > 100000 ? Math.round(durRaw / 1000) : durRaw; // duration 可能是毫秒
+
+  // 2) 转写正文（transcript:export）。⚠️端点待真机校准——失败回显飞书原始响应。
+  const tRes = await fetch(`${FEISHU_OPEN}/open-apis/minutes/v1/minutes/${encodeURIComponent(minuteToken)}/transcript?need_speaker=true&need_timestamp=false&file_format=txt`, { headers: auth });
+  const ct = tRes.headers.get('content-type') || '';
+  if (!tRes.ok) {
+    const body = (await tRes.text().catch(() => '')).slice(0, 300);
+    throw new Error(`拉妙记转写失败 HTTP ${tRes.status}（端点待真机校准）｜飞书返回：${body}`);
+  }
+  let transcript = '';
+  if (ct.includes('application/json')) {
+    const d: any = await tRes.json().catch(() => ({}));
+    if (typeof d.code === 'number' && d.code !== 0) throw new Error(`拉妙记转写失败：${d.msg || d.error_description}（端点待真机校准）`);
+    const segs = pickList(d, ['data.sentences', 'data.paragraphs', 'data.transcript', 'data.contents', 'data.transcripts']);
+    transcript = segs.length
+      ? segs.map((s: any) => (typeof s === 'string' ? s : s.text || s.content || s.sentence || '')).join('\n')
+      : String(d.data?.text || d.data?.content || d.data?.transcript || '');
+  } else {
+    transcript = await tRes.text();
+  }
+  return { title, durationSec, transcript: transcript.trim() };
 }

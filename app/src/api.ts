@@ -130,6 +130,8 @@ export const api = {
     req('/api/recording/provider/feishu', { method: 'PUT', body: JSON.stringify(b) }),
   recordingFeishuOauthStart: (): Promise<{ authUrl: string }> =>
     req('/api/recording/oauth/feishu/start'),
+  recordingFeishuPull: (url: string, accountId?: string): Promise<{ source: string; saved: number; skipped: number; note: string }> =>
+    req('/api/recording/feishu/pull', { method: 'POST', body: JSON.stringify({ url, accountId }) }),
   recordingSaveGetnote: (b: { apiKey: string; clientId: string; baseUrl?: string }): Promise<{ ok: true }> =>
     req('/api/recording/credential/getnote', { method: 'PUT', body: JSON.stringify(b) }),
   recordingDeleteCredential: (source: string): Promise<{ ok: true }> =>

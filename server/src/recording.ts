@@ -10,7 +10,7 @@ import { z } from 'zod';
 import { prisma } from './prisma.js';
 import { enc, dec } from './ai.js';
 import { ingestVoiceText, type IngestResult } from './voice.js';
-import { buildFeishuAuthUrl, exchangeFeishuCode, refreshFeishuToken, listFeishuMinutes, getFeishuTranscript, type FeishuApp } from './feishu.js';
+import { buildFeishuAuthUrl, exchangeFeishuCode, refreshFeishuToken, getFeishuMinute, extractFeishuMinuteToken, type FeishuApp } from './feishu.js';
 import mammoth from 'mammoth';
 import { extractText, getDocumentProxy } from 'unpdf';
 import { listGetnoteNotes, getGetnoteTranscript } from './getnote.js';
@@ -59,8 +59,8 @@ const MOCK_TRANSCRIPTS: PulledTranscript[] = [
  */
 async function pullFromSource(tenantId: string, userId: string, source: RecordingSource): Promise<{ items: PulledTranscript[]; note: string }> {
   if (source === 'mock') return { items: MOCK_TRANSCRIPTS, note: 'mock 演示转写（2 条）' };
-  if (source === 'feishu') return pullFeishu(tenantId, userId);
   if (source === 'getnote') return pullGetnote(tenantId, userId);
+  // 飞书无「列表」开放 API → 走 POST /api/recording/feishu/pull（按妙记链接拉单篇），不经此批量入口。
   // 钉钉听记无转写开放 API → 改文件上传(/api/recording/upload)，不走此路径。
   throw new Error(`录音源「${source}」暂未接入：请改用文件上传，或在录音接入里先完成该来源的授权/配置`);
 }
@@ -165,10 +165,12 @@ async function saveCredential(tenantId: string, userId: string, source: string, 
   });
 }
 
-/** 飞书拉取：读 per-user 凭据(过期则 refresh) → 列妙记 → 逐篇拉转写正文。 */
-async function pullFeishu(tenantId: string, userId: string): Promise<{ items: PulledTranscript[]; note: string }> {
+/** 飞书拉取：按 minute_token/链接拉单篇（飞书无列表 API）。读凭据(过期 refresh)→ getFeishuMinute → 存 Transcript。 */
+async function pullFeishuByToken(tenantId: string, userId: string, input: string, mount: { accountId?: string; opportunityId?: string }): Promise<{ saved: number; skipped: number; note: string }> {
+  const minuteToken = extractFeishuMinuteToken(input);
+  if (!minuteToken) throw new Error('请粘贴妙记链接或 token');
   const cred = await getCredential(tenantId, userId, 'feishu');
-  if (!cred) throw new Error('尚未授权飞书妙记：请先在录音接入里点「连接飞书」完成授权');
+  if (!cred) throw new Error('尚未授权飞书妙记：请先点「连接飞书」完成授权');
   let token = cred.accessToken;
   if (cred.expiresAt && cred.expiresAt.getTime() < Date.now() + 60_000) { // 提前 1 分钟续期
     const appCfg = await getFeishuApp(tenantId);
@@ -178,15 +180,10 @@ async function pullFeishu(tenantId: string, userId: string): Promise<{ items: Pu
     await saveCredential(tenantId, userId, 'feishu', fresh);
     token = fresh.accessToken;
   }
-  const minutes = await listFeishuMinutes(token);
-  const items: PulledTranscript[] = [];
-  for (const m of minutes) {
-    try {
-      const text = await getFeishuTranscript(token, m.token);
-      if (text) items.push({ externalRef: `feishu:${m.token}`, title: m.title, text, durationSec: m.durationSec });
-    } catch { /* 单篇失败跳过，不阻塞整体 */ }
-  }
-  return { items, note: `飞书妙记 ${items.length}/${minutes.length} 篇（无转写的已跳过）` };
+  const m = await getFeishuMinute(token, minuteToken);
+  if (!m.transcript) throw new Error('该妙记暂无转写正文（可能尚未转写完成，或该篇无语音转写）');
+  const stat = await saveTranscripts(tenantId, userId, 'feishu', [{ externalRef: `feishu:${minuteToken}`, title: m.title, text: m.transcript, durationSec: m.durationSec }], mount);
+  return { ...stat, note: `飞书妙记「${m.title}」` };
 }
 
 /** 得到大脑拉取：读 per-user 凭据(apiKey+clientId) → 列笔记 → 拉录音/会议类的转写正文(audio.original)。 */
@@ -336,6 +333,21 @@ export function recordingRoutes(app: FastifyInstance): void {
       select: { source: true, status: true, expiresAt: true, updatedAt: true },
     });
     return { credentials: rows };
+  });
+
+  // ── 飞书妙记：按链接/token 拉单篇转写（飞书无列表 API）。viewer 只读不可触发 ──
+  app.post('/api/recording/feishu/pull', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (req.user.role === 'viewer') return reply.code(403).send({ error: '只读成员不可拉取' });
+    const p = z.object({ url: z.string().min(1), accountId: z.string().optional(), opportunityId: z.string().optional() }).safeParse(req.body);
+    if (!p.success) return reply.code(400).send({ error: '请粘贴妙记链接' });
+    if (p.data.accountId) {
+      const acc = await prisma.account.findFirst({ where: { id: p.data.accountId, tenantId: req.user.tenantId } });
+      if (!acc) return reply.code(404).send({ error: '客户不存在' });
+    }
+    try {
+      const r = await pullFeishuByToken(req.user.tenantId, req.user.userId, p.data.url, { accountId: p.data.accountId, opportunityId: p.data.opportunityId });
+      return { source: 'feishu', ...r };
+    } catch (e: any) { return reply.code(400).send({ error: e?.message || '拉取失败' }); }
   });
 
   // ── 飞书 OAuth：生成授权 URL（前端跳转）。state 加密含 tenantId+userId，回调按它定位授权人 ──
