@@ -45,7 +45,7 @@ export interface ScoringProfile {
 }
 export const DEFAULT_PROFILE: ScoringProfile = {
   id: 'energy-g64111-v1',
-  name: '数字能源 G64111 v1.0',
+  name: '数字能源 G64111 v1.1',
   formC1Curve: 'strict',
   bands: { absAdv: 0.75, relAdv: 0.5, relDis: 0.25 },
 };

@@ -21,7 +21,7 @@ export const CUSTOMER_SKELETONS: Record<number, SkeletonRole[]> = {
   ],
   2: [ // ② 地方能源国企
     { role: 'A', title: '公司主要领导/分管副总', orgLevel: 1 },
-    { role: 'D', title: '生产技术/信息化部负责人', orgLevel: 2 },
+    { role: 'D', title: '信息化/数字化部负责人', orgLevel: 2 },
     { role: 'R', title: '招采/招标管理岗', orgLevel: 3 },
     { role: 'U', title: '场站/生产运营岗', orgLevel: 3 },
     { role: 'C', title: '业务对接骨干', orgLevel: 3 },
