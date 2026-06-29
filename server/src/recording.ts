@@ -225,7 +225,7 @@ export function recordingRoutes(app: FastifyInstance): void {
       if (!acc) return reply.code(404).send({ error: '客户不存在' });
     }
     try {
-      const r = await pullAndSave(req.user.tenantId, req.user.id || '', p.data.source, { accountId: p.data.accountId, opportunityId: p.data.opportunityId });
+      const r = await pullAndSave(req.user.tenantId, req.user.userId || '', p.data.source, { accountId: p.data.accountId, opportunityId: p.data.opportunityId });
       return r;
     } catch (e: any) { return reply.code(400).send({ error: e?.message || '拉取失败' }); }
   });
@@ -235,7 +235,7 @@ export function recordingRoutes(app: FastifyInstance): void {
     if (req.user.role === 'viewer') return reply.code(403).send({ error: '只读成员不可抽取转写' });
     const p = z.object({ transcriptId: z.string().min(1) }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '缺少 transcriptId' });
-    const r = await extractTranscript(req.user.tenantId, req.user.id || '', p.data.transcriptId);
+    const r = await extractTranscript(req.user.tenantId, req.user.userId || '', p.data.transcriptId);
     if (!r.ok) return reply.code(r.status).send(r.body);
     return r.receipt;
   });
@@ -306,7 +306,7 @@ export function recordingRoutes(app: FastifyInstance): void {
       const acc = await prisma.account.findFirst({ where: { id: accountId, tenantId: req.user.tenantId } });
       if (!acc) return reply.code(404).send({ error: '客户不存在' });
     }
-    const stat = await saveTranscripts(req.user.tenantId, req.user.id || '', 'upload', [{ externalRef: '', title: name, text }], { accountId, opportunityId });
+    const stat = await saveTranscripts(req.user.tenantId, req.user.userId || '', 'upload', [{ externalRef: '', title: name, text }], { accountId, opportunityId });
     return { source: 'upload', ...stat };
   });
 
@@ -332,7 +332,7 @@ export function recordingRoutes(app: FastifyInstance): void {
   // ── per-user 凭据状态：我授权/配置了哪些源 ──
   app.get('/api/recording/credentials', { preHandler: [app.authenticate] }, async (req: any) => {
     const rows = await prisma.recordingCredential.findMany({
-      where: { tenantId: req.user.tenantId, userId: req.user.id },
+      where: { tenantId: req.user.tenantId, userId: req.user.userId },
       select: { source: true, status: true, expiresAt: true, updatedAt: true },
     });
     return { credentials: rows };
@@ -343,25 +343,25 @@ export function recordingRoutes(app: FastifyInstance): void {
     if (req.user.role === 'viewer') return reply.code(403).send({ error: '只读成员不可授权' });
     const appCfg = await getFeishuApp(req.user.tenantId);
     if (!appCfg) return reply.code(400).send({ error: '工作区未配置飞书应用，请管理员先在录音设置里配置 App ID/Secret' });
-    const state = enc(JSON.stringify({ t: req.user.tenantId, u: req.user.id, ts: Date.now() }));
+    const state = enc(JSON.stringify({ t: req.user.tenantId, u: req.user.userId, ts: Date.now() }));
     return { authUrl: buildFeishuAuthUrl(appCfg.appId, FEISHU_REDIRECT, state) };
   });
 
   // ── 飞书 OAuth 回调：换 token 存 per-user 凭据。无需登录态（飞书服务器回调），靠 state 加密自证 ──
   app.get('/api/recording/oauth/feishu/callback', async (req: any, reply) => {
     const code = req.query?.code, state = req.query?.state;
-    if (!code || !state) return reply.type('text/html').send('<p>授权失败：缺少 code/state</p>');
+    if (!code || !state) return reply.type('text/html; charset=utf-8').send('<p>授权失败：缺少 code/state</p>');
     let st: any;
-    try { st = JSON.parse(dec(String(state))); } catch { return reply.type('text/html').send('<p>授权失败：state 无效</p>'); }
-    if (!st?.t || !st?.u) return reply.type('text/html').send('<p>授权失败：state 缺字段</p>');
+    try { st = JSON.parse(dec(String(state))); } catch { return reply.type('text/html; charset=utf-8').send('<p>授权失败：state 无效</p>'); }
+    if (!st?.t || !st?.u) return reply.type('text/html; charset=utf-8').send('<p>授权失败：state 缺字段</p>');
     const appCfg = await getFeishuApp(st.t);
-    if (!appCfg) return reply.type('text/html').send('<p>授权失败：工作区未配置飞书应用</p>');
+    if (!appCfg) return reply.type('text/html; charset=utf-8').send('<p>授权失败：工作区未配置飞书应用</p>');
     try {
       const tok = await exchangeFeishuCode(appCfg, String(code), FEISHU_REDIRECT);
       await saveCredential(st.t, st.u, 'feishu', tok);
-      return reply.type('text/html').send('<p>✅ 飞书妙记已授权。请回到江湖，在「录音接入」点「拉取拜访录音」。本页可关闭。</p>');
+      return reply.type('text/html; charset=utf-8').send('<p>✅ 飞书妙记已授权。请回到江湖，在「录音接入」点「拉取拜访录音」。本页可关闭。</p>');
     } catch (e: any) {
-      return reply.type('text/html').send(`<p>授权失败：${e?.message || e}</p>`);
+      return reply.type('text/html; charset=utf-8').send(`<p>授权失败：${e?.message || e}</p>`);
     }
   });
 
@@ -372,9 +372,9 @@ export function recordingRoutes(app: FastifyInstance): void {
     if (!p.success) return reply.code(400).send({ error: '缺少 API Key 或 Client ID' });
     const meta = JSON.stringify({ clientId: p.data.clientId, baseUrl: p.data.baseUrl || '' });
     await prisma.recordingCredential.upsert({
-      where: { tenantId_userId_source: { tenantId: req.user.tenantId, userId: req.user.id, source: 'getnote' } },
+      where: { tenantId_userId_source: { tenantId: req.user.tenantId, userId: req.user.userId, source: 'getnote' } },
       update: { accessTokenEnc: enc(p.data.apiKey), meta, status: 'active' },
-      create: { id: 'rc_' + randomUUID().slice(0, 12), tenantId: req.user.tenantId, userId: req.user.id, source: 'getnote', accessTokenEnc: enc(p.data.apiKey), meta },
+      create: { id: 'rc_' + randomUUID().slice(0, 12), tenantId: req.user.tenantId, userId: req.user.userId, source: 'getnote', accessTokenEnc: enc(p.data.apiKey), meta },
     });
     return { ok: true };
   });
@@ -382,7 +382,7 @@ export function recordingRoutes(app: FastifyInstance): void {
   // ── 撤销某源授权（per-user）──
   app.delete('/api/recording/credential/:source', { preHandler: [app.authenticate] }, async (req: any) => {
     const source = (req.params as any)?.source;
-    await prisma.recordingCredential.deleteMany({ where: { tenantId: req.user.tenantId, userId: req.user.id, source } });
+    await prisma.recordingCredential.deleteMany({ where: { tenantId: req.user.tenantId, userId: req.user.userId, source } });
     return { ok: true };
   });
 }

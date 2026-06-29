@@ -108,8 +108,8 @@ export function curatedRoutes(app: FastifyInstance): void {
     if (!(await entityOwned(req.user.tenantId, p.data.entityKind, p.data.entityId))) return reply.code(404).send({ error: '实体不存在' });
     await prisma.curatedSummary.upsert({
       where: { tenantId_entityKind_entityId: { tenantId: req.user.tenantId, entityKind: p.data.entityKind, entityId: p.data.entityId } },
-      update: { content: p.data.content, editedByHuman: true, editedBy: req.user.id || '' },
-      create: { id: 'cs_' + randomUUID().slice(0, 12), tenantId: req.user.tenantId, entityKind: p.data.entityKind, entityId: p.data.entityId, content: p.data.content, editedByHuman: true, editedBy: req.user.id || '' },
+      update: { content: p.data.content, editedByHuman: true, editedBy: req.user.userId || '' },
+      create: { id: 'cs_' + randomUUID().slice(0, 12), tenantId: req.user.tenantId, entityKind: p.data.entityKind, entityId: p.data.entityId, content: p.data.content, editedByHuman: true, editedBy: req.user.userId || '' },
     });
     return { ok: true };
   });

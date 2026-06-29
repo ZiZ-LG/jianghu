@@ -309,7 +309,7 @@ export function voiceRoutes(app: FastifyInstance) {
   app.post('/api/voice/extract', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     const p = z.object({ text: z.string().min(1), accountId: z.string().optional(), opportunityId: z.string().optional(), priorText: z.string().optional(), sourceVisitId: z.string().optional() }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '请输入要录入的文字' });
-    const r = await ingestVoiceText(req.user.tenantId, req.user.id || '', p.data);
+    const r = await ingestVoiceText(req.user.tenantId, req.user.userId || '', p.data);
     if (!r.ok) return reply.code(r.status).send(r.body);
     return r.receipt;
   });
