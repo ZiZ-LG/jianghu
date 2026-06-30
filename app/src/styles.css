@@ -1325,7 +1325,6 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 @keyframes overlayIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes modalIn   { from { transform: translateY(10px) scale(.98); opacity: 0; } to { transform: none; opacity: 1; } }
 @keyframes bandPop   { from { transform: scale(.96); } to { transform: scale(1); } }
-@keyframes scTyping  { 0%,100% { opacity: .3; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-4px); } }
 /* 转场：工作台 / Hub 渐显（仅透明度，不扰画布）*/
 .app-shell { animation: viewIn .28s ease; }
 .hub { animation: viewIn .28s ease; }
@@ -1349,11 +1348,6 @@ html[data-theme="dark"] .btn.primary { box-shadow: 0 0 18px rgba(59,130,246,.30)
 html[data-theme="dark"] .btn.primary:hover { box-shadow: 0 0 24px rgba(59,130,246,.42); }
 html[data-theme="dark"] .acc-card:hover { box-shadow: 0 8px 28px rgba(0,0,0,.5), 0 0 22px rgba(59,130,246,.16); }
 html[data-theme="dark"] .modal { box-shadow: 0 24px 60px rgba(0,0,0,.6), 0 0 44px rgba(59,130,246,.08); }
-/* SuggestionPanel 生成态打字动画 */
-.sc-typing { display: flex; gap: 5px; justify-content: center; margin-top: 12px; }
-.sc-typing span { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); opacity: .5; animation: scTyping 1s var(--ease-spring) infinite; }
-.sc-typing span:nth-child(2) { animation-delay: .15s; }
-.sc-typing span:nth-child(3) { animation-delay: .3s; }
 /* reduced-motion：一刀切兜底（count-up 另由 useReducedMotion 落定）*/
 @media (prefers-reduced-motion: reduce) {
   *, ::before, ::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }

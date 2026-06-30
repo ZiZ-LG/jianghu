@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'r
 import type { Layer, Role, CustomerType, Edge, Person } from './types';
 import { LAYER_LABEL } from './types';
 import { reducer, computeInverse, injectBaseVersion, newAccount, newPerson, uid, type Action } from './store';
-import { api, type AuthResult, type Suggestion, type PersonSuggestion, type InboxRel, type InboxPerson, type InboxProposal } from './api';
+import { api, type AuthResult, type Suggestion, type InboxRel, type InboxPerson, type InboxProposal } from './api';
 import { scoreFromDomain } from './lib/g64111';
 import { usePersistentState, useTheme, useViewport } from './ui';
 import { Auth } from './components/Auth';
@@ -26,7 +26,6 @@ import { nextFreeSlot } from './lib/layout';
 import { PersonForm } from './components/PersonForm';
 import { TeamBilling } from './components/TeamBilling';
 import { AiSettings } from './components/AiSettings';
-import { SuggestionPanel } from './components/SuggestionPanel';
 import { InboxPanel } from './components/InboxPanel';
 import { RecordingPanel } from './components/RecordingPanel';
 import { ReportPanel } from './components/ReportPanel';
@@ -56,10 +55,7 @@ export default function App() {
   const [newOppOpen, setNewOppOpen] = useState(false);
   const [teamOpen, setTeamOpen] = useState(false);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
-  const [suggestOpen, setSuggestOpen] = useState(false);
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [personSuggs, setPersonSuggs] = useState<PersonSuggestion[]>([]);
-  const [generating, setGenerating] = useState(false);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]); // 当前商机的关系候选 → 喂 Canvas 画灰虚线候选边；审核统一走收件箱
   // 审核收件箱（Hub 级聚合，全租户 pending 候选）
   const [inboxOpen, setInboxOpen] = useState(false);
   const [inbox, setInbox] = useState<{ rels: InboxRel[]; persons: InboxPerson[]; proposals: InboxProposal[]; total: number }>({ rels: [], persons: [], proposals: [], total: 0 });
@@ -198,12 +194,6 @@ export default function App() {
     api.suggestList(opp.id).then((r) => setSuggestions(r.suggestions)).catch(() => setSuggestions([]));
   }, [opp?.id]);
 
-  // 进入某客户时加载候选干系人（外部 agent 经 MCP 提议，pending）
-  useEffect(() => {
-    if (!accId) { setPersonSuggs([]); return; }
-    api.personSuggestList(accId).then((r) => setPersonSuggs(r.suggestions)).catch(() => setPersonSuggs([]));
-  }, [accId]);
-
   const openAccount = (id: string) => {
     const a = state.accounts.find((x) => x.id === id);
     setAccId(id); setOppId(a?.opportunities[0]?.id ?? null); setSelectedId(null); setVisibleLayers(new Set(['L1']));
@@ -314,52 +304,7 @@ export default function App() {
     setDrawerPersonId((d) => (d === id ? null : d));
   };
 
-  // ── AI 关系推断 ──
-  const generateSuggestions = async () => {
-    if (!opp) return;
-    setGenerating(true);
-    try { const r = await api.suggestGenerate(opp.id); setSuggestions(r.suggestions); }
-    catch (e: any) { setSyncErr('关系推断失败：' + e.message); }
-    finally { setGenerating(false); }
-  };
-  const acceptSuggestion = async (id: string) => {
-    if (!account || !opp) return;
-    try {
-      const { edge, createdPersons } = await api.suggestAccept(id);
-      // 级联：若端点是候选人物，服务端已建正式 Person，本地须先 ADD_PERSON 再 ADD_EDGE（否则画布找不到端点）
-      for (const p of createdPersons ?? []) {
-        dispatch({ type: 'ADD_PERSON', accId: account.id, person: p });
-        if (opp.memberScoped) dispatch({ type: 'ADD_OPP_MEMBER', accId: account.id, oppId: opp.id, personId: p.id }); // 服务端已加成员，本地同步
-      }
-      dispatch({ type: 'ADD_EDGE', accId: account.id, oppId: opp.id, edge }); // 服务端已建，本地直接加避免重复写
-      setSuggestions((s) => s.filter((x) => x.id !== id));
-    } catch (e: any) { setSyncErr('采纳失败：' + e.message); }
-  };
-
-  // ── 候选干系人（外部 agent 经 MCP 提议，待人审）──
-  const loadPersonSuggestions = async (accId: string) => {
-    try { const r = await api.personSuggestList(accId); setPersonSuggs(r.suggestions); }
-    catch { setPersonSuggs([]); }
-  };
-  const acceptPersonSugg = async (id: string) => {
-    if (!account) return;
-    try {
-      const { person } = await api.personSuggestAccept(id);
-      if (person) {
-        dispatch({ type: 'ADD_PERSON', accId: account.id, person });
-        if (opp?.memberScoped) dispatch({ type: 'ADD_OPP_MEMBER', accId: account.id, oppId: opp.id, personId: person.id }); // 服务端已加成员，本地同步
-      }
-      setPersonSuggs((s) => s.filter((x) => x.id !== id));
-    } catch (e: any) { setSyncErr('采纳干系人失败：' + e.message); }
-  };
-  const rejectPersonSugg = async (id: string) => {
-    try { await api.personSuggestReject(id); setPersonSuggs((s) => s.filter((x) => x.id !== id)); }
-    catch (e: any) { setSyncErr('忽略失败：' + e.message); }
-  };
-  const rejectSuggestion = async (id: string) => {
-    try { await api.suggestReject(id); setSuggestions((s) => s.filter((x) => x.id !== id)); }
-    catch (e: any) { setSyncErr('忽略失败：' + e.message); }
-  };
+  // AI 关系/人物候选的【生成】= selfCompute（自算补全，异步入队，见下）；【审核】统一走收件箱（inbox* 系列）。
 
   // ── 江湖自算·补全：后台入队 enrich(客户·发现干系人) + suggest_relations(当前商机·推断关系) → 轮询 → 刷新候选。产物走人审，铁律② ──
   const selfCompute = async () => {
@@ -389,7 +334,6 @@ export default function App() {
             if (j.type === 'suggest_relations') { rels += res.added ?? 0; onlyMock = false; }
           } catch { /* 摘要解析失败忽略 */ }
         }
-        try { setPersonSuggs((await api.personSuggestList(account.id)).suggestions); } catch { /* 下次同步 */ }
         if (opp) { try { setSuggestions((await api.suggestList(opp.id)).suggestions); } catch { /* 下次同步 */ } }
         await loadInbox();
         setSyncErr(onlyMock && persons === 0 && rels === 0
@@ -405,6 +349,7 @@ export default function App() {
   const loadInbox = async () => { try { setInbox(await api.inboxList()); } catch { /* 角标失败忽略 */ } };
   const refreshAfterAccept = async () => {
     try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); } catch { /* 重拉失败下次同步 */ }
+    if (opp) { try { setSuggestions((await api.suggestList(opp.id)).suggestions); } catch { /* 下次同步 */ } } // 采纳/忽略关系候选后刷新画布灰虚线候选边
     await loadInbox();
   };
   const inboxAcceptRel = async (id: string) => { try { await api.suggestAccept(id); await refreshAfterAccept(); } catch (e: any) { setSyncErr('采纳失败：' + e.message); } };
@@ -507,7 +452,7 @@ export default function App() {
                   <button className="btn ghost xs" onClick={() => setMdDocOpen(true)} title="客户档案 / 商机档案 / 拜访记录（.md 文档）">📋 作战档案</button>
                   <button className="btn ghost xs" onClick={selfCompute} disabled={selfComputeBusy} title="江湖自算：后台用企查查/AI 发现关键干系人 + 推断当前商机内关系，候选进收件箱待人审">{selfComputeBusy ? '⏳ 自算中…' : '🔍 自算补全'}</button>
                   <button className="btn ghost xs" onClick={() => setRecordingOpen(true)} title="录音接入：从录音源拉转写 → 抽取成图，候选进收件箱人审">🎧 录音接入</button>
-                  <button className="btn ghost xs" onClick={() => setSuggestOpen(true)}>📥 收件箱{suggestions.length + personSuggs.length > 0 ? ` (${suggestions.length + personSuggs.length})` : ''}</button>
+                  <button className="btn ghost xs" onClick={() => setInboxOpen(true)}>📥 收件箱{inbox.total > 0 ? ` (${inbox.total})` : ''}</button>
                   <button className="btn ghost xs" onClick={() => setReportOpen(true)}>📊 报表</button>
                   <button className="btn ghost xs" onClick={() => setHelpOpen(true)}>❓ 帮助</button>
                   <span className="mt-heartbeat" style={{ marginLeft: 'auto' }} title="AI 后台持续监测：荐关系 / 局势 / 缺口">● 监测中</span>
@@ -519,7 +464,7 @@ export default function App() {
                     { label: '📋 作战档案', onClick: () => setMdDocOpen(true) },
                     { label: selfComputeBusy ? '⏳ 自算中…' : '🔍 自算补全', onClick: selfCompute },
                     { label: '🎧 录音接入', onClick: () => setRecordingOpen(true) },
-                    { label: '📥 收件箱', badge: suggestions.length + personSuggs.length > 0 ? String(suggestions.length + personSuggs.length) : undefined, onClick: () => setSuggestOpen(true) },
+                    { label: '📥 收件箱', badge: inbox.total > 0 ? String(inbox.total) : undefined, onClick: () => setInboxOpen(true) },
                     { label: '📊 报表', onClick: () => setReportOpen(true) },
                     { label: '❓ 帮助', onClick: () => setHelpOpen(true) },
                   ]} />
@@ -597,12 +542,7 @@ export default function App() {
       {gapsOpen && account && opp && breakdown && (
         <GapCards account={account} opp={opp} dispatch={act} onClose={() => setGapsOpen(false)} />
       )}
-      {suggestOpen && (
-        <SuggestionPanel suggestions={suggestions} generating={generating}
-          onRegenerate={generateSuggestions} onAccept={acceptSuggestion} onReject={rejectSuggestion}
-          personSuggs={personSuggs} onAcceptPerson={acceptPersonSugg} onRejectPerson={rejectPersonSugg}
-          onClose={() => setSuggestOpen(false)} />
-      )}
+      {inboxOpen && <InboxPanel rels={inbox.rels} persons={inbox.persons} proposals={inbox.proposals} accounts={state.accounts} onAccept={inboxAcceptRel} onReject={inboxRejectRel} onAcceptPerson={inboxAcceptPerson} onRejectPerson={inboxRejectPerson} onAcceptProposal={inboxAcceptProposal} onRejectProposal={inboxRejectProposal} onClose={() => setInboxOpen(false)} />}
       {syncErr && <div className="sync-toast">{syncErr}</div>}
       {undoHint && <div className="undo-toast">{undoHint}</div>}
     </div>
