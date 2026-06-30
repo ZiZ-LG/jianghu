@@ -43,6 +43,7 @@ export function RecordingPanel({ accountId, role, onClose, onExtracted }: {
   const [getnoteApiKey, setGetnoteApiKey] = useState('');
   const [getnoteClientId, setGetnoteClientId] = useState('');
   const [feishuUrl, setFeishuUrl] = useState('');
+  const [showFeishuUrl, setShowFeishuUrl] = useState(false);
 
   const isAdmin = role === 'owner' || role === 'admin';
 
@@ -80,6 +81,15 @@ export function RecordingPanel({ accountId, role, onClose, onExtracted }: {
       setFeishuUrl('');
       await load();
     } catch (e: any) { setMsg('拉取失败：' + (e?.message || e)); }
+    finally { setBusy(false); }
+  };
+  const feishuSync = async () => {
+    setBusy(true); setMsg('');
+    try {
+      const r = await api.recordingFeishuSync(accountId);
+      setMsg(`一键拉取：${r.note}。可在下方点「抽取成图」。`);
+      await load();
+    } catch (e: any) { setMsg('一键拉取失败：' + (e?.message || e)); }
     finally { setBusy(false); }
   };
 
@@ -149,9 +159,16 @@ export function RecordingPanel({ accountId, role, onClose, onExtracted }: {
           {!feishuCfg?.configured ? (
             <div style={{ fontSize: 13, color: 'var(--muted)' }}>工作区还没配置飞书应用。{isAdmin ? '点下方「配置飞书应用」填 App ID/Secret。' : '请工作区管理员先配置飞书应用。'}</div>
           ) : creds.feishu === 'active' ? (
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-              <input placeholder="粘贴飞书妙记链接…" value={feishuUrl} onChange={(e) => setFeishuUrl(e.target.value)} style={{ ...inputStyle, marginBottom: 0, flex: 1, minWidth: 180 }} />
-              <button className="btn primary sm" onClick={pullFeishuOne} disabled={busy || !feishuUrl.trim()}>{busy ? '⏳ 拉取中…' : '⬇️ 拉取这篇'}</button>
+            <div>
+              <button className="btn primary sm" onClick={feishuSync} disabled={busy}>{busy ? '⏳ 拉取中…' : '🔄 一键拉取拜访妙记'}</button>
+              <button className="btn ghost sm" style={{ marginLeft: 6 }} onClick={() => setShowFeishuUrl(!showFeishuUrl)}>按链接拉单篇</button>
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 6 }}>扫描你飞书妙记里标题以「【拜访】」开头的新记录，自动拉取（已拉过的跳过）。</div>
+              {showFeishuUrl && (
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
+                  <input placeholder="粘贴飞书妙记链接…" value={feishuUrl} onChange={(e) => setFeishuUrl(e.target.value)} style={{ ...inputStyle, marginBottom: 0, flex: 1, minWidth: 180 }} />
+                  <button className="btn primary sm" onClick={pullFeishuOne} disabled={busy || !feishuUrl.trim()}>拉这篇</button>
+                </div>
+              )}
             </div>
           ) : (
             <button className="btn primary sm" onClick={connectFeishu}>🔗 连接飞书（授权我的妙记）</button>

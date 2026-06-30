@@ -10,7 +10,7 @@ import { z } from 'zod';
 import { prisma } from './prisma.js';
 import { enc, dec } from './ai.js';
 import { ingestVoiceText, type IngestResult } from './voice.js';
-import { buildFeishuAuthUrl, exchangeFeishuCode, refreshFeishuToken, getFeishuMinute, extractFeishuMinuteToken, type FeishuApp } from './feishu.js';
+import { buildFeishuAuthUrl, exchangeFeishuCode, refreshFeishuToken, getFeishuMinute, extractFeishuMinuteToken, searchFeishuMinutes, type FeishuApp } from './feishu.js';
 import mammoth from 'mammoth';
 import { extractText, getDocumentProxy } from 'unpdf';
 import { listGetnoteNotes, getGetnoteTranscript } from './getnote.js';
@@ -165,21 +165,46 @@ async function saveCredential(tenantId: string, userId: string, source: string, 
   });
 }
 
-/** 飞书拉取：按 minute_token/链接拉单篇（飞书无列表 API）。读凭据(过期 refresh)→ getFeishuMinute → 存 Transcript。 */
-async function pullFeishuByToken(tenantId: string, userId: string, input: string, mount: { accountId?: string; opportunityId?: string }): Promise<{ saved: number; skipped: number; note: string }> {
-  const minuteToken = extractFeishuMinuteToken(input);
-  if (!minuteToken) throw new Error('请粘贴妙记链接或 token');
+/** 取 per-user 飞书 user_access_token（过期则 refresh 并回存）。 */
+async function feishuToken(tenantId: string, userId: string): Promise<string> {
   const cred = await getCredential(tenantId, userId, 'feishu');
   if (!cred) throw new Error('尚未授权飞书妙记：请先点「连接飞书」完成授权');
-  let token = cred.accessToken;
   if (cred.expiresAt && cred.expiresAt.getTime() < Date.now() + 60_000) { // 提前 1 分钟续期
     const appCfg = await getFeishuApp(tenantId);
     if (!appCfg) throw new Error('工作区未配置飞书应用（请管理员先配置 App ID/Secret）');
     if (!cred.refreshToken) throw new Error('飞书授权已过期，请重新授权');
     const fresh = await refreshFeishuToken(appCfg, cred.refreshToken);
     await saveCredential(tenantId, userId, 'feishu', fresh);
-    token = fresh.accessToken;
+    return fresh.accessToken;
   }
+  return cred.accessToken;
+}
+
+/** 飞书一键拉取：搜索妙记 → 筛标题「【拜访】」开头 → externalRef 去重(只拉新增) → 逐篇拉转写存 Transcript。 */
+async function pullFeishuAuto(tenantId: string, userId: string, mount: { accountId?: string; opportunityId?: string }): Promise<{ saved: number; skipped: number; scanned: number; note: string }> {
+  const token = await feishuToken(tenantId, userId);
+  const briefs = await searchFeishuMinutes(token, '【拜访】');
+  const visits = briefs.filter((b) => b.title.trim().startsWith('【拜访】'));
+  let saved = 0, skipped = 0;
+  for (const b of visits) {
+    const ref = `feishu:${b.token}`;
+    const exists = await prisma.transcript.findFirst({ where: { tenantId, source: 'feishu', externalRef: ref } });
+    if (exists) { skipped++; continue; } // 已拉过 → 跳过(只拉新增)
+    try {
+      const m = await getFeishuMinute(token, b.token);
+      if (!m.transcript) { skipped++; continue; }
+      await saveTranscripts(tenantId, userId, 'feishu', [{ externalRef: ref, title: m.title, text: m.transcript, durationSec: m.durationSec }], mount);
+      saved++;
+    } catch { skipped++; } // 单篇失败不阻塞整体
+  }
+  return { saved, skipped, scanned: visits.length, note: `扫描到【拜访】妙记 ${visits.length} 篇，新增拉取 ${saved} 篇` };
+}
+
+/** 飞书拉取：按 minute_token/链接拉单篇（备选入口）。 */
+async function pullFeishuByToken(tenantId: string, userId: string, input: string, mount: { accountId?: string; opportunityId?: string }): Promise<{ saved: number; skipped: number; note: string }> {
+  const minuteToken = extractFeishuMinuteToken(input);
+  if (!minuteToken) throw new Error('请粘贴妙记链接或 token');
+  const token = await feishuToken(tenantId, userId);
   const m = await getFeishuMinute(token, minuteToken);
   if (!m.transcript) throw new Error('该妙记暂无转写正文（可能尚未转写完成，或该篇无语音转写）');
   const stat = await saveTranscripts(tenantId, userId, 'feishu', [{ externalRef: `feishu:${minuteToken}`, title: m.title, text: m.transcript, durationSec: m.durationSec }], mount);
@@ -333,6 +358,22 @@ export function recordingRoutes(app: FastifyInstance): void {
       select: { source: true, status: true, expiresAt: true, updatedAt: true },
     });
     return { credentials: rows };
+  });
+
+  // ── 飞书妙记·一键拉取：搜索 → 筛标题「【拜访】」开头 → 只拉新增。viewer 只读不可触发 ──
+  app.post('/api/recording/feishu/sync', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (req.user.role === 'viewer') return reply.code(403).send({ error: '只读成员不可拉取' });
+    const p = z.object({ accountId: z.string().optional(), opportunityId: z.string().optional() }).safeParse(req.body || {});
+    const accountId = p.success ? p.data.accountId : undefined;
+    const opportunityId = p.success ? p.data.opportunityId : undefined;
+    if (accountId) {
+      const acc = await prisma.account.findFirst({ where: { id: accountId, tenantId: req.user.tenantId } });
+      if (!acc) return reply.code(404).send({ error: '客户不存在' });
+    }
+    try {
+      const r = await pullFeishuAuto(req.user.tenantId, req.user.userId, { accountId, opportunityId });
+      return { source: 'feishu', ...r };
+    } catch (e: any) { return reply.code(400).send({ error: e?.message || '一键拉取失败' }); }
   });
 
   // ── 飞书妙记：按链接/token 拉单篇转写（飞书无列表 API）。viewer 只读不可触发 ──
