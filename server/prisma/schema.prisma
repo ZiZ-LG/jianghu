@@ -20,6 +20,7 @@ model Tenant {
   accounts           Account[]
   aiConfig           AiConfig?
   qccConfig          QccConfig?
+  wecomConfig        WeComConfig?
 }
 
 // 工作区自配的企查查 OpenAPI 凭证（BYO-key）。secretKey 加密存储。
@@ -604,4 +605,40 @@ model Reminder {
 
   @@unique([tenantId, dedupeKey])
   @@index([tenantId, status])
+}
+
+// ── 企业微信日历双向同步（交互升级纲领 P2·出口闭环）──
+// 租户级 BYO 凭据：用租户自己企微自建应用凭据，江湖代调其日程 API（平台不需公司资质，照 QccConfig/AiConfig 范式）。
+model WeComConfig {
+  tenantId  String   @id
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  corpId    String   @default("")
+  agentId   String   @default("")   // 自建应用 AgentId（日程权限）
+  secretEnc String   @default("")   // AES-256-GCM 密文（应用 Secret，绝不明文落库/外发/入提交）
+  updatedAt DateTime @updatedAt
+}
+
+// 江湖 user ↔ 企微 userid 映射（写对人的日程必须绑定）。P2-a 手填，P2-b OAuth 扫码自动绑。
+model WeComUserBind {
+  id          String   @id // wb_xxx
+  tenantId    String
+  userId      String   // 江湖 user.id
+  wecomUserid String   // 企微 userid
+  createdAt   DateTime @default(now())
+
+  @@unique([tenantId, userId])
+}
+
+// 日程映射：江湖 PlanAction / OppMilestone ↔ 企微 scheduleId（幂等防重复建 + 双向同步锚）。
+model ScheduleSync {
+  id              String   @id // ss_xxx
+  tenantId        String
+  kind            String   // plan_action | milestone
+  refId           String   // planActionId 或 milestoneId
+  wecomScheduleId String   @default("")
+  status          String   @default("synced") // synced | pending | failed | deleted
+  lastError       String   @default("")
+  updatedAt       DateTime @updatedAt
+
+  @@unique([tenantId, kind, refId])
 }

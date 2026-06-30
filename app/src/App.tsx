@@ -26,6 +26,7 @@ import { nextFreeSlot } from './lib/layout';
 import { PersonForm } from './components/PersonForm';
 import { TeamBilling } from './components/TeamBilling';
 import { AiSettings } from './components/AiSettings';
+import { WeComSettings } from './components/WeComSettings';
 import { InboxPanel } from './components/InboxPanel';
 import { RecordingPanel } from './components/RecordingPanel';
 import { ReportPanel } from './components/ReportPanel';
@@ -55,6 +56,7 @@ export default function App() {
   const [newOppOpen, setNewOppOpen] = useState(false);
   const [teamOpen, setTeamOpen] = useState(false);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
+  const [wecomSettingsOpen, setWecomSettingsOpen] = useState(false);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]); // 当前商机的关系候选 → 喂 Canvas 画灰虚线候选边；审核统一走收件箱
   // 审核收件箱（Hub 级聚合，全租户 pending 候选）
   const [inboxOpen, setInboxOpen] = useState(false);
@@ -371,7 +373,7 @@ export default function App() {
           accounts={state.accounts} onOpen={openAccount} onCreate={createAccount} onLoadDemo={loadDemo}
           onDeleteAccount={(id) => act({ type: 'DELETE_ACCOUNT', accId: id })}
           tenantName={auth.tenant.name} userName={auth.user.name} plan={auth.tenant.plan}
-          onOpenTeam={() => setTeamOpen(true)} onLogout={logout} onOpenAiSettings={() => setAiSettingsOpen(true)}
+          onOpenTeam={() => setTeamOpen(true)} onLogout={logout} onOpenAiSettings={() => setAiSettingsOpen(true)} onOpenWecom={() => setWecomSettingsOpen(true)}
           theme={theme} onToggleTheme={toggleTheme} onOpenHelp={() => setHelpOpen(true)}
           onOpenMcpAccess={() => setMcpAccessOpen(true)}
           onOpenIntel={() => setIntelOpen(true)}
@@ -396,6 +398,7 @@ export default function App() {
         )}
         {teamOpen && <TeamBilling role={auth.user.role} onClose={() => setTeamOpen(false)} />}
         {aiSettingsOpen && <AiSettings role={auth.user.role} onClose={() => setAiSettingsOpen(false)} />}
+        {wecomSettingsOpen && <WeComSettings role={auth.user.role} onClose={() => setWecomSettingsOpen(false)} />}
         {helpOpen && <HelpManual onClose={() => setHelpOpen(false)} />}
         {mcpAccessOpen && <McpAccess onClose={() => setMcpAccessOpen(false)} />}
         <Footer />

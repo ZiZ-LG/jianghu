@@ -6,7 +6,7 @@ import { OverflowMenu } from './OverflowMenu';
 
 export function CustomerHub({
   accounts, onOpen, onCreate, onLoadDemo, onDeleteAccount,
-  tenantName, userName, plan, onOpenTeam, onLogout, onOpenAiSettings, theme, onToggleTheme, onOpenHelp, onOpenMcpAccess, onOpenIntel, onOpenInbox, inboxCount = 0,
+  tenantName, userName, plan, onOpenTeam, onLogout, onOpenAiSettings, onOpenWecom, theme, onToggleTheme, onOpenHelp, onOpenMcpAccess, onOpenIntel, onOpenInbox, inboxCount = 0,
 }: {
   accounts: Account[];
   onOpen: (accId: string) => void;
@@ -19,6 +19,7 @@ export function CustomerHub({
   onOpenTeam: () => void;
   onLogout: () => void;
   onOpenAiSettings: () => void;
+  onOpenWecom: () => void;
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
   onOpenHelp: () => void;
@@ -52,6 +53,7 @@ export function CustomerHub({
           <button className="team-chip" onClick={onOpenMcpAccess}>🔌 接入 AI</button>
           <button className="team-chip" onClick={onOpenHelp}>❓ 帮助</button>
           <button className="team-chip" onClick={onOpenAiSettings}>🧠 AI 模型</button>
+          <button className="team-chip" onClick={onOpenWecom}>📆 企微日历</button>
           <button className="team-chip" onClick={onOpenTeam}>👥 团队 · ❤️ 支持</button>
           <span className="who">{userName}</span>
           <button className="btn ghost" onClick={onLoadDemo}>载入示例</button>
@@ -69,6 +71,7 @@ export function CustomerHub({
             { label: '📋 载入示例', onClick: onLoadDemo },
             { label: '🔌 接入 AI', onClick: onOpenMcpAccess },
             { label: '🧠 AI 模型', onClick: onOpenAiSettings },
+            { label: '📆 企微日历', onClick: onOpenWecom },
             { label: '❓ 帮助', onClick: onOpenHelp },
             { label: '👥 团队 · ❤️ 支持', onClick: onOpenTeam },
             { label: '🚪 退出登录', onClick: onLogout },

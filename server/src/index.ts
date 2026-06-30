@@ -22,6 +22,7 @@ import { voiceRoutes } from './voice.js';
 import { recordingRoutes } from './recording.js';
 import { curatedRoutes } from './curated.js';
 import { opportunityRoutes } from './opp.js';
+import { wecomRoutes, syncFromAction } from './wecom.js';
 import { handleMcpBody } from './mcpServer.js';
 import { accessTokenRoutes, mcpAuthenticate } from './accessToken.js';
 
@@ -86,6 +87,7 @@ recordingRoutes(app);
 curatedRoutes(app);
 opportunityRoutes(app);
 accessTokenRoutes(app);
+wecomRoutes(app); // 企微日历：配置/绑定（江湖→企微同步在 mutate 落库后触发）
 
 // ── 数据：拉取整树 / 应用变更 ──
 app.get('/api/state', { preHandler: [app.authenticate] }, async (req) => assembleState(req.user.tenantId));
@@ -97,6 +99,7 @@ app.post('/api/mutate', { preHandler: [app.authenticate] }, async (req, reply) =
   if (!body.success) return reply.code(400).send({ error: '无效的 action' });
   try {
     await applyAction(req.user.tenantId, body.data.action);
+    void syncFromAction(req.user.tenantId, (req.user as any).userId, body.data.action).catch(() => {}); // 江湖→企微日历同步：不阻塞、失败不影响落库
     return { ok: true };
   } catch (e: any) {
     req.log.warn(e);
