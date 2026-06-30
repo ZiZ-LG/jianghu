@@ -147,14 +147,18 @@ export async function searchFeishuMinutes(accessToken: string, query = ''): Prom
   let d: any = {}; try { d = JSON.parse(rawText); } catch { /* 非 JSON */ }
   if (typeof d.code === 'number' && d.code !== 0) throw new Error(`飞书妙记搜索失败：${d.msg || d.error_description || d.code}（端点待真机校准）`);
   const list = pickList(d, ['data.minutes', 'data.items', 'data.list', 'data.objects', 'data.records', 'minutes', 'items']);
-  const briefs = list.map((m: any) => ({
-    token: m.minute_token || m.token || m.id || m.object_token || '',
-    title: m.title || m.topic || m.name || m.object_title || '',
-    createTime: Number(m.create_time || m.start_time || 0),
-  })).filter((m: FeishuMinuteBrief) => m.token);
-  // 诊断（真机校准用）：原始响应结构 + 解析结果，便于定位 search 端点/字段
-  const topKeys = JSON.stringify(Object.keys(d.data || d || {})).slice(0, 120);
-  const itemKeys = list[0] ? JSON.stringify(Object.keys(list[0])).slice(0, 140) : '无';
-  const debug = `HTTP${res.status} code=${d.code ?? '-'} 顶层keys=${topKeys} 列表${list.length}条 解析出token的${briefs.length}条 首项keys=${itemKeys}`;
+  const briefs = list.map((m: any) => {
+    const di = m.display_info || {};
+    const md = m.meta_data || {};
+    return {
+      token: m.token || m.minute_token || m.id || m.object_token || '',
+      // 标题藏在 display_info/meta_data 子对象里（真机返回结构），多路径兜底
+      title: di.title || di.name || di.subject || di.topic || di.display_name || md.title || md.topic || md.name || m.title || m.topic || '',
+      createTime: Number(md.create_time || md.start_time || di.create_time || m.create_time || 0),
+    };
+  }).filter((m: FeishuMinuteBrief) => m.token);
+  // 诊断：dump 首项 display_info/meta_data 完整内容，定位 title 确切字段
+  const sample = list[0] ? `display_info=${JSON.stringify(list[0].display_info || {}).slice(0, 240)} ｜ meta_data=${JSON.stringify(list[0].meta_data || {}).slice(0, 240)}` : '无';
+  const debug = `HTTP${res.status} code=${d.code ?? '-'} 列表${list.length}条 解析token ${briefs.length}条 有title ${briefs.filter((b) => b.title).length}条; 首项 ${sample}`;
   return { briefs, debug };
 }
