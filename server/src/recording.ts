@@ -185,22 +185,28 @@ async function pullFeishuAuto(tenantId: string, userId: string, mount: { account
   const token = await feishuToken(tenantId, userId);
   const { briefs, debug } = await searchFeishuMinutes(token, '【拜访】');
   const visits = briefs.filter((b) => b.title.trim().startsWith('【拜访】'));
-  let saved = 0, skipped = 0;
+  let pulled = 0, skippedDone = 0, failed = 0;
   for (const b of visits) {
     const ref = `feishu:${b.token}`;
-    const exists = await prisma.transcript.findFirst({ where: { tenantId, source: 'feishu', externalRef: ref } });
-    if (exists) { skipped++; continue; } // 已拉过 → 跳过(只拉新增)
+    const existing = await prisma.transcript.findFirst({ where: { tenantId, source: 'feishu', externalRef: ref } });
+    // 「是否新增」按「是否已成图」判定：非 active（已成图 extracted / 已降解 redacted）→ 跳过
+    if (existing && existing.status !== 'active') { skippedDone++; continue; }
+    if (existing) {
+      // 已拉过但未成图 → 重新挂到当前商机，让此处可处理（不重复拉转写）
+      await prisma.transcript.update({ where: { id: existing.id }, data: { accountId: mount.accountId ?? existing.accountId, opportunityId: mount.opportunityId ?? existing.opportunityId } });
+      pulled++; continue;
+    }
     try {
       const m = await getFeishuMinute(token, b.token);
-      if (!m.transcript) { skipped++; continue; }
+      if (!m.transcript) { failed++; continue; }
       await saveTranscripts(tenantId, userId, 'feishu', [{ externalRef: ref, title: m.title, text: m.transcript, durationSec: m.durationSec }], mount);
-      saved++;
-    } catch { skipped++; } // 单篇失败不阻塞整体
+      pulled++;
+    } catch { failed++; } // 单篇失败不阻塞整体
   }
   const note = visits.length === 0
-    ? `未扫描到「【拜访】」开头的妙记（搜索原始返回 ${briefs.length} 条）。诊断：${debug}`
-    : `扫描到【拜访】妙记 ${visits.length} 篇，新增拉取 ${saved} 篇`;
-  return { saved, skipped, scanned: visits.length, note };
+    ? `未扫描到「【拜访】」开头的妙记（搜索返回 ${briefs.length} 条）。诊断：${debug}`
+    : `扫描到【拜访】妙记 ${visits.length} 篇：待处理（未成图）${pulled} 篇、已成图跳过 ${skippedDone} 篇${failed ? `、${failed} 篇暂无转写` : ''}`;
+  return { saved: pulled, skipped: skippedDone, scanned: visits.length, note };
 }
 
 /** 飞书拉取：按 minute_token/链接拉单篇（备选入口）。 */
