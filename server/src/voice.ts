@@ -34,6 +34,30 @@ const isSimilarName = (a: string, b: string): boolean => {
   return short.length >= 2 && long.includes(short); // 短串≥2 且被长串包含
 };
 
+// 家庭七问键，对齐 G64111 方法论（与 g64111.ts / 前端 types 同源、固定不变）。
+const FAMILY_7Q = ['籍贯', '年纪', '生日', '毕业院校', '配偶', '子女', '父母'] as const;
+// 从抽取的 form 构建 Person.form（只收销售明说的非空字段）。FORM 是 G64111 C1（D 的 FORM 表）计分项。
+function buildForm(raw: any): { family: string; occupation: string; recreation: string; moneyMotivation: string; family7: Record<string, string> } | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const f7raw = raw.family7 && typeof raw.family7 === 'object' ? raw.family7 : {};
+  const family7: Record<string, string> = {};
+  for (const q of FAMILY_7Q) { const v = S(f7raw[q], 60); if (v) family7[q] = v; }
+  const family = S(raw.family, 200), occupation = S(raw.occupation, 300), recreation = S(raw.recreation, 200), moneyMotivation = S(raw.moneyMotivation, 200);
+  if (!family && !occupation && !recreation && !moneyMotivation && !Object.keys(family7).length) return null;
+  return { family, occupation, recreation, moneyMotivation, family7 };
+}
+// 合并 FORM：新抽到的非空字段覆盖、family7 逐键并入，不丢已填。
+function mergeForm(cur: any, add: NonNullable<ReturnType<typeof buildForm>>): any {
+  const c = cur && typeof cur === 'object' ? cur : {};
+  return {
+    family: add.family || c.family || '',
+    occupation: add.occupation || c.occupation || '',
+    recreation: add.recreation || c.recreation || '',
+    moneyMotivation: add.moneyMotivation || c.moneyMotivation || '',
+    family7: { ...(c.family7 || {}), ...add.family7 },
+  };
+}
+
 const EXTRACT_SYSTEM = `你是销售情报结构化助手，精通 G64111 销售罗盘。把销售口述的拜访记录整理成结构化 JSON。
 
 【最高铁律】只整理文本中【明确说出】的人、关系、事实。绝不补充、推断、脑补、联想任何文本未提及的内容。
@@ -49,7 +73,7 @@ const EXTRACT_SYSTEM = `你是销售情报结构化助手，精通 G64111 销售
 {
   "account": {"name":"客户全称或简称","customerType":1或2或3或4,"region":"大区","kind":"explicit|inferred","evidence":"原话片段"} 或 null,
   "opportunity": {"name":"商机名","pipelineStage":"七阶段之一","competitor":"主要友商","kind":"...","evidence":"..."} 或 null,
-  "persons": [{"name":"姓名","title":"职务","orgLevel":1到4,"suggestedRole":"A|D|U|R|C","suggestedSentiment":"star|plus|neutral|unknown|minus|x","kind":"explicit|inferred","confidence":0到1,"evidence":"原话"}],
+  "persons": [{"name":"姓名","title":"职务","orgLevel":1到4,"suggestedRole":"A|D|U|R|C","suggestedSentiment":"star|plus|neutral|unknown|minus|x","kind":"explicit|inferred","confidence":0到1,"evidence":"原话","form":{"family7":{"籍贯":"","年纪":"","生日":"","毕业院校":"","配偶":"","子女":"","父母":""},"occupation":"职业经历/晋升序列","recreation":"爱好/志趣","moneyMotivation":"金钱观/核心动机/价值观","family":"家庭情况补充"}}],
   "relationships": [{"source":"人名","target":"人名","layer":"L1|L2|L3|L4","label":"关系描述","kind":"...","confidence":0到1,"evidence":"..."}],
   "burningIssues": [{"person":"姓名","description":"燃眉之急","category":"类别","kind":"..."}],
   "ucvs": [{"person":"该价值针对谁的BI","biCategory":"对应BI的类别","description":"我方独特价值","competitorCannot":"竞品给不了什么","status":"建议|获认可|已解决","kind":"explicit|inferred","evidence":"原话"}],
@@ -58,6 +82,8 @@ const EXTRACT_SYSTEM = `你是销售情报结构化助手，精通 G64111 销售
 - pipelineStage 只能取：线索/需求引导/方案认可/客户立项/招投标/合同谈判/合同双签。
 - relationships 的 source/target 必须是 persons 里出现过的人名或上下文已知干系人；端点是隐含的第三方（如"竞争对手"）时标 inferred。
 - ucvs 必须对应 burningIssues 中某人的 BI（同 person + biCategory）；销售没明说"我方能解决而对手给不了"就别造 UCV。
+- persons 的 form：把销售提到的该人「家庭/事业/爱好/动机」FORM 情报填进去——子女/配偶/父母/籍贯/年纪/生日/毕业院校填 family7 对应键；爱好志趣（钓鱼、爬山等）填 recreation；职业经历/晋升填 occupation；金钱观/核心诉求填 moneyMotivation。只填销售明说的，没提的字段留空字符串，整个人都没提 FORM 就给 form:{}。这些是 G64111 C1（D 的 FORM 表）计分项，务必抽全。
+- suggestedRole：销售对某人的角色判断要抽出来，哪怕是"可能是/应该是真正的拍板人/这个项目真正的 D"这类推测——给对应 A/D/U/R/C，evidence 保留原话，kind 标 inferred、confidence 给中低值；别因为"可能"就丢掉。
 - 若给了【前文】，用它消解本次口述里的指代（"他""那位副总"等指向前文的人）；但只抽取【本次补充】里新增或变更的人/关系/事实，不要重复输出前文已处理过的。
 - 没提到的部分填 null 或空数组 []。绝不编造。`;
 
@@ -205,16 +231,27 @@ export async function ingestVoiceText(tenantId: string, userId: string, input: I
     const existingId = formalId.get(name);
     if (existingId) { // 已存在正式干系人 → 复用（销售自己说的，默认同一人）
       receipt.personsReused.push({ id: existingId, name });
-      if (isExplicit(per)) await setRoleIf(existingId, per, name, true); // 已有干系人：支持度变化走提案而非直写
+      if (isExplicit(per)) {
+        await setRoleIf(existingId, per, name, true); // 已有干系人：支持度变化走提案而非直写
+        const nf = buildForm(per.form); // 抽到 FORM 情报 → 合并补充到已有 form（非空覆盖，不丢已填）
+        if (nf) {
+          const exist = acc.persons.find((pp) => pp.id === existingId);
+          let curForm: any = {}; try { curForm = JSON.parse((exist as any)?.form || '{}'); } catch { /* 容错 */ }
+          await applyAction(tenantId, { type: 'UPDATE_PERSON', accId: acc.id, personId: existingId, patch: { form: mergeForm(curForm, nf) } });
+          receipt.formsFilled = (receipt.formsFilled ?? 0) + 1;
+        }
+      }
       continue;
     }
-    if (isExplicit(per)) { // 明说 → 直落正式 Person（form 留空：敏感隐私不落；logs 带来源溯源）
+    if (isExplicit(per)) { // 明说 → 直落正式 Person（FORM 情报随抽随落，是 G64111 C1 计分项；logs 带来源溯源）
       // 同客户内相似名（如「李处」≈「李处长」，含本次已建）→ 回执提示疑似重复，不打断、仍新建
       const simName = [...formalId.keys()].find((k) => isSimilarName(k, name));
       const pid = 'p_' + randomUUID().slice(0, 12);
       const { x, y } = nextFreeSlot(occupied); occupied.push({ x, y });
       const logs = [{ date: today, content: `${src.emoji} ${src.word}：${S(per.evidence, 80) || name}`, visibility: 'team' }];
-      await applyAction(tenantId, { type: 'ADD_PERSON', accId: acc.id, person: { id: pid, name, title: S(per.title, 60), orgLevel: clampLevel(per.orgLevel), x, y, logs } });
+      const form = buildForm(per.form); // 家庭七问/职业/爱好/动机随抽随落
+      await applyAction(tenantId, { type: 'ADD_PERSON', accId: acc.id, person: { id: pid, name, title: S(per.title, 60), orgLevel: clampLevel(per.orgLevel), x, y, logs, ...(form ? { form } : {}) } });
+      if (form) receipt.formsFilled = (receipt.formsFilled ?? 0) + 1;
       formalId.set(name, pid);
       if (opp?.memberScoped) await applyAction(tenantId, { type: 'ADD_OPP_MEMBER', accId: acc.id, oppId: opp.id, personId: pid }); // memberScoped 商机 → 新人加入成员
       receipt.personsCreated.push({ id: pid, name, title: S(per.title, 60) });

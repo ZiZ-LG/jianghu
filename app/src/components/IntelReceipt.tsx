@@ -18,6 +18,7 @@ export function IntelReceipt({ receipt, emptyHint }: { receipt: any; emptyHint?:
         {c.personsCreated?.length > 0 && <div className="ir-row">👤 新建干系人：<b>{c.personsCreated.map((p: any) => p.name).join('、')}</b> — 已上图</div>}
         {c.personsReused?.length > 0 && <div className="ir-row">♻️ 已有干系人：{c.personsReused.map((p: any) => p.name).join('、')}</div>}
         {c.rolesSet?.length > 0 && <div className="ir-row">🎭 角色：{c.rolesSet.map((r: any) => `${r.name}(${r.role})`).join('、')}</div>}
+        {c.formsFilled > 0 && <div className="ir-row">📋 FORM 情报：已为 {c.formsFilled} 位干系人录入家庭/事业/爱好/动机</div>}
         {c.edgesCreated?.length > 0 && <div className="ir-row">🔗 关系：{c.edgesCreated.map((e: any) => `${e.source}→${e.target}`).join('、')} — 已上图</div>}
         {c.burningIssues?.length > 0 && <div className="ir-row">🔥 燃眉之急：{c.burningIssues.map((b: any) => b.person).join('、')}</div>}
         {c.ucvs?.length > 0 && <div className="ir-row">💎 独特价值：{c.ucvs.map((u: any) => `${u.person}(${u.status})`).join('、')}</div>}
