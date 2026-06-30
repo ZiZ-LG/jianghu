@@ -183,7 +183,7 @@ async function feishuToken(tenantId: string, userId: string): Promise<string> {
 /** 飞书一键拉取：搜索妙记 → 筛标题「【拜访】」开头 → externalRef 去重(只拉新增) → 逐篇拉转写存 Transcript。 */
 async function pullFeishuAuto(tenantId: string, userId: string, mount: { accountId?: string; opportunityId?: string }): Promise<{ saved: number; skipped: number; scanned: number; note: string }> {
   const token = await feishuToken(tenantId, userId);
-  const briefs = await searchFeishuMinutes(token, '【拜访】');
+  const { briefs, debug } = await searchFeishuMinutes(token, '【拜访】');
   const visits = briefs.filter((b) => b.title.trim().startsWith('【拜访】'));
   let saved = 0, skipped = 0;
   for (const b of visits) {
@@ -197,7 +197,10 @@ async function pullFeishuAuto(tenantId: string, userId: string, mount: { account
       saved++;
     } catch { skipped++; } // 单篇失败不阻塞整体
   }
-  return { saved, skipped, scanned: visits.length, note: `扫描到【拜访】妙记 ${visits.length} 篇，新增拉取 ${saved} 篇` };
+  const note = visits.length === 0
+    ? `未扫描到「【拜访】」开头的妙记（搜索原始返回 ${briefs.length} 条）。诊断：${debug}`
+    : `扫描到【拜访】妙记 ${visits.length} 篇，新增拉取 ${saved} 篇`;
+  return { saved, skipped, scanned: visits.length, note };
 }
 
 /** 飞书拉取：按 minute_token/链接拉单篇（备选入口）。 */

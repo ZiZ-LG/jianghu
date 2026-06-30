@@ -136,23 +136,25 @@ export interface FeishuMinuteBrief { token: string; title: string; createTime: n
  * ⚠️ 端点待真机校准：飞书文档为动态页抓不到，按惯例推断 POST minutes/search；失败回显飞书原始响应。
  * query 传「【拜访】」让飞书侧先粗筛标题，江湖再精确 startsWith 过滤。
  */
-export async function searchFeishuMinutes(accessToken: string, query = ''): Promise<FeishuMinuteBrief[]> {
+export async function searchFeishuMinutes(accessToken: string, query = ''): Promise<{ briefs: FeishuMinuteBrief[]; debug: string }> {
   const res = await fetch(`${FEISHU_OPEN}/open-apis/minutes/v1/minutes/search`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json; charset=utf-8' },
     body: JSON.stringify({ query, page_size: 50 }),
   });
-  const ct = res.headers.get('content-type') || '';
-  if (!res.ok) {
-    const body = (await res.text().catch(() => '')).slice(0, 300);
-    throw new Error(`飞书妙记搜索失败 HTTP ${res.status}（端点待真机校准）｜飞书返回：${body}`);
-  }
-  const d: any = ct.includes('json') ? await res.json().catch(() => ({})) : {};
-  if (typeof d.code === 'number' && d.code !== 0) throw new Error(`飞书妙记搜索失败：${d.msg || d.error_description}（端点待真机校准）`);
-  const list = pickList(d, ['data.minutes', 'data.items', 'data.list', 'data.objects', 'minutes']);
-  return list.map((m: any) => ({
-    token: m.minute_token || m.token || m.id || '',
-    title: m.title || m.topic || '',
+  const rawText = await res.text().catch(() => '');
+  if (!res.ok) throw new Error(`飞书妙记搜索失败 HTTP ${res.status}（端点待真机校准）｜飞书返回：${rawText.slice(0, 300)}`);
+  let d: any = {}; try { d = JSON.parse(rawText); } catch { /* 非 JSON */ }
+  if (typeof d.code === 'number' && d.code !== 0) throw new Error(`飞书妙记搜索失败：${d.msg || d.error_description || d.code}（端点待真机校准）`);
+  const list = pickList(d, ['data.minutes', 'data.items', 'data.list', 'data.objects', 'data.records', 'minutes', 'items']);
+  const briefs = list.map((m: any) => ({
+    token: m.minute_token || m.token || m.id || m.object_token || '',
+    title: m.title || m.topic || m.name || m.object_title || '',
     createTime: Number(m.create_time || m.start_time || 0),
   })).filter((m: FeishuMinuteBrief) => m.token);
+  // 诊断（真机校准用）：原始响应结构 + 解析结果，便于定位 search 端点/字段
+  const topKeys = JSON.stringify(Object.keys(d.data || d || {})).slice(0, 120);
+  const itemKeys = list[0] ? JSON.stringify(Object.keys(list[0])).slice(0, 140) : '无';
+  const debug = `HTTP${res.status} code=${d.code ?? '-'} 顶层keys=${topKeys} 列表${list.length}条 解析出token的${briefs.length}条 首项keys=${itemKeys}`;
+  return { briefs, debug };
 }
