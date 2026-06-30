@@ -70,7 +70,7 @@ export function RecordingPanel({ accountId, role, onClose, onExtracted }: {
 
   const connectFeishu = async () => {
     setMsg('');
-    try { const { authUrl } = await api.recordingFeishuOauthStart(); window.open(authUrl, '_blank'); setMsg('已打开飞书授权页，授权完成后回来粘贴妙记链接拉取。'); }
+    try { const { authUrl } = await api.recordingFeishuOauthStart(); window.open(authUrl, '_blank'); setMsg('已打开飞书授权页，确认勾选含「离线访问」后回来点「一键拉取」。'); }
     catch (e: any) { setMsg('发起授权失败：' + (e?.message || e)); }
   };
   const pullFeishuOne = async () => {
@@ -162,7 +162,8 @@ export function RecordingPanel({ accountId, role, onClose, onExtracted }: {
             <div>
               <button className="btn primary sm" onClick={feishuSync} disabled={busy}>{busy ? '⏳ 拉取中…' : '🔄 一键拉取拜访妙记'}</button>
               <button className="btn ghost sm" style={{ marginLeft: 6 }} onClick={() => setShowFeishuUrl(!showFeishuUrl)}>按链接拉单篇</button>
-              <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 6 }}>扫描你飞书妙记里标题以「【拜访】」开头的新记录，自动拉取（已拉过的跳过）。</div>
+              <button className="btn ghost sm" style={{ marginLeft: 6 }} onClick={connectFeishu}>🔗 重新授权</button>
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 6 }}>扫描你飞书妙记里标题以「【拜访】」开头的新记录，自动拉取（已拉过的跳过）。授权过期请点「重新授权」。</div>
               {showFeishuUrl && (
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
                   <input placeholder="粘贴飞书妙记链接…" value={feishuUrl} onChange={(e) => setFeishuUrl(e.target.value)} style={{ ...inputStyle, marginBottom: 0, flex: 1, minWidth: 180 }} />
