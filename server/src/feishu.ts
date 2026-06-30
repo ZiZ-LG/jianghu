@@ -148,13 +148,16 @@ export async function searchFeishuMinutes(accessToken: string, query = ''): Prom
   if (typeof d.code === 'number' && d.code !== 0) throw new Error(`飞书妙记搜索失败：${d.msg || d.error_description || d.code}（端点待真机校准）`);
   const list = pickList(d, ['data.minutes', 'data.items', 'data.list', 'data.objects', 'data.records', 'minutes', 'items']);
   const briefs = list.map((m: any) => {
-    const di = m.display_info || {};
+    const di = m.display_info; // 真机：字符串(带 <h>/<b> 高亮标签的搜索片段，首行=标题)；少数情况可能是对象
     const md = m.meta_data || {};
+    let title = '';
+    if (typeof di === 'string') title = di.replace(/<[^>]+>/g, '').split('\n')[0].trim(); // 去高亮标签、取首行作标题
+    else if (di && typeof di === 'object') title = di.title || di.name || di.subject || '';
     return {
-      token: m.token || m.minute_token || m.id || m.object_token || '',
-      // 标题藏在 display_info/meta_data 子对象里（真机返回结构），多路径兜底
-      title: di.title || di.name || di.subject || di.topic || di.display_name || md.title || md.topic || md.name || m.title || m.topic || '',
-      createTime: Number(md.create_time || md.start_time || di.create_time || m.create_time || 0),
+      // token：优先从 meta_data.app_link 提 minute_token（确定可喂 getFeishuMinute），回退顶层 token
+      token: extractFeishuMinuteToken(md.app_link || '') || m.token || m.minute_token || m.id || '',
+      title: title || md.title || m.title || '',
+      createTime: Number(md.create_time || md.start_time || m.create_time || 0),
     };
   }).filter((m: FeishuMinuteBrief) => m.token);
   // 诊断：dump 首项 display_info/meta_data 完整内容，定位 title 确切字段
