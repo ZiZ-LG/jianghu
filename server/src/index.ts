@@ -17,7 +17,7 @@ import { suggestRoutes } from './suggest.js';
 import { proposalRoutes } from './proposals.js';
 import { strategyRoutes } from './strategy.js';
 import { enrichRoutes } from './enrich.js';
-import { jobRoutes, startJobWorker } from './jobs.js';
+import { jobRoutes, startJobWorker, startPatrol } from './jobs.js';
 import { voiceRoutes } from './voice.js';
 import { recordingRoutes } from './recording.js';
 import { curatedRoutes } from './curated.js';
@@ -215,4 +215,5 @@ const port = Number(process.env.PORT || 3001);
 app.listen({ port, host: '0.0.0.0' }).then(() => {
   console.log(`江湖 API listening on http://localhost:${port}`);
   startJobWorker(); // 江湖自算后台 worker（消费 EnrichJob 队列）
+  startPatrol(); // 江湖巡检：每日扫活跃商机 → 提醒型提案进收件箱（确定性·零 LLM·铁律②）
 }).catch((e) => { console.error(e); process.exit(1); });

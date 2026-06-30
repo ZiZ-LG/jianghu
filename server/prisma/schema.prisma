@@ -146,6 +146,7 @@ model Opportunity {
   c5Items              String         @default("{}") // JSON
   memberScoped         Boolean        @default(false) // false=全员可见(存量兼容)；true=按 OpportunityMember 过滤
   version              Int            @default(0) // 乐观锁：内容编辑并发冲突检测（UPDATE_OPP）
+  createdAt            DateTime       @default(now()) // 巡检停滞基准 / 排序（补齐：此前缺失，存量行迁移时填当时）
   roles                OppRole[]
   edges                Edge[]
   bis                  BurningIssue[]
@@ -581,4 +582,26 @@ model CuratedSummary {
   updatedAt     DateTime  @updatedAt
 
   @@unique([tenantId, entityKind, entityId])
+}
+
+// 巡检提醒（提案层·提醒型）：确定性后台巡检发现「该动了」(商机停滞 / 缺决策人 / 支持度待复查) → 进收件箱人审（铁律②）。
+// 与 ChangeProposal（机器改字段值）不同：提醒只读——人「忽略 / 去处理」，巡检绝不直接改库。跨库可移植(全 String，无 enum/json)。
+model Reminder {
+  id            String   @id // rem_xxx
+  tenantId      String
+  accountId     String
+  accountName   String   @default("")     // 冗余：收件箱按客户分组展示，免 join
+  opportunityId String?
+  oppName       String   @default("")
+  kind          String                     // stalled | no_decider | sentiment_recheck
+  title         String                     // 一句话摘要（收件箱主文案）
+  detail        String   @default("")      // 详情 / 建议动作
+  severity      String   @default("info")  // info | warn
+  entityId      String?                    // 关联干系人（支持度复查指向某人）
+  dedupeKey     String                     // 去重键 tenantId:oppId:kind:entityId，同类不重复刷屏
+  status        String   @default("pending") // pending | dismissed | done
+  createdAt     DateTime @default(now())
+
+  @@unique([tenantId, dedupeKey])
+  @@index([tenantId, status])
 }

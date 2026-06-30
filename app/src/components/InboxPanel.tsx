@@ -1,9 +1,9 @@
-// 审核收件箱（机器写初稿·人审）：Hub 级聚合当前租户所有待审——v1 关系/人物候选 + v2.0 字段更新提案。
-// 按客户分组 + 类型筛选 + 多选批量。提案卡带 改前→改后 diff + 趋赢力影响预览 + 改后采纳（下拉）。
+// 审核收件箱（机器写初稿·人审）：Hub 级聚合当前租户所有待审——巡检提醒 + 关系/人物候选 + v2.0 字段更新提案。
+// 按客户分组 + 类型筛选 + 多选批量。提案卡带 改前→改后 diff + 趋赢力影响预览 + 改后采纳（下拉）；提醒卡只读（仅「忽略」，不建边/不改值）。
 // 采纳/驳回沿用既有链路（采纳后由 App getState 重拉整树保证跨客户一致）。
 import { useMemo, useState } from 'react';
 import type { Account } from '../types';
-import type { InboxRel, InboxPerson, InboxProposal } from '../api';
+import type { InboxRel, InboxPerson, InboxProposal, InboxReminder } from '../api';
 import { previewProposalImpact } from '../lib/impact';
 import { Modal } from './Modal';
 
@@ -11,18 +11,21 @@ const LAYER_COLOR: Record<string, string> = { L1: '#2563eb', L2: '#9333ea', L3: 
 const ORIGIN: Record<string, string> = { graph: '📊 图谱', llm: '🤖 AI', qcc: '🏢 企查查', mcp: '🌐 AI 调研', ai: '🤖 AI', voice: '🎙️ 录音', engine: '⚙️ 引擎' };
 const SENT_LABEL: Record<string, string> = { star: '排他支持', plus: '明确支持', neutral: '中立', unknown: '未知', minus: '负面/抗拒', x: '倒向对手' };
 const FIELD_LABEL: Record<string, string> = { sentiment: '支持度', confidence: '可信度' };
+const KIND_LABEL: Record<string, string> = { stalled: '商机停滞', no_decider: '决策链缺口', sentiment_recheck: '支持度复查' };
 const SENT_OPTS = ['star', 'plus', 'neutral', 'minus', 'x'];
 const valLabel = (field: string, v: string) => (field === 'sentiment' ? (SENT_LABEL[v] ?? v) : v);
 
 type Item =
+  | { kind: 'reminder'; id: string; accountId: string; accountName: string; data: InboxReminder }
   | { kind: 'person'; id: string; accountId: string; accountName: string; data: InboxPerson }
   | { kind: 'rel'; id: string; accountId: string; accountName: string; data: InboxRel }
   | { kind: 'proposal'; id: string; accountId: string; accountName: string; data: InboxProposal };
 
-export function InboxPanel({ rels, persons, proposals, accounts, onAccept, onReject, onAcceptPerson, onRejectPerson, onAcceptProposal, onRejectProposal, onClose }: {
+export function InboxPanel({ rels, persons, proposals, reminders, accounts, onAccept, onReject, onAcceptPerson, onRejectPerson, onAcceptProposal, onRejectProposal, onDismissReminder, onClose }: {
   rels: InboxRel[];
   persons: InboxPerson[];
   proposals: InboxProposal[];
+  reminders: InboxReminder[];                            // 巡检提醒（提醒型，只读）
   accounts: Account[];                                  // 全树（算影响预览：找目标 account/opp）
   onAccept: (id: string) => void;                       // 关系候选采纳
   onReject: (id: string) => void;
@@ -30,24 +33,28 @@ export function InboxPanel({ rels, persons, proposals, accounts, onAccept, onRej
   onRejectPerson: (id: string) => void;
   onAcceptProposal: (id: string, overrideValue?: string) => void; // 字段提案采纳（可改后采纳）
   onRejectProposal: (id: string) => void;
+  onDismissReminder: (id: string) => void;              // 提醒忽略（不改业务库）
   onClose: () => void;
 }) {
   const [acctFilter, setAcctFilter] = useState('');
-  const [typeFilter, setTypeFilter] = useState<'all' | 'proposal' | 'person' | 'rel'>('all');
+  const [typeFilter, setTypeFilter] = useState<'all' | 'reminder' | 'proposal' | 'person' | 'rel'>('all');
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [overrides, setOverrides] = useState<Record<string, string>>({}); // 提案改后采纳：id → 选定值
 
   const acctList = useMemo(() => {
     const m = new Map<string, string>();
+    for (const r of reminders) m.set(r.accountId, r.accountName);
     for (const p of persons) m.set(p.accountId, p.accountName);
     for (const r of rels) m.set(r.accountId, r.accountName);
     for (const cp of proposals) m.set(cp.accountId, cp.accountName);
     return [...m.entries()].map(([id, name]) => ({ id, name }));
-  }, [persons, rels, proposals]);
+  }, [persons, rels, proposals, reminders]);
 
   const groups = useMemo(() => {
     const items: Item[] = [];
     const ok = (aid: string) => !acctFilter || aid === acctFilter;
+    // 提醒优先排最前（催人行动的「该动了」信号）
+    if (typeFilter === 'all' || typeFilter === 'reminder') for (const r of reminders) if (ok(r.accountId)) items.push({ kind: 'reminder', id: r.id, accountId: r.accountId, accountName: r.accountName, data: r });
     if (typeFilter === 'all' || typeFilter === 'proposal') for (const cp of proposals) if (ok(cp.accountId)) items.push({ kind: 'proposal', id: cp.id, accountId: cp.accountId, accountName: cp.accountName, data: cp });
     if (typeFilter === 'all' || typeFilter === 'person') for (const p of persons) if (ok(p.accountId)) items.push({ kind: 'person', id: p.id, accountId: p.accountId, accountName: p.accountName, data: p });
     if (typeFilter === 'all' || typeFilter === 'rel') for (const r of rels) if (ok(r.accountId)) items.push({ kind: 'rel', id: r.id, accountId: r.accountId, accountName: r.accountName, data: r });
@@ -57,16 +64,17 @@ export function InboxPanel({ rels, persons, proposals, accounts, onAccept, onRej
       g.items.push(it); byAcct.set(it.accountId, g);
     }
     return [...byAcct.values()];
-  }, [persons, rels, proposals, acctFilter, typeFilter]);
+  }, [persons, rels, proposals, reminders, acctFilter, typeFilter]);
 
   const keyOf = (it: Item) => `${it.kind}:${it.id}`;
-  const total = persons.length + rels.length + proposals.length;
+  const total = persons.length + rels.length + proposals.length + reminders.length;
   const toggleSel = (k: string) => setSel((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
 
   const batchApply = (accept: boolean) => {
     for (const g of groups) for (const it of g.items) {
       if (!sel.has(keyOf(it))) continue;
-      if (it.kind === 'person') accept ? onAcceptPerson(it.id) : onRejectPerson(it.id);
+      if (it.kind === 'reminder') { if (!accept) onDismissReminder(it.id); } // 提醒只读：批量仅「忽略」，采纳无意义
+      else if (it.kind === 'person') accept ? onAcceptPerson(it.id) : onRejectPerson(it.id);
       else if (it.kind === 'rel') accept ? onAccept(it.id) : onReject(it.id);
       else accept ? onAcceptProposal(it.id, overrides[it.id]) : onRejectProposal(it.id);
     }
@@ -97,9 +105,9 @@ export function InboxPanel({ rels, persons, proposals, accounts, onAccept, onRej
           {acctList.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
         <div className="inbox-types">
-          {(['all', 'proposal', 'person', 'rel'] as const).map((t) => (
+          {(['all', 'reminder', 'proposal', 'person', 'rel'] as const).map((t) => (
             <button key={t} className={`inbox-type${typeFilter === t ? ' on' : ''}`} onClick={() => setTypeFilter(t)}>
-              {t === 'all' ? '全部' : t === 'proposal' ? `✏️ 改字段 ${proposals.length}` : t === 'person' ? `👤 人物 ${persons.length}` : `🔗 关系 ${rels.length}`}
+              {t === 'all' ? '全部' : t === 'reminder' ? `⏰ 提醒 ${reminders.length}` : t === 'proposal' ? `✏️ 改字段 ${proposals.length}` : t === 'person' ? `👤 人物 ${persons.length}` : `🔗 关系 ${rels.length}`}
             </button>
           ))}
         </div>
@@ -108,7 +116,7 @@ export function InboxPanel({ rels, persons, proposals, accounts, onAccept, onRej
       {total === 0 ? (
         <div className="sc-empty" style={{ padding: '36px 0' }}>
           <div style={{ fontSize: 30 }}>📭</div>
-          <div>没有待审候选 · 机器写入的关系/人物/字段改动会先进这里等你审</div>
+          <div>没有待审候选 · 机器写入的提醒 / 关系 / 人物 / 字段改动会先进这里等你审</div>
         </div>
       ) : groups.length === 0 ? (
         <div className="empty-hint" style={{ padding: '8px 2px' }}>当前筛选无候选。</div>
@@ -124,7 +132,17 @@ export function InboxPanel({ rels, persons, proposals, accounts, onAccept, onRej
                   <div key={k} className={`sug-row${checked ? ' inbox-sel' : ''}`}>
                     <input type="checkbox" className="inbox-ck" checked={checked} onChange={() => toggleSel(k)} />
                     <div className="sug-main">
-                      {it.kind === 'proposal' ? (() => {
+                      {it.kind === 'reminder' ? (<>
+                        <div className="sug-pair">
+                          <span className="inbox-tag" style={it.data.severity === 'warn' ? { background: '#fee2e2', color: '#b91c1c', opacity: 1 } : undefined}>⏰ {KIND_LABEL[it.data.kind] ?? '提醒'}</span>
+                          <b>{it.data.title}</b>
+                        </div>
+                        <div className="sug-meta">
+                          <span className="sug-origin">⚙️ 巡检</span>
+                          {it.data.oppName && <span className="sug-ev" style={{ opacity: 0.65 }}>🎯 {it.data.oppName}</span>}
+                          <span className="sug-ev">{it.data.detail}</span>
+                        </div>
+                      </>) : it.kind === 'proposal' ? (() => {
                         const cp = it.data; const imp = impactOf(cp);
                         return (<>
                           <div className="sug-pair">
@@ -174,8 +192,12 @@ export function InboxPanel({ rels, persons, proposals, accounts, onAccept, onRej
                           {SENT_OPTS.map((s) => <option key={s} value={s}>{SENT_LABEL[s]}</option>)}
                         </select>
                       )}
-                      <button className="btn primary sm" onClick={() => (it.kind === 'person' ? onAcceptPerson(it.id) : it.kind === 'rel' ? onAccept(it.id) : onAcceptProposal(it.id, overrides[it.id]))}>采纳</button>
-                      <button className="btn ghost sm" onClick={() => (it.kind === 'person' ? onRejectPerson(it.id) : it.kind === 'rel' ? onReject(it.id) : onRejectProposal(it.id))}>忽略</button>
+                      {it.kind === 'reminder' ? (
+                        <button className="btn ghost sm" onClick={() => onDismissReminder(it.id)} title="忽略这条提醒（不影响业务数据）">忽略</button>
+                      ) : (<>
+                        <button className="btn primary sm" onClick={() => (it.kind === 'person' ? onAcceptPerson(it.id) : it.kind === 'rel' ? onAccept(it.id) : onAcceptProposal(it.id, overrides[it.id]))}>采纳</button>
+                        <button className="btn ghost sm" onClick={() => (it.kind === 'person' ? onRejectPerson(it.id) : it.kind === 'rel' ? onReject(it.id) : onRejectProposal(it.id))}>忽略</button>
+                      </>)}
                     </div>
                   </div>
                 );

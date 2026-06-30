@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'r
 import type { Layer, Role, CustomerType, Edge, Person } from './types';
 import { LAYER_LABEL } from './types';
 import { reducer, computeInverse, injectBaseVersion, newAccount, newPerson, uid, type Action } from './store';
-import { api, type AuthResult, type Suggestion, type InboxRel, type InboxPerson, type InboxProposal } from './api';
+import { api, type AuthResult, type Suggestion, type InboxRel, type InboxPerson, type InboxProposal, type InboxReminder } from './api';
 import { scoreFromDomain } from './lib/g64111';
 import { usePersistentState, useTheme, useViewport } from './ui';
 import { Auth } from './components/Auth';
@@ -58,7 +58,7 @@ export default function App() {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]); // 当前商机的关系候选 → 喂 Canvas 画灰虚线候选边；审核统一走收件箱
   // 审核收件箱（Hub 级聚合，全租户 pending 候选）
   const [inboxOpen, setInboxOpen] = useState(false);
-  const [inbox, setInbox] = useState<{ rels: InboxRel[]; persons: InboxPerson[]; proposals: InboxProposal[]; total: number }>({ rels: [], persons: [], proposals: [], total: 0 });
+  const [inbox, setInbox] = useState<{ rels: InboxRel[]; persons: InboxPerson[]; proposals: InboxProposal[]; reminders: InboxReminder[]; total: number }>({ rels: [], persons: [], proposals: [], reminders: [], total: 0 });
   const [gapsOpen, setGapsOpen] = useState(false); // M3 缺口刷卡补分（enrichOpen 随重构删 EnrichPanel 移除）
   const [selfComputeBusy, setSelfComputeBusy] = useState(false); // 江湖自算·补全干系人 进行中
   const [recordingOpen, setRecordingOpen] = useState(false); // 录音接入面板
@@ -358,6 +358,7 @@ export default function App() {
   const inboxRejectPerson = async (id: string) => { try { await api.personSuggestReject(id); await loadInbox(); } catch (e: any) { setSyncErr('忽略失败：' + e.message); } };
   const inboxAcceptProposal = async (id: string, overrideValue?: string) => { try { await api.proposalAccept(id, overrideValue); await refreshAfterAccept(); } catch (e: any) { setSyncErr('采纳失败：' + e.message); } };
   const inboxRejectProposal = async (id: string) => { try { await api.proposalReject(id); await loadInbox(); } catch (e: any) { setSyncErr('忽略失败：' + e.message); } };
+  const inboxDismissReminder = async (id: string) => { try { await api.reminderDismiss(id); await loadInbox(); } catch (e: any) { setSyncErr('忽略失败：' + e.message); } };
 
   if (booting) return <div className="boot">加载中…</div>;
   if (!auth) return <Auth onAuthed={onAuthed} />;
@@ -377,7 +378,7 @@ export default function App() {
           onOpenInbox={() => setInboxOpen(true)} inboxCount={inbox.total}
         />
         {syncErr && <div className="sync-toast">{syncErr}</div>}
-        {inboxOpen && <InboxPanel rels={inbox.rels} persons={inbox.persons} proposals={inbox.proposals} accounts={state.accounts} onAccept={inboxAcceptRel} onReject={inboxRejectRel} onAcceptPerson={inboxAcceptPerson} onRejectPerson={inboxRejectPerson} onAcceptProposal={inboxAcceptProposal} onRejectProposal={inboxRejectProposal} onClose={() => setInboxOpen(false)} />}
+        {inboxOpen && <InboxPanel rels={inbox.rels} persons={inbox.persons} proposals={inbox.proposals} accounts={state.accounts} onAccept={inboxAcceptRel} onReject={inboxRejectRel} onAcceptPerson={inboxAcceptPerson} onRejectPerson={inboxRejectPerson} onAcceptProposal={inboxAcceptProposal} onRejectProposal={inboxRejectProposal} reminders={inbox.reminders} onDismissReminder={inboxDismissReminder} onClose={() => setInboxOpen(false)} />}
         {intelOpen && (
           <IntelCapture
             onClose={() => setIntelOpen(false)}
@@ -542,7 +543,7 @@ export default function App() {
       {gapsOpen && account && opp && breakdown && (
         <GapCards account={account} opp={opp} dispatch={act} onClose={() => setGapsOpen(false)} />
       )}
-      {inboxOpen && <InboxPanel rels={inbox.rels} persons={inbox.persons} proposals={inbox.proposals} accounts={state.accounts} onAccept={inboxAcceptRel} onReject={inboxRejectRel} onAcceptPerson={inboxAcceptPerson} onRejectPerson={inboxRejectPerson} onAcceptProposal={inboxAcceptProposal} onRejectProposal={inboxRejectProposal} onClose={() => setInboxOpen(false)} />}
+      {inboxOpen && <InboxPanel rels={inbox.rels} persons={inbox.persons} proposals={inbox.proposals} accounts={state.accounts} onAccept={inboxAcceptRel} onReject={inboxRejectRel} onAcceptPerson={inboxAcceptPerson} onRejectPerson={inboxRejectPerson} onAcceptProposal={inboxAcceptProposal} onRejectProposal={inboxRejectProposal} reminders={inbox.reminders} onDismissReminder={inboxDismissReminder} onClose={() => setInboxOpen(false)} />}
       {syncErr && <div className="sync-toast">{syncErr}</div>}
       {undoHint && <div className="undo-toast">{undoHint}</div>}
     </div>

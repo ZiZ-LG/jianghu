@@ -86,10 +86,11 @@ export const api = {
   personSuggestAccept: (id: string): Promise<{ person: any; accId: string }> => req(`/api/suggest/persons/${id}/accept`, { method: 'POST' }),
   personSuggestReject: (id: string): Promise<{ ok: true }> => req(`/api/suggest/persons/${id}/reject`, { method: 'POST' }),
   // Hub 级审核收件箱：聚合当前租户所有 pending 候选（关系 + 人物），带 account/opp 上下文
-  inboxList: (): Promise<{ rels: InboxRel[]; persons: InboxPerson[]; proposals: InboxProposal[]; total: number }> => req('/api/inbox'),
+  inboxList: (): Promise<{ rels: InboxRel[]; persons: InboxPerson[]; proposals: InboxProposal[]; reminders: InboxReminder[]; total: number }> => req('/api/inbox'),
   // 字段更新提案（v2.0）：采纳（可改后采纳 overrideValue）/ 驳回
   proposalAccept: (id: string, overrideValue?: string): Promise<{ ok: true }> => req(`/api/proposals/${id}/accept`, { method: 'POST', body: JSON.stringify({ overrideValue }) }),
   proposalReject: (id: string): Promise<{ ok: true }> => req(`/api/proposals/${id}/reject`, { method: 'POST' }),
+  reminderDismiss: (id: string): Promise<{ ok: true }> => req(`/api/reminders/${id}/dismiss`, { method: 'POST' }),
   // 企查查 MCP / 自动建图
   qccConfig: (): Promise<{ configured: boolean; mode: string; endpoint: string; hasToken: boolean }> => req('/api/qcc/config'),
   qccSaveConfig: (b: { mcpJson: string }): Promise<{ ok: true; endpoint: string }> => req('/api/qcc/config', { method: 'PUT', body: JSON.stringify(b) }),
@@ -186,4 +187,9 @@ export interface InboxProposal {
   id: string; accountId: string; accountName: string; opportunityId?: string; oppName: string;
   entityKind: string; entityId: string; entityName: string;
   field: string; oldValue: string; newValue: string; origin: string; evidence: string; confidence: number;
+}
+// 巡检提醒（提醒型提案）：确定性后台发现「该动了」。只读——人「忽略 / 去看看」，不建边/不改值。
+export interface InboxReminder {
+  id: string; accountId: string; accountName: string; opportunityId?: string; oppName: string;
+  kind: string; title: string; detail: string; severity: string; entityId?: string;
 }

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from './prisma.js';
 import { discoverPersons } from './enrich.js';
 import { generateRelSuggestions } from './suggest.js';
+import { computeReminders, type PatrolOpp, type PatrolRole } from './patrol.js';
 
 // 江湖自算 · 轻量后台任务队列（DB-backed）。
 // 设计取舍（对齐架构纲领「加轻量 job 队列」）：单实例 setInterval 消费，原子 claim；
@@ -180,6 +181,81 @@ export function startJobWorker(): void {
   workerTimer = setInterval(() => { void tick(); }, POLL_MS);
   workerTimer.unref?.(); // 不阻止进程退出
   console.log(`江湖自算 worker 已启动（每 ${POLL_MS / 1000}s 轮询）`);
+}
+
+// ── 后台巡检（确定性·零 LLM）：每日扫活跃商机 → 提醒型提案进收件箱（铁律②：只产候选，人审）──
+const PATROL_MS = 24 * 60 * 60 * 1000; // 每日一轮
+const PATROL_FIRST_DELAY_MS = 30_000; // 启动后延迟首跑，避开启动风暴
+let patrolTimer: NodeJS.Timeout | null = null;
+let patrolling = false;
+
+/**
+ * 巡检一轮：遍历所有租户的活跃商机 → computeReminders → 按 dedupeKey upsert（去重不刷屏）+ 自动消除。
+ * - 新提醒 → create(pending)；已 pending → 刷新文案；已 dismissed/done → 跳过（尊重人已处理，不复活）。
+ * - 条件消失（某 pending 的 dedupeKey 不在本轮 draft）→ status=done（提醒随商机更新自动消失）。
+ * tenantId 隔离：每条 Reminder 带其商机的 tenantId（后台动作在明确租户上下文，铁律①）。
+ */
+export async function runPatrol(): Promise<{ scanned: number; created: number; resolved: number }> {
+  const now = new Date();
+  const opps = await prisma.opportunity.findMany({ where: { status: 'active' } });
+  const accIds = [...new Set(opps.map((o) => o.accountId))];
+  const accs = accIds.length ? await prisma.account.findMany({ where: { id: { in: accIds } } }) : [];
+  const accName = new Map(accs.map((a) => [a.id, a.name]));
+  let created = 0, resolved = 0;
+
+  for (const opp of opps) {
+    // 最近活动 = max(evidence / visitNote / planAction)；并按人取最近证据（支持度复查用）
+    const evs = await prisma.evidenceEvent.findMany({ where: { opportunityId: opp.id }, orderBy: { createdAt: 'desc' } });
+    const lastEvByPerson = new Map<string, Date>();
+    for (const e of evs) if (!lastEvByPerson.has(e.personId)) lastEvByPerson.set(e.personId, e.createdAt);
+    const [lastVn, lastPa] = await Promise.all([
+      prisma.visitNote.findFirst({ where: { opportunityId: opp.id }, orderBy: { createdAt: 'desc' } }),
+      prisma.planAction.findFirst({ where: { opportunityId: opp.id }, orderBy: { createdAt: 'desc' } }),
+    ]);
+    const times = [evs[0]?.createdAt, lastVn?.createdAt, lastPa?.createdAt].filter(Boolean) as Date[];
+    const lastActivityAt = times.length ? new Date(Math.max(...times.map((t) => t.getTime()))) : null;
+
+    const roles = await prisma.oppRole.findMany({ where: { opportunityId: opp.id } });
+    const persons = roles.length ? await prisma.person.findMany({ where: { id: { in: roles.map((r) => r.personId) } } }) : [];
+    const nameOf = new Map(persons.map((p) => [p.id, p.name]));
+    const patrolRoles: PatrolRole[] = roles.map((r) => ({
+      personId: r.personId, personName: nameOf.get(r.personId) ?? '某干系人',
+      role: r.role, sentiment: r.sentiment, lastEvidenceAt: lastEvByPerson.get(r.personId) ?? null,
+    }));
+    const patrolOpp: PatrolOpp = {
+      tenantId: opp.tenantId, accountId: opp.accountId, accountName: accName.get(opp.accountId) ?? '',
+      opportunityId: opp.id, oppName: opp.name, createdAt: opp.createdAt, lastActivityAt, roles: patrolRoles,
+    };
+
+    const drafts = computeReminders(patrolOpp, now);
+    const draftKeys = new Set(drafts.map((d) => d.dedupeKey));
+    for (const d of drafts) {
+      const existing = await prisma.reminder.findUnique({ where: { tenantId_dedupeKey: { tenantId: d.tenantId, dedupeKey: d.dedupeKey } } });
+      if (!existing) { await prisma.reminder.create({ data: { id: 'rem_' + randomUUID().slice(0, 12), ...d } }); created++; }
+      else if (existing.status === 'pending') { await prisma.reminder.update({ where: { id: existing.id }, data: { title: d.title, detail: d.detail, severity: d.severity } }); }
+      // dismissed / done → 跳过，不复活
+    }
+    // 自动消除：本轮 draft 已不含的 pending 提醒（条件消失）→ done
+    const pendings = await prisma.reminder.findMany({ where: { tenantId: opp.tenantId, opportunityId: opp.id, status: 'pending' } });
+    for (const p of pendings) if (!draftKeys.has(p.dedupeKey)) { await prisma.reminder.update({ where: { id: p.id }, data: { status: 'done' } }); resolved++; }
+  }
+  return { scanned: opps.length, created, resolved };
+}
+
+/** 启动后台巡检（index.ts 在 listen 成功后调用一次）。串行保护：上一轮没跑完不叠跑。 */
+export function startPatrol(): void {
+  if (patrolTimer) return;
+  const run = async () => {
+    if (patrolling) return;
+    patrolling = true;
+    try { const r = await runPatrol(); console.log(`[巡检] 扫 ${r.scanned} 商机，新增提醒 ${r.created}，自动消除 ${r.resolved}`); }
+    catch (e: any) { console.error('[巡检] 失败', e?.message || e); }
+    finally { patrolling = false; }
+  };
+  setTimeout(() => { void run(); }, PATROL_FIRST_DELAY_MS);
+  patrolTimer = setInterval(() => { void run(); }, PATROL_MS);
+  patrolTimer.unref?.(); // 不阻止进程退出
+  console.log(`江湖巡检已启动（每 ${PATROL_MS / 3600000}h 一轮，启动 ${PATROL_FIRST_DELAY_MS / 1000}s 后首跑）`);
 }
 
 export function jobRoutes(app: FastifyInstance): void {

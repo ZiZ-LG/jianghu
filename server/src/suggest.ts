@@ -281,10 +281,11 @@ export function suggestRoutes(app: FastifyInstance) {
   // 多租户红线：全程 tenantId 过滤（参考 state.ts 的 assembleState）。采纳/驳回沿用现有 /api/suggest[/persons]/:id/accept|reject。
   app.get('/api/inbox', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     const tenantId = req.user.tenantId;
-    const [relRows, psRows, cpRows, persons, opps, accounts] = await Promise.all([
+    const [relRows, psRows, cpRows, remRows, persons, opps, accounts] = await Promise.all([
       prisma.relSuggestion.findMany({ where: { tenantId, status: 'pending' }, orderBy: { confidence: 'desc' } }),
       prisma.personSuggestion.findMany({ where: { tenantId, status: 'pending' }, orderBy: { confidence: 'desc' } }),
       prisma.changeProposal.findMany({ where: { tenantId, status: 'pending' }, orderBy: { createdAt: 'desc' } }), // v2.0 字段更新提案
+      prisma.reminder.findMany({ where: { tenantId, status: 'pending' }, orderBy: { createdAt: 'desc' } }), // 巡检提醒（提醒型，自带 account/opp 名免 join）
       prisma.person.findMany({ where: { tenantId }, select: { id: true, name: true } }),
       prisma.opportunity.findMany({ where: { tenantId }, select: { id: true, name: true, accountId: true } }),
       prisma.account.findMany({ where: { tenantId }, select: { id: true, name: true } }),
@@ -305,6 +306,14 @@ export function suggestRoutes(app: FastifyInstance) {
       entityName: cp.entityKind === 'oppRole' ? (personName.get(cp.entityId) ?? cp.entityId) : cp.entityId,
       field: cp.field, oldValue: cp.oldValue, newValue: cp.newValue, origin: cp.origin, evidence: cp.evidence, confidence: cp.confidence,
     }));
-    return { rels, persons: personsOut, proposals, total: rels.length + personsOut.length + proposals.length };
+    const reminders = remRows.map((r) => ({ id: r.id, accountId: r.accountId, accountName: r.accountName, opportunityId: r.opportunityId ?? undefined, oppName: r.oppName, kind: r.kind, title: r.title, detail: r.detail, severity: r.severity, entityId: r.entityId ?? undefined }));
+    return { rels, persons: personsOut, proposals, reminders, total: rels.length + personsOut.length + proposals.length + reminders.length };
+  });
+
+  // 忽略一条巡检提醒（提醒型提案：只读，人「忽略」→ dismissed；绝不改业务库）。tenantId 隔离 + status=pending 防重复处理。
+  app.post('/api/reminders/:id/dismiss', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    const r = await prisma.reminder.updateMany({ where: { id: req.params.id, tenantId: req.user.tenantId, status: 'pending' }, data: { status: 'dismissed' } });
+    if (!r.count) return reply.code(404).send({ error: '提醒不存在或已处理' });
+    return { ok: true };
   });
 }
