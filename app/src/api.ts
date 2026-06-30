@@ -74,6 +74,7 @@ export const api = {
   wecomSaveConfig: (b: { corpId?: string; agentId?: string; secret?: string }) => req('/api/wecom/config', { method: 'PUT', body: JSON.stringify(b) }),
   wecomBind: (): Promise<{ wecomUserid: string }> => req('/api/wecom/bind'),
   wecomSaveBind: (wecomUserid: string) => req('/api/wecom/bind', { method: 'PUT', body: JSON.stringify({ wecomUserid }) }),
+  wecomOauthStart: (): Promise<{ url: string }> => req('/api/wecom/oauth/start'), // 扫码自动绑 userid（回调需公网）
   aiTest: (): Promise<{ ok: boolean; message?: string }> => req('/api/ai/test', { method: 'POST' }),
   aiSimulate: (context: any, hypothesis: string): Promise<{ analysis: string; provider: string }> =>
     req('/api/ai/simulate', { method: 'POST', body: JSON.stringify({ context, hypothesis }) }),

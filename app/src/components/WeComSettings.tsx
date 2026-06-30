@@ -34,6 +34,11 @@ export function WeComSettings({ role, onClose }: { role: string; onClose: () => 
     try { await api.wecomSaveBind(wecomUserid.trim()); setMsg(wecomUserid.trim() ? '企微 userid 绑定已保存' : '已解除绑定'); }
     catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   };
+  const connectWecom = async () => {
+    setErr(''); setMsg('');
+    try { const { url } = await api.wecomOauthStart(); window.open(url, '_blank'); setMsg('已打开企微授权页，扫码/确认后回此处会自动绑定（可重新打开本设置查看）'); }
+    catch (e: any) { setErr(e.message); }
+  };
 
   return (
     <Modal title="企业微信日历同步" width={540} onClose={onClose}
@@ -55,7 +60,10 @@ export function WeComSettings({ role, onClose }: { role: string; onClose: () => 
       <div style={{ fontWeight: 600, margin: '18px 0 6px' }}>② 我的企微 userid（绑定后行动才进我的日历）</div>
       <label className="fld"><span>我的企微 userid</span>
         <input value={wecomUserid} onChange={(e) => setWecomUserid(e.target.value)} placeholder="企微通讯录里的成员账号，如 zhangsan" /></label>
-      <button className="btn primary sm" onClick={saveBind} disabled={busy} style={{ marginTop: 4 }}>保存绑定</button>
+      <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+        <button className="btn primary sm" onClick={saveBind} disabled={busy}>保存绑定</button>
+        <button className="btn ghost sm" onClick={connectWecom} disabled={busy} title="扫码自动获取企微 userid（需公网部署 + 应用可信域名）">📱 扫码自动绑定</button>
+      </div>
 
       {msg && <div className="ok-msg">{msg}</div>}
       {err && <div className="auth-err">{err}</div>}

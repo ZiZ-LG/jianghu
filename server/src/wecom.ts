@@ -26,6 +26,24 @@ export async function getAccessToken(corpId: string, secret: string): Promise<st
   return d.access_token;
 }
 
+// ── OAuth2 网页授权（snsapi_base 静默）：扫码自动绑 userid，替代手填 ──
+const WXWORK_OAUTH = 'https://open.weixin.qq.com/connect/oauth2/authorize';
+
+/** 构造企微网页授权链接（静默 snsapi_base）。redirectUri 须在应用「可信域名」内（真机配置）。 */
+export function buildWecomAuthUrl(corpId: string, agentId: string, redirectUri: string, state: string): string {
+  const p = new URLSearchParams({ appid: corpId, redirect_uri: redirectUri, response_type: 'code', scope: 'snsapi_base', agentid: agentId, state });
+  return `${WXWORK_OAUTH}?${p.toString()}#wechat_redirect`;
+}
+
+/** 用授权 code 换企微 userid（auth/getuserinfo）。 */
+export async function exchangeCodeToUserid(corpId: string, secret: string, code: string): Promise<string> {
+  const token = await getAccessToken(corpId, secret);
+  const res = await fetch(`${QYAPI}/cgi-bin/auth/getuserinfo?access_token=${encodeURIComponent(token)}&code=${encodeURIComponent(code)}`);
+  const d: any = await res.json().catch(() => ({}));
+  if (d.errcode !== 0 || !d.userid) throw new Error(`企微 getuserinfo 失败：${d.errmsg || d.errcode}（确认应用可信域名 + 成员在可见范围）`);
+  return String(d.userid);
+}
+
 // 日程数据（PIPL 白名单：只允许这些字段进企微，敏感信息不在此结构内）
 export interface WeComSchedule {
   summary: string;            // 标题（如「【拜访】客户·商机·下一步」）
@@ -56,7 +74,7 @@ function scheduleBody(s: WeComSchedule, scheduleId?: string): any {
       start_time: s.startTime,
       end_time: s.endTime,
       attendees: s.attendeeUserids.map((u) => ({ userid: u })),
-      ...(s.remindBeforeSecs ? { reminders: { is_remind: 1, remind_before_event_secs: [s.remindBeforeSecs] } } : {}),
+      ...(s.remindBeforeSecs ? { reminders: { is_remind: 1, remind_time_diffs: [-Math.abs(s.remindBeforeSecs)] } } : {}), // 企微：负数=提前秒数
     },
   };
 }
@@ -203,5 +221,36 @@ export function wecomRoutes(app: FastifyInstance) {
       update: { wecomUserid },
     });
     return { ok: true, wecomUserid };
+  });
+
+  // OAuth 扫码绑定：start 生成授权链接，callback 用 code 换 userid 落 WeComUserBind（替代手填）。⚠️ 回调需公网 + 应用可信域名，真机生效。
+  app.get('/api/wecom/oauth/start', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    const cfg = await prisma.weComConfig.findUnique({ where: { tenantId: req.user.tenantId } });
+    if (!cfg?.corpId || !cfg.agentId) return reply.code(400).send({ error: '请先配置企微应用（corpId / AgentId）' });
+    const base = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.headers.host}`;
+    const state = enc(JSON.stringify({ t: req.user.tenantId, u: req.user.userId, ts: Date.now() }));
+    return { url: buildWecomAuthUrl(cfg.corpId, cfg.agentId, `${base}/api/wecom/oauth/callback`, state) };
+  });
+
+  app.get('/api/wecom/oauth/callback', async (req: any, reply) => {
+    const { code, state } = (req.query || {}) as any;
+    const html = (msg: string, ok: boolean) => `<!doctype html><meta charset="utf-8"><body style="font-family:system-ui;text-align:center;padding:48px"><h2>${ok ? '✅' : '❌'} ${msg}</h2><p>可关闭本页返回江湖。</p></body>`;
+    reply.type('text/html; charset=utf-8');
+    try {
+      const st = JSON.parse(dec(String(state || '')));
+      if (!st?.t || !st?.u) return reply.send(html('绑定失败：state 无效', false));
+      const cfg = await prisma.weComConfig.findUnique({ where: { tenantId: st.t } });
+      if (!cfg?.corpId || !cfg.secretEnc) return reply.send(html('绑定失败：企微应用未配置', false));
+      const cred = decryptWeComCred(cfg);
+      const userid = await exchangeCodeToUserid(cred.corpId, cred.secret, String(code || ''));
+      await prisma.weComUserBind.upsert({
+        where: { tenantId_userId: { tenantId: st.t, userId: st.u } },
+        create: { id: 'wb_' + randomUUID().slice(0, 12), tenantId: st.t, userId: st.u, wecomUserid: userid },
+        update: { wecomUserid: userid },
+      });
+      return reply.send(html(`已绑定企微 userid：${userid}`, true));
+    } catch (e: any) {
+      return reply.send(html('绑定失败：' + (e?.message || e), false));
+    }
   });
 }
