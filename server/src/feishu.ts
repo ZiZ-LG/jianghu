@@ -11,6 +11,7 @@ export const FEISHU_MINUTES_SCOPES = [
   'minutes:minutes.transcript:export',
   'minutes:minutes.search:read',
   'minutes:minutes.basic:read',
+  'offline_access', // 必须：飞书仅在 scope 含 offline_access 时返回 refresh_token（否则 access_token ~2h 过期后无法续期）
 ];
 
 export interface FeishuApp { appId: string; appSecret: string; }
