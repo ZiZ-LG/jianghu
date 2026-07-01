@@ -464,7 +464,12 @@ export default function App() {
                   <button className="btn ghost xs" onClick={() => setMdDocOpen(true)} title="客户档案 / 商机档案 / 拜访记录（.md 文档）">📋 作战档案</button>
                   <button className="btn ghost xs" onClick={selfCompute} disabled={selfComputeBusy} title="江湖自算：后台用企查查/AI 发现关键干系人 + 推断当前商机内关系，候选进收件箱待人审">{selfComputeBusy ? '⏳ 自算中…' : '🔍 自算补全'}</button>
                   <button className="btn ghost xs" onClick={() => setInboxOpen(true)}>📥 收件箱{inbox.total > 0 ? ` (${inbox.total})` : ''}</button>
-                  <button className="btn ghost xs" onClick={() => setHelpOpen(true)}>❓ 帮助</button>
+                  <span style={{ marginLeft: 'auto' }}>
+                    <OverflowMenu align="right" label="⚙️" items={[
+                      { label: '❓ 帮助', onClick: () => setHelpOpen(true) },
+                      { label: theme === 'dark' ? '☀️ 白天模式' : '🌙 黑夜模式', onClick: toggleTheme },
+                    ]} />
+                  </span>
                 </>)}
                 {isMobile && (<>
                   <OverflowMenu align="left" label={`▾ 层级 (${visibleLayers.size})`}
@@ -475,9 +480,9 @@ export default function App() {
                     { label: selfComputeBusy ? '⏳ 自算中…' : '🔍 自算补全', onClick: selfCompute },
                     { label: '📥 收件箱', badge: inbox.total > 0 ? String(inbox.total) : undefined, onClick: () => setInboxOpen(true) },
                     { label: '❓ 帮助', onClick: () => setHelpOpen(true) },
+                    { label: theme === 'dark' ? '☀️ 白天模式' : '🌙 黑夜模式', onClick: toggleTheme },
                   ]} />
                 </>)}
-                <button className="theme-toggle mt-theme" style={{ marginLeft: 'auto' }} onClick={toggleTheme} title={theme === 'dark' ? '切换到白天模式' : '切换到黑夜模式'}>{theme === 'dark' ? '☀️' : '🌙'}</button>
               </div>
             )}
             <>

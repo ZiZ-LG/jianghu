@@ -38,6 +38,18 @@ export function CustomerHub({
     setName(''); setCtype(2); setCreating(false);
   };
 
+  // 配置类聚合到「⚙️ 设置」——低频，不与日常动作抢位（桌面/移动共用）。落地 待办-入口重构.md 的 B2 集约。
+  const settingsItems = [
+    { label: '🔌 接入 AI', onClick: onOpenMcpAccess },
+    { label: '🧠 AI 模型', onClick: onOpenAiSettings },
+    { label: '📆 企微日历', onClick: onOpenWecom },
+    { label: '👥 团队 · ❤️ 支持', onClick: onOpenTeam },
+    { label: theme === 'dark' ? '☀️ 白天模式' : '🌙 黑夜模式', onClick: onToggleTheme },
+    { label: '📋 载入示例', onClick: onLoadDemo },
+    { label: '❓ 帮助', onClick: onOpenHelp },
+    { label: '🚪 退出登录', onClick: onLogout },
+  ];
+
   return (
     <div className="hub">
       <div className="hub-top">
@@ -48,33 +60,19 @@ export function CustomerHub({
         </div>
         {/* 桌面：整排操作 */}
         <div className="hub-actions-desktop">
-          <button className="theme-toggle" onClick={onToggleTheme} title={theme === 'dark' ? '切换到白天模式' : '切换到黑夜模式'}>{theme === 'dark' ? '☀️' : '🌙'}</button>
-          <button className="team-chip inbox-chip" onClick={onOpenInbox} title="审核机器写入的候选（关系 / 人物），采纳后才落库">📥 收件箱{inboxCount > 0 ? ` · ${inboxCount}` : ''}</button>
-          <button className="team-chip" onClick={onOpenMcpAccess}>🔌 接入 AI</button>
-          <button className="team-chip" onClick={onOpenHelp}>❓ 帮助</button>
-          <button className="team-chip" onClick={onOpenAiSettings}>🧠 AI 模型</button>
-          <button className="team-chip" onClick={onOpenWecom}>📆 企微日历</button>
-          <button className="team-chip" onClick={onOpenTeam}>👥 团队 · ❤️ 支持</button>
           <span className="who">{userName}</span>
-          <button className="btn ghost" onClick={onLoadDemo}>载入示例</button>
+          <button className="team-chip inbox-chip" onClick={onOpenInbox} title="审核机器写入的候选（关系 / 人物），采纳后才落库">📥 收件箱{inboxCount > 0 ? ` · ${inboxCount}` : ''}</button>
           <button className="btn cta" onClick={onOpenIntel}>🎙️ 录入情报</button>
           <button className="btn primary" onClick={() => setCreating(true)}>＋ 新建客户</button>
-          <button className="btn ghost" onClick={onLogout} title="退出登录">退出</button>
+          <OverflowMenu align="right" label="⚙️ 设置" items={settingsItems} />
         </div>
         {/* 移动：主题 + 新建 + ⋯ 菜单 */}
         <div className="hub-actions-mobile">
-          <button className="theme-toggle" onClick={onToggleTheme} title="切换主题">{theme === 'dark' ? '☀️' : '🌙'}</button>
           <button className="btn primary xs" onClick={() => setCreating(true)}>＋ 新建</button>
-          <OverflowMenu align="right" items={[
+          <OverflowMenu align="right" label="⚙️" items={[
             { label: '📥 收件箱', badge: inboxCount > 0 ? String(inboxCount) : undefined, onClick: onOpenInbox },
             { label: '🎙️ 录入情报', primary: true, onClick: onOpenIntel },
-            { label: '📋 载入示例', onClick: onLoadDemo },
-            { label: '🔌 接入 AI', onClick: onOpenMcpAccess },
-            { label: '🧠 AI 模型', onClick: onOpenAiSettings },
-            { label: '📆 企微日历', onClick: onOpenWecom },
-            { label: '❓ 帮助', onClick: onOpenHelp },
-            { label: '👥 团队 · ❤️ 支持', onClick: onOpenTeam },
-            { label: '🚪 退出登录', onClick: onLogout },
+            ...settingsItems,
           ]} />
         </div>
       </div>
