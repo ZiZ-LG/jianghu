@@ -28,7 +28,7 @@ import { TeamBilling } from './components/TeamBilling';
 import { AiSettings } from './components/AiSettings';
 import { WeComSettings } from './components/WeComSettings';
 import { InboxPanel } from './components/InboxPanel';
-import { RecordingPanel } from './components/RecordingPanel';
+import { AddIntel } from './components/AddIntel';
 import { HelpManual } from './components/HelpManual';
 import { McpAccess } from './components/McpAccess';
 import { OverflowMenu } from './components/OverflowMenu';
@@ -62,7 +62,7 @@ export default function App() {
   const [inbox, setInbox] = useState<{ rels: InboxRel[]; persons: InboxPerson[]; proposals: InboxProposal[]; reminders: InboxReminder[]; total: number }>({ rels: [], persons: [], proposals: [], reminders: [], total: 0 });
   const [gapsOpen, setGapsOpen] = useState(false); // M3 缺口刷卡补分（enrichOpen 随重构删 EnrichPanel 移除）
   const [selfComputeBusy, setSelfComputeBusy] = useState(false); // 江湖自算·补全干系人 进行中
-  const [recordingOpen, setRecordingOpen] = useState(false); // 录音接入面板
+  const [addIntelOpen, setAddIntelOpen] = useState(false); // ＋添加情报 单入口（口述 / 录音 / 对话 三合一）
   const [helpOpen, setHelpOpen] = useState(false);
   const [mcpAccessOpen, setMcpAccessOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistentState('jianghu.sidebarCollapsed', false);
@@ -464,9 +464,9 @@ export default function App() {
               <div className="module-top wall-top">
                 {!isMobile && <LayerTabs visible={visibleLayers} onToggle={toggleLayer} />}
                 {!isMobile && (<>
+                  <button className="btn cta xs" onClick={() => setAddIntelOpen(true)} title="添加情报：口述录入 / 录音转写 / 和地图对话——把手上的线索喂进江湖">＋ 添加情报</button>
                   <button className="btn ghost xs" onClick={() => setMdDocOpen(true)} title="客户档案 / 商机档案 / 拜访记录（.md 文档）">📋 作战档案</button>
                   <button className="btn ghost xs" onClick={selfCompute} disabled={selfComputeBusy} title="江湖自算：后台用企查查/AI 发现关键干系人 + 推断当前商机内关系，候选进收件箱待人审">{selfComputeBusy ? '⏳ 自算中…' : '🔍 自算补全'}</button>
-                  <button className="btn ghost xs" onClick={() => setRecordingOpen(true)} title="录音接入：从录音源拉转写 → 抽取成图，候选进收件箱人审">🎧 录音接入</button>
                   <button className="btn ghost xs" onClick={() => setInboxOpen(true)}>📥 收件箱{inbox.total > 0 ? ` (${inbox.total})` : ''}</button>
                   <button className="btn ghost xs" onClick={() => setHelpOpen(true)}>❓ 帮助</button>
                 </>)}
@@ -474,9 +474,9 @@ export default function App() {
                   <OverflowMenu align="left" label={`▾ 层级 (${visibleLayers.size})`}
                     items={(['L1', 'L2', 'L3', 'L4'] as Layer[]).map((l) => ({ label: LAYER_LABEL[l], active: visibleLayers.has(l), onClick: () => toggleLayer(l) }))} />
                   <OverflowMenu align="left" label="⋯ 操作" items={[
+                    { label: '＋ 添加情报', primary: true, onClick: () => setAddIntelOpen(true) },
                     { label: '📋 作战档案', onClick: () => setMdDocOpen(true) },
                     { label: selfComputeBusy ? '⏳ 自算中…' : '🔍 自算补全', onClick: selfCompute },
-                    { label: '🎧 录音接入', onClick: () => setRecordingOpen(true) },
                     { label: '📥 收件箱', badge: inbox.total > 0 ? String(inbox.total) : undefined, onClick: () => setInboxOpen(true) },
                     { label: '❓ 帮助', onClick: () => setHelpOpen(true) },
                   ]} />
@@ -541,11 +541,10 @@ export default function App() {
           onDone={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); } catch { /* 静默：保存已成功，仅刷新失败 */ } }} />
       )}
       {mdDocOpen && <MdDocPanel account={account} dispatch={act} onClose={() => setMdDocOpen(false)} />}
-      {recordingOpen && <RecordingPanel accountId={account.id} role={auth.user.role} onClose={() => setRecordingOpen(false)} onExtracted={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); await loadInbox(); } catch { /* 静默：抽取已成功，仅刷新失败 */ } }} />}
-      {intelOpen && (
-        <IntelCapture account={account} opportunity={opp}
-          onClose={() => setIntelOpen(false)}
-          onDone={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); } catch { /* 静默：保存已成功，仅刷新失败 */ } }} />
+      {addIntelOpen && (
+        <AddIntel account={account} opp={opp} role={auth.user.role}
+          onClose={() => setAddIntelOpen(false)}
+          onDone={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); await loadInbox(); } catch { /* 静默：保存已成功，仅刷新失败 */ } }} />
       )}
       {personFormOpen && <PersonForm onCreate={addPerson} onClose={() => setPersonFormOpen(false)} />}
       {teamOpen && <TeamBilling role={auth.user.role} onClose={() => setTeamOpen(false)} />}

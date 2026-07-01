@@ -23,11 +23,12 @@ const inputStyle: CSSProperties = {
   background: 'var(--panel)', color: 'var(--ink)', fontSize: 13, marginBottom: 6, width: '100%', boxSizing: 'border-box',
 };
 
-export function RecordingPanel({ accountId, role, onClose, onExtracted }: {
+export function RecordingPanel({ accountId, role, onClose, onExtracted, embedded }: {
   accountId?: string;
   role: string;
   onClose: () => void;
   onExtracted: () => void; // 抽取成功后回调：刷新整树 + 收件箱
+  embedded?: boolean; // true=嵌入「＋添加情报」单入口（去掉自带 Modal 外壳）
 }) {
   const [source, setSource] = useState<Source>('feishu');
   const [list, setList] = useState<Transcript[]>([]);
@@ -141,9 +142,9 @@ export function RecordingPanel({ accountId, role, onClose, onExtracted }: {
     <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 4, border: '1px solid var(--line)', color: 'var(--muted)' }}>{STATUS_LABEL[status] || status}</span>
   );
 
-  return (
-    <Modal title="🎧 录音接入" onClose={onClose} width={580}
-      footer={<span style={{ fontSize: 12, color: 'var(--muted)' }}>转写原文加密存储、严格按工作区隔离，可随时降解 / 删除（PIPL 合规）。</span>}>
+  const footer = <span style={{ fontSize: 12, color: 'var(--muted)' }}>转写原文加密存储、严格按工作区隔离，可随时降解 / 删除（PIPL 合规）。</span>;
+  const body = (
+    <>
       {/* 源选择 */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
         {SOURCES.map((s) => (
@@ -242,6 +243,9 @@ export function RecordingPanel({ accountId, role, onClose, onExtracted }: {
           ))}
         </ul>
       )}
-    </Modal>
+    </>
   );
+  return embedded
+    ? <div className="intel-embed">{body}<div className="modal-foot">{footer}</div></div>
+    : <Modal title="🎧 录音接入" onClose={onClose} width={580} footer={footer}>{body}</Modal>;
 }

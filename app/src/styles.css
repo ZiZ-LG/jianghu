@@ -1307,6 +1307,33 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 .adv-cand-hint { font-size: 10.5px; color: var(--faint); line-height: 1.4; }
 html[data-theme="dark"] .adv-cand-done { color: #4ade80; border-color: #4ade80; }
 
+/* ＋添加情报 单入口（P3，落地 docs/添加情报-单入口原型.html）：左 nav 三输入 + 右内容体。复用原型 method-* 观感，全语义变量暗色自适配。 */
+.addintel { display: grid; grid-template-columns: 208px 1fr; min-height: 384px; }
+.addintel-nav { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-right: 1px solid var(--line); background: var(--panel-2); }
+.addintel-way { text-align: left; display: flex; gap: 10px; padding: 11px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); transition: .15s; }
+.addintel-way:hover { background: var(--hover); }
+.addintel-way.active { border-color: var(--accent); background: var(--accent-soft); }
+.aw-ico { font-size: 18px; line-height: 1.3; flex-shrink: 0; }
+.aw-tx { display: flex; flex-direction: column; min-width: 0; }
+.aw-t { font-size: 13px; font-weight: 800; color: var(--ink); display: flex; align-items: center; gap: 6px; }
+.aw-hot { font-size: 10px; font-weight: 800; color: #fff; background: var(--accent); border-radius: 5px; padding: 1px 5px; }
+.aw-d { font-size: 11px; color: var(--muted); margin-top: 3px; line-height: 1.5; }
+.addintel-hint { margin-top: auto; padding: 9px 10px; font-size: 11px; color: var(--muted); line-height: 1.6; border: 1px dashed var(--line); border-radius: 10px; }
+.addintel-hint b { color: var(--ink-2); }
+.addintel-body { padding: 16px 18px; overflow-y: auto; min-height: 0; max-height: 64vh; }
+.addintel-empty { padding: 28px 12px; text-align: center; font-size: 13px; color: var(--muted); }
+.addintel-chat { height: 420px; display: flex; flex-direction: column; }
+.addintel-chat .chat-panel { flex: 1; min-height: 0; border: none; }
+/* embedded 输入体（IntelCapture/RecordingPanel 去壳）：内容 + 贴底按钮条（负边距铺满 body 宽度） */
+.intel-embed { display: flex; flex-direction: column; }
+.intel-embed .modal-foot { margin: 14px -18px -16px; padding: 11px 18px; border-top: 1px solid var(--line); background: var(--panel-2); display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
+@media (max-width: 720px) {
+  .addintel { grid-template-columns: 1fr; }
+  .addintel-nav { flex-direction: row; overflow-x: auto; border-right: none; border-bottom: 1px solid var(--line); }
+  .addintel-way { min-width: 152px; }
+  .addintel-hint { display: none; }
+}
+
 /* 关系层级 · 点亮/熄灭 多选切换（顶栏，可层叠并显） */
 .layer-toggles { gap: 5px; }
 .tab.lay-toggle { opacity: .5; filter: grayscale(.55); transition: opacity .12s, filter .12s; }

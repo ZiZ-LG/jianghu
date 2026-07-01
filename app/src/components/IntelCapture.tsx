@@ -39,12 +39,13 @@ function FloatPanel({ title, onClose, footer, width = 420, children }: {
  * 双轨（见 docs/录入情报-设计方案.md）：口述明说直落正式库；AI 补充进「🔮 荐关系」候选。
  * 两态：输入 → 回执（不逐项二次确认）。
  */
-export function IntelCapture({ account, opportunity, onClose, onDone, onEnterAccount }: {
+export function IntelCapture({ account, opportunity, onClose, onDone, onEnterAccount, embedded }: {
   account?: Account | null;
   opportunity?: Opportunity | null;
   onClose: () => void;
   onDone: () => void; // 落库后通知 App 重新拉取 state
   onEnterAccount?: (accId: string) => void; // 从零口述建客户后，回执里「进入客户」用
+  embedded?: boolean; // true=嵌入「＋添加情报」单入口（去掉自带 FloatPanel 外壳，只出内容+底部按钮）
 }) {
   const [text, setText] = useState('');
   const [scope, setScope] = useState<'opp' | 'acc'>(opportunity ? 'opp' : 'acc');
@@ -69,29 +70,34 @@ export function IntelCapture({ account, opportunity, onClose, onDone, onEnterAcc
     finally { setBusy(false); }
   };
 
+  // 外壳：独立=可拖动悬浮面板 FloatPanel；embedded=嵌入「＋添加情报」单入口（只出内容 + 底部按钮）
+  const shell = (title: string, width: number, footer: ReactNode, body: ReactNode) =>
+    embedded
+      ? <div className="intel-embed">{body}<div className="modal-foot">{footer}</div></div>
+      : <FloatPanel title={title} width={width} onClose={onClose} footer={footer}>{body}</FloatPanel>;
+
   // ── 回执视图 ──
   if (receipt) {
     const c = receipt;
     const canEnter = Boolean(fromScratch && c.account?.id && onEnterAccount); // 从零建客户成功 → 可一键进入
-    return (
-      <FloatPanel title="🎙️ 录入情报 · 已录入" width={420} onClose={onClose}
-        footer={<>
-          <button className="btn ghost" onClick={onClose}>完成</button>
-          <button className={canEnter ? 'btn ghost' : 'btn primary'} onClick={() => { setReceipt(null); setText(''); }}>＋ 再记一条</button>
-          {canEnter && <button className="btn primary" onClick={() => onEnterAccount!(c.account.id)}>🗺️ 进入客户</button>}
-        </>}>
-        <IntelReceipt receipt={c} emptyHint={fromScratch ? '没听出客户名称——请在口述里说明是哪家客户，再试一次。' : '这段话里没识别到可建的客户/干系人。'} />
-      </FloatPanel>
+    return shell('🎙️ 口述录入 · 已录入', 420,
+      <>
+        <button className="btn ghost" onClick={onClose}>完成</button>
+        <button className={canEnter ? 'btn ghost' : 'btn primary'} onClick={() => { setReceipt(null); setText(''); }}>＋ 再记一条</button>
+        {canEnter && <button className="btn primary" onClick={() => onEnterAccount!(c.account.id)}>🗺️ 进入客户</button>}
+      </>,
+      <IntelReceipt receipt={c} emptyHint={fromScratch ? '没听出客户名称——请在口述里说明是哪家客户，再试一次。' : '这段话里没识别到可建的客户/干系人。'} />,
     );
   }
 
   // ── 输入视图 ──
-  return (
-    <FloatPanel title={priorText ? '🎙️ 录入情报 · 再补一句（接着上文理解）' : fromScratch ? '🎙️ 录入情报 · 口述一段，自动建客户 + 干系人 + 关系' : '🎙️ 录入情报 · 一句话理清客户 / 商机 / 关系'} width={440} onClose={onClose}
-      footer={<>
-        <button className="btn ghost" onClick={onClose}>取消</button>
-        <button className="btn primary" onClick={submit} disabled={busy || !text.trim()}>{busy ? '整理中…' : '📥 录入成图'}</button>
-      </>}>
+  const inTitle = priorText ? '🎙️ 口述录入 · 再补一句（接着上文理解）' : fromScratch ? '🎙️ 口述录入 · 口述一段，自动建客户 + 干系人 + 关系' : '🎙️ 口述录入 · 一句话理清客户 / 商机 / 关系';
+  return shell(inTitle, 440,
+    <>
+      <button className="btn ghost" onClick={onClose}>取消</button>
+      <button className="btn primary" onClick={submit} disabled={busy || !text.trim()}>{busy ? '整理中…' : '📥 录入成图'}</button>
+    </>,
+    <>
       {priorText
         ? <div className="intel-demo-hint">接着上一条补充：可直接用「他 / 那位副总」等指代，江湖会结合上文理解，已建的人不会重复。</div>
         : fromScratch && <div className="intel-demo-hint">从零口述：请在文字里说出客户名称，江湖会据此自动新建客户，并整理干系人与关系。</div>}
@@ -112,6 +118,6 @@ export function IntelCapture({ account, opportunity, onClose, onDone, onEnterAcc
         </div>
       )}
       {err && <div className="intel-err">{err}</div>}
-    </FloatPanel>
+    </>,
   );
 }
