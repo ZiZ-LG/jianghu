@@ -6,16 +6,17 @@ import type { Account, Opportunity, Person, OppRole, BurningIssue, UCV, VisitNot
 import { ROLE_LABEL, SENTIMENT_LABEL } from '../types';
 import type { Action } from '../store';
 import { DetailDrawer } from './DetailDrawer';
-import { ChatPanel } from './ChatPanel';
+import { AdvisorPanel } from './AdvisorPanel';
+import type { ScoreBreakdown } from '../lib/g64111';
 
 type Tab = 'profile' | 'dynamic' | 'advisor';
 type DynItem = { date: string; title?: string; body: string; source: string; sensitive?: boolean };
 
 export function FocusPanel({
-  accId, oppId, account, opp, person, oppRole, bis, ucvs, visitNotes, tab, onTabChange, dispatch, onRefresh, onClose,
+  accId, oppId, account, opp, breakdown, person, oppRole, bis, ucvs, visitNotes, tab, onTabChange, dispatch, onRefresh, onClose,
 }: {
   accId: string; oppId: string;
-  account: Account; opp: Opportunity;
+  account: Account; opp: Opportunity; breakdown: ScoreBreakdown;
   person: Person; oppRole?: OppRole; bis: BurningIssue[]; ucvs: UCV[];
   visitNotes: VisitNote[];
   tab: Tab; onTabChange: (t: Tab) => void;
@@ -84,7 +85,7 @@ export function FocusPanel({
         )}
 
         {tab === 'advisor' && (
-          <ChatPanel account={account} opp={opp} onDone={onRefresh} />
+          <AdvisorPanel account={account} opp={opp} breakdown={breakdown} person={person} />
         )}
       </div>
     </div>

@@ -514,8 +514,8 @@ export default function App() {
         )}
       </main>
 
-      {selectedPerson && opp && (
-        <FocusPanel accId={account.id} oppId={opp.id} account={account} opp={opp}
+      {selectedPerson && opp && breakdown && (
+        <FocusPanel accId={account.id} oppId={opp.id} account={account} opp={opp} breakdown={breakdown}
           person={selectedPerson} oppRole={selectedRole} bis={selectedBis} ucvs={selectedUcvs}
           visitNotes={account.visitNotes ?? []} tab={focusTab} onTabChange={setFocusTab} dispatch={act}
           onRefresh={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); } catch { /* 静默：改图已成功，仅刷新失败 */ } }}
