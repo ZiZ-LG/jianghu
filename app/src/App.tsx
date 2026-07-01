@@ -10,7 +10,6 @@ import { CustomerHub } from './components/CustomerHub';
 import { Sidebar } from './components/Sidebar';
 import { LayerTabs } from './components/LayerTabs';
 import { Canvas } from './components/Canvas';
-import { type CustomerView } from './components/ViewTabs';
 import { DeliberationDock } from './components/DeliberationDock';
 import { FocusPanel } from './components/FocusPanel';
 import { EdgeDrawer } from './components/EdgeDrawer';
@@ -66,7 +65,6 @@ export default function App() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [mcpAccessOpen, setMcpAccessOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistentState('jianghu.sidebarCollapsed', false);
-  const [view, setView] = usePersistentState<CustomerView>('jianghu.customerView', 'wall'); // 客户级镜头：关系地图 / 行动计划
   const [theme, toggleTheme] = useTheme();
   // 画布选中模型：单击=选中(节点出锚点/连线出控制点)，双击=打开右侧栏
   const [focusTab, setFocusTab] = useState<'profile' | 'dynamic' | 'advisor'>('advisor'); // 焦点面板 tab：单击→参谋、双击→档案
@@ -270,8 +268,6 @@ export default function App() {
   };
   // 切客户/商机时清空一切选中
   useEffect(() => { setSelectedId(null); setSelectedEdgeId(null); setDrawerEdgeId(null); }, [accId, oppId]);
-  // 策略沙盘并入地图推演坞、行动计划网格退役：旧持久态（sandbox/planner）一律归一到关系地图
-  useEffect(() => { if (view !== 'wall') setView('wall'); }, [view, setView]);
 
   const addPersonAt = (x: number, y: number): string => {
     if (!account) return '';
@@ -439,7 +435,7 @@ export default function App() {
   return (
     <div className={`app-shell${isMobile ? ' mobile' : ''}${immersive ? ' immersive' : ''}`}>
       {isMobile && !isLandscape && <OrientationGate />}
-      {view === 'wall' && !immersive && (isMobile ? (
+      {!immersive && (isMobile ? (
         <>
           {!mobileNavOpen && <button className="edge-arrow edge-left" onClick={() => setMobileNavOpen(true)} title="展开侧边栏" aria-label="展开侧边栏">›</button>}
           {mobileNavOpen && <div className="mobile-backdrop" onClick={() => setMobileNavOpen(false)} />}
@@ -460,7 +456,7 @@ export default function App() {
       <main className="main">
         {opp ? (
           <>
-            {view === 'wall' && !immersive && (
+            {!immersive && (
               <div className="module-top wall-top">
                 {!isMobile && <LayerTabs visible={visibleLayers} onToggle={toggleLayer} />}
                 {!isMobile && (<>
