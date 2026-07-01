@@ -243,6 +243,9 @@ export interface PlanAction {
   done: boolean;
   doneAt?: string;
   review?: string;
+  resources?: string;      // 所需资源（牌·六要素）
+  cautions?: string;       // 注意要点（牌·六要素）
+  props?: string;          // 道具：方案/POC/报告/会议大纲…（P3 WorkBuddy 产）
   origin?: string;         // manual | ai | workbuddy
   createdBy?: string;
   createdAt?: string;

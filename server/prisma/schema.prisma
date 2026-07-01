@@ -340,6 +340,9 @@ model PlanAction {
   done          Boolean  @default(false) // 是否完成（仅行动有完成态）
   doneAt        String?  // 完成日期 YYYY-MM-DD
   review        String   @default("") // 复盘（喂周复盘）
+  resources     String   @default("") // 所需资源（牌·六要素）
+  cautions      String   @default("") // 注意要点（牌·六要素）
+  props         String   @default("") // 道具：方案/POC/报告/会议大纲…（P3 由 WorkBuddy 产）
   origin        String   @default("manual") // manual | ai(741) | workbuddy
   createdBy     String   @default("")
   createdAt     DateTime @default(now())

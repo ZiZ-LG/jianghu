@@ -174,11 +174,11 @@ export function DeliberationDock({
   useEffect(() => { setDrawer(null); }, [opp.id, account.id]);
 
   // ── 行动清单（PlanAction，承接 DealPlanner 网格退役；勾完成→结果回填录证据，闭合执行→证据→局势飞轮）──
-  const [actDraft, setActDraft] = useState<{ title: string; startDate: string; personId?: string; done: boolean; wasDone: boolean; outcome?: 'up' | 'flat' | 'down' } | null>(null);
+  const [actDraft, setActDraft] = useState<{ title: string; startDate: string; personId?: string; target: string; resources: string; cautions: string; props: string; done: boolean; wasDone: boolean; outcome?: 'up' | 'flat' | 'down' } | null>(null);
   useEffect(() => {
     if (drawer?.kind === 'action') {
       const a = (account.planActions ?? []).find((x) => x.id === drawer.id);
-      if (a) setActDraft({ title: a.title || '', startDate: a.startDate || todayYmd(), personId: a.personId, done: !!a.done, wasDone: !!a.done });
+      if (a) setActDraft({ title: a.title || '', startDate: a.startDate || todayYmd(), personId: a.personId, target: a.target || '', resources: a.resources || '', cautions: a.cautions || '', props: a.props || '', done: !!a.done, wasDone: !!a.done });
     } else setActDraft(null);
     // 仅在切换抽屉对象时初始化草稿；编辑中不因 store 更新而重置（避免清掉未保存输入）
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -187,7 +187,7 @@ export function DeliberationDock({
     const pa = newPlanAction(account.id, opp.id, todayYmd(), todayYmd(), 'am');
     pa.title = '';
     dispatch({ type: 'ADD_PLAN_ACTION', accId: account.id, oppId: opp.id, planAction: pa });
-    setActDraft({ title: '', startDate: pa.startDate, personId: undefined, done: false, wasDone: false });
+    setActDraft({ title: '', startDate: pa.startDate, personId: undefined, target: '', resources: '', cautions: '', props: '', done: false, wasDone: false });
     setDrawer({ kind: 'action', id: pa.id });
   };
   const deleteAction = (actionId: string) => { dispatch({ type: 'DELETE_PLAN_ACTION', accId: account.id, actionId }); setDrawer(null); };
@@ -195,7 +195,7 @@ export function DeliberationDock({
     if (!actDraft) return;
     const d = actDraft; const today = todayYmd();
     const title = d.title.trim() || '新行动';
-    dispatch({ type: 'UPDATE_PLAN_ACTION', accId: account.id, actionId, patch: { title, startDate: d.startDate, endDate: d.startDate, personId: d.personId, done: d.done, doneAt: d.done ? today : undefined } });
+    dispatch({ type: 'UPDATE_PLAN_ACTION', accId: account.id, actionId, patch: { title, startDate: d.startDate, endDate: d.startDate, personId: d.personId, target: d.target, resources: d.resources, cautions: d.cautions, props: d.props, done: d.done, doneAt: d.done ? today : undefined } });
     // 结果回填：完成且关联干系人、选了态度变化 → 录一条互动证据喂策略引擎 E2（守铁律②：人当场拍板，非机器自动改分）
     if (d.done && !d.wasDone && d.personId && (d.outcome === 'up' || d.outcome === 'down')) {
       const ev = newEvidence(account.id, opp.id, d.personId, d.outcome === 'up' ? 'positive_interaction' : 'negative_interaction', d.outcome === 'up' ? 1 : -1, 'mid');
@@ -576,6 +576,18 @@ export function DeliberationDock({
                     <option value="">（可选 · 关联后可回填态度）</option>
                     {account.persons.map((p) => <option key={p.id} value={p.id}>{p.name}{p.title ? ` · ${p.title}` : ''}</option>)}
                   </select>
+                </label>
+                <label className="sb-field"><span>目的</span>
+                  <input value={actDraft.target} placeholder="这一手要达成什么" onChange={(e) => setActDraft({ ...actDraft, target: e.target.value })} />
+                </label>
+                <label className="sb-field"><span>所需资源</span>
+                  <input value={actDraft.resources} placeholder="人 / 预算 / 内部支持…" onChange={(e) => setActDraft({ ...actDraft, resources: e.target.value })} />
+                </label>
+                <label className="sb-field"><span>注意要点</span>
+                  <input value={actDraft.cautions} placeholder="风险 / 红线 / 话术提示" onChange={(e) => setActDraft({ ...actDraft, cautions: e.target.value })} />
+                </label>
+                <label className="sb-field"><span>道具</span>
+                  <input value={actDraft.props} placeholder="方案 / POC / 报告 / 会议大纲…（后续可交 WorkBuddy 生产）" onChange={(e) => setActDraft({ ...actDraft, props: e.target.value })} />
                 </label>
                 <label className="dp-done"><input type="checkbox" checked={actDraft.done} onChange={(e) => setActDraft({ ...actDraft, done: e.target.checked })} /> 标记为已完成</label>
                 {actDraft.done && !actDraft.wasDone && actDraft.personId && (
