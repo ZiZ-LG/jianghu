@@ -40,7 +40,7 @@ const wheelX = (e: React.WheelEvent<HTMLDivElement>) => {
 };
 
 export function DeliberationDock({
-  account, opp, breakdown, dispatch, selectedPersonId, onSelectPerson,
+  account, opp, breakdown, dispatch, selectedPersonId, onSelectPerson, openActionId, onActionOpened,
 }: {
   account: Account;
   opp: Opportunity;
@@ -48,6 +48,8 @@ export function DeliberationDock({
   dispatch: (a: Action) => void;
   selectedPersonId?: string | null;
   onSelectPerson?: (id: string | null) => void;
+  openActionId?: string | null; // 点画布行动牌 → 打开该行动的编辑抽屉
+  onActionOpened?: () => void;
 }) {
   const itemKeys = Object.keys(ITEM_MAX) as ItemKey[];
   const personById = new Map(account.persons.map((p) => [p.id, p]));
@@ -183,6 +185,11 @@ export function DeliberationDock({
     // 仅在切换抽屉对象时初始化草稿；编辑中不因 store 更新而重置（避免清掉未保存输入）
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drawer]);
+  // 点画布行动牌 → 展开坞 + 打开该行动编辑抽屉
+  useEffect(() => {
+    if (openActionId) { setHeight('half'); setDrawer({ kind: 'action', id: openActionId }); onActionOpened?.(); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openActionId]);
   const addAction = () => {
     const pa = newPlanAction(account.id, opp.id, todayYmd(), todayYmd(), 'am');
     pa.title = '';

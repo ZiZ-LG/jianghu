@@ -72,6 +72,7 @@ export default function App() {
   const [focusTab, setFocusTab] = useState<'profile' | 'dynamic' | 'advisor'>('advisor'); // 焦点面板 tab：单击→参谋、双击→档案
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [drawerEdgeId, setDrawerEdgeId] = useState<string | null>(null);
+  const [openActionId, setOpenActionId] = useState<string | null>(null); // 点画布行动牌 → 通知坞开编辑抽屉
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [immersive, setImmersive] = useState(false);
   const { isMobile, isLandscape } = useViewport();
@@ -474,16 +475,17 @@ export default function App() {
             <Canvas account={account} opp={opp} visibleLayers={visibleLayers}
               selectedId={selectedId} selectedEdgeId={selectedEdgeId}
               onSelectPerson={selectPerson} onSelectEdge={selectEdge}
-              onOpenPerson={openPerson} onOpenEdge={openEdge}
+              onOpenPerson={openPerson} onOpenEdge={openEdge} onOpenAction={setOpenActionId}
               onMovePerson={(id, x, y) => act({ type: 'MOVE_PERSON', accId: account.id, personId: id, x, y })}
               onAddPersonAt={addPersonAt} onAddConnectedNode={addConnectedNode} onConnect={connectNodes}
               onUpdateEdge={updateEdge} onDeleteEdge={deleteEdgeById}
               onUpdatePerson={updatePerson} onDeletePerson={deletePerson}
               immersive={immersive} onToggleImmersive={toggleImmersive} secondTapOpens={true}
-              suggestions={suggestions} />
+              suggestions={suggestions} planActions={account.planActions ?? []} />
             {!immersive && breakdown && (
               <DeliberationDock account={account} opp={opp} breakdown={breakdown} dispatch={act}
-                selectedPersonId={selectedId} onSelectPerson={selectPerson} />
+                selectedPersonId={selectedId} onSelectPerson={selectPerson}
+                openActionId={openActionId} onActionOpened={() => setOpenActionId(null)} />
             )}
             </>
           </>

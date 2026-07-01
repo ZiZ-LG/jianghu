@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Account, Opportunity, Layer, Edge, OppRole, Person, EdgeShape } from '../types';
+import type { Account, Opportunity, Layer, Edge, OppRole, Person, EdgeShape, PlanAction } from '../types';
 import { ROLE_COLOR, ROLE_LABEL, SENTIMENT_CHAR, SENTIMENT_COLOR, SENTIMENT_LABEL, FAMILY_7Q } from '../types';
 import { personContributions } from '../lib/g64111';
 
@@ -71,11 +71,12 @@ type Gesture =
   | { kind: 'bend'; edgeId: string; csx: number; csy: number }
   | { kind: 'edge'; edgeId: string; csx: number; csy: number }
   | { kind: 'marquee'; csx: number; csy: number; x0: number; y0: number; append: boolean }
-  | { kind: 'pinch' };
+  | { kind: 'pinch' }
+  | { kind: 'action'; actionId: string; csx: number; csy: number };
 
 export function Canvas({
-  account, opp, visibleLayers, selectedId, selectedEdgeId,
-  onSelectPerson, onSelectEdge, onOpenPerson, onOpenEdge,
+  account, opp, planActions, visibleLayers, selectedId, selectedEdgeId,
+  onSelectPerson, onSelectEdge, onOpenPerson, onOpenEdge, onOpenAction,
   onMovePerson, onAddPersonAt, onAddConnectedNode, onConnect,
   onUpdateEdge, onDeleteEdge, onUpdatePerson, onDeletePerson, suggestions = [],
   immersive = false, onToggleImmersive, secondTapOpens = false,
@@ -89,6 +90,7 @@ export function Canvas({
   onSelectEdge: (id: string | null) => void;
   onOpenPerson: (id: string) => void;
   onOpenEdge: (id: string) => void;
+  onOpenAction?: (id: string) => void; // 点行动牌 → 开坞编辑抽屉
   onMovePerson: (id: string, x: number, y: number) => void;
   onAddPersonAt: (x: number, y: number) => string;
   onAddConnectedNode: (sourceId: string, x: number, y: number) => string;
@@ -98,6 +100,7 @@ export function Canvas({
   onUpdatePerson: (id: string, patch: Partial<Person>) => void;
   onDeletePerson: (id: string) => void;
   suggestions?: { source: string; target: string }[];
+  planActions?: PlanAction[]; // 挂责任人节点旁的行动牌（主线：战场+行动令）
   immersive?: boolean;
   onToggleImmersive?: () => void;
   secondTapOpens?: boolean;   // 选中后再次单击即进入详情（桌面+手机统一；双击仍兼容）
@@ -217,8 +220,11 @@ export function Canvas({
     const anchorH = el.closest('[data-anchor]');
     const nodeH = el.closest('[data-node]');
     const edgeH = el.closest('[data-edge]');
+    const actionH = el.closest('[data-action]'); // 行动牌（挂节点旁）→ 点开编辑抽屉，优先于节点
 
-    if (bendH) {
+    if (actionH) {
+      gesture.current = { kind: 'action', actionId: actionH.getAttribute('data-action')!, csx: e.clientX, csy: e.clientY };
+    } else if (bendH) {
       gesture.current = { kind: 'bend', edgeId: bendH.getAttribute('data-bend')!, csx: e.clientX, csy: e.clientY };
     } else if (endpH) {
       gesture.current = { kind: 'endpoint', edgeId: endpH.getAttribute('data-edge-h')!, end: endpH.getAttribute('data-endpoint') as 'source' | 'target', csx: e.clientX, csy: e.clientY };
@@ -304,7 +310,9 @@ export function Canvas({
     const moved = Math.hypot(e.clientX - (g as any).csx, e.clientY - (g as any).csy) > TAP_MOVE;
     const w = toWorld(e.clientX, e.clientY);
 
-    if (g.kind === 'pan') {
+    if (g.kind === 'action') {
+      if (!moved) onOpenAction?.(g.actionId);
+    } else if (g.kind === 'pan') {
       if (!moved) handleTap('empty', '', w);
     } else if (g.kind === 'marquee') {
       if (moved) {
@@ -559,6 +567,14 @@ export function Canvas({
                       </text>
                     </>
                   )}
+                  {/* 行动牌：挂责任人节点右侧（主线·战场+行动令）。②a 先只读展示，②b 接点击开抽屉 */}
+                  {(planActions ?? []).filter((a) => a.personId === p.id && a.opportunityId === opp.id).map((a, i) => (
+                    <g key={a.id} data-action={a.id} transform={`translate(${CHW + 10},${-CHH + 8 + i * 26})`} style={{ cursor: 'pointer' }}>
+                      <rect width={124} height={22} rx={5} fill="var(--node-fill)" stroke={a.done ? '#16a34a' : 'var(--accent)'} strokeWidth={1.2} />
+                      <circle cx={11} cy={11} r={3.5} fill={a.done ? '#16a34a' : 'var(--accent)'} />
+                      <text x={20} y={14.5} fontSize={10} fill="var(--node-text)">{clipText(a.title || '未命名行动', 12)}</text>
+                    </g>
+                  ))}
                   {anchors}
                 </g>
               );
