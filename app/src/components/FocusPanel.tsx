@@ -85,7 +85,7 @@ export function FocusPanel({
         )}
 
         {tab === 'advisor' && (
-          <AdvisorPanel account={account} opp={opp} breakdown={breakdown} person={person} />
+          <AdvisorPanel account={account} opp={opp} breakdown={breakdown} person={person} dispatch={dispatch} />
         )}
       </div>
     </div>

@@ -81,6 +81,9 @@ export const api = {
   // 策略沙盘 AI 顺推(策略卡候选)/倒推(里程碑候选)——只返回候选，前端暂存 + 人审采纳后才落库
   strategySuggest: (opportunityId: string, mode: 'forward' | 'backward', context: any): Promise<{ mode: string; candidates: any[]; provider: string }> =>
     req('/api/strategy/suggest', { method: 'POST', body: JSON.stringify({ opportunityId, mode, context }) }),
+  // 参谋出牌（P2④b）：右栏焦点人 → AI 产行动牌候选（六要素之 目的/资源/注意）。只返回候选，人审采纳才 dispatch ADD_PLAN_ACTION 落画布。
+  advisorActions: (opportunityId: string, focus: { name: string; title?: string }, context: any, note?: string): Promise<{ candidates: ActionCand[]; provider: string }> =>
+    req('/api/strategy/actions', { method: 'POST', body: JSON.stringify({ opportunityId, focus, context, note }) }),
   // AI 关系推断（待确认候选）
   suggestList: (opportunityId: string): Promise<{ suggestions: Suggestion[] }> => req(`/api/suggest?opportunityId=${encodeURIComponent(opportunityId)}`),
   suggestGenerate: (opportunityId: string): Promise<{ added: number; suggestions: Suggestion[] }> => req('/api/suggest/generate', { method: 'POST', body: JSON.stringify({ opportunityId }) }),
@@ -171,6 +174,9 @@ export interface CompanyEquityData { shareholders: Shareholder[]; investments: I
 export interface CompanyCandidate {
   name: string; creditCode: string; legalPerson: string; status: string; establishDate: string;
 }
+
+// 参谋行动牌候选（P2④b）：六要素之 目的(purpose→PlanAction.target)/资源/注意；采纳落 PlanAction，personId=焦点人
+export interface ActionCand { title: string; purpose: string; resources: string; cautions: string }
 
 export interface Suggestion {
   id: string; source: string; target: string; sourceName: string; targetName: string;

@@ -1295,6 +1295,18 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 .chat-send:disabled { opacity: .4; cursor: default; }
 .chat-send:not(:disabled):hover { background: var(--accent-soft); }
 
+/* 参谋出牌（P2④b）：出牌工具条 + 行动牌候选。待采纳复用 .sb2-stamp/.sb2-cand-acts（橙）；已落画布=绿。状态色沿用项目既有硬编码+color-mix(var(--panel)) 约定，暗色靠 color-mix 自适配 + 下方 dark 覆盖。 */
+.adv-cardbar { display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-bottom: 1px solid var(--line); background: var(--panel-2); flex-shrink: 0; }
+.adv-cardbar-hint { font-size: 10.5px; color: var(--faint); line-height: 1.3; }
+.adv-cand { align-self: stretch; display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border: 1.5px dashed #d97706; border-radius: 10px; background: color-mix(in srgb, #f59e0b 6%, var(--panel)); }
+.adv-cand-top { display: flex; align-items: center; gap: 6px; }
+.adv-cand-title { font-size: 12px; font-weight: 700; color: var(--ink); line-height: 1.35; }
+.adv-cand-done { margin-left: auto; flex-shrink: 0; font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 4px; white-space: nowrap; border: 1px solid #16a34a; color: #16a34a; background: color-mix(in srgb, #16a34a 12%, var(--panel)); }
+.adv-cand-meta { font-size: 11px; line-height: 1.5; color: var(--ink-2); }
+.adv-cand-meta b { display: inline-block; min-width: 30px; margin-right: 4px; color: var(--faint); font-weight: 600; }
+.adv-cand-hint { font-size: 10.5px; color: var(--faint); line-height: 1.4; }
+html[data-theme="dark"] .adv-cand-done { color: #4ade80; border-color: #4ade80; }
+
 /* 关系层级 · 点亮/熄灭 多选切换（顶栏，可层叠并显） */
 .layer-toggles { gap: 5px; }
 .tab.lay-toggle { opacity: .5; filter: grayscale(.55); transition: opacity .12s, filter .12s; }
