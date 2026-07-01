@@ -1306,6 +1306,9 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 .adv-cand-meta b { display: inline-block; min-width: 30px; margin-right: 4px; color: var(--faint); font-weight: 600; }
 .adv-cand-hint { font-size: 10.5px; color: var(--faint); line-height: 1.4; }
 html[data-theme="dark"] .adv-cand-done { color: #4ade80; border-color: #4ade80; }
+/* 三类候选按 kind 区分：行动牌=默认橙(.adv-cand) / 策略卡=蓝 / 风险=红 */
+.adv-cand-card { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--panel)); }
+.adv-cand-risk { border-color: #dc2626; background: color-mix(in srgb, #dc2626 6%, var(--panel)); }
 
 /* ＋添加情报 单入口（P3，落地 docs/添加情报-单入口原型.html）：左 nav 三输入 + 右内容体。复用原型 method-* 观感，全语义变量暗色自适配。 */
 .addintel { display: grid; grid-template-columns: 208px 1fr; min-height: 384px; }

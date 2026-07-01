@@ -1,19 +1,18 @@
-// 参谋 · 深度对话 + 出牌（焦点面板「🧭 参谋」tab）：对着当前焦点人，带整张图上下文(buildAiContext)问 AI（多轮），
-// 想落地时点「🃏 把下一步做成牌」→ AI 承接对话产行动牌候选 → 人审采纳 → 落 PlanAction（挂焦点人，自动出现在画布该人节点旁）。
-// 复用 /api/ai/simulate（问答）+ /api/strategy/actions（出牌）；无 Key 走 mock 演示降级。
-// 守硬规则②：候选只本地暂存，人当场「采纳落牌」才 dispatch 落库；分析绝不自动改图。
-// 与左栏 ChatPanel(和地图对话·改图直落) 分工：这里是"想 + 出牌"，那里是"改"。
+// 参谋 · 深度对话 + 出候选（焦点面板「🧭 参谋」tab）：对着焦点人带全图上下文多轮问答（/api/ai/simulate），
+// 想落地时「🎯 出候选」→ AI 承接对话产三类可落地候选：🃏行动牌 / 📌策略卡 / ⚠️风险 → 人审采纳落库（挂焦点人）。
+// 守硬规则②：候选只本地暂存，采纳才 dispatch（ADD_PLAN_ACTION / ADD_STRATEGY_CARD / ADD_STRATEGY_RISK）；分析绝不自动改图。
+// 与左栏 ChatPanel(和地图对话·改图直落) 分工：这里是"想 + 出候选"，那里是"改"。
 import { useEffect, useRef, useState } from 'react';
 import type { Dispatch } from 'react';
 import type { Account, Opportunity, Person } from '../types';
 import type { ScoreBreakdown } from '../lib/g64111';
 import type { Action } from '../store';
-import { newPlanAction } from '../store';
+import { newPlanAction, newStrategyCard, newStrategyRisk } from '../store';
 import { buildAiContext } from '../aiContext';
-import { api, type ActionCand } from '../api';
+import { api, type AdvisorCand } from '../api';
 
 type Msg = { role: 'user' | 'assistant'; text: string };
-type Cand = ActionCand & { accepted?: boolean };
+type Cand = AdvisorCand & { accepted?: boolean };
 const todayYmd = () => new Date().toISOString().slice(0, 10);
 
 export function AdvisorPanel({ account, opp, breakdown, person, dispatch }: {
@@ -21,7 +20,7 @@ export function AdvisorPanel({ account, opp, breakdown, person, dispatch }: {
 }) {
   const [msgs, setMsgs] = useState<Msg[]>([{
     role: 'assistant',
-    text: `对着「${person.name}」问我——怎么打、倒戈风险、下一步。我带上整张图的上下文（角色 / 态度 / 关系 / 趋赢力 / 燃点）帮你深想；想落地时点「🃏 把下一步做成牌」，采纳后自动挂到他节点旁。`,
+    text: `对着「${person.name}」问我——怎么打、倒戈风险、下一步。我带整张图的上下文（角色/态度/关系/趋赢力/燃点）帮你深想；想落地就点「🎯 出候选」，我给出可采纳的 🃏行动牌 / 📌策略卡 / ⚠️风险。`,
   }]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -44,7 +43,7 @@ export function AdvisorPanel({ account, opp, breakdown, person, dispatch }: {
     } finally { setBusy(false); }
   };
 
-  // 出牌：承接最近一问一答，产针对焦点人的行动牌候选（本地暂存，采纳才落）
+  // 出候选：承接最近一问一答，产三类候选（本地暂存，采纳才落）
   const makeCards = async () => {
     if (cardBusy || busy) return;
     setCardBusy(true);
@@ -57,19 +56,29 @@ export function AdvisorPanel({ account, opp, breakdown, person, dispatch }: {
       const r = await api.advisorActions(opp.id, { name: person.name, title: person.title }, ctx, note);
       const list: Cand[] = (r.candidates || []).map((c) => ({ ...c }));
       setCands(list);
-      if (!list.length) setMsgs((m) => [...m, { role: 'assistant', text: '这一手我暂时没抽出可落地的牌——把目标聊具体些，或多问两句，我再出。' }]);
+      if (!list.length) setMsgs((m) => [...m, { role: 'assistant', text: '这一手我暂时没抽出可落地的候选——把目标聊具体些，或多问两句，我再出。' }]);
     } catch (e: any) {
-      setMsgs((m) => [...m, { role: 'assistant', text: '出牌失败：' + (e?.message || '未知') + '（若未配模型，去「🧠 AI 模型」填一个自己的 Key，或用内置演示模式）' }]);
+      setMsgs((m) => [...m, { role: 'assistant', text: '出候选失败：' + (e?.message || '未知') + '（若未配模型，去「🧠 AI 模型」填一个自己的 Key，或用内置演示模式）' }]);
     } finally { setCardBusy(false); }
   };
 
-  // 采纳：候选 → PlanAction（六要素：目的/资源/注意；责任人=焦点人；origin=ai）→ 落画布该人节点旁
+  // 采纳：按类型落不同库（行动牌→PlanAction 挂焦点人 / 策略卡→StrategyCard / 风险→StrategyRisk），全带 origin=ai
   const acceptCard = (i: number) => {
     const c = cands[i]; if (!c || c.accepted) return;
-    const pa = newPlanAction(account.id, opp.id, todayYmd());
-    pa.title = c.title; pa.target = c.purpose; pa.resources = c.resources; pa.cautions = c.cautions;
-    pa.personId = person.id; pa.origin = 'ai';
-    dispatch({ type: 'ADD_PLAN_ACTION', accId: account.id, oppId: opp.id, planAction: pa });
+    if (c.kind === 'action') {
+      const pa = newPlanAction(account.id, opp.id, todayYmd());
+      pa.title = c.title; pa.target = c.purpose; pa.resources = c.resources; pa.cautions = c.cautions;
+      pa.personId = person.id; pa.origin = 'ai';
+      dispatch({ type: 'ADD_PLAN_ACTION', accId: account.id, oppId: opp.id, planAction: pa });
+    } else if (c.kind === 'card') {
+      const card = newStrategyCard(account.id, opp.id, c.gapItem || '');
+      card.title = c.title; card.basis = c.basis; card.personId = person.id; card.origin = 'ai';
+      dispatch({ type: 'ADD_STRATEGY_CARD', accId: account.id, oppId: opp.id, card });
+    } else {
+      const risk = newStrategyRisk(account.id, opp.id, 'risk');
+      risk.text = c.title; risk.severity = c.severity; risk.origin = 'ai';
+      dispatch({ type: 'ADD_STRATEGY_RISK', accId: account.id, oppId: opp.id, risk });
+    }
     setCands((xs) => xs.map((x, j) => (j === i ? { ...x, accepted: true } : x)));
   };
   const ignoreCard = (i: number) => setCands((xs) => xs.filter((_, j) => j !== i));
@@ -82,6 +91,12 @@ export function AdvisorPanel({ account, opp, breakdown, person, dispatch }: {
     ? ['这个竞品的威胁点在哪', '怎么把跟它绑定的人策反']
     : ['他的倒戈风险多大', '给我攻坚他的下一步', '怎么把他往我方拉'];
 
+  const META = {
+    action: { ic: '🃏', tag: '行动牌', done: `已挂到「${person.name}」节点旁 · 去画布点牌可标完成 / 记反馈` },
+    card: { ic: '📌', tag: '策略卡', done: '已进推演坞「策略泳道」' },
+    risk: { ic: '⚠️', tag: '风险', done: '已进推演坞「风险清单」' },
+  } as const;
+
   return (
     <div className="chat-panel" style={{ height: '100%' }}>
       <div className="chat-head">
@@ -92,32 +107,44 @@ export function AdvisorPanel({ account, opp, breakdown, person, dispatch }: {
         {quick.map((q) => <button key={q} className="btn ghost xs" onClick={() => ask(q)} disabled={busy}>{q}</button>)}
       </div>
       <div className="adv-cardbar">
-        <button className="btn primary xs" disabled={cardBusy || busy} onClick={makeCards}>{cardBusy ? '结合对话出牌中…' : '🃏 把下一步做成牌'}</button>
-        <span className="adv-cardbar-hint">AI 产行动牌 · 采纳挂「{person.name}」节点旁</span>
+        <button className="btn primary xs" disabled={cardBusy || busy} onClick={makeCards}>{cardBusy ? '结合对话出候选中…' : '🎯 出候选'}</button>
+        <span className="adv-cardbar-hint">AI 产 行动牌 / 策略卡 / 风险 · 采纳挂「{person.name}」</span>
       </div>
       <div className="chat-list" ref={listRef}>
         {msgs.map((m, i) => <div key={i} className={`chat-bub ${m.role}`}>{m.text}</div>)}
         {busy && <div className="chat-bub assistant chat-typing">结合整张图思考中…</div>}
-        {cardBusy && <div className="chat-bub assistant chat-typing">正在把下一步拟成牌…</div>}
-        {cands.map((c, i) => (
-          <div className="adv-cand" key={i}>
-            <div className="adv-cand-top">
-              <span className="adv-cand-title">🃏 {c.title}</span>
-              {c.accepted ? <span className="adv-cand-done">✓ 已落画布</span> : <span className="sb2-stamp">待采纳</span>}
-            </div>
-            <div className="adv-cand-meta"><b>目的</b>{c.purpose}</div>
-            {c.resources && <div className="adv-cand-meta"><b>资源</b>{c.resources}</div>}
-            {c.cautions && <div className="adv-cand-meta"><b>注意</b>{c.cautions}</div>}
-            {c.accepted
-              ? <div className="adv-cand-hint">已挂到「{person.name}」节点旁 · 去画布点牌可标完成 / 记反馈</div>
-              : (
-                <div className="sb2-cand-acts">
-                  <button className="btn primary xs" onClick={() => acceptCard(i)}>采纳落牌</button>
-                  <button className="btn ghost xs" onClick={() => ignoreCard(i)}>忽略</button>
-                </div>
+        {cardBusy && <div className="chat-bub assistant chat-typing">正在拟 行动 / 策略 / 风险 候选…</div>}
+        {cands.map((c, i) => {
+          const meta = META[c.kind];
+          return (
+            <div className={`adv-cand adv-cand-${c.kind}`} key={i}>
+              <div className="adv-cand-top">
+                <span className="adv-cand-title">{meta.ic} {c.title}</span>
+                {c.accepted ? <span className="adv-cand-done">✓ 已采纳</span> : <span className="sb2-stamp">{meta.tag}·待采纳</span>}
+              </div>
+              {c.kind === 'action' && (<>
+                <div className="adv-cand-meta"><b>目的</b>{c.purpose}</div>
+                {c.resources && <div className="adv-cand-meta"><b>资源</b>{c.resources}</div>}
+                {c.cautions && <div className="adv-cand-meta"><b>注意</b>{c.cautions}</div>}
+              </>)}
+              {c.kind === 'card' && (<>
+                <div className="adv-cand-meta"><b>依据</b>{c.basis}</div>
+                {c.gapItem && <div className="adv-cand-meta"><b>缺口</b>{c.gapItem}</div>}
+              </>)}
+              {c.kind === 'risk' && (
+                <div className="adv-cand-meta"><b>等级</b>{c.severity === 'high' ? '高' : c.severity === 'mid' ? '中' : '低'}</div>
               )}
-          </div>
-        ))}
+              {c.accepted
+                ? <div className="adv-cand-hint">{meta.done}</div>
+                : (
+                  <div className="sb2-cand-acts">
+                    <button className="btn primary xs" onClick={() => acceptCard(i)}>采纳</button>
+                    <button className="btn ghost xs" onClick={() => ignoreCard(i)}>忽略</button>
+                  </div>
+                )}
+            </div>
+          );
+        })}
       </div>
       <div className="chat-input">
         <textarea rows={1} value={input} placeholder={`问参谋关于「${person.name}」…（Enter 发送）`}

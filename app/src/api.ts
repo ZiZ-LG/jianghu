@@ -82,7 +82,7 @@ export const api = {
   strategySuggest: (opportunityId: string, mode: 'forward' | 'backward', context: any): Promise<{ mode: string; candidates: any[]; provider: string }> =>
     req('/api/strategy/suggest', { method: 'POST', body: JSON.stringify({ opportunityId, mode, context }) }),
   // 参谋出牌（P2④b）：右栏焦点人 → AI 产行动牌候选（六要素之 目的/资源/注意）。只返回候选，人审采纳才 dispatch ADD_PLAN_ACTION 落画布。
-  advisorActions: (opportunityId: string, focus: { name: string; title?: string }, context: any, note?: string): Promise<{ candidates: ActionCand[]; provider: string }> =>
+  advisorActions: (opportunityId: string, focus: { name: string; title?: string }, context: any, note?: string): Promise<{ candidates: AdvisorCand[]; provider: string }> =>
     req('/api/strategy/actions', { method: 'POST', body: JSON.stringify({ opportunityId, focus, context, note }) }),
   // AI 关系推断（待确认候选）
   suggestList: (opportunityId: string): Promise<{ suggestions: Suggestion[] }> => req(`/api/suggest?opportunityId=${encodeURIComponent(opportunityId)}`),
@@ -175,8 +175,11 @@ export interface CompanyCandidate {
   name: string; creditCode: string; legalPerson: string; status: string; establishDate: string;
 }
 
-// 参谋行动牌候选（P2④b）：六要素之 目的(purpose→PlanAction.target)/资源/注意；采纳落 PlanAction，personId=焦点人
-export interface ActionCand { title: string; purpose: string; resources: string; cautions: string }
+// 参谋候选（P2④b→多类型）：action 行动牌(目的/资源/注意→PlanAction) / card 策略卡(依据/缺口→StrategyCard) / risk 风险登记(→StrategyRisk)；人审采纳才落库，挂焦点人
+export type AdvisorCand =
+  | { kind: 'action'; title: string; purpose: string; resources: string; cautions: string }
+  | { kind: 'card'; title: string; basis: string; gapItem?: string }
+  | { kind: 'risk'; title: string; severity: 'low' | 'mid' | 'high' };
 
 export interface Suggestion {
   id: string; source: string; target: string; sourceName: string; targetName: string;
