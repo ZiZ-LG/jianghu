@@ -1,31 +1,38 @@
 // 右栏「焦点面板」：跟选中的人走，身份头 + 三 tab（档案 / 动态 / 参谋）。
-// 档案＝复用 DetailDrawer(embedded)；动态＝person.logs 时间线(后续汇入录音/态度变更)；参谋＝ChatPanel(P2 升级为带全图上下文的深度参谋)。
-// P1-a：触发仍走双击(drawerPersonId)，默认停「档案」tab；单击→参谋、关系焦点等为后续增量。
-import { useState } from 'react';
+// tab 受控（App 管：单击节点→参谋、双击→档案；选中即现面板）。
+// 档案＝复用 DetailDrawer(embedded)；动态＝person.logs + 该人参与的 VisitNote，按日期倒序、带溯源；参谋＝ChatPanel(P2 升级为带全图上下文的深度参谋)。
 import type { Dispatch } from 'react';
-import type { Account, Opportunity, Person, OppRole, BurningIssue, UCV } from '../types';
+import type { Account, Opportunity, Person, OppRole, BurningIssue, UCV, VisitNote } from '../types';
 import { ROLE_LABEL, SENTIMENT_LABEL } from '../types';
 import type { Action } from '../store';
 import { DetailDrawer } from './DetailDrawer';
 import { ChatPanel } from './ChatPanel';
 
 type Tab = 'profile' | 'dynamic' | 'advisor';
+type DynItem = { date: string; title?: string; body: string; source: string; sensitive?: boolean };
 
 export function FocusPanel({
-  accId, oppId, account, opp, person, oppRole, bis, ucvs, dispatch, onRefresh, onClose,
+  accId, oppId, account, opp, person, oppRole, bis, ucvs, visitNotes, tab, onTabChange, dispatch, onRefresh, onClose,
 }: {
   accId: string; oppId: string;
   account: Account; opp: Opportunity;
   person: Person; oppRole?: OppRole; bis: BurningIssue[]; ucvs: UCV[];
+  visitNotes: VisitNote[];
+  tab: Tab; onTabChange: (t: Tab) => void;
   dispatch: Dispatch<Action>;
   onRefresh: () => void; // 参谋改图后刷新整树
   onClose: () => void;
 }) {
-  const [tab, setTab] = useState<Tab>('profile');
-
   const f = person.form;
   const formFilled = [f.family, f.occupation, f.recreation, f.moneyMotivation].filter(Boolean).length;
-  const logs = [...person.logs].reverse(); // 最新在上
+
+  // 动态时间线：交往日志(人级) + 该人参与的拜访记录(name 匹配)，按日期倒序、带溯源
+  const dyn: DynItem[] = [
+    ...person.logs.map((l) => ({ date: l.date, body: l.content, source: '交往日志', sensitive: l.sensitive })),
+    ...visitNotes
+      .filter((vn) => vn.participants.some((p) => p.name === person.name))
+      .map((vn) => ({ date: vn.date, title: vn.topic, body: vn.summary, source: `拜访 · ${vn.origin === 'workbuddy' ? 'WorkBuddy' : '手动'}` })),
+  ].sort((a, b) => (a.date < b.date ? 1 : -1));
 
   return (
     <div className="drawer focus-panel">
@@ -48,9 +55,9 @@ export function FocusPanel({
       </div>
 
       <div className="focus-tabs">
-        <button className={`focus-tab ${tab === 'profile' ? 'on' : ''}`} onClick={() => setTab('profile')}>📇 档案</button>
-        <button className={`focus-tab ${tab === 'dynamic' ? 'on' : ''}`} onClick={() => setTab('dynamic')}>📝 动态</button>
-        <button className={`focus-tab ${tab === 'advisor' ? 'on' : ''}`} onClick={() => setTab('advisor')}>🧭 参谋</button>
+        <button className={`focus-tab ${tab === 'profile' ? 'on' : ''}`} onClick={() => onTabChange('profile')}>📇 档案</button>
+        <button className={`focus-tab ${tab === 'dynamic' ? 'on' : ''}`} onClick={() => onTabChange('dynamic')}>📝 动态</button>
+        <button className={`focus-tab ${tab === 'advisor' ? 'on' : ''}`} onClick={() => onTabChange('advisor')}>🧭 参谋</button>
       </div>
 
       <div className="focus-body">
@@ -60,12 +67,14 @@ export function FocusPanel({
         )}
 
         {tab === 'dynamic' && (
-          logs.length > 0 ? (
+          dyn.length > 0 ? (
             <div className="focus-tl">
-              {logs.map((log, i) => (
+              {dyn.map((it, i) => (
                 <div className="focus-tl-item" key={i}>
-                  <div className="focus-tl-date">{log.date}{log.sensitive && <span className="sensitive-tag">敏感·仅团队</span>}</div>
-                  <div className="focus-tl-body">{log.content}</div>
+                  <div className="focus-tl-date">{it.date}{it.sensitive && <span className="sensitive-tag">敏感·仅团队</span>}</div>
+                  {it.title && <div className="focus-tl-title">{it.title}</div>}
+                  <div className="focus-tl-body">{it.body}</div>
+                  <span className="focus-tl-src">溯源：{it.source}</span>
                 </div>
               ))}
             </div>

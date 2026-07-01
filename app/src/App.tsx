@@ -69,7 +69,7 @@ export default function App() {
   const [view, setView] = usePersistentState<CustomerView>('jianghu.customerView', 'wall'); // 客户级镜头：关系地图 / 行动计划
   const [theme, toggleTheme] = useTheme();
   // 画布选中模型：单击=选中(节点出锚点/连线出控制点)，双击=打开右侧栏
-  const [drawerPersonId, setDrawerPersonId] = useState<string | null>(null);
+  const [focusTab, setFocusTab] = useState<'profile' | 'dynamic' | 'advisor'>('advisor'); // 焦点面板 tab：单击→参谋、双击→档案
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [drawerEdgeId, setDrawerEdgeId] = useState<string | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -250,12 +250,12 @@ export default function App() {
   };
 
   // ── 画布交互：选中 / 打开右侧栏 / 飞书式建点连线 ──
-  const selectPerson = (id: string | null) => { setSelectedId(id); setSelectedEdgeId(null); if (id && (drawerPersonId || drawerEdgeId)) { setDrawerEdgeId(null); setDrawerPersonId(id); } };
-  const openPerson = (id: string) => { setSelectedId(id); setSelectedEdgeId(null); setDrawerEdgeId(null); setDrawerPersonId(id); };
-  const selectEdge = (id: string | null) => { setSelectedEdgeId(id); setSelectedId(null); if (id && (drawerPersonId || drawerEdgeId)) { setDrawerPersonId(null); setDrawerEdgeId(id); } };
-  const openEdge = (id: string) => { setDrawerPersonId(null); setDrawerEdgeId(id); };
+  const selectPerson = (id: string | null) => { setSelectedId(id); setSelectedEdgeId(null); if (id) setFocusTab('advisor'); }; // 单击=选中→焦点面板「参谋」
+  const openPerson = (id: string) => { setSelectedId(id); setSelectedEdgeId(null); setDrawerEdgeId(null); setFocusTab('profile'); }; // 双击=选中→焦点面板「档案」
+  const selectEdge = (id: string | null) => { setSelectedEdgeId(id); setSelectedId(null); if (id && drawerEdgeId) setDrawerEdgeId(id); };
+  const openEdge = (id: string) => { setSelectedId(null); setDrawerEdgeId(id); };
   // 切客户/商机时清空一切选中
-  useEffect(() => { setSelectedId(null); setSelectedEdgeId(null); setDrawerPersonId(null); setDrawerEdgeId(null); }, [accId, oppId]);
+  useEffect(() => { setSelectedId(null); setSelectedEdgeId(null); setDrawerEdgeId(null); }, [accId, oppId]);
   // 策略沙盘并入地图推演坞、行动计划网格退役：旧持久态（sandbox/planner）一律归一到关系地图
   useEffect(() => { if (view !== 'wall') setView('wall'); }, [view, setView]);
 
@@ -301,7 +301,6 @@ export default function App() {
     if (!account) return;
     act({ type: 'DELETE_PERSON', accId: account.id, personId: id });
     setSelectedId(null);
-    setDrawerPersonId((d) => (d === id ? null : d));
   };
 
   // AI 关系/人物候选的【生成】= selfCompute（自算补全，异步入队，见下）；【审核】统一走收件箱（inbox* 系列）。
@@ -404,10 +403,10 @@ export default function App() {
     );
   }
 
-  const drawerPerson = account.persons.find((p) => p.id === drawerPersonId) ?? null;
-  const drawerRole = opp?.roles.find((r) => r.personId === drawerPersonId);
-  const drawerBis = opp?.bis.filter((b) => b.personId === drawerPersonId) ?? [];
-  const drawerUcvs = (opp?.ucvs ?? []).filter((u) => drawerBis.some((b) => b.id === u.targetBiId));
+  const selectedPerson = account.persons.find((p) => p.id === selectedId) ?? null;
+  const selectedRole = opp?.roles.find((r) => r.personId === selectedId);
+  const selectedBis = opp?.bis.filter((b) => b.personId === selectedId) ?? [];
+  const selectedUcvs = (opp?.ucvs ?? []).filter((u) => selectedBis.some((b) => b.id === u.targetBiId));
   const drawerEdge = drawerEdgeId
     ? [...account.baseEdges, ...account.opportunities.flatMap((o) => o.edges)].find((e) => e.id === drawerEdgeId) ?? null
     : null;
@@ -500,11 +499,12 @@ export default function App() {
         )}
       </main>
 
-      {drawerPerson && opp && (
+      {selectedPerson && opp && (
         <FocusPanel accId={account.id} oppId={opp.id} account={account} opp={opp}
-          person={drawerPerson} oppRole={drawerRole} bis={drawerBis} ucvs={drawerUcvs} dispatch={act}
+          person={selectedPerson} oppRole={selectedRole} bis={selectedBis} ucvs={selectedUcvs}
+          visitNotes={account.visitNotes ?? []} tab={focusTab} onTabChange={setFocusTab} dispatch={act}
           onRefresh={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); } catch { /* 静默：改图已成功，仅刷新失败 */ } }}
-          onClose={() => setDrawerPersonId(null)} />
+          onClose={() => setSelectedId(null)} />
       )}
       {drawerEdge && (
         <EdgeDrawer edge={drawerEdge} persons={account.persons}
