@@ -1,0 +1,377 @@
+<!doctype html>
+<!-- 江湖 · 「焦点面板 · 精简三 tab」原型（可点）
+     右栏 = 以当前焦点人为中心：共享身份头 + 📇档案 | 📝动态 | 🧭参谋。
+       · 档案 = 他是谁（角色/态度/FORM/燃点，字段编辑）＝ DetailDrawer 搬进来
+       · 动态 = 他经历了什么（拜访 log ＋ 录音抽取 ＋ 态度变更 ＋ 采纳记录，时间线，带溯源）
+       · 参谋 = 怎么打他（对话/分析/候选）
+     单击节点 → 参谋 tab；双击节点 → 档案 tab。详情不再抢右侧，成同一个人的三个面。
+     视觉沿用 app/src/styles.css 语义变量；亮/暗双主题；纯静态无依赖。 -->
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>江湖 · 焦点面板（档案｜动态｜参谋）原型</title>
+<style>
+  :root{
+    --bg:#f1f5f9; --panel:#fff; --panel-2:#f8fafc; --ink:#0f172a; --ink-2:#334155;
+    --muted:#64748b; --faint:#94a3b8; --line:#e2e8f0; --hover:#eef2f6;
+    --accent:#2563eb; --accent-soft:#eff6ff; --accent-ink:#1e40af;
+    --ok:#16a34a; --warn:#d97706; --bad:#dc2626; --shadow:rgba(15,23,42,.10); --dot:rgba(15,23,42,.05);
+    --node:#fff; --node-stroke:#cbd5e1;
+  }
+  html[data-theme="dark"]{
+    --bg:#0b1120; --panel:#131c2e; --panel-2:#1b2538; --ink:#e8edf5; --ink-2:#c0cbdb;
+    --muted:#97a4b8; --faint:#6b788f; --line:#2a374d; --hover:#232f45;
+    --accent:#3b82f6; --accent-soft:#18283f; --accent-ink:#93c5fd;
+    --ok:#34d399; --warn:#fbbf24; --bad:#f87171; --shadow:rgba(0,0,0,.5); --dot:rgba(148,163,184,.10);
+    --node:#1b2538; --node-stroke:#3a4a66;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Roboto,sans-serif;
+        color:var(--ink); background:var(--bg); height:100vh; overflow:hidden; -webkit-font-smoothing:antialiased; }
+  button{ font-family:inherit; cursor:pointer; border:none; background:none; color:inherit; }
+
+  .top{ height:46px; display:flex; align-items:center; gap:10px; padding:0 14px; background:var(--panel); border-bottom:1px solid var(--line); }
+  .logo{ width:24px; height:24px; border-radius:6px; background:#0f172a; color:#fff; display:grid; place-items:center; font-weight:800; font-size:13px; }
+  .top .name{ font-weight:800; font-size:14px; }
+  .top .sub{ font-size:11px; color:var(--muted); }
+  .spacer{ flex:1; }
+  .icon-btn{ width:32px; height:32px; border-radius:8px; border:1px solid var(--line); background:var(--panel); display:grid; place-items:center; font-size:14px; }
+  .icon-btn:hover{ background:var(--hover); }
+
+  .main{ display:flex; height:calc(100vh - 46px); }
+
+  .canvas{ flex:1; position:relative; background:radial-gradient(var(--dot) 1.4px, transparent 1.4px); background-size:22px 22px; overflow:hidden; }
+  .canvas svg{ width:100%; height:100%; display:block; }
+  .canvas .tip{ position:absolute; top:12px; left:14px; right:14px; font-size:12px; color:var(--muted); background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:6px 11px; box-shadow:0 4px 16px var(--shadow); }
+  .canvas .tip b{ color:var(--accent-ink); }
+  .node{ cursor:pointer; }
+  .ncard{ fill:var(--node); stroke:var(--node-stroke); stroke-width:1.2; transition:.15s; }
+  .node:hover .ncard{ stroke:var(--accent); }
+  .node.selected .ncard{ stroke:var(--accent); stroke-width:2.5; }
+  .node.selected .halo{ opacity:1; }
+  .halo{ fill:none; stroke:var(--accent); stroke-width:1.4; opacity:0; }
+  .nname{ font-size:13px; font-weight:800; fill:var(--ink); }
+  .ntitle{ font-size:10.5px; fill:var(--muted); }
+  .nrole{ font-size:10px; font-weight:800; fill:#fff; }
+  .edge{ stroke:var(--node-stroke); stroke-width:1.5; fill:none; }
+  .edge.dashed{ stroke-dasharray:5 4; stroke:var(--faint); }
+  .elabel{ font-size:10px; fill:var(--muted); }
+
+  .panel{ width:390px; flex-shrink:0; border-left:1px solid var(--line); background:var(--panel); display:flex; flex-direction:column; }
+
+  .idhead{ padding:12px 14px; border-bottom:1px solid var(--line); }
+  .idhead.empty{ color:var(--muted); font-size:13px; }
+  .id-row{ display:flex; align-items:center; gap:10px; }
+  .avatar{ width:38px; height:38px; border-radius:10px; background:var(--accent-soft); color:var(--accent-ink); display:grid; place-items:center; font-weight:800; font-size:16px; flex-shrink:0; }
+  .id-name{ font-size:15px; font-weight:800; }
+  .id-title{ font-size:11.5px; color:var(--muted); margin-top:1px; }
+  .id-tags{ display:flex; flex-wrap:wrap; gap:6px; margin-top:9px; }
+  .tag{ font-size:11px; font-weight:700; padding:3px 8px; border-radius:6px; border:1px solid var(--line); }
+  .tag.role{ color:#fff; background:var(--accent); border-color:var(--accent); }
+  .tag.sent-ok{ color:var(--ok); border-color:var(--ok); }
+  .tag.sent-un{ color:var(--warn); border-color:var(--warn); }
+  .tag.win{ color:var(--accent-ink); background:var(--accent-soft); border-color:var(--accent); }
+  .tag.form{ color:var(--muted); }
+
+  .tabs{ display:flex; gap:3px; padding:8px 10px 0; border-bottom:1px solid var(--line); }
+  .tab{ font-size:12.5px; font-weight:700; padding:8px 12px; border-radius:9px 9px 0 0; color:var(--muted); border:1px solid transparent; border-bottom:none; position:relative; top:1px; }
+  .tab:hover{ color:var(--ink-2); background:var(--hover); }
+  .tab.on{ color:var(--accent-ink); background:var(--panel); border-color:var(--line); }
+  .tab:disabled{ color:var(--faint); cursor:not-allowed; }
+
+  .tabwrap{ flex:1; min-height:0; display:flex; flex-direction:column; }
+  .tabpane{ display:none; flex:1; min-height:0; flex-direction:column; }
+  .tabpane.on{ display:flex; }
+
+  /* 档案 */
+  .prof{ flex:1; overflow-y:auto; padding:14px; }
+  .prof-empty{ color:var(--muted); font-size:13px; padding:30px 8px; text-align:center; line-height:1.7; }
+  .fld{ margin-bottom:14px; }
+  .fld-l{ font-size:10px; font-weight:800; color:var(--faint); text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; }
+  .seg{ display:inline-flex; gap:6px; flex-wrap:wrap; }
+  .segv{ font-size:12.5px; font-weight:700; padding:6px 11px; border:1px solid var(--line); border-radius:8px; color:var(--ink-2); background:var(--panel-2); }
+  .segv.on{ border-color:var(--accent); background:var(--accent-soft); color:var(--accent-ink); }
+  .form7{ display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+  .f7{ display:flex; align-items:center; gap:7px; font-size:12.5px; padding:6px 9px; border:1px solid var(--line); border-radius:8px; }
+  .f7 .mk{ width:16px; height:16px; border-radius:5px; display:grid; place-items:center; font-size:11px; color:#fff; flex-shrink:0; }
+  .f7.done .mk{ background:var(--ok); }
+  .f7.miss .mk{ background:var(--line); color:var(--faint); }
+  .f7.miss{ color:var(--muted); }
+  .bi{ padding:9px 11px; border:1px solid var(--warn); border-radius:9px; font-size:12.5px; color:var(--ink); background:var(--panel-2); }
+  .prof-foot{ padding:11px 14px; border-top:1px solid var(--line); }
+  .btn-edit{ width:100%; font-size:13px; font-weight:700; padding:9px; border:1px solid var(--line); border-radius:9px; color:var(--ink-2); background:var(--panel); }
+  .btn-edit:hover{ background:var(--hover); border-color:var(--accent); color:var(--accent-ink); }
+
+  /* 动态时间线 */
+  .tl{ flex:1; overflow-y:auto; padding:16px 16px 8px; }
+  .tl-empty{ color:var(--muted); font-size:13px; padding:30px 8px; text-align:center; line-height:1.7; }
+  .tl-item{ position:relative; padding:0 0 15px 24px; border-left:1.5px solid var(--line); }
+  .tl-item:last-child{ padding-bottom:2px; }
+  .tl-dot{ position:absolute; left:-9px; top:0; width:18px; height:18px; border-radius:50%; background:var(--panel); border:1.5px solid var(--line); display:grid; place-items:center; font-size:9px; }
+  .tl-date{ font-size:11px; color:var(--faint); font-weight:700; }
+  .tl-title{ font-size:12.5px; font-weight:700; color:var(--ink); margin-top:1px; }
+  .tl-body{ font-size:12px; color:var(--muted); margin-top:2px; line-height:1.5; }
+  .tl-src{ display:inline-block; font-size:10px; color:var(--muted); border:1px solid var(--line); border-radius:5px; padding:1px 6px; margin-top:5px; }
+
+  /* 参谋 */
+  .adv-quick{ padding:10px 14px; display:flex; flex-wrap:wrap; gap:6px; border-bottom:1px solid var(--line); }
+  .qlabel{ width:100%; font-size:10px; font-weight:800; color:var(--faint); text-transform:uppercase; letter-spacing:.5px; margin-bottom:2px; }
+  .qchip{ font-size:12px; font-weight:600; padding:6px 11px; border:1px solid var(--line); border-radius:999px; color:var(--ink-2); background:var(--panel); }
+  .qchip:hover{ border-color:var(--accent); background:var(--accent-soft); color:var(--accent-ink); }
+  .adv-thread{ flex:1; overflow-y:auto; padding:14px; display:flex; flex-direction:column; gap:11px; }
+  .bub{ max-width:92%; padding:10px 12px; border-radius:13px; font-size:12.5px; line-height:1.65; white-space:pre-line; }
+  .bub.me{ align-self:flex-end; background:var(--accent); color:#fff; border-bottom-right-radius:4px; }
+  .bub.ai{ align-self:flex-start; background:var(--panel-2); border:1px solid var(--line); color:var(--ink); border-bottom-left-radius:4px; }
+  .bub.sys{ align-self:center; font-size:11.5px; color:var(--ok); background:none; padding:2px; }
+  .typing{ color:var(--muted); font-style:italic; }
+  .cands{ align-self:flex-start; width:92%; display:flex; flex-direction:column; gap:7px; }
+  .cand{ border:1px solid var(--line); border-radius:11px; padding:9px 11px; background:var(--panel); }
+  .cand-line{ display:flex; gap:8px; align-items:flex-start; font-size:12.5px; color:var(--ink); font-weight:600; line-height:1.4; }
+  .cand-foot{ display:flex; align-items:center; gap:8px; margin-top:8px; }
+  .cand-type{ font-size:10.5px; font-weight:700; color:var(--warn); border:1px solid var(--warn); border-radius:5px; padding:1px 6px; }
+  .cand-accept{ margin-left:auto; font-size:12px; font-weight:700; color:#fff; background:var(--accent); border-radius:7px; padding:5px 12px; }
+  .cand.done{ background:var(--panel-2); opacity:.8; }
+  .cand.done .cand-accept{ background:var(--ok); pointer-events:none; }
+  .adv-input{ padding:11px 14px; border-top:1px solid var(--line); display:flex; gap:8px; }
+  .adv-input input{ flex:1; padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:var(--panel); color:var(--ink); font:inherit; font-size:13px; }
+  .adv-input input:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+  .adv-send{ width:40px; border-radius:10px; background:var(--accent); color:#fff; font-size:15px; }
+</style>
+</head>
+<body>
+  <div class="top">
+    <div class="logo">江</div>
+    <div>
+      <div class="name">西部风光储</div>
+      <div class="sub">中石油华北 · 赢面 67% · 方案认可</div>
+    </div>
+    <div class="spacer"></div>
+    <button class="icon-btn" id="themeBtn" aria-label="切换主题">🌙</button>
+  </div>
+
+  <div class="main">
+    <div class="canvas">
+      <div class="tip">👆 <b>单击</b>人=参谋(怎么打) · <b>双击</b>人=档案(他是谁) · 中间「📝 动态」=他经历了什么(时间线) —— 右栏三个 tab,同一个焦点人</div>
+      <svg viewBox="0 0 620 470" xmlns="http://www.w3.org/2000/svg" id="svg">
+        <line class="edge" x1="300" y1="96" x2="300" y2="165"/><text class="elabel" x="306" y="135">上级</text>
+        <line class="edge" x1="270" y1="212" x2="195" y2="305"/><text class="elabel" x="205" y="262">直属·采购</text>
+        <line class="edge" x1="330" y1="212" x2="415" y2="305"/><text class="elabel" x="352" y="262">汇报</text>
+        <line class="edge dashed" x1="358" y1="178" x2="452" y2="140"/><text class="elabel" x="372" y="150">❓疑似旧关系</text>
+
+        <g class="node" data-k="qian" transform="translate(240,50)">
+          <rect class="halo" x="-4" y="-4" width="128" height="54" rx="12"/><rect class="ncard" width="120" height="46" rx="9"/>
+          <rect width="5" height="46" rx="2" fill="var(--faint)"/>
+          <text class="nname" x="13" y="20">钱大钧</text><text class="ntitle" x="13" y="35">集团一把手</text>
+          <circle cx="103" cy="15" r="10" fill="var(--muted)"/><text class="nrole" x="103" y="18.5" text-anchor="middle">E</text>
+        </g>
+        <g class="node" data-k="wang" transform="translate(240,166)">
+          <rect class="halo" x="-4" y="-4" width="128" height="54" rx="12"/><rect class="ncard" width="120" height="46" rx="9"/>
+          <rect width="5" height="46" rx="2" fill="var(--ok)"/>
+          <text class="nname" x="13" y="20">王副总</text><text class="ntitle" x="13" y="35">信息化副总</text>
+          <circle cx="103" cy="15" r="10" fill="var(--accent)"/><text class="nrole" x="103" y="18.5" text-anchor="middle">D</text>
+        </g>
+        <g class="node" data-k="li" transform="translate(115,306)">
+          <rect class="halo" x="-4" y="-4" width="128" height="54" rx="12"/><rect class="ncard" width="120" height="46" rx="9"/>
+          <rect width="5" height="46" rx="2" fill="var(--faint)"/>
+          <text class="nname" x="13" y="20">李处长</text><text class="ntitle" x="13" y="35">采购处长</text>
+          <circle cx="103" cy="15" r="10" fill="var(--warn)"/><text class="nrole" x="103" y="18.5" text-anchor="middle">?</text>
+        </g>
+        <g class="node" data-k="zhao" transform="translate(355,306)">
+          <rect class="halo" x="-4" y="-4" width="128" height="54" rx="12"/><rect class="ncard" width="120" height="46" rx="9"/>
+          <rect width="5" height="46" rx="2" fill="var(--faint)"/>
+          <text class="nname" x="13" y="20">赵工</text><text class="ntitle" x="13" y="35">技术负责人</text>
+          <circle cx="103" cy="15" r="10" fill="var(--line)"/><text class="nrole" x="103" y="18.5" text-anchor="middle" fill="var(--muted)">·</text>
+        </g>
+        <g class="node" data-k="yongyou" transform="translate(430,116)">
+          <rect class="halo" x="-4" y="-4" width="118" height="50" rx="12"/><rect class="ncard" width="110" height="42" rx="9" style="stroke-dasharray:4 3"/>
+          <rect width="5" height="42" rx="2" fill="var(--bad)"/>
+          <text class="nname" x="13" y="19">用友</text><text class="ntitle" x="13" y="33">竞品</text>
+        </g>
+      </svg>
+    </div>
+
+    <div class="panel">
+      <div class="idhead empty" id="idhead">🌐 全局视角 · 未选中任何人</div>
+      <div class="tabs">
+        <button class="tab" id="tabProfileBtn" data-t="profile" disabled>📇 档案</button>
+        <button class="tab" id="tabDynBtn" data-t="dynamic" disabled>📝 动态</button>
+        <button class="tab on" id="tabAdvisorBtn" data-t="advisor">🧭 参谋</button>
+      </div>
+      <div class="tabwrap">
+        <div class="tabpane" data-p="profile">
+          <div class="prof" id="prof"></div>
+          <div class="prof-foot"><button class="btn-edit">✏️ 编辑全部字段</button></div>
+        </div>
+        <div class="tabpane" data-p="dynamic">
+          <div class="tl" id="tl"></div>
+        </div>
+        <div class="tabpane on" data-p="advisor">
+          <div class="adv-quick" id="quick"></div>
+          <div class="adv-thread" id="thread"></div>
+          <div class="adv-input">
+            <input id="ask" placeholder="对着图问一句…（Enter 发送）" />
+            <button class="adv-send" id="askSend" aria-label="发送">➤</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const $ = (s,r=document)=>r.querySelector(s);
+  const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
+  $('#themeBtn').onclick = () => { const d=document.documentElement, dk=d.dataset.theme==='dark'; d.dataset.theme=dk?'light':'dark'; $('#themeBtn').textContent=dk?'🌙':'☀️'; };
+
+  const PEOPLE = {
+    wang:{ name:'王副总', title:'信息化副总' }, li:{ name:'李处长', title:'采购处长' },
+    zhao:{ name:'赵工', title:'技术负责人' }, qian:{ name:'钱大钧', title:'集团一把手' }, yongyou:{ name:'用友', title:'竞品' },
+  };
+  const F7 = ['家庭','事业','爱好','性格','人脉','关键决策','其他偏好'];
+
+  // 档案：他是谁（角色/态度/FORM/燃点）
+  const PROFILE = {
+    wang:{ role:'D 决策人', sent:['支持','ok'], win:'+18', form:[1,1,0,1,0,1,0], bis:['担心新系统冲击现有考核指标，怕落地期业务受影响'] },
+    li:{ role:'GK 守门人', sent:['未明','un'], win:'0', form:[0,1,0,0,0,1,0], bis:[] },
+    zhao:{ role:'暂无角色', sent:['未明','un'], win:'0', form:[0,1,1,0,0,0,0], bis:[] },
+    qian:{ role:'E 未接触', sent:['未明','un'], win:'0', form:[0,1,0,0,0,0,0], bis:[] },
+    yongyou:{ role:'竞品', sent:['—','un'], win:'—', form:[0,0,0,0,0,0,0], bis:[] },
+  };
+
+  // 动态：他经历了什么（时间线，带溯源）
+  const TIMELINE = {
+    wang:[
+      {ic:'🎧',date:'06-28',src:'录音·飞书妙记',title:'二次沟通纪要',body:'愿推动，但要看落地保障与考核衔接'},
+      {ic:'✅',date:'06-28',src:'收件箱·人审采纳',title:'确认关系：赵工 → 王副总（汇报）',body:''},
+      {ic:'📈',date:'06-25',src:'系统·G64111',title:'态度变更：中立 → 支持',body:'依据：首次拜访明确认可方案方向'},
+      {ic:'📝',date:'06-20',src:'口述录入',title:'首次拜访',body:'见分管信息化的王副总，认可方案方向'},
+      {ic:'➕',date:'06-18',src:'自算·企查查',title:'建档（待验证 → 已核实）',body:'AI 补全职务「信息化副总」，人审通过'},
+    ],
+    li:[
+      {ic:'🎧',date:'06-28',src:'录音·飞书妙记',title:'会上出现',body:'管采购，全程未表态，态度不明'},
+      {ic:'➕',date:'06-18',src:'自算·企查查',title:'建档（待核实）',body:'AI 发现「采购处长」，待人审确认'},
+    ],
+    zhao:[ {ic:'📝',date:'06-28',src:'口述录入',title:'技术全程记录',body:'配合度高，可发展为技术拥护者'} ],
+    qian:[ {ic:'➕',date:'06-18',src:'自算·企查查',title:'建档',body:'集团一把手，尚未接触'} ],
+    yongyou:[ {ic:'🎧',date:'06-20',src:'录音·飞书妙记',title:'竞品出现',body:'王副总提及与用友疑似有旧关系（待核实）'} ],
+  };
+
+  const SCRIPT = {
+    wang:{ quick:['他倒戈风险多大','给我攻坚这单的三招'],
+      '他倒戈风险多大':{ text:'王副总是决策人(D)、态度支持，但盯着整张图有三个隐患：\n① 与竞品「用友」疑似旧关系（L4·置信 0.5，未证实）——最大变量；\n② 支持没被下级呼应：李处长态度未明；\n③ 赵工全程参与却无角色背书，缺个"技术拥护者"。\n综合：倒戈概率中等偏低，用友关系一旦激活会骤升。',
+        cands:[{ic:'🔗',label:'核实关系：王副总 ⇢ 用友（旧关系）',type:'进收件箱'},{ic:'🎯',label:'行动：单独摸李处长态度',type:'进行动清单'}]},
+      '给我攻坚这单的三招':{ text:'按优先级三招：\n1️⃣ 锁死王副总：高层汇报把"支持"变"承诺"；\n2️⃣ 打通李处长：借王副总背书触达；\n3️⃣ 立技术拥护者：把赵工发展成背书人。',
+        cands:[{ic:'📌',label:'策略卡：高层汇报锁定承诺',type:'进策略泳道'},{ic:'🎯',label:'行动：发展赵工为技术拥护者',type:'进行动清单'}]},
+    },
+    li:{ quick:['怎么把他从中立拉过来','他在这单里多关键'],
+      '怎么把他从中立拉过来':{ text:'李处长向王副总汇报、管采购、是流程守门人，态度未明。三步：借王副总正向信号降观望 → 给采购口最在意的（合规/交付）专项材料 → 非正式接触摸真实倾向。',
+        cands:[{ic:'📌',label:'策略卡：借王副总背书触达李处长',type:'进策略泳道'},{ic:'🎯',label:'行动：约李处长非正式沟通',type:'进行动清单'}]},
+      '他在这单里多关键':{ text:'守门人(GK)型：不拍板但能卡流程，采购合规一票否决常在这层。他态度未明是你的盲区。优先级：高。',
+        cands:[{ic:'❓',label:'情报缺口：李处长真实态度',type:'进收件箱'}]},
+    },
+    zhao:{ quick:['他能帮我什么'],
+      '他能帮我什么':{ text:'赵工是技术负责人、暂无角色，是最易转化的一环。发展成"技术拥护者"能同时稳住王副总、抵消用友技术牌。',
+        cands:[{ic:'🎯',label:'行动：给赵工做深度技术对齐',type:'进行动清单'}]},
+    },
+    _global:{ quick:['顺推打法','找最短夺单路径'],
+      '顺推打法':{ text:'不锁焦点、看全局，顺推三张策略卡候选（＝原「AI 顺推」）：',
+        cands:[{ic:'📌',label:'策略卡：主攻 — 锁定王副总承诺',type:'进策略泳道'},{ic:'📌',label:'策略卡：探牌 — 摸李处长态度',type:'进策略泳道'}]},
+      '找最短夺单路径':{ text:'赢面 67%。最短路径：王副总(已支持)→借背书打通李处长→补赵工技术背书堵用友→高层汇报锁承诺。瓶颈=李处长态度未明，先解它。',
+        cands:[{ic:'🎯',label:'行动：优先解李处长态度',type:'进行动清单'}]},
+    },
+  };
+
+  let focus = null, activeTab = 'advisor';
+
+  const renderHead = () => {
+    const h = $('#idhead');
+    if (!focus) { h.className='idhead empty'; h.textContent='🌐 全局视角 · 未选中任何人'; return; }
+    const p=PEOPLE[focus], pr=PROFILE[focus], done=pr.form.reduce((a,b)=>a+b,0);
+    h.className='idhead';
+    h.innerHTML = `<div class="id-row"><div class="avatar">${p.name[0]}</div>
+      <div><div class="id-name">${p.name}</div><div class="id-title">${p.title}</div></div></div>
+      <div class="id-tags"><span class="tag role">${pr.role}</span>
+        <span class="tag ${pr.sent[1]==='ok'?'sent-ok':'sent-un'}">态度 ${pr.sent[0]}</span>
+        ${pr.win!=='—'&&pr.win!=='0'?`<span class="tag win">趋赢力 ${pr.win}</span>`:''}
+        <span class="tag form">FORM ${done}/7</span></div>`;
+  };
+
+  const renderProfile = () => {
+    const box=$('#prof');
+    if (!focus){ box.innerHTML='<div class="prof-empty">先在左边图上选一个人，<br>这里是他的「档案」：角色 / 态度 / FORM 七问 / 燃点。</div>'; return; }
+    const pr=PROFILE[focus], roleLetter=pr.role.split(' ')[0], roles=['A','D','U','R','C','GK','E'];
+    box.innerHTML = `
+      <div class="fld"><div class="fld-l">角色（趋赢力）</div><div class="seg">${roles.map(r=>`<span class="segv ${roleLetter===r?'on':''}">${r}</span>`).join('')}</div></div>
+      <div class="fld"><div class="fld-l">态度</div><div class="seg">${['支持','中立','未明','抗拒'].map(s=>`<span class="segv ${pr.sent[0]===s?'on':''}">${s}</span>`).join('')}</div></div>
+      <div class="fld"><div class="fld-l">FORM 七问 · ${pr.form.reduce((a,b)=>a+b,0)}/7</div>
+        <div class="form7">${F7.map((f,i)=>`<div class="f7 ${pr.form[i]?'done':'miss'}"><span class="mk">${pr.form[i]?'✓':'?'}</span>${f}</div>`).join('')}</div></div>
+      <div class="fld"><div class="fld-l">燃点（BI）</div>
+        ${pr.bis.length?pr.bis.map(b=>`<div class="bi">🔥 ${b}</div>`).join(''):'<div class="prof-empty" style="padding:8px;text-align:left">暂无——去参谋问"他最在意什么"补一条。</div>'}</div>`;
+  };
+
+  const renderDynamic = () => {
+    const box=$('#tl');
+    if (!focus){ box.innerHTML='<div class="tl-empty">先在左边图上选一个人，<br>这里是他的「动态」时间线：拜访 / 录音抽取 / 态度变更 / 采纳记录，都带溯源。</div>'; return; }
+    const items=TIMELINE[focus]||[];
+    box.innerHTML = items.length ? items.map(t=>`
+      <div class="tl-item"><div class="tl-dot">${t.ic}</div>
+        <div class="tl-date">${t.date}</div>
+        <div class="tl-title">${t.title}</div>
+        ${t.body?`<div class="tl-body">${t.body}</div>`:''}
+        <span class="tl-src">溯源：${t.src}</span></div>`).join('')
+      : '<div class="tl-empty">这个人还没有动态记录。</div>';
+  };
+
+  const thread=()=>$('#thread');
+  const addBub=(cls,text)=>{ const d=document.createElement('div'); d.className='bub '+cls; d.textContent=text; thread().appendChild(d); thread().scrollTop=thread().scrollHeight; return d; };
+  const renderCands=(cands)=>{ const wrap=document.createElement('div'); wrap.className='cands';
+    cands.forEach(c=>{ const el=document.createElement('div'); el.className='cand';
+      el.innerHTML=`<div class="cand-line"><span>${c.ic}</span><span>${c.label}</span></div><div class="cand-foot"><span class="cand-type">${c.type}</span><button class="cand-accept">采纳</button></div>`;
+      el.querySelector('.cand-accept').onclick=()=>{ el.classList.add('done'); el.querySelector('.cand-accept').textContent='✓ 已采纳'; addBub('sys',`✓ 已采纳 · ${c.type}：${c.label}（守铁律②，未直接改图）`); };
+      wrap.appendChild(el); });
+    thread().appendChild(wrap); thread().scrollTop=thread().scrollHeight;
+  };
+  const renderQuick=()=>{ const q=$('#quick'), set=focus?SCRIPT[focus]:SCRIPT._global;
+    q.innerHTML=`<div class="qlabel">${focus?`聚焦「${PEOPLE[focus].name}」· 试试问：`:'全局 · 试试问：'}</div>`;
+    (set&&set.quick||[]).forEach(t=>{ const b=document.createElement('button'); b.className='qchip'; b.textContent=t; b.onclick=()=>askIntent(t); q.appendChild(b); });
+  };
+  const askIntent=(text)=>{ setTab('advisor'); addBub('me',text);
+    const set=focus?SCRIPT[focus]:SCRIPT._global, hit=set&&set[text];
+    const typing=addBub('ai typing','结合整张图思考中…');
+    setTimeout(()=>{ typing.remove();
+      if(hit){ addBub('ai',hit.text); if(hit.cands) renderCands(hit.cands); }
+      else addBub('ai',`（原型演示）我会${focus?`围绕「${PEOPLE[focus].name}」`:'结合整张图'}带全图上下文深度作答。试试上方快捷指令看示例。`);
+    },600);
+  };
+
+  const setTab=(t)=>{ if((t==='profile'||t==='dynamic')&&!focus) return; activeTab=t;
+    $$('.tab').forEach(b=>b.classList.toggle('on', b.dataset.t===t));
+    $$('.tabpane').forEach(p=>p.classList.toggle('on', p.dataset.p===t));
+  };
+  $('#tabProfileBtn').onclick=()=>setTab('profile');
+  $('#tabDynBtn').onclick=()=>setTab('dynamic');
+  $('#tabAdvisorBtn').onclick=()=>setTab('advisor');
+
+  const setFocus=(k,tab)=>{ focus=k;
+    $$('.node').forEach(n=>n.classList.toggle('selected', n.dataset.k===k));
+    $('#tabProfileBtn').disabled=!k; $('#tabDynBtn').disabled=!k;
+    renderHead(); renderProfile(); renderDynamic(); renderQuick();
+    setTab(k?(tab||'advisor'):'advisor');
+  };
+
+  let ct;
+  $$('.node').forEach(n=>{
+    n.addEventListener('click',()=>{ clearTimeout(ct); ct=setTimeout(()=>setFocus(n.dataset.k,'advisor'),200); });
+    n.addEventListener('dblclick',()=>{ clearTimeout(ct); setFocus(n.dataset.k,'profile'); });
+  });
+
+  const send=()=>{ const v=$('#ask').value.trim(); if(!v)return; $('#ask').value=''; askIntent(v); };
+  $('#askSend').onclick=send;
+  $('#ask').addEventListener('keydown',e=>{ if(e.key==='Enter') send(); });
+
+  addBub('ai','单击图上的人 → 我带他的全图上下文陪你想；双击 → 看「档案」；中间「动态」是他经历过的事。也可以直接问全局。');
+  renderQuick(); renderProfile(); renderDynamic();
+  window.__demo={ setFocus, setTab };
+</script>
+</body>
+</html>

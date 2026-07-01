@@ -1,0 +1,341 @@
+<!doctype html>
+<!-- 江湖 · 「图上参谋」交互原型（可点）
+     验证：对着图、看着图 → 选中焦点 → 下深度指令 → AI 带全图上下文回应 + 抽可落地候选 → 采纳(守铁律②) → 换焦点多轮追问。
+     收编：和地图对话(执行挡·直落) + AI 顺推倒推(快捷指令) + 新核心(焦点×自由深度指令×多轮)。
+     视觉沿用 app/src/styles.css 语义变量；亮/暗双主题；纯静态无依赖。 -->
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>江湖 · 图上参谋原型</title>
+<style>
+  :root{
+    --bg:#f1f5f9; --panel:#fff; --panel-2:#f8fafc; --ink:#0f172a; --ink-2:#334155;
+    --muted:#64748b; --faint:#94a3b8; --line:#e2e8f0; --hover:#eef2f6;
+    --accent:#2563eb; --accent-soft:#eff6ff; --accent-ink:#1e40af;
+    --ok:#16a34a; --warn:#d97706; --bad:#dc2626; --shadow:rgba(15,23,42,.10); --dot:rgba(15,23,42,.05);
+    --node:#fff; --node-stroke:#cbd5e1;
+  }
+  html[data-theme="dark"]{
+    --bg:#0b1120; --panel:#131c2e; --panel-2:#1b2538; --ink:#e8edf5; --ink-2:#c0cbdb;
+    --muted:#97a4b8; --faint:#6b788f; --line:#2a374d; --hover:#232f45;
+    --accent:#3b82f6; --accent-soft:#18283f; --accent-ink:#93c5fd;
+    --ok:#34d399; --warn:#fbbf24; --bad:#f87171; --shadow:rgba(0,0,0,.5); --dot:rgba(148,163,184,.10);
+    --node:#1b2538; --node-stroke:#3a4a66;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Roboto,sans-serif;
+        color:var(--ink); background:var(--bg); height:100vh; overflow:hidden; -webkit-font-smoothing:antialiased; }
+  button{ font-family:inherit; cursor:pointer; border:none; background:none; color:inherit; }
+
+  .top{ height:46px; display:flex; align-items:center; gap:10px; padding:0 14px; background:var(--panel); border-bottom:1px solid var(--line); }
+  .logo{ width:24px; height:24px; border-radius:6px; background:#0f172a; color:#fff; display:grid; place-items:center; font-weight:800; font-size:13px; }
+  .top .name{ font-weight:800; font-size:14px; }
+  .top .sub{ font-size:11px; color:var(--muted); }
+  .spacer{ flex:1; }
+  .icon-btn{ width:32px; height:32px; border-radius:8px; border:1px solid var(--line); background:var(--panel); display:grid; place-items:center; font-size:14px; }
+  .icon-btn:hover{ background:var(--hover); }
+
+  .main{ display:flex; height:calc(100vh - 46px); }
+
+  /* ── 画布 ── */
+  .canvas{ flex:1; position:relative; background:radial-gradient(var(--dot) 1.4px, transparent 1.4px); background-size:22px 22px; overflow:hidden; }
+  .canvas svg{ width:100%; height:100%; display:block; }
+  .canvas .tip{ position:absolute; top:12px; left:14px; font-size:12px; color:var(--muted); background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:5px 10px; box-shadow:0 4px 16px var(--shadow); }
+  .node{ cursor:pointer; }
+  .ncard{ fill:var(--node); stroke:var(--node-stroke); stroke-width:1.2; transition:.15s; }
+  .node:hover .ncard{ stroke:var(--accent); }
+  .node.selected .ncard{ stroke:var(--accent); stroke-width:2.5; }
+  .node.selected .halo{ opacity:1; }
+  .halo{ fill:none; stroke:var(--accent); stroke-width:1.4; opacity:0; }
+  .nname{ font-size:13px; font-weight:800; fill:var(--ink); }
+  .ntitle{ font-size:10.5px; fill:var(--muted); }
+  .nrole{ font-size:10px; font-weight:800; fill:#fff; }
+  .edge{ stroke:var(--node-stroke); stroke-width:1.5; fill:none; }
+  .edge.dashed{ stroke-dasharray:5 4; stroke:var(--faint); }
+  .edge.flash{ stroke:var(--accent); stroke-width:2.5; }
+  .elabel{ font-size:10px; fill:var(--muted); }
+
+  /* ── 参谋栏 ── */
+  .advisor{ width:390px; flex-shrink:0; border-left:1px solid var(--line); background:var(--panel); display:flex; flex-direction:column; }
+  .adv-head{ padding:12px 14px; border-bottom:1px solid var(--line); }
+  .adv-title{ font-size:14px; font-weight:800; display:flex; align-items:center; gap:6px; }
+  .adv-focus{ margin-top:8px; display:inline-flex; align-items:center; gap:7px; font-size:12px; font-weight:700;
+              padding:5px 11px; border-radius:999px; border:1px solid var(--line); color:var(--muted); background:var(--panel-2); }
+  .adv-focus.on{ border-color:var(--accent); background:var(--accent-soft); color:var(--accent-ink); }
+  .adv-focus .clr{ width:16px; height:16px; border-radius:50%; display:grid; place-items:center; font-size:12px; color:var(--accent-ink); }
+  .adv-focus .clr:hover{ background:var(--accent); color:#fff; }
+
+  .adv-quick{ padding:10px 14px; display:flex; flex-wrap:wrap; gap:6px; border-bottom:1px solid var(--line); }
+  .qlabel{ width:100%; font-size:10px; font-weight:800; color:var(--faint); text-transform:uppercase; letter-spacing:.5px; margin-bottom:2px; }
+  .qchip{ font-size:12px; font-weight:600; padding:6px 11px; border:1px solid var(--line); border-radius:999px; color:var(--ink-2); background:var(--panel); }
+  .qchip:hover{ border-color:var(--accent); background:var(--accent-soft); color:var(--accent-ink); }
+
+  .adv-thread{ flex:1; overflow-y:auto; padding:14px; display:flex; flex-direction:column; gap:11px; }
+  .bub{ max-width:92%; padding:10px 12px; border-radius:13px; font-size:12.5px; line-height:1.65; white-space:pre-line; }
+  .bub.me{ align-self:flex-end; background:var(--accent); color:#fff; border-bottom-right-radius:4px; }
+  .bub.ai{ align-self:flex-start; background:var(--panel-2); border:1px solid var(--line); color:var(--ink); border-bottom-left-radius:4px; }
+  .bub.sys{ align-self:center; font-size:11.5px; color:var(--ok); background:none; padding:2px; }
+  .typing{ color:var(--muted); font-style:italic; }
+
+  .cands{ align-self:flex-start; width:92%; display:flex; flex-direction:column; gap:7px; margin-top:-3px; }
+  .cand{ border:1px solid var(--line); border-radius:11px; padding:9px 11px; background:var(--panel); }
+  .cand-line{ display:flex; gap:8px; align-items:flex-start; font-size:12.5px; color:var(--ink); font-weight:600; line-height:1.4; }
+  .cand-foot{ display:flex; align-items:center; gap:8px; margin-top:8px; }
+  .cand-type{ font-size:10.5px; font-weight:700; color:var(--warn); border:1px solid var(--warn); border-radius:5px; padding:1px 6px; }
+  .cand-accept{ margin-left:auto; font-size:12px; font-weight:700; color:#fff; background:var(--accent); border-radius:7px; padding:5px 12px; }
+  .cand-accept:hover{ filter:brightness(1.08); }
+  .cand.done{ background:var(--panel-2); opacity:.8; }
+  .cand.done .cand-accept{ background:var(--ok); pointer-events:none; }
+
+  .adv-input{ padding:11px 14px; border-top:1px solid var(--line); display:flex; gap:8px; }
+  .adv-input input{ flex:1; padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:var(--panel); color:var(--ink); font:inherit; font-size:13px; }
+  .adv-input input:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+  .adv-send{ width:40px; border-radius:10px; background:var(--accent); color:#fff; font-size:15px; }
+  .adv-send:hover{ filter:brightness(1.08); }
+  .adv-foot{ padding:8px 14px; border-top:1px solid var(--line); background:var(--panel-2); font-size:11px; color:var(--muted); line-height:1.5; }
+</style>
+</head>
+<body>
+  <div class="top">
+    <div class="logo">江</div>
+    <div>
+      <div class="name">西部风光储</div>
+      <div class="sub">中石油华北 · 赢面 67% · 方案认可</div>
+    </div>
+    <div class="spacer"></div>
+    <button class="icon-btn" id="themeBtn" aria-label="切换主题">🌙</button>
+  </div>
+
+  <div class="main">
+    <!-- 画布 -->
+    <div class="canvas">
+      <div class="tip">👇 点画布上的人 → 右侧参谋自动「聚焦」他，再问就带上他的全图上下文</div>
+      <svg viewBox="0 0 620 470" xmlns="http://www.w3.org/2000/svg" id="svg">
+        <!-- 连线（先画，压在节点下）-->
+        <line class="edge" x1="300" y1="96" x2="300" y2="165"/>
+        <text class="elabel" x="306" y="135">上级</text>
+        <line class="edge" x1="270" y1="212" x2="195" y2="305"/>
+        <text class="elabel" x="205" y="262">直属·采购</text>
+        <line class="edge" x1="330" y1="212" x2="415" y2="305"/>
+        <text class="elabel" x="352" y="262">汇报</text>
+        <line class="edge dashed" id="edgeYongyou" x1="358" y1="178" x2="452" y2="140"/>
+        <text class="elabel" x="372" y="150">❓疑似旧关系</text>
+
+        <!-- 钱大钧 一把手 -->
+        <g class="node" data-k="qian" transform="translate(240,50)">
+          <rect class="halo" x="-4" y="-4" width="128" height="54" rx="12"/>
+          <rect class="ncard" width="120" height="46" rx="9"/>
+          <rect width="5" height="46" rx="2" fill="var(--faint)"/>
+          <text class="nname" x="13" y="20">钱大钧</text>
+          <text class="ntitle" x="13" y="35">集团一把手</text>
+          <circle cx="103" cy="15" r="10" fill="var(--muted)"/><text class="nrole" x="103" y="18.5" text-anchor="middle">E</text>
+        </g>
+        <!-- 王副总 决策人 支持 -->
+        <g class="node" data-k="wang" transform="translate(240,166)">
+          <rect class="halo" x="-4" y="-4" width="128" height="54" rx="12"/>
+          <rect class="ncard" width="120" height="46" rx="9"/>
+          <rect width="5" height="46" rx="2" fill="var(--ok)"/>
+          <text class="nname" x="13" y="20">王副总</text>
+          <text class="ntitle" x="13" y="35">信息化副总</text>
+          <circle cx="103" cy="15" r="10" fill="var(--accent)"/><text class="nrole" x="103" y="18.5" text-anchor="middle">D</text>
+        </g>
+        <!-- 李处长 采购 未明 -->
+        <g class="node" data-k="li" transform="translate(115,306)">
+          <rect class="halo" x="-4" y="-4" width="128" height="54" rx="12"/>
+          <rect class="ncard" width="120" height="46" rx="9"/>
+          <rect width="5" height="46" rx="2" fill="var(--faint)"/>
+          <text class="nname" x="13" y="20">李处长</text>
+          <text class="ntitle" x="13" y="35">采购处长</text>
+          <circle cx="103" cy="15" r="10" fill="var(--warn)"/><text class="nrole" x="103" y="18.5" text-anchor="middle">?</text>
+        </g>
+        <!-- 赵工 技术 无角色 -->
+        <g class="node" data-k="zhao" transform="translate(355,306)">
+          <rect class="halo" x="-4" y="-4" width="128" height="54" rx="12"/>
+          <rect class="ncard" width="120" height="46" rx="9"/>
+          <rect width="5" height="46" rx="2" fill="var(--faint)"/>
+          <text class="nname" x="13" y="20">赵工</text>
+          <text class="ntitle" x="13" y="35">技术负责人</text>
+          <circle cx="103" cy="15" r="10" fill="var(--line)"/><text class="nrole" x="103" y="18.5" text-anchor="middle" fill="var(--muted)">·</text>
+        </g>
+        <!-- 用友 竞品 -->
+        <g class="node" data-k="yongyou" transform="translate(430,116)">
+          <rect class="halo" x="-4" y="-4" width="118" height="50" rx="12"/>
+          <rect class="ncard" width="110" height="42" rx="9" style="stroke-dasharray:4 3"/>
+          <rect width="5" height="42" rx="2" fill="var(--bad)"/>
+          <text class="nname" x="13" y="19">用友</text>
+          <text class="ntitle" x="13" y="33">竞品</text>
+        </g>
+      </svg>
+    </div>
+
+    <!-- 参谋栏 -->
+    <div class="advisor">
+      <div class="adv-head">
+        <div class="adv-title">🧭 图上参谋</div>
+        <div class="adv-focus" id="focusChip">🌐 全局视角 · 未选中</div>
+      </div>
+      <div class="adv-quick" id="quick"></div>
+      <div class="adv-thread" id="thread"></div>
+      <div class="adv-input">
+        <input id="ask" placeholder="对着图问一句…（Enter 发送）" />
+        <button class="adv-send" id="askSend" aria-label="发送">➤</button>
+      </div>
+      <div class="adv-foot">🟢 明说的执行指令（标态度/连关系）直落 · 🔴 分析/推断产出候选，采纳才落库（铁律②）· 用你自己的模型</div>
+    </div>
+  </div>
+
+<script>
+  const $ = (s,r=document)=>r.querySelector(s);
+  const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
+
+  $('#themeBtn').onclick = () => {
+    const d = document.documentElement; const dark = d.dataset.theme === 'dark';
+    d.dataset.theme = dark ? 'light' : 'dark'; $('#themeBtn').textContent = dark ? '🌙' : '☀️';
+  };
+
+  const PEOPLE = {
+    wang: { name:'王副总', desc:'信息化副总 · 决策人(D) · 支持' },
+    li:   { name:'李处长', desc:'采购处长 · 守门人(GK) · 态度未明' },
+    zhao: { name:'赵工',   desc:'技术负责人 · 暂无角色' },
+    qian: { name:'钱大钧', desc:'集团一把手 · 未接触(E)' },
+    yongyou:{ name:'用友', desc:'竞品' },
+  };
+
+  // 预设问答（体现"带全图上下文的深度"）。每条含 text + 可落地候选。
+  const SCRIPT = {
+    wang: {
+      quick: ['他倒戈风险多大','给我攻坚这单的三招','他退休了我赢面怎么变'],
+      '他倒戈风险多大': {
+        text:'王副总现在是决策人(D)、态度支持，但盯着整张图有三个隐患：\n① 他与竞品「用友」疑似有旧关系（L4·置信仅 0.5，未证实）——这是最大变量；\n② 支持没被下级呼应：李处长（采购守门人）态度还未明；\n③ 技术口赵工全程参与却没角色背书，你缺一个"技术拥护者"帮你稳住他。\n综合：倒戈概率中等偏低，但一旦用友旧关系被激活会骤升。',
+        cands:[
+          {ic:'🔗',label:'核实关系：王副总 ⇢ 用友（旧关系）',type:'进收件箱',fx:'flash'},
+          {ic:'🎯',label:'行动：单独摸李处长态度，形成下级呼应',type:'进行动清单'},
+          {ic:'❓',label:'情报缺口：赵工的角色（技术拥护者？）',type:'进收件箱'},
+        ]},
+      '给我攻坚这单的三招': {
+        text:'基于当前局势（赢面 67%、方案认可阶段），按优先级三招：\n1️⃣ 锁死王副总：一次高层汇报，把"支持"变"承诺"，趁用友关系未激活；\n2️⃣ 打通李处长：借王副总背书触达，把采购守门人从"未明"拉到"中立偏上"；\n3️⃣ 立技术拥护者：把赵工从"记录者"发展成技术背书人，堵住用友的技术牌。',
+        cands:[
+          {ic:'📌',label:'策略卡：高层汇报锁定王副总承诺',type:'进策略泳道'},
+          {ic:'📌',label:'策略卡：借王副总背书打通李处长',type:'进策略泳道'},
+          {ic:'🎯',label:'行动：发展赵工为技术拥护者',type:'进行动清单'},
+        ]},
+      '他退休了我赢面怎么变': {
+        text:'假设王副总离场（决策人真空），我按整张图重算：\n· 趋赢力 67% → 约 41%（决策链断点，你最大的支持者消失）；\n· 李处长态度未明 → 无人顶上，采购口失锚；\n· 用友旧关系若是他私人的，反而降权。\n结论：你现在过度依赖单点，应尽快培养第二决策影响人。',
+        cands:[
+          {ic:'⚠️',label:'风险登记：决策人单点依赖',type:'进风险清单'},
+          {ic:'🎯',label:'行动：物色并培养第二支持人',type:'进行动清单'},
+        ]},
+    },
+    li: {
+      quick: ['怎么把他从中立拉过来','他在这单里多关键'],
+      '怎么把他从中立拉过来': {
+        text:'李处长向王副总汇报（L1 直属）、管采购、是流程守门人，但态度还未明。三步：\n① 借势：让已支持你的王副总先给个正向信号，降他的观望；\n② 给利：针对采购口最在意的（合规、交付风险）准备专项材料；\n③ 试探：一次非正式接触摸真实倾向，别急着要承诺。',
+        cands:[
+          {ic:'📌',label:'策略卡：借王副总背书触达李处长',type:'进策略泳道'},
+          {ic:'🎯',label:'行动：约李处长非正式沟通',type:'进行动清单'},
+          {ic:'🔗',label:'补角色：李处长 = 采购守门人(GK)',type:'进收件箱'},
+        ]},
+      '他在这单里多关键': {
+        text:'李处长是"守门人(GK)"型：不拍板，但能卡流程——采购合规的一票否决通常就在这层。他现在态度未明是你的盲区。优先级建议：高。',
+        cands:[ {ic:'❓',label:'情报缺口：李处长真实态度',type:'进收件箱'} ]},
+    },
+    zhao: {
+      quick: ['他能帮我什么','该发展成什么角色'],
+      '他能帮我什么': {
+        text:'赵工是技术负责人、全程参与但暂无角色。他是你最容易转化的一环：技术评估往往影响决策人的信心。把他发展成"技术拥护者"，能同时稳住王副总、抵消用友的技术牌。',
+        cands:[
+          {ic:'🎯',label:'行动：给赵工做一次深度技术对齐',type:'进行动清单'},
+          {ic:'🔗',label:'补角色：赵工 = 技术拥护者(候选)',type:'进收件箱'},
+        ]},
+      '该发展成什么角色': {
+        text:'建议定位「技术拥护者(Coach 苗子)」：他愿意给你内部信息、帮你在技术评审里说话。现在无角色 → 先补一次接触验证意愿，再定。',
+        cands:[ {ic:'❓',label:'情报缺口：赵工的合作意愿',type:'进收件箱'} ]},
+    },
+    _global: {
+      quick: ['顺推打法','找最短夺单路径'],
+      '顺推打法': {
+        text:'不锁焦点、看全局，从"现状锚缺口"顺推三张策略卡候选（＝原来的「AI 顺推」）：',
+        cands:[
+          {ic:'📌',label:'策略卡：主攻 — 锁定王副总承诺',type:'进策略泳道'},
+          {ic:'📌',label:'策略卡：迂回 — 赵工技术背书',type:'进策略泳道'},
+          {ic:'📌',label:'策略卡：探牌 — 摸李处长态度',type:'进策略泳道'},
+        ]},
+      '找最短夺单路径': {
+        text:'当前赢面 67%。最短路径：\n王副总(已支持) → 借他背书打通李处长(采购卡点) → 补赵工技术背书堵用友 → 高层汇报锁承诺。\n瓶颈 = 李处长态度未明，先解这个。',
+        cands:[ {ic:'🎯',label:'行动：优先解李处长态度',type:'进行动清单'} ]},
+    },
+  };
+
+  let focus = null; // 当前焦点 personKey or null
+
+  const thread = $('#thread');
+  const addBub = (cls, text) => { const d = document.createElement('div'); d.className='bub '+cls; d.textContent=text; thread.appendChild(d); thread.scrollTop=thread.scrollHeight; return d; };
+
+  const renderCands = (cands) => {
+    const wrap = document.createElement('div'); wrap.className='cands';
+    cands.forEach(c => {
+      const el = document.createElement('div'); el.className='cand';
+      el.innerHTML = `<div class="cand-line"><span>${c.ic}</span><span class="cand-label">${c.label}</span></div>
+        <div class="cand-foot"><span class="cand-type">${c.type}</span><button class="cand-accept">采纳</button></div>`;
+      el.querySelector('.cand-accept').onclick = () => {
+        el.classList.add('done'); el.querySelector('.cand-accept').textContent='✓ 已采纳';
+        addBub('sys', `✓ 已采纳 · ${c.type}：${c.label}（守铁律②，未直接改图）`);
+        if (c.fx === 'flash') { const e = $('#edgeYongyou'); e.classList.add('flash'); setTimeout(()=>e.classList.remove('flash'), 1400); }
+      };
+      wrap.appendChild(el);
+    });
+    thread.appendChild(wrap); thread.scrollTop=thread.scrollHeight;
+  };
+
+  const renderQuick = () => {
+    const q = $('#quick'); const set = focus ? SCRIPT[focus] : SCRIPT._global;
+    const label = focus ? `聚焦「${PEOPLE[focus].name}」· 试试问：` : '全局 · 试试问：';
+    q.innerHTML = `<div class="qlabel">${label}</div>`;
+    (set.quick || []).forEach(text => {
+      const b = document.createElement('button'); b.className='qchip'; b.textContent=text;
+      b.onclick = () => askIntent(text); q.appendChild(b);
+    });
+  };
+
+  const setFocus = (k) => {
+    focus = k;
+    $$('.node').forEach(n => n.classList.toggle('selected', n.dataset.k === k));
+    const chip = $('#focusChip');
+    if (k) { chip.className='adv-focus on'; chip.innerHTML = `🎯 聚焦 ${PEOPLE[k].name} <button class="clr" id="clrFocus" title="清除聚焦">✕</button>`; $('#clrFocus').onclick = (e)=>{ e.stopPropagation(); setFocus(null); }; }
+    else { chip.className='adv-focus'; chip.textContent='🌐 全局视角 · 未选中'; }
+    renderQuick();
+  };
+
+  const askIntent = (text) => {
+    addBub('me', text);
+    const set = focus ? SCRIPT[focus] : SCRIPT._global;
+    const hit = set && set[text];
+    const typing = addBub('ai typing', '结合整张图思考中…');
+    setTimeout(() => {
+      typing.remove();
+      if (hit) { addBub('ai', hit.text); if (hit.cands) renderCands(hit.cands); }
+      else {
+        const who = focus ? `围绕「${PEOPLE[focus].name}」` : '结合整张图';
+        addBub('ai', `（原型演示）我会${who}、带上全图上下文（角色/态度/关系/趋赢力/燃点）深度作答，可落地的部分抽成候选卡待你采纳。\n试试上方的快捷指令，看几个带方法论的真实示例。`);
+      }
+    }, 620);
+  };
+
+  // 画布节点点击 → 聚焦
+  $$('.node').forEach(n => n.addEventListener('click', () => setFocus(n.dataset.k)));
+
+  // 输入
+  const send = () => { const v = $('#ask').value.trim(); if (!v) return; $('#ask').value=''; askIntent(v); };
+  $('#askSend').onclick = send;
+  $('#ask').addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+
+  // 初始
+  addBub('ai', '点图上的人，我就带上他的全图上下文帮你想；也可以直接问全局。\n你说的执行指令（标态度、连关系）直接生效；我的分析/建议作为候选，你采纳才落库。');
+  renderQuick();
+
+  // 供验证驱动
+  window.__demo = { setFocus, askIntent };
+</script>
+</body>
+</html>

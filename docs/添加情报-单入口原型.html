@@ -1,0 +1,489 @@
+<!doctype html>
+<!-- 江湖 · 「＋ 添加情报」单入口多输入 交互原型（可点）· v2
+     调整（依据三位一体架构）：
+       · 「添加情报」= 纯人工喂料三项：✍️口述录入 / 🎧录音转写 / 💬和地图对话（我手上有条线索，喂进去）。
+       · 「🔍 自算补全」不是一次“添加”动作，而是 AI 后台主动挖 → 移到顶栏「📥 收件箱」旁，产物进收件箱人审。
+       · 删除过时的「🧠 AI 推演」（当前 main 已并入推演坞 DeliberationDock，非独立入口）。
+     视觉：沿用 app/src/styles.css 语义变量与组件观感；亮/暗双主题。纯静态，无外部依赖。 -->
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>江湖 · 添加情报（单入口多输入）原型</title>
+<style>
+  :root{
+    --bg:#f1f5f9; --panel:#fff; --panel-2:#f8fafc; --ink:#0f172a; --ink-2:#334155;
+    --muted:#64748b; --faint:#94a3b8; --line:#e2e8f0; --hover:#eef2f6;
+    --accent:#2563eb; --accent-soft:#eff6ff; --accent-ink:#1e40af;
+    --ok:#16a34a; --warn:#d97706; --shadow:rgba(15,23,42,.10); --dot:rgba(15,23,42,.05);
+  }
+  html[data-theme="dark"]{
+    --bg:#0b1120; --panel:#131c2e; --panel-2:#1b2538; --ink:#e8edf5; --ink-2:#c0cbdb;
+    --muted:#97a4b8; --faint:#6b788f; --line:#2a374d; --hover:#232f45;
+    --accent:#3b82f6; --accent-soft:#18283f; --accent-ink:#93c5fd;
+    --ok:#34d399; --warn:#fbbf24; --shadow:rgba(0,0,0,.5); --dot:rgba(148,163,184,.10);
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Roboto,sans-serif;
+        color:var(--ink); background:var(--bg); height:100vh; overflow:hidden; -webkit-font-smoothing:antialiased; }
+  button{ font-family:inherit; cursor:pointer; border:none; background:none; color:inherit; }
+
+  /* ── 顶栏（模拟商机工作台 maintoolbar）── */
+  .appbar{ height:56px; display:flex; align-items:center; gap:10px; padding:0 16px;
+           background:var(--panel); border-bottom:1px solid var(--line); }
+  .logo{ width:28px; height:28px; border-radius:7px; background:#0f172a; color:#fff;
+         display:grid; place-items:center; font-weight:800; font-size:15px; flex-shrink:0; }
+  .oppname{ font-weight:800; font-size:15px; }
+  .oppsub{ font-size:11px; color:var(--muted); font-weight:600; }
+  .spacer{ flex:1; }
+
+  .btn{ display:inline-flex; align-items:center; gap:5px; padding:7px 13px; border:1px solid var(--line);
+        border-radius:8px; background:var(--panel); color:var(--ink); font-size:13px; font-weight:600; line-height:1; transition:.15s; }
+  .btn:hover{ background:var(--hover); }
+  .btn.primary{ background:var(--accent); color:#fff; border-color:var(--accent); }
+  .btn.primary:hover{ filter:brightness(1.08); }
+  .btn.cta{ background:var(--accent-soft); border-color:var(--accent); color:var(--accent-ink); font-weight:800; }
+  .btn.cta:hover{ background:var(--accent); color:#fff; }
+  .btn.ghost{ background:transparent; color:var(--ink-2); }
+  .btn.ghost:hover{ background:var(--hover); }
+  .btn.sm{ padding:5px 10px; font-size:12px; }
+  .btn.xs{ padding:4px 9px; font-size:12px; border-radius:6px; }
+  .btn:disabled{ opacity:.5; cursor:not-allowed; }
+  .chip{ padding:5px 11px; border:1px solid var(--line); border-radius:999px; background:var(--panel);
+         color:var(--ink-2); font-size:12px; font-weight:600; }
+  .chip:hover{ background:var(--hover); }
+  .chip.ai{ border-style:dashed; border-color:var(--accent); color:var(--accent-ink); }
+  .chip.ai:hover{ background:var(--accent-soft); }
+  .icon-btn{ width:34px; height:34px; border-radius:8px; border:1px solid var(--line); background:var(--panel);
+             display:grid; place-items:center; font-size:15px; }
+  .icon-btn:hover{ background:var(--hover); }
+  .badge-n{ background:var(--accent); color:#fff; border-radius:999px; padding:0 6px; font-size:11px; font-weight:800; margin-left:4px; }
+
+  /* ── 舞台（弱化的关系地图背景 + 提示）── */
+  .stage{ position:relative; height:calc(100vh - 56px); overflow:hidden;
+          background:radial-gradient(var(--dot) 1.4px, transparent 1.4px); background-size:22px 22px; }
+  .hint{ position:absolute; top:74px; left:50%; transform:translateX(-50%); text-align:center; }
+  .hint .big{ font-size:15px; color:var(--ink-2); font-weight:700; }
+  .hint .arrow{ font-size:13px; color:var(--muted); margin-top:4px; }
+
+  .designnote{ position:absolute; left:50%; bottom:22px; transform:translateX(-50%);
+        width:min(820px,93vw); background:var(--panel); border:1px dashed var(--accent);
+        border-radius:12px; padding:12px 16px; box-shadow:0 8px 28px var(--shadow); }
+  .designnote b{ color:var(--accent-ink); }
+  .designnote .row{ font-size:12.5px; color:var(--muted); margin-top:6px; line-height:1.7; }
+  .designnote s{ color:var(--faint); text-decoration-color:var(--faint); }
+  .split{ margin-top:9px; padding-top:9px; border-top:1px dashed var(--line); }
+
+  /* ── 遮罩 + 面板 ── */
+  .overlay{ position:fixed; inset:0; background:rgba(15,23,42,.5); backdrop-filter:blur(2px);
+            display:none; align-items:center; justify-content:center; padding:24px; z-index:50; }
+  .overlay.on{ display:flex; }
+  .sheet{ width:min(880px,97vw); max-height:92vh; background:var(--panel); border:1px solid var(--line);
+          border-radius:16px; box-shadow:0 30px 80px var(--shadow); display:flex; flex-direction:column; overflow:hidden;
+          animation:pop .16s ease; }
+  @keyframes pop{ from{ transform:translateY(10px) scale(.985); opacity:0; } to{ transform:none; opacity:1; } }
+  .sheet-head{ display:flex; align-items:flex-start; gap:10px; padding:16px 18px; border-bottom:1px solid var(--line); }
+  .sheet-head h1{ font-size:17px; font-weight:800; }
+  .sheet-head p{ font-size:12.5px; color:var(--muted); margin-top:2px; }
+  .x{ margin-left:auto; width:30px; height:30px; border-radius:8px; font-size:17px; color:var(--muted); display:grid; place-items:center; }
+  .x:hover{ background:var(--hover); color:var(--ink); }
+
+  .sheet-body{ display:grid; grid-template-columns:230px 1fr; min-height:0; }
+  .method-nav{ border-right:1px solid var(--line); padding:12px; display:flex; flex-direction:column; gap:8px; background:var(--panel-2); }
+  .method-card{ text-align:left; display:flex; gap:10px; padding:11px; border:1px solid var(--line);
+                border-radius:12px; background:var(--panel); transition:.15s; }
+  .method-card:hover{ background:var(--hover); }
+  .method-card.active{ border-color:var(--accent); background:var(--accent-soft); }
+  .method-card .ico{ font-size:18px; line-height:1.3; flex-shrink:0; }
+  .method-card .t{ font-size:13px; font-weight:800; color:var(--ink); display:flex; align-items:center; gap:6px; }
+  .method-card .d{ font-size:11px; color:var(--muted); margin-top:3px; line-height:1.5; }
+  .tag-hot{ font-size:10px; font-weight:800; color:#fff; background:var(--accent); border-radius:5px; padding:1px 5px; }
+  .nav-hint{ margin-top:auto; padding:9px 10px; font-size:11px; color:var(--muted); line-height:1.6;
+             border:1px dashed var(--line); border-radius:10px; }
+  .nav-hint b{ color:var(--ink-2); }
+
+  .method-body{ padding:18px 20px; overflow-y:auto; min-height:340px; }
+  .pane{ display:none; }
+  .pane.on{ display:block; }
+  .pane h2{ font-size:14px; font-weight:800; display:flex; align-items:center; gap:7px; }
+  .pane .lead{ font-size:12.5px; color:var(--muted); margin:6px 0 14px; line-height:1.7; }
+
+  .field{ width:100%; padding:11px 12px; border:1px solid var(--line); border-radius:10px; background:var(--panel);
+          color:var(--ink); font:inherit; font-size:13px; line-height:1.65; resize:vertical; }
+  .field:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+  .rowlabel{ font-size:11px; font-weight:800; color:var(--faint); text-transform:uppercase; letter-spacing:.5px; margin:14px 0 7px; }
+  .radio{ display:inline-flex; gap:6px; align-items:center; padding:7px 12px; border:1px solid var(--line);
+          border-radius:999px; font-size:12.5px; font-weight:600; color:var(--ink-2); margin-right:8px; }
+  .radio.on{ border-color:var(--accent); background:var(--accent-soft); color:var(--accent-ink); }
+  .actions{ display:flex; gap:8px; justify-content:flex-end; margin-top:16px; }
+
+  .subtabs{ display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
+  .src-op{ display:none; padding:12px; border:1px solid var(--line); border-radius:10px; background:var(--panel-2); margin-bottom:12px; }
+  .src-op.on{ display:block; }
+  .src-op .note{ font-size:12px; color:var(--muted); margin-top:8px; line-height:1.6; }
+  .tx{ display:flex; align-items:center; gap:8px; padding:9px 11px; border:1px solid var(--line);
+       border-radius:10px; background:var(--panel); margin-top:8px; }
+  .tx .meta{ flex:1; min-width:0; }
+  .tx .ti{ font-size:13px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .tx .sub{ font-size:11px; color:var(--muted); margin-top:2px; }
+  .pill{ font-size:11px; padding:1px 7px; border:1px solid var(--line); border-radius:5px; color:var(--muted); }
+
+  /* 回执 */
+  .receipt{ border:1px solid var(--line); border-radius:12px; padding:16px; background:var(--panel-2); }
+  .receipt .ok{ font-size:14px; font-weight:800; color:var(--ok); display:flex; align-items:center; gap:6px; }
+  .receipt ul{ list-style:none; margin:12px 0; display:flex; flex-direction:column; gap:7px; }
+  .receipt li{ font-size:12.5px; color:var(--ink); display:flex; gap:8px; }
+  .receipt li .k{ color:var(--muted); min-width:64px; }
+  .cand{ margin-top:12px; padding:11px 12px; border:1px dashed var(--warn); border-radius:10px; background:var(--panel); }
+  .cand .h{ font-size:12.5px; font-weight:800; color:var(--warn); }
+  .cand .b{ font-size:12px; color:var(--ink-2); margin-top:5px; line-height:1.6; }
+
+  /* 自算进度 */
+  .steps{ display:flex; flex-direction:column; gap:2px; margin:12px 0; }
+  .step{ display:flex; gap:9px; align-items:center; font-size:13px; color:var(--faint); padding:6px 0; }
+  .step .mk{ width:18px; text-align:center; }
+  .step.run{ color:var(--ink-2); }
+  .step.done{ color:var(--ink); }
+
+  /* 对话 */
+  .thread{ display:flex; flex-direction:column; gap:9px; padding:6px 0 12px; max-height:300px; overflow-y:auto; }
+  .bubble{ max-width:80%; padding:9px 12px; border-radius:13px; font-size:12.5px; line-height:1.6; }
+  .bubble.me{ align-self:flex-end; background:var(--accent); color:#fff; border-bottom-right-radius:4px; }
+  .bubble.ai{ align-self:flex-start; background:var(--panel-2); border:1px solid var(--line); color:var(--ink); border-bottom-left-radius:4px; }
+  .composer{ display:flex; gap:8px; margin-top:6px; }
+  .composer input{ flex:1; padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:var(--panel); color:var(--ink); font:inherit; font-size:13px; }
+  .composer input:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+
+  .sheet-foot{ padding:11px 18px; border-top:1px solid var(--line); background:var(--panel-2);
+               font-size:11.5px; color:var(--muted); display:flex; gap:16px; flex-wrap:wrap; }
+  .sheet-foot span{ display:inline-flex; align-items:center; gap:5px; }
+</style>
+</head>
+<body>
+  <!-- 顶栏 -->
+  <div class="appbar">
+    <div class="logo">江</div>
+    <div>
+      <div class="oppname">西部风光储</div>
+      <div class="oppsub">中石油华北 · 方案认可阶段</div>
+    </div>
+    <span style="margin:0 4px; color:var(--line)">|</span>
+    <button class="btn cta" id="openBtn">＋ 添加情报</button>
+    <button class="chip" id="inboxChip" title="审核机器写入的候选（关系/人物），采纳后才落库">📥 收件箱<span class="badge-n" id="inboxN">3</span></button>
+    <button class="chip ai" id="selfBtn" title="让江湖后台用企查查＋AI 主动发现干系人，候选进收件箱人审（不自动建边）">🔍 让 AI 补全</button>
+    <button class="chip">📇 客户档案</button>
+    <div class="spacer"></div>
+    <button class="icon-btn" id="themeBtn" aria-label="切换主题">🌙</button>
+  </div>
+
+  <!-- 舞台 -->
+  <div class="stage">
+    <div class="hint">
+      <div class="big">这一颗「＋ 添加情报」，就是所有线索进江湖的唯一入口</div>
+      <div class="arrow">👆 点左上角的「＋ 添加情报」试试；「🔍 让 AI 补全」在收件箱旁</div>
+    </div>
+
+    <div class="designnote">
+      <div style="font-size:13px; font-weight:800; color:var(--ink)">🎯 这个原型在验证什么</div>
+      <div class="row">
+        「添加情报」只收<b>人工喂料</b>——我手上有条具体线索，喂进去：<br>
+        <s>Hub 顶栏 🎙️ 录入情报</s> ＋ <s>侧栏 🎧 录音接入</s> ＋ <s>💬 和地图对话</s>
+        &nbsp;→&nbsp; <b style="color:var(--accent-ink)">＋ 添加情报（单入口 · 3 种输入）</b>
+      </div>
+      <div class="row split">
+        「🔍 <b>自算补全</b>」是 <b>AI 后台主动挖</b>、不是一次“添加”动作 → 归到 <b>📥 收件箱</b> 那条线，产物进收件箱人审（不混进「我来喂」的入口）。
+      </div>
+    </div>
+  </div>
+
+  <!-- ① 添加情报面板 -->
+  <div class="overlay" id="overlay">
+    <div class="sheet" role="dialog" aria-label="添加情报">
+      <div class="sheet-head">
+        <div>
+          <h1>＋ 添加情报</h1>
+          <p>我手上有条线索，喂进江湖 · 归属：西部风光储</p>
+        </div>
+        <button class="x" id="closeBtn" aria-label="关闭">✕</button>
+      </div>
+
+      <div class="sheet-body">
+        <!-- 左：输入方式（纯人工喂料三项）-->
+        <div class="method-nav">
+          <button class="method-card active" data-m="intel">
+            <span class="ico">✍️</span>
+            <span>
+              <span class="t">口述录入 <span class="tag-hot">最常用</span></span>
+              <span class="d">粘贴拜访口述 / 打字，AI 整理成图</span>
+            </span>
+          </button>
+          <button class="method-card" data-m="rec">
+            <span class="ico">🎧</span>
+            <span>
+              <span class="t">录音转写</span>
+              <span class="d">飞书妙记 · 上传文件 · 得到大脑</span>
+            </span>
+          </button>
+          <button class="method-card" data-m="chat">
+            <span class="ico">💬</span>
+            <span>
+              <span class="t">和地图对话</span>
+              <span class="d">问一句、补一条，边聊边建</span>
+            </span>
+          </button>
+          <div class="nav-hint">
+            想让 AI <b>主动发现</b>干系人？用顶栏「🔍 让 AI 补全」——那是后台活，产物进 📥 收件箱。
+          </div>
+        </div>
+
+        <!-- 右：输入区 -->
+        <div class="method-body">
+
+          <!-- 口述录入 -->
+          <div class="pane on" data-p="intel">
+            <div id="intel-input">
+              <h2>✍️ 口述录入</h2>
+              <p class="lead">把 Typeless 口述转好的文字粘进来。你<b>明说的</b>直落正式库，AI <b>补充/脑补的</b>进候选待你审——不逐项二次确认，错了事后在地图上改。</p>
+              <textarea class="field" rows="6" id="intel-text">今天拜访了中石油华北，见了分管信息化的王副总，对我们方案挺认可。他下面李处长管采购，还没摸清态度。技术口的赵工全程记录，比较关键。竞品用友也在推，王副总说跟他们有点老关系。</textarea>
+              <div class="rowlabel">归属</div>
+              <span class="radio on">◉ 当前商机 · 西部风光储</span>
+              <span class="radio">○ 新客户 / 商机</span>
+              <div class="actions">
+                <button class="btn ghost" id="closeBtn2">取消</button>
+                <button class="btn primary" id="intelSubmit">📥 录入成图</button>
+              </div>
+            </div>
+            <div id="intel-receipt" style="display:none"></div>
+          </div>
+
+          <!-- 录音转写 -->
+          <div class="pane" data-p="rec">
+            <h2>🎧 录音转写</h2>
+            <p class="lead">从录音源拉转写，抽取成图。转写原文<b>加密存储、按工作区隔离</b>，可随时降解 / 删除（PIPL）。</p>
+            <div class="subtabs">
+              <button class="btn primary sm src-tab on" data-s="feishu">飞书妙记 ✓</button>
+              <button class="btn ghost sm src-tab" data-s="upload">上传文件</button>
+              <button class="btn ghost sm src-tab" data-s="getnote">得到大脑</button>
+              <button class="btn ghost sm src-tab" data-s="mock">演示</button>
+            </div>
+
+            <div class="src-op on" data-so="feishu">
+              <button class="btn primary sm">🔄 一键拉取拜访妙记</button>
+              <button class="btn ghost sm" style="margin-left:6px">按链接拉单篇</button>
+              <button class="btn ghost sm" style="margin-left:6px">🔗 重新授权</button>
+              <div class="note">扫描你飞书妙记里标题以「【拜访】」开头的新记录，自动拉取（已拉过的跳过）。</div>
+            </div>
+            <div class="src-op" data-so="upload">
+              <span class="btn primary sm">📄 选择文件（md / txt / docx / pdf）</span>
+              <div class="note">替代钉钉（钉钉听记无转写 API）。上传文本，后端解析后抽取成图。</div>
+            </div>
+            <div class="src-op" data-so="getnote">
+              <div class="note" style="margin-top:0">得到大脑开放平台（biji.com/openapi）的 API Key + Client ID，加密存储、按你自己额度调用。</div>
+              <input class="field" style="margin-top:8px" placeholder="API Key（gk_live_…）" />
+              <input class="field" style="margin-top:6px" placeholder="Client ID（cli_…）" />
+              <button class="btn primary sm" style="margin-top:8px">保存</button>
+            </div>
+            <div class="src-op" data-so="mock">
+              <button class="btn primary sm">⬇️ 拉取演示转写</button>
+              <div class="note">无需配置，拉一条示例转写体验「抽取成图」。</div>
+            </div>
+
+            <div class="rowlabel">已拉取的转写</div>
+            <div class="tx">
+              <div class="meta">
+                <div class="ti">【拜访】中石油西部风光储 · 二次沟通</div>
+                <div class="sub"><span class="pill">待抽取</span> &nbsp;feishu · 12分34秒</div>
+              </div>
+              <button class="btn sm" id="recExtract">🪄 抽取成图</button>
+            </div>
+            <div id="rec-receipt" style="margin-top:12px"></div>
+          </div>
+
+          <!-- 和地图对话 -->
+          <div class="pane" data-p="chat">
+            <h2>💬 和地图对话</h2>
+            <p class="lead">用大白话问一句、补一条，边聊边建。AI 提议的关系同样走候选，你点「补进地图」才落库。</p>
+            <div class="thread" id="thread">
+              <div class="bubble me">王副总和李处长是什么关系？</div>
+              <div class="bubble ai">据现有情报：李处长在采购口，向王副总汇报（L1 直属下级）。王副总是本商机决策人(D)、态度支持。要我把这条「王副总 → 李处长」关系补进地图吗？</div>
+            </div>
+            <div class="composer">
+              <input id="chatInput" placeholder="例如：把李处长标成中立，赵工是技术把关人…" />
+              <button class="btn primary" id="chatSend">发送</button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="sheet-foot">
+        <span>🟢 你口述的 → 直落正式库</span>
+        <span>🔴 AI 补充/脑补 → 进 🔮 荐关系待采纳</span>
+        <span>🔒 转写加密 · 按工作区隔离（PIPL）</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ② 让 AI 补全（自算补全 = AI 后台动作，归收件箱线，独立小面板）-->
+  <div class="overlay" id="selfOverlay">
+    <div class="sheet" style="width:min(560px,96vw)" role="dialog" aria-label="让 AI 补全">
+      <div class="sheet-head">
+        <div>
+          <h1>🔍 让 AI 补全</h1>
+          <p>后台用企查查＋AI 主动发现干系人，候选进 📥 收件箱人审</p>
+        </div>
+        <button class="x" id="selfClose" aria-label="关闭">✕</button>
+      </div>
+      <div style="padding:18px 20px">
+        <p class="lead" style="color:var(--muted); font-size:12.5px; line-height:1.7; margin-bottom:14px">
+          和「添加情报」不同：这里不用你喂，是<b>江湖后台自己去挖</b>这个客户的关键干系人、推断商机内关系。结果作为<b>候选进收件箱</b>，画布以灰虚线 ❓ 标注，<b>人审采纳后才落库——绝不自动建边</b>（铁律②）。
+        </p>
+        <button class="btn primary" id="selfStart">🔍 开始自算补全</button>
+        <div class="steps" id="self-steps" style="display:none">
+          <div class="step" data-i="0"><span class="mk">○</span>企查查核准主体「中石油华北」…</div>
+          <div class="step" data-i="1"><span class="mk">○</span>拉取高管 / 股东 / 对外投资…</div>
+          <div class="step" data-i="2"><span class="mk">○</span>AI 推断商机内人物关系…</div>
+          <div class="step" data-i="3"><span class="mk">○</span>G64111 打分 · 按影响力排序…</div>
+        </div>
+        <div id="self-result" style="display:none"></div>
+      </div>
+      <div class="sheet-foot">
+        <span>🔒 结果进 📥 收件箱 · 灰虚线 ❓ 待验证 · 人审采纳才建边（铁律②）</span>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const $ = (s,r=document)=>r.querySelector(s);
+  const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
+
+  // 主题
+  $('#themeBtn').onclick = () => {
+    const d = document.documentElement;
+    const dark = d.dataset.theme === 'dark';
+    d.dataset.theme = dark ? 'light' : 'dark';
+    $('#themeBtn').textContent = dark ? '🌙' : '☀️';
+  };
+
+  // 通用开关
+  const openOv = (o) => o.classList.add('on');
+  const closeOv = (o) => o.classList.remove('on');
+
+  // 添加情报面板
+  const overlay = $('#overlay');
+  $('#openBtn').onclick = () => openOv(overlay);
+  $('#closeBtn').onclick = () => closeOv(overlay);
+  $('#closeBtn2').onclick = () => closeOv(overlay);
+  overlay.onclick = (e) => { if (e.target === overlay) closeOv(overlay); };
+
+  // 让 AI 补全 面板（收件箱线）
+  const selfOverlay = $('#selfOverlay');
+  $('#selfBtn').onclick = () => openOv(selfOverlay);
+  $('#selfClose').onclick = () => closeOv(selfOverlay);
+  selfOverlay.onclick = (e) => { if (e.target === selfOverlay) closeOv(selfOverlay); };
+
+  // 左侧方式切换
+  $$('.method-card').forEach(c => c.onclick = () => {
+    $$('.method-card').forEach(x => x.classList.remove('active'));
+    c.classList.add('active');
+    $$('.pane').forEach(p => p.classList.toggle('on', p.dataset.p === c.dataset.m));
+  });
+
+  // 录音源子 tab
+  $$('.src-tab').forEach(t => t.onclick = () => {
+    $$('.src-tab').forEach(x => { x.classList.remove('primary'); x.classList.add('ghost'); });
+    t.classList.add('primary'); t.classList.remove('ghost');
+    $$('.src-op').forEach(o => o.classList.toggle('on', o.dataset.so === t.dataset.s));
+  });
+
+  // 回执 HTML（口述 / 录音 共用）
+  const receiptHTML = () => `
+    <div class="receipt">
+      <div class="ok">✅ 已整理入图</div>
+      <ul>
+        <li><span class="k">🏢 客户</span><span>中石油华北（更新 · 华北大区）</span></li>
+        <li><span class="k">💼 商机</span><span>西部风光储 · 方案认可</span></li>
+        <li><span class="k">👤 干系人</span><span>3 位：王副总（决策人 D · 支持）、李处长（采购）、赵工（技术把关）</span></li>
+        <li><span class="k">🔗 关系</span><span>2 条：王副总→李处长（直属）、赵工→王副总（汇报）</span></li>
+        <li><span class="k">📝 纪要</span><span>1 篇（原话留档，🎙️ 口述录入·溯源）</span></li>
+      </ul>
+      <div class="cand">
+        <div class="h">🔮 2 条 AI 补充、拿不准的，已放进「荐关系」待你定夺</div>
+        <div class="b">· 王副总 ⇢ 用友（疑似旧关系，L4，置信 0.5）<br>· 李处长态度倾向（未明说，暂不落图）</div>
+      </div>
+      <div class="actions">
+        <button class="btn ghost" onclick="location.reload()">🗺 看关系地图</button>
+        <button class="btn primary" data-again="1">＋ 再记一条</button>
+      </div>
+    </div>`;
+
+  // 口述：录入成图
+  $('#intelSubmit').onclick = () => {
+    const btn = $('#intelSubmit'); btn.textContent = '整理中…'; btn.disabled = true;
+    setTimeout(() => {
+      $('#intel-input').style.display = 'none';
+      const box = $('#intel-receipt'); box.style.display = 'block'; box.innerHTML = receiptHTML();
+      box.querySelector('[data-again]').onclick = () => {
+        box.style.display = 'none'; $('#intel-input').style.display = 'block';
+        btn.textContent = '📥 录入成图'; btn.disabled = false;
+      };
+    }, 650);
+  };
+
+  // 录音：抽取成图
+  $('#recExtract').onclick = () => {
+    const btn = $('#recExtract'); btn.textContent = '整理中…'; btn.disabled = true;
+    setTimeout(() => {
+      const box = $('#rec-receipt'); box.innerHTML = receiptHTML();
+      box.querySelector('.receipt').querySelectorAll('.actions .btn')[1].textContent = '↻ 再抽取一条';
+      btn.textContent = '✓ 已抽取';
+    }, 650);
+  };
+
+  // 让 AI 补全：进度 → 结果 → 收件箱角标 +N
+  $('#selfStart').onclick = () => {
+    $('#selfStart').disabled = true;
+    const steps = $('#self-steps'); steps.style.display = 'flex';
+    const els = $$('.step', steps); let i = 0;
+    const tick = () => {
+      if (i > 0) { els[i-1].classList.remove('run'); els[i-1].classList.add('done'); els[i-1].querySelector('.mk').textContent = '✓'; }
+      if (i < els.length) { els[i].classList.add('run'); els[i].querySelector('.mk').textContent = '◐'; i++; setTimeout(tick, 620); }
+      else {
+        const cur = parseInt($('#inboxN').textContent, 10) || 0;
+        $('#inboxN').textContent = String(cur + 4);
+        const r = $('#self-result'); r.style.display = 'block';
+        r.innerHTML = `<div class="receipt" style="margin-top:14px">
+          <div class="ok" style="color:var(--accent-ink)">📥 已进收件箱 · 待人审</div>
+          <ul>
+            <li><span class="k">发现</span><span>4 位关键干系人候选（含 1 位一把手、2 位分管副总）</span></li>
+            <li><span class="k">推断</span><span>3 条疑似关系（画布以灰虚线 ❓ 标注，采纳后才建边）</span></li>
+            <li><span class="k">来源</span><span>企查查工商 + AI 推断，均带「待验证」溯源</span></li>
+          </ul>
+          <div class="actions"><button class="btn primary" onclick="location.reload()">📥 去收件箱审</button></div>
+        </div>`;
+      }
+    };
+    tick();
+  };
+
+  // 对话
+  const send = () => {
+    const inp = $('#chatInput'); const v = inp.value.trim(); if (!v) return;
+    const th = $('#thread');
+    const me = document.createElement('div'); me.className = 'bubble me'; me.textContent = v; th.appendChild(me);
+    inp.value = '';
+    setTimeout(() => {
+      const ai = document.createElement('div'); ai.className = 'bubble ai';
+      ai.textContent = '收到。我理解成一条关系/角色变更，已作为候选生成——去「🔮 荐关系」点“补进地图”即可落库（不会自动改图）。';
+      th.appendChild(ai); th.scrollTop = th.scrollHeight;
+    }, 500);
+    th.scrollTop = th.scrollHeight;
+  };
+  $('#chatSend').onclick = send;
+  $('#chatInput').addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+
+  // Esc 关闭
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeOv(overlay); closeOv(selfOverlay); } });
+</script>
+</body>
+</html>
