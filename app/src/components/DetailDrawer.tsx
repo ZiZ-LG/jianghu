@@ -10,7 +10,7 @@ const ROLES: Role[] = ['A', 'D', 'U', 'R', 'C'];
 const SENTIMENTS: Sentiment[] = ['star', 'plus', 'neutral', 'unknown', 'minus', 'x'];
 
 export function DetailDrawer({
-  accId, oppId, person, oppRole, bis, ucvs, dispatch, onClose,
+  accId, oppId, person, oppRole, bis, ucvs, dispatch, onClose, embedded,
 }: {
   accId: string; oppId: string;
   person: Person;
@@ -19,6 +19,7 @@ export function DetailDrawer({
   ucvs: UCV[];
   dispatch: Dispatch<Action>;
   onClose: () => void;
+  embedded?: boolean; // 焦点面板「档案」tab 复用：去掉 .drawer 外壳与标题栏，只渲染 body
 }) {
   const [logText, setLogText] = useState('');
   const [logSensitive, setLogSensitive] = useState(false);
@@ -36,13 +37,7 @@ export function DetailDrawer({
     setLogText(''); setLogSensitive(false);
   };
 
-  return (
-    <div className="drawer">
-      <div className="drawer-head">
-        <span className="t">情报档案</span>
-        <button className="x-btn" onClick={onClose}>×</button>
-      </div>
-
+  const body = (
       <div className="drawer-body">
         <div className="person-hd">
           <div className="avatar">{person.name[0] || '?'}</div>
@@ -181,6 +176,15 @@ export function DetailDrawer({
           🗑 删除该干系人
         </button>
       </div>
+  );
+  if (embedded) return body;
+  return (
+    <div className="drawer">
+      <div className="drawer-head">
+        <span className="t">情报档案</span>
+        <button className="x-btn" onClick={onClose}>×</button>
+      </div>
+      {body}
     </div>
   );
 }

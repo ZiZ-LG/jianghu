@@ -159,6 +159,30 @@ select { font-family: inherit; }
 .x-btn { width: 28px; height: 28px; border-radius: 7px; color: #64748b; font-size: 18px; display: grid; place-items: center; }
 .x-btn:hover { background: #e2e8f0; }
 .drawer-body { flex: 1; overflow-y: auto; padding: 16px; }
+
+/* ── 焦点面板（右栏：身份头 + 档案/动态/参谋 tab；复用 .drawer 定位）── */
+.focus-head { padding: 12px 14px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+.focus-id { display: flex; align-items: center; gap: 10px; }
+.focus-avatar { width: 38px; height: 38px; border-radius: 10px; background: var(--accent-soft); color: var(--accent-ink); display: grid; place-items: center; font-weight: 800; font-size: 16px; flex-shrink: 0; }
+.focus-name { font-size: 15px; font-weight: 800; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.focus-title { font-size: 11.5px; color: var(--muted); margin-top: 1px; }
+.focus-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.focus-tag { font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--line); color: var(--muted); }
+.focus-tag.role { color: #fff; background: var(--accent); border-color: var(--accent); }
+.focus-tabs { display: flex; gap: 3px; padding: 8px 10px 0; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+.focus-tab { font-size: 12.5px; font-weight: 700; padding: 8px 12px; border-radius: 9px 9px 0 0; color: var(--muted); border: 1px solid transparent; border-bottom: none; position: relative; top: 1px; }
+.focus-tab:hover { color: var(--ink-2); background: var(--hover); }
+.focus-tab.on { color: var(--accent-ink); background: var(--panel); border-color: var(--line); }
+.focus-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.focus-body .drawer-body { flex: 1; }
+.focus-body .chat-panel { flex: 1; min-height: 0; border: none; }
+.focus-tl { flex: 1; overflow-y: auto; padding: 14px 16px; }
+.focus-tl-item { position: relative; padding: 0 0 14px 20px; border-left: 1.5px solid var(--line); }
+.focus-tl-item::before { content: ''; position: absolute; left: -5px; top: 3px; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); }
+.focus-tl-item:last-child { border-left-color: transparent; }
+.focus-tl-date { font-size: 11px; color: var(--faint); font-weight: 700; }
+.focus-tl-body { font-size: 12.5px; color: var(--ink); margin-top: 2px; line-height: 1.55; }
+.focus-empty { color: var(--muted); font-size: 13px; padding: 28px 16px; text-align: center; line-height: 1.7; }
 .person-hd { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
 .avatar { width: 46px; height: 46px; border-radius: 50%; background: #e2e8f0; display: grid; place-items: center; font-weight: 800; font-size: 18px; color: #475569; }
 .person-hd .nm { font-weight: 800; font-size: 17px; }

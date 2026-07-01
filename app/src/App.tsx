@@ -12,7 +12,7 @@ import { LayerTabs } from './components/LayerTabs';
 import { Canvas } from './components/Canvas';
 import { type CustomerView } from './components/ViewTabs';
 import { DeliberationDock } from './components/DeliberationDock';
-import { DetailDrawer } from './components/DetailDrawer';
+import { FocusPanel } from './components/FocusPanel';
 import { EdgeDrawer } from './components/EdgeDrawer';
 import { OpportunityForm } from './components/OpportunityForm';
 import { CustomerProfile } from './components/CustomerProfile';
@@ -501,8 +501,10 @@ export default function App() {
       </main>
 
       {drawerPerson && opp && (
-        <DetailDrawer accId={account.id} oppId={opp.id} person={drawerPerson} oppRole={drawerRole}
-          bis={drawerBis} ucvs={drawerUcvs} dispatch={act} onClose={() => setDrawerPersonId(null)} />
+        <FocusPanel accId={account.id} oppId={opp.id} account={account} opp={opp}
+          person={drawerPerson} oppRole={drawerRole} bis={drawerBis} ucvs={drawerUcvs} dispatch={act}
+          onRefresh={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); } catch { /* 静默：改图已成功，仅刷新失败 */ } }}
+          onClose={() => setDrawerPersonId(null)} />
       )}
       {drawerEdge && (
         <EdgeDrawer edge={drawerEdge} persons={account.persons}
