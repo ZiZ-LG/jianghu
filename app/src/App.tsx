@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { Layer, Role, CustomerType, Edge, Person } from './types';
 import { LAYER_LABEL } from './types';
-import { reducer, computeInverse, injectBaseVersion, newAccount, newPerson, uid, type Action } from './store';
+import { reducer, computeInverse, injectBaseVersion, newAccount, newPerson, newEvidence, uid, type Action } from './store';
 import { api, type AuthResult, type Suggestion, type InboxRel, type InboxPerson, type InboxProposal, type InboxReminder } from './api';
 import { scoreFromDomain } from './lib/g64111';
 import { usePersistentState, useTheme, useViewport } from './ui';
@@ -255,6 +255,19 @@ export default function App() {
   const openPerson = (id: string) => { setSelectedId(id); setSelectedEdgeId(null); setDrawerEdgeId(null); setFocusTab('profile'); }; // 双击=选中→焦点面板「档案」
   const selectEdge = (id: string | null) => { setSelectedEdgeId(id); setSelectedId(null); if (id && drawerEdgeId) setDrawerEdgeId(id); };
   const openEdge = (id: string) => { setSelectedId(null); setDrawerEdgeId(id); };
+  // 画布行动牌就地反馈：标完成 + 态度↑↓ → 录一条互动证据喂策略引擎（复用坞的结果回填飞轮，守铁律②：人当场拍板）
+  const actionFeedback = (actionId: string, outcome: 'up' | 'flat' | 'down') => {
+    if (!account || !opp) return;
+    const a = (account.planActions ?? []).find((x) => x.id === actionId);
+    if (!a) return;
+    const today = new Date().toISOString().slice(0, 10);
+    act({ type: 'TOGGLE_PLAN_ACTION', accId: account.id, actionId, done: true, doneAt: today });
+    if (a.personId && (outcome === 'up' || outcome === 'down')) {
+      const ev = newEvidence(account.id, opp.id, a.personId, outcome === 'up' ? 'positive_interaction' : 'negative_interaction', outcome === 'up' ? 1 : -1, 'mid');
+      ev.rawContent = `行动结果回填：${a.title || '行动'}`; ev.occurredAt = today;
+      act({ type: 'ADD_EVIDENCE', accId: account.id, oppId: opp.id, evidence: ev });
+    }
+  };
   // 切客户/商机时清空一切选中
   useEffect(() => { setSelectedId(null); setSelectedEdgeId(null); setDrawerEdgeId(null); }, [accId, oppId]);
   // 策略沙盘并入地图推演坞、行动计划网格退役：旧持久态（sandbox/planner）一律归一到关系地图
@@ -475,7 +488,7 @@ export default function App() {
             <Canvas account={account} opp={opp} visibleLayers={visibleLayers}
               selectedId={selectedId} selectedEdgeId={selectedEdgeId}
               onSelectPerson={selectPerson} onSelectEdge={selectEdge}
-              onOpenPerson={openPerson} onOpenEdge={openEdge} onOpenAction={setOpenActionId}
+              onOpenPerson={openPerson} onOpenEdge={openEdge} onOpenAction={setOpenActionId} onActionFeedback={actionFeedback}
               onMovePerson={(id, x, y) => act({ type: 'MOVE_PERSON', accId: account.id, personId: id, x, y })}
               onAddPersonAt={addPersonAt} onAddConnectedNode={addConnectedNode} onConnect={connectNodes}
               onUpdateEdge={updateEdge} onDeleteEdge={deleteEdgeById}

@@ -72,11 +72,12 @@ type Gesture =
   | { kind: 'edge'; edgeId: string; csx: number; csy: number }
   | { kind: 'marquee'; csx: number; csy: number; x0: number; y0: number; append: boolean }
   | { kind: 'pinch' }
-  | { kind: 'action'; actionId: string; csx: number; csy: number };
+  | { kind: 'action'; actionId: string; csx: number; csy: number }
+  | { kind: 'actionfb'; actionId: string; outcome: string; csx: number; csy: number };
 
 export function Canvas({
   account, opp, planActions, visibleLayers, selectedId, selectedEdgeId,
-  onSelectPerson, onSelectEdge, onOpenPerson, onOpenEdge, onOpenAction,
+  onSelectPerson, onSelectEdge, onOpenPerson, onOpenEdge, onOpenAction, onActionFeedback,
   onMovePerson, onAddPersonAt, onAddConnectedNode, onConnect,
   onUpdateEdge, onDeleteEdge, onUpdatePerson, onDeletePerson, suggestions = [],
   immersive = false, onToggleImmersive, secondTapOpens = false,
@@ -91,6 +92,7 @@ export function Canvas({
   onOpenPerson: (id: string) => void;
   onOpenEdge: (id: string) => void;
   onOpenAction?: (id: string) => void; // 点行动牌 → 开坞编辑抽屉
+  onActionFeedback?: (id: string, outcome: 'up' | 'flat' | 'down') => void; // 牌上就地反馈：完成 + 态度 → 录证据
   onMovePerson: (id: string, x: number, y: number) => void;
   onAddPersonAt: (x: number, y: number) => string;
   onAddConnectedNode: (sourceId: string, x: number, y: number) => string;
@@ -117,6 +119,7 @@ export function Canvas({
   const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null); // 框选矩形(world)
 
   const gesture = useRef<Gesture | null>(null);
+  const [fbAction, setFbAction] = useState<string | null>(null); // 画布牌就地反馈：正在选态度的行动 id
   const pointers = useRef<Map<number, Pt>>(new Map());
   const pinch = useRef<null | { dist: number; scale: number; tx: number; ty: number }>(null);
   const lastTap = useRef<null | { t: number; kind: string; id: string }>(null);
@@ -221,8 +224,11 @@ export function Canvas({
     const nodeH = el.closest('[data-node]');
     const edgeH = el.closest('[data-edge]');
     const actionH = el.closest('[data-action]'); // 行动牌（挂节点旁）→ 点开编辑抽屉，优先于节点
+    const actionFbH = el.closest('[data-action-fb]'); // 牌上就地反馈热区，最优先
 
-    if (actionH) {
+    if (actionFbH) {
+      gesture.current = { kind: 'actionfb', actionId: actionFbH.getAttribute('data-action-fb')!, outcome: actionFbH.getAttribute('data-fb-outcome') || 'trigger', csx: e.clientX, csy: e.clientY };
+    } else if (actionH) {
       gesture.current = { kind: 'action', actionId: actionH.getAttribute('data-action')!, csx: e.clientX, csy: e.clientY };
     } else if (bendH) {
       gesture.current = { kind: 'bend', edgeId: bendH.getAttribute('data-bend')!, csx: e.clientX, csy: e.clientY };
@@ -310,7 +316,9 @@ export function Canvas({
     const moved = Math.hypot(e.clientX - (g as any).csx, e.clientY - (g as any).csy) > TAP_MOVE;
     const w = toWorld(e.clientX, e.clientY);
 
-    if (g.kind === 'action') {
+    if (g.kind === 'actionfb') {
+      if (!moved) { if (g.outcome === 'trigger') setFbAction(g.actionId); else { onActionFeedback?.(g.actionId, g.outcome as 'up' | 'flat' | 'down'); setFbAction(null); } }
+    } else if (g.kind === 'action') {
       if (!moved) onOpenAction?.(g.actionId);
     } else if (g.kind === 'pan') {
       if (!moved) handleTap('empty', '', w);
@@ -569,10 +577,31 @@ export function Canvas({
                   )}
                   {/* 行动牌：挂责任人节点右侧（主线·战场+行动令）。②a 先只读展示，②b 接点击开抽屉 */}
                   {(planActions ?? []).filter((a) => a.personId === p.id && a.opportunityId === opp.id).map((a, i) => (
-                    <g key={a.id} data-action={a.id} transform={`translate(${CHW + 10},${-CHH + 8 + i * 26})`} style={{ cursor: 'pointer' }}>
-                      <rect width={124} height={22} rx={5} fill="var(--node-fill)" stroke={a.done ? '#16a34a' : 'var(--accent)'} strokeWidth={1.2} />
-                      <circle cx={11} cy={11} r={3.5} fill={a.done ? '#16a34a' : 'var(--accent)'} />
-                      <text x={20} y={14.5} fontSize={10} fill="var(--node-text)">{clipText(a.title || '未命名行动', 12)}</text>
+                    <g key={a.id} transform={`translate(${CHW + 10},${-CHH + 8 + i * 26})`}>
+                      <g data-action={a.id} style={{ cursor: 'pointer' }}>
+                        <rect width={124} height={22} rx={5} fill="var(--node-fill)" stroke={a.done ? '#16a34a' : 'var(--accent)'} strokeWidth={1.2} />
+                        <text x={20} y={14.5} fontSize={10} fill="var(--node-text)">{clipText(a.title || '未命名行动', 12)}</text>
+                      </g>
+                      {a.done
+                        ? <circle cx={11} cy={11} r={3.5} fill="#16a34a" style={{ pointerEvents: 'none' }} />
+                        : (
+                          <g data-action-fb={a.id} data-fb-outcome="trigger" style={{ cursor: 'pointer' }} aria-label="标完成并反馈">
+                            <circle cx={11} cy={11} r={8} fill="transparent" />
+                            <circle cx={11} cy={11} r={3.5} fill="var(--accent)" />
+                          </g>
+                        )}
+                      {fbAction === a.id && (
+                        <g transform="translate(0,25)">
+                          <rect width={124} height={22} rx={5} fill="var(--node-fill)" stroke="var(--accent)" strokeWidth={1.2} />
+                          <text x={7} y={14.5} fontSize={9} fill="var(--node-text)" opacity={0.6}>完成·效果</text>
+                          {(['up', 'flat', 'down'] as const).map((o, k) => (
+                            <g key={o} data-action-fb={a.id} data-fb-outcome={o} transform={`translate(${46 + k * 25},0)`} style={{ cursor: 'pointer' }}>
+                              <rect x={0} y={3} width={22} height={16} rx={4} fill="transparent" stroke="var(--node-stroke)" strokeWidth={1} />
+                              <text x={11} y={15} textAnchor="middle" fontSize={11} fontWeight={700} fill={o === 'up' ? '#16a34a' : o === 'down' ? '#b91c1c' : 'var(--node-text)'}>{o === 'up' ? '↑' : o === 'down' ? '↓' : '—'}</text>
+                            </g>
+                          ))}
+                        </g>
+                      )}
                     </g>
                   ))}
                   {anchors}
