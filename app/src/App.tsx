@@ -29,7 +29,6 @@ import { AiSettings } from './components/AiSettings';
 import { WeComSettings } from './components/WeComSettings';
 import { InboxPanel } from './components/InboxPanel';
 import { RecordingPanel } from './components/RecordingPanel';
-import { ReportPanel } from './components/ReportPanel';
 import { HelpManual } from './components/HelpManual';
 import { McpAccess } from './components/McpAccess';
 import { OverflowMenu } from './components/OverflowMenu';
@@ -64,7 +63,6 @@ export default function App() {
   const [gapsOpen, setGapsOpen] = useState(false); // M3 缺口刷卡补分（enrichOpen 随重构删 EnrichPanel 移除）
   const [selfComputeBusy, setSelfComputeBusy] = useState(false); // 江湖自算·补全干系人 进行中
   const [recordingOpen, setRecordingOpen] = useState(false); // 录音接入面板
-  const [reportOpen, setReportOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [mcpAccessOpen, setMcpAccessOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistentState('jianghu.sidebarCollapsed', false);
@@ -457,9 +455,7 @@ export default function App() {
                   <button className="btn ghost xs" onClick={selfCompute} disabled={selfComputeBusy} title="江湖自算：后台用企查查/AI 发现关键干系人 + 推断当前商机内关系，候选进收件箱待人审">{selfComputeBusy ? '⏳ 自算中…' : '🔍 自算补全'}</button>
                   <button className="btn ghost xs" onClick={() => setRecordingOpen(true)} title="录音接入：从录音源拉转写 → 抽取成图，候选进收件箱人审">🎧 录音接入</button>
                   <button className="btn ghost xs" onClick={() => setInboxOpen(true)}>📥 收件箱{inbox.total > 0 ? ` (${inbox.total})` : ''}</button>
-                  <button className="btn ghost xs" onClick={() => setReportOpen(true)}>📊 报表</button>
                   <button className="btn ghost xs" onClick={() => setHelpOpen(true)}>❓ 帮助</button>
-                  <span className="mt-heartbeat" style={{ marginLeft: 'auto' }} title="AI 后台持续监测：荐关系 / 局势 / 缺口">● 监测中</span>
                 </>)}
                 {isMobile && (<>
                   <OverflowMenu align="left" label={`▾ 层级 (${visibleLayers.size})`}
@@ -469,11 +465,10 @@ export default function App() {
                     { label: selfComputeBusy ? '⏳ 自算中…' : '🔍 自算补全', onClick: selfCompute },
                     { label: '🎧 录音接入', onClick: () => setRecordingOpen(true) },
                     { label: '📥 收件箱', badge: inbox.total > 0 ? String(inbox.total) : undefined, onClick: () => setInboxOpen(true) },
-                    { label: '📊 报表', onClick: () => setReportOpen(true) },
                     { label: '❓ 帮助', onClick: () => setHelpOpen(true) },
                   ]} />
                 </>)}
-                <button className="theme-toggle mt-theme" onClick={toggleTheme} title={theme === 'dark' ? '切换到白天模式' : '切换到黑夜模式'}>{theme === 'dark' ? '☀️' : '🌙'}</button>
+                <button className="theme-toggle mt-theme" style={{ marginLeft: 'auto' }} onClick={toggleTheme} title={theme === 'dark' ? '切换到白天模式' : '切换到黑夜模式'}>{theme === 'dark' ? '☀️' : '🌙'}</button>
               </div>
             )}
             <>
@@ -538,9 +533,6 @@ export default function App() {
       {personFormOpen && <PersonForm onCreate={addPerson} onClose={() => setPersonFormOpen(false)} />}
       {teamOpen && <TeamBilling role={auth.user.role} onClose={() => setTeamOpen(false)} />}
       {aiSettingsOpen && <AiSettings role={auth.user.role} onClose={() => setAiSettingsOpen(false)} />}
-      {reportOpen && opp && (
-        <ReportPanel account={account} opp={opp} onClose={() => setReportOpen(false)} />
-      )}
       {helpOpen && <HelpManual onClose={() => setHelpOpen(false)} />}
       {mcpAccessOpen && <McpAccess onClose={() => setMcpAccessOpen(false)} />}
       {gapsOpen && account && opp && breakdown && (

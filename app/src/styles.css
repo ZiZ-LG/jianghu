@@ -1221,8 +1221,6 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 .sb2-focus { border-color: var(--accent) !important; box-shadow: 0 0 0 2px var(--accent-soft); }
 .dock-wintendency { margin-top: 12px; border-top: 1px dashed var(--line); padding-top: 6px; }
 .dock-wintendency .winpanel { box-shadow: none; border-top: none; height: auto; padding-top: 6px; }
-/* AI 后台心跳指示（局势/荐关系/缺口 持续监测） */
-.mt-heartbeat { font-size: 11px; color: #16a34a; font-weight: 600; white-space: nowrap; }
 /* 行动清单卡（PlanAction · 推演坞内） */
 .sb2-card.sb2-action.done { opacity: .66; }
 .sb2-act-status { font-size: 11px; font-weight: 700; color: var(--muted); }
