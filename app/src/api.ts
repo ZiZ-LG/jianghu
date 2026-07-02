@@ -69,12 +69,13 @@ export const api = {
   // AI 模型（BYO-key）
   aiConfig: (): Promise<{ configured: boolean; provider: string; baseUrl: string; model: string; hasKey: boolean }> => req('/api/ai/config'),
   aiSaveConfig: (b: { provider: string; baseUrl?: string; model?: string; apiKey?: string }) => req('/api/ai/config', { method: 'PUT', body: JSON.stringify(b) }),
-  // 企微日历：租户应用配置(管理员·Secret 不回明文) + 当前用户 userid 绑定
-  wecomConfig: (): Promise<{ configured: boolean; corpId: string; agentId: string; hasSecret: boolean }> => req('/api/wecom/config'),
-  wecomSaveConfig: (b: { corpId?: string; agentId?: string; secret?: string }) => req('/api/wecom/config', { method: 'PUT', body: JSON.stringify(b) }),
+  // 企微集成：租户应用配置(管理员·Secret/AESKey 不回明文) + 当前用户 userid 绑定 + 回调 + 测试推送
+  wecomConfig: (): Promise<{ configured: boolean; corpId: string; agentId: string; hasSecret: boolean; hasCallback: boolean; callbackUrl: string }> => req('/api/wecom/config'),
+  wecomSaveConfig: (b: { corpId?: string; agentId?: string; secret?: string; callbackToken?: string; callbackAesKey?: string }) => req('/api/wecom/config', { method: 'PUT', body: JSON.stringify(b) }),
   wecomBind: (): Promise<{ wecomUserid: string }> => req('/api/wecom/bind'),
   wecomSaveBind: (wecomUserid: string) => req('/api/wecom/bind', { method: 'PUT', body: JSON.stringify({ wecomUserid }) }),
   wecomOauthStart: (): Promise<{ url: string }> => req('/api/wecom/oauth/start'), // 扫码自动绑 userid（回调需公网）
+  wecomTestPush: (kind: 'textcard' | 'card') => req('/api/wecom/test-push', { method: 'POST', body: JSON.stringify({ kind }) }), // V1 文本卡 / V2 按钮卡
   aiTest: (): Promise<{ ok: boolean; message?: string }> => req('/api/ai/test', { method: 'POST' }),
   aiSimulate: (context: any, hypothesis: string): Promise<{ analysis: string; provider: string }> =>
     req('/api/ai/simulate', { method: 'POST', body: JSON.stringify({ context, hypothesis }) }),

@@ -613,12 +613,14 @@ model Reminder {
 // ── 企业微信日历双向同步（交互升级纲领 P2·出口闭环）──
 // 租户级 BYO 凭据：用租户自己企微自建应用凭据，江湖代调其日程 API（平台不需公司资质，照 QccConfig/AiConfig 范式）。
 model WeComConfig {
-  tenantId  String   @id
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  corpId    String   @default("")
-  agentId   String   @default("")   // 自建应用 AgentId（日程权限）
-  secretEnc String   @default("")   // AES-256-GCM 密文（应用 Secret，绝不明文落库/外发/入提交）
-  updatedAt DateTime @updatedAt
+  tenantId          String   @id
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  corpId            String   @default("")
+  agentId           String   @default("")   // 自建应用 AgentId（日程权限）
+  secretEnc         String   @default("")   // AES-256-GCM 密文（应用 Secret，绝不明文落库/外发/入提交）
+  callbackToken     String   @default("")   // 「接收消息」回调校验 Token（场景 B 消息推送+一键采纳）
+  callbackAesKeyEnc String   @default("")   // EncodingAESKey 的 AES-256-GCM 密文（解回调消息用）
+  updatedAt         DateTime @updatedAt
 }
 
 // 江湖 user ↔ 企微 userid 映射（写对人的日程必须绑定）。P2-a 手填，P2-b OAuth 扫码自动绑。
