@@ -198,6 +198,49 @@ async function llmPrefill(cfg: any, ctx: any, card: { title?: string; basis?: st
   };
 }
 
+// ── P6 里程碑「→ 排行动」（列③→④焊缝）：为达成某个里程碑拆 2-3 个具体行动候选，
+// 前端落 draft 草稿进列④人审（复用第3刀 prefill 体系的 mock/LLM 双轨与人审闭环）──
+interface MsActionCand { title: string; target: string; cautions: string }
+const MS_ACT_TMPL: Array<[RegExp, Array<{ title: string; target: string }>]> = [
+  [/立项|调研/, [
+    { title: '约拍板人确认需求范围与立项口径', target: '把需求边界、立项时间点和牵头人问死' },
+    { title: '摸清立项流程节点与材料清单', target: '拿到立项材料清单，明确谁起草谁签字' }]],
+  [/可研|方案|认可/, [
+    { title: '给技术把关人做方案预讲', target: '评审会前把技术异议逐条消化掉' },
+    { title: '收集使用方意见回填方案', target: '让使用者在评审时替我们说话' }]],
+  [/预算/, [
+    { title: '确认预算口径与额度来源', target: '列支科目、额度、批复人一次问清' },
+    { title: '跟住预算批复流程节点', target: '知道卡在谁手里、何时能批' }]],
+  [/招标|挂网/, [
+    { title: '确认招标代理与评标办法', target: '评标细则出台前影响权重设置' },
+    { title: '备齐资质与业绩证明材料', target: '资格预审零瑕疵' }]],
+  [/开标|评标/, [
+    { title: '核对投标文件与澄清预案', target: '投标文件零废标风险' },
+    { title: '安排评标期关键人盯守', target: '评标期外围信息不失控' }]],
+  [/谈判|商务/, [
+    { title: '准备底价与让步阶梯', target: '谈判前内部对齐授权底线' },
+    { title: '预清合同条款风险点', target: '付款/验收/违约条款先过法务' }]],
+  [/签约|双签|合同/, [
+    { title: '合同文本法务终审', target: '签署版零改动风险' },
+    { title: '敲定双方签署人与用印时间', target: '签字流程与仪式落位' }]],
+];
+function mockMilestoneActions(ms: { title: string; date?: string }, existing: string[]): MsActionCand[] {
+  const hit = MS_ACT_TMPL.find(([re]) => re.test(ms.title));
+  const base = hit ? hit[1] : [
+    { title: `为「${ms.title}」拆解准备动作`, target: '把这一步需要的人、材料、时间点列出来' },
+    { title: `确认「${ms.title}」的关键干系人到位`, target: '谁拍板、谁经办、谁能使绊子——逐个落实' }];
+  const caution = ms.date ? `盯紧时间点——最晚 ${ms.date} 要闭环，倒排预留缓冲` : '先定完成时限再动手';
+  return base.filter((c) => !existing.includes(c.title)).map((c) => ({ ...c, cautions: caution }));
+}
+async function llmMilestoneActions(cfg: any, ctx: any, ms: { title: string; date?: string }, existing: string[]): Promise<MsActionCand[]> {
+  const system = '你是 B2B 大客户销售教练。为达成指定的销售里程碑，结合商机现状拆出 2-3 个具体行动。只输出 JSON 数组，每项 {title,target,cautions}：title=行动名(≤20字)，target=目的/达成标准(≤40字)，cautions=注意要点(≤30字)。不要输出 JSON 以外内容。';
+  const user = `# 商机现状快照\n${JSON.stringify(ctx, null, 1)}\n\n# 目标里程碑\n${ms.title}（最晚 ${ms.date || '日期未定'}）\n\n# 已有行动（勿重复）\n${existing.length ? existing.join('；') : '无'}`;
+  const text = await callLLM(cfg, system, user, 600);
+  return grabJsonArray(text).slice(0, 3)
+    .map((r) => ({ title: String(r?.title || '').slice(0, 30), target: String(r?.target || '').slice(0, 60), cautions: String(r?.cautions || '').slice(0, 50) }))
+    .filter((c) => c.title && !existing.includes(c.title));
+}
+
 export function strategyRoutes(app: FastifyInstance) {
   app.post('/api/strategy/suggest', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     const p = z.object({ opportunityId: z.string(), mode: z.enum(['forward', 'backward']), context: z.any() }).safeParse(req.body);
@@ -269,6 +312,32 @@ export function strategyRoutes(app: FastifyInstance) {
       return { prefill, provider: useMock ? 'mock' : cfg.model };
     } catch (e: any) {
       return reply.code(400).send({ error: e?.message || 'AI 预填失败，请检查模型配置' });
+    }
+  });
+
+  // P6 里程碑「→ 排行动」：只返回行动候选不写库（前端落 draft 草稿人审，守铁律②）
+  app.post('/api/strategy/milestone-actions', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    const p = z.object({
+      opportunityId: z.string(),
+      milestone: z.object({ title: z.string().min(1), date: z.string().optional() }),
+      context: z.any(),
+      existingTitles: z.array(z.string()).optional(),
+    }).safeParse(req.body);
+    if (!p.success) return reply.code(400).send({ error: '参数无效' });
+    const tenantId = req.user.tenantId;
+    const opp = await prisma.opportunity.findFirst({ where: { id: p.data.opportunityId, tenantId }, select: { id: true } });
+    if (!opp) return reply.code(404).send({ error: '商机不存在' });
+    const cfg = await loadAiConfig(tenantId);
+    if (!cfg) return reply.code(400).send({ error: '请先在「AI 模型」里配置模型（或选择内置演示模式）', needConfig: true });
+
+    const { milestone, context, existingTitles = [] } = p.data;
+    const useMock = cfg.provider === 'mock' || !cfg.baseUrl || !cfg.model;
+    try {
+      let candidates = useMock ? mockMilestoneActions(milestone, existingTitles) : await llmMilestoneActions(cfg, context, milestone, existingTitles);
+      if (!candidates.length) candidates = mockMilestoneActions(milestone, existingTitles); // LLM 空产出回落 mock
+      return { candidates, provider: useMock ? 'mock' : cfg.model };
+    } catch (e: any) {
+      return reply.code(400).send({ error: e?.message || 'AI 排行动失败，请检查模型配置' });
     }
   });
 }

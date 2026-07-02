@@ -31,7 +31,7 @@ const SENT_TEXT: Record<Sentiment, string> = { star: '排他支持', plus: '支�
 const p2 = (n: number) => String(n).padStart(2, '0');
 const fmt = (d: Date) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
 const todayYmd = () => fmt(new Date());
-const addDaysYmd = (n: number) => { const d = new Date(); d.setDate(d.getDate() + n); return fmt(d); };
+const addDaysYmd = (n: number, baseYmd?: string) => { const d = baseYmd ? new Date(baseYmd + 'T00:00:00') : new Date(); d.setDate(d.getDate() + n); return fmt(d); };
 const mmdd = (ymd: string) => (ymd && ymd.length >= 10 ? `${ymd.slice(5, 7)}/${ymd.slice(8, 10)}` : '未定');
 
 interface FwdCand { gapItem: string; title: string; basis: string; }
@@ -187,6 +187,36 @@ export function DeliberationDock({
   const updateMilestone = (milestoneId: string, patch: { title?: string; startDate?: string; endDate?: string }) =>
     dispatch({ type: 'UPDATE_MILESTONE', accId: account.id, milestoneId, patch });
   const deleteMilestone = (milestoneId: string) => { dispatch({ type: 'DELETE_MILESTONE', accId: account.id, milestoneId }); setDrawer(null); };
+
+  // ── P6 里程碑「→ 排行动」（列③→④焊缝）：AI 拆 2-3 个行动候选 → 各落一张 draft 草稿（origin=ai）进列④人审，
+  // endDate 锚定里程碑日（最晚完成）、startDate=里程碑前一周（不早于今天）。msArranged=会话级「✓ 已排 N」反馈。──
+  const [msBusy, setMsBusy] = useState<string | null>(null);
+  const [msArranged, setMsArranged] = useState<Record<string, number>>({});
+  const planFromMilestone = async (ms: { id: string; title: string; startDate?: string }) => {
+    if (msBusy) return;
+    setMsBusy(ms.id);
+    try {
+      const ctx = buildAiContext(account, opp, breakdown);
+      const existing = planActions.map((a) => a.title).filter(Boolean);
+      const r = await api.milestoneActions(opp.id, { title: ms.title, date: ms.startDate || undefined }, ctx, existing);
+      const today = todayYmd();
+      const msDate = ms.startDate && ms.startDate >= today ? ms.startDate : today; // 里程碑已过/未定 → 锚今天
+      const start = addDaysYmd(-7, msDate) >= today ? addDaysYmd(-7, msDate) : today;
+      let n = 0;
+      for (const c of (r.candidates || []).slice(0, 3)) {
+        const pa = newPlanAction(account.id, opp.id, start, msDate, 'am');
+        pa.title = c.title; pa.target = c.target; pa.cautions = c.cautions;
+        pa.scene = `为达成里程碑「${ms.title}」${ms.startDate ? `（最晚 ${ms.startDate}）` : ''}`;
+        pa.origin = 'ai'; pa.draft = true;
+        dispatch({ type: 'ADD_PLAN_ACTION', accId: account.id, oppId: opp.id, planAction: pa });
+        n++;
+      }
+      if (n > 0) setMsArranged((m) => ({ ...m, [ms.id]: (m[ms.id] ?? 0) + n }));
+      else setAiErr(`「${ms.title}」的标准动作已在行动列，没有新的可排`); // existingTitles 防重后空产出
+    } catch (e: any) {
+      setAiErr(e?.message || '排行动失败');
+    } finally { setMsBusy(null); }
+  };
 
   // ── 人工雷红条（第6刀：风险砍容器降级坞头，行内＋加雷 ✕排雷；severity 留库不展示，无编辑=删了重记）──
   const [riskDraft, setRiskDraft] = useState<string | null>(null); // null=未在录入；string=inline 输入中
@@ -584,6 +614,12 @@ export function DeliberationDock({
                   <span className="sb2-ms-date">最晚 {mmdd(item.m.startDate || '')}</span>
                 </div>
                 <div className="sb2-card-sub">{item.m.startDate || '日期未定 · 点击设置'}</div>
+                <div className="sb2-card-top" style={{ marginTop: 4 }}>
+                  {msArranged[item.m.id]
+                    ? <span className="sb2-dispatched">✓ 已排 {msArranged[item.m.id]} 张草稿（列④微调后上桌）</span>
+                    : <button className="sb2-send" disabled={!item.m.title || !!msBusy} title={item.m.title ? 'AI 拆解达成该里程碑的 2-3 个行动，落草稿到行动列人审' : '先给里程碑起名'}
+                        onClick={(e) => { e.stopPropagation(); planFromMilestone(item.m); }}>{msBusy === item.m.id ? '拆解中…' : '→ 排行动'}</button>}
+                </div>
               </div>
             ) : (
               <div key={`bc${item.i}`} className="sb2-card sb2-cand">
