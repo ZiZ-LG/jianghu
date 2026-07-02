@@ -37,6 +37,9 @@ interface FwdCand { gapItem: string; title: string; basis: string; }
 interface BwdCand { title: string; offsetDays: number; }
 type DrawerState = null | { kind: 'card'; id: string } | { kind: 'milestone'; id: string } | { kind: 'goal' } | { kind: 'action'; id: string };
 type DockHeight = 'collapsed' | 'half' | 'full';
+// 第3刀：AI 可预填的行动四要素（title/personId 由策略卡携带，不在此列）
+type AiFieldKey = 'target' | 'resources' | 'cautions' | 'props';
+type Prefill = Record<AiFieldKey, string>;
 
 export function DeliberationDock({
   account, opp, breakdown, dispatch, selectedPersonId, onSelectPerson, openActionId, onActionOpened, onChatDone,
@@ -105,8 +108,23 @@ export function DeliberationDock({
     dispatch({ type: 'UPDATE_STRATEGY_CARD', accId: account.id, cardId, patch });
   const deleteCard = (cardId: string) => { dispatch({ type: 'DELETE_STRATEGY_CARD', accId: account.id, cardId }); setDrawer(null); };
 
-  // ── 派发：策略卡 → 行动策划（生成 PlanAction 快照，落行动计划时间轴）──
-  const dispatchToPlanner = (card: StrategyCard) => {
+  // ── 派发：策略卡 → 行动牌（第3刀：AI 预填四要素初稿 → 落草稿 origin=ai → 开抽屉人微调，人保存才定稿守铁律②）──
+  // aiMark = 字段来源前端态（🤖AI建议/✍️手改，不落库）；prefillBusy = 预填中的 cardId 或 'drawer'（抽屉内补全）
+  const [aiMark, setAiMark] = useState<{ actionId: string; fields: Partial<Record<AiFieldKey, 'ai' | 'edited'>> } | null>(null);
+  const [prefillBusy, setPrefillBusy] = useState<string | null>(null);
+  const fetchPrefill = async (card: { title?: string; basis?: string; gapItem?: string }, personId?: string): Promise<Prefill | null> => {
+    try {
+      const target = personId ? personById.get(personId) : null;
+      const ctx = buildAiContext(account, opp, breakdown);
+      const r = await api.strategyPrefill(opp.id, card, target ? { name: target.name, title: target.title } : undefined, ctx);
+      return r.prefill;
+    } catch { return null; } // 预填失败降级：无初稿开抽屉手填（不阻塞派发）
+  };
+  const dispatchToPlanner = async (card: StrategyCard) => {
+    if (prefillBusy) return;
+    setPrefillBusy(card.id);
+    const pf = await fetchPrefill({ title: card.title, basis: card.basis, gapItem: card.gapItem }, card.personId);
+    setPrefillBusy(null);
     const d0 = todayYmd();
     const pa = newPlanAction(account.id, opp.id, d0, d0, 'am');
     pa.title = card.title;
@@ -114,8 +132,13 @@ export function DeliberationDock({
     if (card.personId) pa.personId = card.personId;
     if (card.basis) pa.scene = card.basis;
     pa.origin = 'ai';
+    if (pf) { pa.target = pf.target; pa.resources = pf.resources; pa.cautions = pf.cautions; pa.props = pf.props; }
     dispatch({ type: 'ADD_PLAN_ACTION', accId: account.id, oppId: opp.id, planAction: pa });
     updateCard(card.id, { dispatchedActionIds: [...(card.dispatchedActionIds ?? []), pa.id] });
+    const fields: Partial<Record<AiFieldKey, 'ai'>> = {};
+    (['target', 'resources', 'cautions', 'props'] as AiFieldKey[]).forEach((k) => { if (pf?.[k]) fields[k] = 'ai'; });
+    setAiMark(pf ? { actionId: pa.id, fields } : null);
+    setDrawer({ kind: 'action', id: pa.id });
   };
 
   // ── 终局 + 里程碑（里程碑 = 行动计划 OppMilestone，直接共享）──
@@ -182,15 +205,24 @@ export function DeliberationDock({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
-  // 切商机/客户 → 关抽屉、清背离忽略集、丢未落库的雷草稿
-  useEffect(() => { setDrawer(null); setDismissedShifts(new Set()); setRiskDraft(null); }, [opp.id, account.id]);
+  // 切商机/客户 → 关抽屉、清背离忽略集、丢未落库的雷草稿、清字段来源标记
+  useEffect(() => { setDrawer(null); setDismissedShifts(new Set()); setRiskDraft(null); setAiMark(null); }, [opp.id, account.id]);
 
   // ── 行动清单（PlanAction，承接 DealPlanner 网格退役；勾完成→结果回填录证据，闭合执行→证据→局势飞轮）──
   const [actDraft, setActDraft] = useState<{ title: string; startDate: string; personId?: string; target: string; resources: string; cautions: string; props: string; done: boolean; wasDone: boolean; outcome?: 'up' | 'flat' | 'down' } | null>(null);
   useEffect(() => {
     if (drawer?.kind === 'action') {
       const a = (account.planActions ?? []).find((x) => x.id === drawer.id);
-      if (a) setActDraft({ title: a.title || '', startDate: a.startDate || todayYmd(), personId: a.personId, target: a.target || '', resources: a.resources || '', cautions: a.cautions || '', props: a.props || '', done: !!a.done, wasDone: !!a.done });
+      if (a) {
+        setActDraft({ title: a.title || '', startDate: a.startDate || todayYmd(), personId: a.personId, target: a.target || '', resources: a.resources || '', cautions: a.cautions || '', props: a.props || '', done: !!a.done, wasDone: !!a.done });
+        // 来源标记按库值校准：补全后未保存就关抽屉的字段（库里为空）清掉标记，避免重开误标 🤖
+        setAiMark((m) => {
+          if (!m || m.actionId !== drawer.id) return m;
+          const fields = { ...m.fields };
+          (['target', 'resources', 'cautions', 'props'] as AiFieldKey[]).forEach((k) => { if (!a[k]) delete fields[k]; });
+          return { ...m, fields };
+        });
+      }
     } else setActDraft(null);
     // 仅在切换抽屉对象时初始化草稿；编辑中不因 store 更新而重置（避免清掉未保存输入）
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -220,6 +252,31 @@ export function DeliberationDock({
       dispatch({ type: 'ADD_EVIDENCE', accId: account.id, oppId: opp.id, evidence: ev });
     }
     setDrawer(null);
+  };
+
+  // ── 第3刀：抽屉内「✨ 让引擎补全」——只补空白要素不覆盖已填（human-wins）；字段来源徽章 helpers ──
+  const runDrawerPrefill = async () => {
+    if (prefillBusy || !actDraft || drawer?.kind !== 'action') return;
+    const actionId = drawer.id;
+    setPrefillBusy('drawer');
+    const a = (account.planActions ?? []).find((x) => x.id === actionId);
+    const pf = await fetchPrefill({ title: actDraft.title, basis: a?.scene, gapItem: a?.gapItem }, actDraft.personId);
+    setPrefillBusy(null);
+    if (!pf) return;
+    const next = { ...actDraft };
+    const fill: Partial<Record<AiFieldKey, 'ai'>> = {};
+    (['target', 'resources', 'cautions', 'props'] as AiFieldKey[]).forEach((k) => {
+      if (!next[k].trim() && pf[k]) { next[k] = pf[k]; fill[k] = 'ai'; }
+    });
+    setActDraft(next);
+    setAiMark((m) => ({ actionId, fields: { ...(m?.actionId === actionId ? m.fields : {}), ...fill } }));
+  };
+  const fieldMark = (k: AiFieldKey) => (drawer?.kind === 'action' && aiMark?.actionId === drawer.id ? aiMark.fields[k] : undefined);
+  const markEdited = (k: AiFieldKey) =>
+    setAiMark((m) => (m && drawer?.kind === 'action' && m.actionId === drawer.id && m.fields[k] === 'ai' ? { ...m, fields: { ...m.fields, [k]: 'edited' } } : m));
+  const srcBadge = (k: AiFieldKey) => {
+    const mk = fieldMark(k);
+    return mk ? <em className={`sb2-src sb2-src-${mk}`}>{mk === 'ai' ? '🤖 AI 建议' : '✍️ 手改'}</em> : null;
   };
 
   // 里程碑泳道条目：正式里程碑 + 倒推候选按日期混排（候选虚位出现在它将落的位置上）
@@ -345,8 +402,8 @@ export function DeliberationDock({
                       : <span className="sb2-chip sb2-chip-none">未挂缺口</span>}
                     {dispatched
                       ? <span className="sb2-dispatched">✓ 已派发 {card.dispatchedActionIds!.length}</span>
-                      : <button className="sb2-send" disabled={!card.title} title={card.title ? '生成行动，落到行动计划时间轴' : '先填打法标题'}
-                          onClick={(e) => { e.stopPropagation(); dispatchToPlanner(card); }}>→ 派发</button>}
+                      : <button className="sb2-send" disabled={!card.title || !!prefillBusy} title={card.title ? '生成行动（AI 预填四要素初稿，可微调）' : '先填打法标题'}
+                          onClick={(e) => { e.stopPropagation(); dispatchToPlanner(card); }}>{prefillBusy === card.id ? '预填中…' : '→ 派发'}</button>}
                   </div>
                   <div className="sb2-card-title">{card.title || <span className="sb2-dim">（未命名打法 · 点击编辑）</span>}</div>
                   <div className="sb2-card-sub">
@@ -509,7 +566,7 @@ export function DeliberationDock({
                 <div className="sb2-drawer-acts">
                   {(drawerCard.dispatchedActionIds?.length ?? 0) > 0
                     ? <span className="sb2-dispatched">✓ 已派发 {drawerCard.dispatchedActionIds!.length} 个行动（见行动计划）</span>
-                    : <button className="btn primary sm" disabled={!drawerCard.title} onClick={() => dispatchToPlanner(drawerCard)}>📤 送行动策划</button>}
+                    : <button className="btn primary sm" disabled={!drawerCard.title || !!prefillBusy} onClick={() => dispatchToPlanner(drawerCard)}>{prefillBusy === drawerCard.id ? '✨ 预填中…' : '📤 送行动策划'}</button>}
                 </div>
                 {drawerCard.origin === 'ai' && <div className="sb2-origin">来源：AI 顺推（人审采纳）</div>}
                 <button className="sb2-drawer-del" onClick={() => deleteCard(drawerCard.id)}>🗑 删除该策略卡</button>
@@ -574,17 +631,21 @@ export function DeliberationDock({
                     {account.persons.map((p) => <option key={p.id} value={p.id}>{p.name}{p.title ? ` · ${p.title}` : ''}</option>)}
                   </select>
                 </label>
-                <label className="sb-field"><span>目的</span>
-                  <input value={actDraft.target} placeholder="这一手要达成什么" onChange={(e) => setActDraft({ ...actDraft, target: e.target.value })} />
+                <div className="sb2-prefill-row">
+                  <button className="btn ghost xs" disabled={!!prefillBusy} onClick={runDrawerPrefill}>{prefillBusy === 'drawer' ? '✨ 补全中…' : '✨ 让引擎补全'}</button>
+                  <span className="sb2-prefill-hint">只补空白要素，不覆盖已填</span>
+                </div>
+                <label className="sb-field"><span>目的{srcBadge('target')}</span>
+                  <input value={actDraft.target} placeholder="这一手要达成什么" onChange={(e) => { markEdited('target'); setActDraft({ ...actDraft, target: e.target.value }); }} />
                 </label>
-                <label className="sb-field"><span>所需资源</span>
-                  <input value={actDraft.resources} placeholder="人 / 预算 / 内部支持…" onChange={(e) => setActDraft({ ...actDraft, resources: e.target.value })} />
+                <label className="sb-field"><span>所需资源{srcBadge('resources')}</span>
+                  <input value={actDraft.resources} placeholder="人 / 预算 / 内部支持…" onChange={(e) => { markEdited('resources'); setActDraft({ ...actDraft, resources: e.target.value }); }} />
                 </label>
-                <label className="sb-field"><span>注意要点</span>
-                  <input value={actDraft.cautions} placeholder="风险 / 红线 / 话术提示" onChange={(e) => setActDraft({ ...actDraft, cautions: e.target.value })} />
+                <label className="sb-field"><span>注意要点{srcBadge('cautions')}</span>
+                  <input value={actDraft.cautions} placeholder="风险 / 红线 / 话术提示" onChange={(e) => { markEdited('cautions'); setActDraft({ ...actDraft, cautions: e.target.value }); }} />
                 </label>
-                <label className="sb-field"><span>道具</span>
-                  <input value={actDraft.props} placeholder="方案 / POC / 报告 / 会议大纲…（后续可交 WorkBuddy 生产）" onChange={(e) => setActDraft({ ...actDraft, props: e.target.value })} />
+                <label className="sb-field"><span>道具{srcBadge('props')}</span>
+                  <input value={actDraft.props} placeholder="方案 / POC / 报告 / 会议大纲…（后续可交 WorkBuddy 生产）" onChange={(e) => { markEdited('props'); setActDraft({ ...actDraft, props: e.target.value }); }} />
                 </label>
                 <label className="dp-done"><input type="checkbox" checked={actDraft.done} onChange={(e) => setActDraft({ ...actDraft, done: e.target.checked })} /> 标记为已完成</label>
                 {actDraft.done && !actDraft.wasDone && actDraft.personId && (

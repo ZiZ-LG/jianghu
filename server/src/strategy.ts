@@ -50,6 +50,11 @@ const grabJsonArray = (text: string): any[] => {
   if (!m) return [];
   try { const a = JSON.parse(m[0]); return Array.isArray(a) ? a : []; } catch { return []; }
 };
+const grabJsonObject = (text: string): any => {
+  const m = text.match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  try { const o = JSON.parse(m[0]); return o && typeof o === 'object' && !Array.isArray(o) ? o : null; } catch { return null; }
+};
 
 async function llmForward(cfg: any, ctx: any): Promise<StrategyCand[]> {
   const system = '你是 B2B 大客户销售策略顾问，精通 G64111 趋赢力方法论（6必清 C1-C6 / 4优势 P1-P4 / 1决胜 1K）。基于商机现状（含各分项得分、干系人格局、局势），为"补强趋赢力短板"生成 3-5 条可执行的策略打法，每条挂靠一个 G64111 低分项。只输出 JSON 数组，每项 {gapItem,title,basis}；gapItem 取 C1..C6|P1..P4|1K 之一；title 是具体打法(≤30字)；basis 是依据(≤50字)；不要输出 JSON 以外内容。';
@@ -133,6 +138,50 @@ async function llmAdvisorCands(cfg: any, ctx: any, focus: { name: string; title?
   return out;
 }
 
+// ── 派发预填（推演坞第3刀）：策略卡「→ 派发」成行动牌时，AI 预填四要素初稿 {target,resources,cautions,props}。
+// 只返回初稿，前端落草稿(origin=ai)开抽屉人微调，人保存才定稿（守硬规则②：不自动改分改图）。──
+interface Prefill { target: string; resources: string; cautions: string; props: string; }
+
+// mock 兜底：缺口项 → 四要素模板（同 FWD_TMPL 惯例，用 G64111 打法语言）
+const PREFILL_TMPL: Record<string, Prefill> = {
+  P3: { target: '单独深谈摸清 BI 与政绩诉求，拿到密谋级支持的口头承诺', resources: '内线教练情报、可交换的政绩素材、高层背书', cautions: '单独约见避开竞品耳目；先听诉求再亮牌', props: '一页纸价值主张、样板客户参观邀请' },
+  '1K': { target: '经 D 引荐见到 A，用降本/样板数据换取 A 的背书', resources: 'D 的引荐、可上报的降本测算、标杆案例', cautions: '不越级——必须 D 牵线，谈政绩不谈产品细节', props: '给 A 的一页纸汇报材料、降本测算表' },
+  P2: { target: '锁定招采关键人，至少拿到口头承诺不设卡', resources: '采购/代理的关系线、合规的商务安排', cautions: '守商务红线；关注招采参数是否已被友商植入', props: '资质材料包、投标参数建议清单' },
+  P4: { target: '把关键影响人的态度从中立推到明确支持', resources: '行业专家关系、技术交流机会', cautions: '摸清他与决策人的真实影响路径再发力', props: '技术白皮书、专家推荐意见' },
+  P1: { target: '逐个转化摇摆干系人，把多数人态度推到支持', resources: '教练情报、分头拜访的时间安排', cautions: '优先转化影响力大的；避免同时树敌', props: '针对各角色的价值点清单' },
+  C2: { target: '挖出拍板人的燃眉之急 BI 并确认到明确级', resources: '教练侧面求证、与 D 的正式访谈机会', cautions: '问出真痛点而非表面需求；多听少讲', props: '访谈提纲、同行痛点对照表' },
+  C6: { target: '针对 BI 提炼 UCV 并拿到客户认可', resources: '方案团队支持、客户高层汇报机会', cautions: 'UCV 要独特到竞品给不了，否则只是卖点', props: '价值主张一页纸、ROI 测算' },
+  C5: { target: '补齐招采五事项：家数/参数/规则/甲方代表/代理', resources: '采购线人脉、代理机构关系', cautions: '信息要交叉验证，单一来源不可靠', props: '招采信息核对清单' },
+  C3: { target: '确认立项材料齐备度与项目在客户内部的排序', resources: '发起人/使用方配合、立项流程内线', cautions: '排序低=预算风险，先推排序再谈方案', props: '立项材料清单、可研支撑素材' },
+  C1: { target: '补全组织图关键岗位与 D 的 FORM 家庭七问', resources: '教练访谈、公开信息排查', cautions: 'FORM 靠日常闲聊积累，不要审讯式追问', props: '组织图草稿、FORM 记录卡' },
+  C4: { target: '推动尽早介入需求定义，抢在招标前塑造参数', resources: '技术团队前置投入、调研配合', cautions: '介入晚只能跟标——评估是否值得强攻', props: '需求调研问卷、方案框架' },
+};
+const PREFILL_FALLBACK: Prefill = { target: '推进该打法落地，明确本次接触要拿到的结果', resources: '教练情报、内部支持', cautions: '先明确目的再行动；记录反馈回填局势', props: '会议纪要模板' };
+
+function mockPrefill(ctx: any, card: { title?: string; gapItem?: string }, person?: { name: string }): Prefill {
+  const base = (card.gapItem && PREFILL_TMPL[card.gapItem]) || PREFILL_FALLBACK;
+  if (!person) return base;
+  // 有目标人时用真实格局微调 cautions（同 mockAdvisorCands 惯例：竞品/失血者话术不同）
+  const me = (ctx?.people || []).find((p: any) => p.name === person.name) || {};
+  if (me.isCompetitor) return { ...base, cautions: '对手阵营的人——用事实对比，不正面攻击竞品' };
+  if (me.sentiment === 'x' || me.sentiment === 'minus') return { ...base, cautions: '他已倒向对手/抗拒——先修复关系暂不谈单，避免逼反' };
+  return base;
+}
+
+async function llmPrefill(cfg: any, ctx: any, card: { title?: string; basis?: string; gapItem?: string }, person?: { name: string; title?: string }): Promise<Prefill | null> {
+  const system = '你是 B2B 大客户销售策略顾问，精通 G64111 趋赢力方法论。给定一张策略打法卡与目标干系人，为执行它的下一步行动预填四要素初稿：\n- target 目的：这一手要达成什么（≤40字）\n- resources 所需资源：人/预算/内部支持（≤30字）\n- cautions 注意要点：风险/红线/话术提示（≤30字）\n- props 道具：方案/POC/报告/会议大纲等（≤30字）\n只输出 JSON 对象 {target,resources,cautions,props}，不要输出 JSON 以外内容。';
+  const user = `# 商机现状快照\n${JSON.stringify(ctx, null, 1)}\n\n# 策略打法卡\n标题：${card.title || '（未命名）'}\n依据：${card.basis || '无'}\n挂靠缺口：${card.gapItem ? (ITEM_LABEL[card.gapItem] || card.gapItem) : '无'}\n\n# 目标干系人\n${person ? `${person.name}（${person.title || '职务未知'}）` : '未指定'}`;
+  const text = await callLLM(cfg, system, user, 500);
+  const o = grabJsonObject(text);
+  if (!o) return null;
+  return {
+    target: String(o.target || '').slice(0, 60),
+    resources: String(o.resources || '').slice(0, 50),
+    cautions: String(o.cautions || '').slice(0, 50),
+    props: String(o.props || '').slice(0, 50),
+  };
+}
+
 export function strategyRoutes(app: FastifyInstance) {
   app.post('/api/strategy/suggest', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     const p = z.object({ opportunityId: z.string(), mode: z.enum(['forward', 'backward']), context: z.any() }).safeParse(req.body);
@@ -177,6 +226,33 @@ export function strategyRoutes(app: FastifyInstance) {
       return { candidates, provider: useMock ? 'mock' : cfg.model };
     } catch (e: any) {
       return reply.code(400).send({ error: e?.message || 'AI 出牌失败，请检查模型配置' });
+    }
+  });
+
+  // 派发预填（第3刀）：策略卡 → 行动牌四要素初稿。只返回初稿不写库，前端落草稿人微调（守硬规则②）。
+  app.post('/api/strategy/prefill', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    const p = z.object({
+      opportunityId: z.string(),
+      card: z.object({ title: z.string().optional(), basis: z.string().optional(), gapItem: z.string().optional() }),
+      person: z.object({ name: z.string().min(1), title: z.string().optional() }).optional(),
+      context: z.any(),
+    }).safeParse(req.body);
+    if (!p.success) return reply.code(400).send({ error: '参数无效' });
+    const tenantId = req.user.tenantId;
+    const opp = await prisma.opportunity.findFirst({ where: { id: p.data.opportunityId, tenantId }, select: { id: true } });
+    if (!opp) return reply.code(404).send({ error: '商机不存在' });
+    const cfg = await loadAiConfig(tenantId);
+    if (!cfg) return reply.code(400).send({ error: '请先在「AI 模型」里配置模型（或选择内置演示模式）', needConfig: true });
+
+    const { card, person, context } = p.data;
+    const useMock = cfg.provider === 'mock' || !cfg.baseUrl || !cfg.model;
+    try {
+      const prefill = useMock
+        ? mockPrefill(context, card, person)
+        : (await llmPrefill(cfg, context, card, person)) ?? mockPrefill(context, card, person);
+      return { prefill, provider: useMock ? 'mock' : cfg.model };
+    } catch (e: any) {
+      return reply.code(400).send({ error: e?.message || 'AI 预填失败，请检查模型配置' });
     }
   });
 }

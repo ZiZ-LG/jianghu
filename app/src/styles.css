@@ -1109,6 +1109,12 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 
 .sb2-drawer-body { padding: 14px 16px; overflow-y: auto; }
 .sb2-drawer-body .sb-field select { font-size: 13px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
+/* 第3刀 · 派发 AI 预填：抽屉「✨ 让引擎补全」行 + 四要素字段来源徽章（🤖AI建议/✍️手改，前端态不落库） */
+.sb2-prefill-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.sb2-prefill-hint { font-size: 10.5px; color: var(--faint); }
+.sb2-src { font-style: normal; font-size: 10px; font-weight: 600; margin-left: 6px; padding: 1px 6px; border-radius: 999px; vertical-align: 1px; }
+.sb2-src-ai { color: var(--accent-ink); background: var(--accent-soft); }
+.sb2-src-edited { color: var(--muted); background: var(--panel-2); border: 1px solid var(--line); }
 .sb2-drawer-acts { margin: 4px 0 10px; }
 .sb2-origin { font-size: 11px; color: var(--faint); margin: 8px 0; line-height: 1.5; }
 .sb2-drawer-del { width: 100%; margin-top: 10px; color: #dc2626; background: none; border: 1px solid color-mix(in srgb, #dc2626 40%, var(--line)); padding: 8px; border-radius: 7px; cursor: pointer; font-size: 12.5px; }

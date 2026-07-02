@@ -90,6 +90,9 @@ export const api = {
   // 参谋出牌（P2④b）：右栏焦点人 → AI 产行动牌候选（六要素之 目的/资源/注意）。只返回候选，人审采纳才 dispatch ADD_PLAN_ACTION 落画布。
   advisorActions: (opportunityId: string, focus: { name: string; title?: string }, context: any, note?: string): Promise<{ candidates: AdvisorCand[]; provider: string }> =>
     req('/api/strategy/actions', { method: 'POST', body: JSON.stringify({ opportunityId, focus, context, note }) }),
+  // 派发预填（第3刀）：策略卡→行动牌四要素初稿 {target,resources,cautions,props}。只返回初稿，前端落草稿(origin=ai)开抽屉人微调。
+  strategyPrefill: (opportunityId: string, card: { title?: string; basis?: string; gapItem?: string }, person: { name: string; title?: string } | undefined, context: any): Promise<{ prefill: { target: string; resources: string; cautions: string; props: string }; provider: string }> =>
+    req('/api/strategy/prefill', { method: 'POST', body: JSON.stringify({ opportunityId, card, person, context }) }),
   // AI 关系推断（待确认候选）
   suggestList: (opportunityId: string): Promise<{ suggestions: Suggestion[] }> => req(`/api/suggest?opportunityId=${encodeURIComponent(opportunityId)}`),
   suggestGenerate: (opportunityId: string): Promise<{ added: number; suggestions: Suggestion[] }> => req('/api/suggest/generate', { method: 'POST', body: JSON.stringify({ opportunityId }) }),
