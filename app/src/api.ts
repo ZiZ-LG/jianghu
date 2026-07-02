@@ -76,6 +76,11 @@ export const api = {
   wecomSaveBind: (wecomUserid: string) => req('/api/wecom/bind', { method: 'PUT', body: JSON.stringify({ wecomUserid }) }),
   wecomOauthStart: (): Promise<{ url: string }> => req('/api/wecom/oauth/start'), // 扫码自动绑 userid（回调需公网）
   wecomTestPush: (kind: 'textcard' | 'card') => req('/api/wecom/test-push', { method: 'POST', body: JSON.stringify({ kind }) }), // V1 文本卡 / V2 按钮卡
+  // PDE 决策引擎（评估主链；赢面永不脱离 confidenceFlag）
+  pdeEv: (oppId: string): Promise<any> => req(`/api/pde/${oppId}/ev`),
+  pdeIntel: (oppId: string): Promise<any> => req(`/api/pde/${oppId}/intel-priorities`), // 拜访卡「这次问什么」
+  pdeActions: (oppId: string): Promise<any> => req(`/api/pde/${oppId}/action-ranking`),
+  pdeSnapshot: (oppId: string) => req(`/api/pde/${oppId}/snapshot`, { method: 'POST' }),
   aiTest: (): Promise<{ ok: boolean; message?: string }> => req('/api/ai/test', { method: 'POST' }),
   aiSimulate: (context: any, hypothesis: string): Promise<{ analysis: string; provider: string }> =>
     req('/api/ai/simulate', { method: 'POST', body: JSON.stringify({ context, hypothesis }) }),

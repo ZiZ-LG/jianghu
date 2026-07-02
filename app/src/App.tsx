@@ -32,6 +32,7 @@ import { HelpManual } from './components/HelpManual';
 import { McpAccess } from './components/McpAccess';
 import { OverflowMenu } from './components/OverflowMenu';
 import { OrientationGate } from './components/OrientationGate';
+import { MomentFlow } from './components/MomentFlow';
 import { Footer } from './components/Footer';
 
 export default function App() {
@@ -65,6 +66,7 @@ export default function App() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [mcpAccessOpen, setMcpAccessOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistentState('jianghu.sidebarCollapsed', false);
+  const [forceDesktop, setForceDesktop] = usePersistentState('jianghu.forceDesktop', false); // 手机竖屏默认时刻流；true=强制完整版
   const [theme, toggleTheme] = useTheme();
   // 画布选中模型：单击=选中(节点出锚点/连线出控制点)，双击=打开右侧栏
   const [focusTab, setFocusTab] = useState<'profile' | 'dynamic' | 'advisor'>('advisor'); // 焦点面板 tab：单击→参谋、双击→档案
@@ -372,10 +374,25 @@ export default function App() {
   if (booting) return <div className="boot">加载中…</div>;
   if (!auth) return <Auth onAuthed={onAuthed} />;
 
-  // ── Hub ──
+  // ── Hub / 手机竖屏时刻流（场景 A：竖屏默认=时刻流，横屏提示只在进作战室后）──
+  const phonePortrait = isMobile && !isLandscape;
   if (!account) {
     return (
       <>
+        {phonePortrait && !forceDesktop ? (
+          <MomentFlow
+            accounts={state.accounts} inbox={inbox} userName={auth.user.name}
+            theme={theme} onToggleTheme={toggleTheme}
+            onOpenIntel={() => setIntelOpen(true)}
+            onEnterAccount={(aId, oId) => { const a = state.accounts.find((x) => x.id === aId); setAccId(aId); setOppId(oId ?? a?.opportunities[0]?.id ?? null); setSelectedId(null); }}
+            onExitToDesktop={() => setForceDesktop(true)}
+            onLogout={logout}
+            onAcceptProposal={inboxAcceptProposal} onRejectProposal={inboxRejectProposal}
+            onAcceptPerson={inboxAcceptPerson} onRejectPerson={inboxRejectPerson}
+            onAcceptRel={inboxAcceptRel} onRejectRel={inboxRejectRel}
+            onDismissReminder={inboxDismissReminder}
+          />
+        ) : (
         <CustomerHub
           accounts={state.accounts} onOpen={openAccount} onCreate={createAccount} onLoadDemo={loadDemo}
           onDeleteAccount={(id) => act({ type: 'DELETE_ACCOUNT', accId: id })}
@@ -386,6 +403,8 @@ export default function App() {
           onOpenIntel={() => setIntelOpen(true)}
           onOpenInbox={() => setInboxOpen(true)} inboxCount={inbox.total}
         />
+        )}
+        {phonePortrait && forceDesktop && <button className="mf-exit-desktop" onClick={() => setForceDesktop(false)}>📱 回手机版</button>}
         {syncErr && <div className="sync-toast">{syncErr}</div>}
         {inboxOpen && <InboxPanel rels={inbox.rels} persons={inbox.persons} proposals={inbox.proposals} accounts={state.accounts} onAccept={inboxAcceptRel} onReject={inboxRejectRel} onAcceptPerson={inboxAcceptPerson} onRejectPerson={inboxRejectPerson} onAcceptProposal={inboxAcceptProposal} onRejectProposal={inboxRejectProposal} reminders={inbox.reminders} onDismissReminder={inboxDismissReminder} onClose={() => setInboxOpen(false)} />}
         {intelOpen && (
