@@ -1,0 +1,108 @@
+{
+  "_note": "G64111 评分体系 schema · 行业包 digital-energy · 基线 v1.1（LG 修订认证版）。教训（教育v2.1→能源v1.1 曾发生 C5/C6/C7 重组）：schemaId+schemaVersion 必须写入每个 EVSnapshot，否则体系迭代后历史快照不可解读。type: E=认知变量(不直接进pWin，驱动可信度与VoI) / W=世界状态变量(立场分布，进pWin) / S=结构调节变量。",
+  "schemaId": "g64111-digital-energy",
+  "schemaVersion": "1.1",
+  "totalScore": 100,
+  "items": [
+    {
+      "key": "C1", "name": "客户项目组织结构图(ADURC及倾向性、D的FORM表)",
+      "type": "E", "maxScore": 10, "volatility": "structural",
+      "subItems": [
+        { "key": "org_chart", "points": 3, "rule": "组织结构图角色有缺失直接扣3分" },
+        { "key": "role_clarity", "points": 3, "rule": "除A以外每个?号扣1分" },
+        { "key": "procurement_identified", "points": 1, "rule": "采购/招标管理负责人、招标代理或集采平台负责人、甲方项目代表三者整体占1分" },
+        { "key": "form7", "points": 3, "rule": "家庭7问(籍贯/年纪/生日/毕业院校/配偶/子女/父母)少1扣1，扣完为止", "volatility": "stance" }
+      ],
+      "voiScan": { "mode": "stance_proxy", "note": "未识别的角色=该slot以unk/unclear入模，VoI经立场扫描自动浮现，无需单独扫描" }
+    },
+    {
+      "key": "C2", "name": "拍板人D的燃眉之急(BI)",
+      "type": "E", "maxScore": 5, "volatility": "stance",
+      "legacyScoring": "有=5 / 无=0",
+      "voiScan": { "mode": "enabler", "note": "BI未知会锁死act-solve-bi等高杠杆动作；VoI=解锁动作中最大ΔEV" }
+    },
+    {
+      "key": "C3", "name": "项目立项材料及项目排序",
+      "type": "E", "maxScore": 5, "volatility": "structural",
+      "subItems": [
+        { "key": "reason", "points": 0.714 }, { "key": "name", "points": 0.714 },
+        { "key": "budget", "points": 0.714, "voiScan": { "mode": "pot_scan", "lo": 0.6, "hi": 1.4, "note": "预算未知→pot估计值扫描，VoI以EV摆动计" } },
+        { "key": "plan", "points": 0.714 }, { "key": "funding", "points": 0.714 },
+        { "key": "ranking", "points": 0.715 }, { "key": "procurement_method", "points": 0.715 }
+      ],
+      "legacyScoring": "7项少一项扣1分，扣至0止"
+    },
+    {
+      "key": "C4", "name": "介入项目阶段",
+      "type": "S", "maxScore": 5, "volatility": "structural",
+      "stageEnum": ["initiation", "feasibility", "budget_approval", "tender_design", "tender_execution"],
+      "stageLabels": ["需求调研立项", "方案/可研编制上报", "预算(概算)批复/资金申报", "招标方案论证", "招采执行"],
+      "effects": ["m(stage) 可塑性乘子作用于所有行动ΔpWin", "c_comp 建议默认值(见params)", "legacy分5/4/3/2/1仅用于名义分展示"]
+    },
+    {
+      "key": "C5", "name": "招采事项",
+      "type": "E", "maxScore": 5, "volatility": "procurement",
+      "subItems": [
+        { "key": "bidder_list", "points": 1 }, { "key": "tender_params", "points": 1 },
+        { "key": "eval_rules", "points": 1 }, { "key": "owner_rep_identity", "points": 1 },
+        { "key": "tender_agent_identity", "points": 1 }
+      ],
+      "legacyScoring": "5项少一项扣1分",
+      "voiScan": { "mode": "c_comp_scan", "note": "招采信息未知→竞争系数不确定，用params.voiScanDefaults.cCompScan" }
+    },
+    {
+      "key": "C6", "name": "UCV：C2燃眉之急已解决的程度",
+      "type": "W_EVIDENCE", "maxScore": 5, "volatility": "stance",
+      "legacyScoring": "建议并获认可=3 / 已落地解决=5",
+      "mapsToSignals": ["ucv_acknowledged", "ucv_delivered"],
+      "note": "不再独立加分入pWin；作为作用于D立场分布的强证据事件（signal-catalog）"
+    },
+    {
+      "key": "P1", "name": "项目组多数人支持",
+      "type": "W", "maxScore": 5, "slot": "MEMBER",
+      "legacyScoring": "数+/☆有几个得几分(≤5)；-/x有几个扣几分(≤5)；=/?不计",
+      "kernelMapping": "每位组员一条StanceAssessment，slot=MEMBER，权重池上限5（见params.memberPoolCap）"
+    },
+    {
+      "key": "P2", "name": "招采关键人支持",
+      "type": "W", "maxScore": 10,
+      "slots": { "PROC_MGMT": 4, "PROC_AGENT": 2, "OWNER_REP": 4 },
+      "legacyScoring": "密谋评标策略并落实=满档 / 口头承诺=1 / 未有效接触=0；三类均未接触扣5",
+      "engagementToMark": { "密谋评标策略并落实使用": "star", "口头承诺": "plus", "未有效接触": "unk" },
+      "note": "沿用 v1.1 原始表述与判定标准（决策#1）。三类均未接触的扣5分由三个unk的收缩负净值自然体现，无需显式扣分规则"
+    },
+    {
+      "key": "P3", "name": "与拍板人D密谋/策划及明确支持",
+      "type": "W", "maxScore": 20, "slot": "D",
+      "legacyScoring": "☆+20 / ++10 / =?0 / −−10 / x−20",
+      "markJudgment": { "plusConditions": "signal-catalog group p3_plus 任意2条", "starConditions": "事实证明法 或 group p3_star ≥2条（前提：顶压力不退缩公开排他支持）" }
+    },
+    {
+      "key": "P4", "name": "项目组关键影响人密谋/策划及明确支持",
+      "type": "W", "maxScore": 10, "slot": "KEY_INFLUENCER",
+      "legacyScoring": "☆+10 / ++5 / 其余0",
+      "note": "同一时间只锁定一个关键影响人，优先D的；前期找能影响决策的，招采期找能推动定标的"
+    },
+    {
+      "key": "1K", "name": "与最高决策人A密谋+策划/明确支持",
+      "type": "W", "maxScore": 20, "slot": "A",
+      "legacyScoring": "☆+20 / ++10 / =?0 / −−10 / x−20",
+      "markJudgment": "判定同P3，作用于A；A的+可不私下约见（看公开表态/口头承诺/纳入规划/指定试点）",
+      "gateNote": "A 是唯一否决门slot（params.gate）"
+    }
+  ],
+  "strategy741": {
+    "note": "741 八策略降级为 RAISE/CALL 下的子策略菜单，由得分构成向量驱动推荐，不再由总分阶跃触发",
+    "bands": [
+      { "range": ">=0.75", "posture": "绝对优势·可承诺", "plays": ["直接赢单：控节奏、加速签约、框架绑定、防节外生枝"] },
+      { "range": "0.50-0.75", "posture": "相对优势·可争取", "plays": ["制定规则", "加速进度", "总包(联合体/总集成)"] },
+      { "range": "0.25-0.50", "posture": "相对劣势·可参与", "plays": ["改变规则(A→B或A→A±1)", "减速拖延", "拆包"] },
+      { "range": "<0.25", "posture": "绝对劣势·重新复盘", "plays": ["重新回炉：放弃或养单，优先补C1/C2与D/A关系"] }
+    ],
+    "compositionRules": [
+      "S高但C5可信度低 → 先补招采情报再定规则",
+      "A弱D强 → 优先1K高层互访类动作",
+      "gate触发 → 唯一高杠杆动作是翻转A（见golden deal_Gate）"
+    ]
+  }
+}

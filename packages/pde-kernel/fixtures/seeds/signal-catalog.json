@@ -1,0 +1,36 @@
+{
+  "_note": "行为信号库 · 行业包 digital-energy v1.1。来源：G64111 P3/1K 的+/☆判定条件（原文照录，决策#1）＋PDE行为信号集＋C2/C6事件。deltaAlphaMap 默认 {weak:0.5, mid:1.0, strong:2.0}。judgmentGroup 规则：p3_plus 组任意2条成立→该干系人mark升为plus；p3_star 组事实证明法或≥2条→mark升为star（前提：顶压力不退缩公开排他支持）。所有 ai_extracted 证据必须 pending_review。",
+  "schemaVersion": "1.0",
+  "deltaAlphaMap": { "weak": 0.5, "mid": 1.0, "strong": 2.0 },
+  "signals": [
+    { "key": "co_plan_budget", "label": "一起共同策划项目预算", "group": "p3_plus", "direction": 1, "tier": "strong", "behavioral": true },
+    { "key": "provide_insider_info", "label": "提供客户内幕", "group": "p3_plus", "direction": 1, "tier": "strong", "behavioral": true },
+    { "key": "co_draft_tender_docs", "label": "一起制定招标文件", "group": "p3_plus", "direction": 1, "tier": "strong", "behavioral": true },
+    { "key": "share_competitor_intel", "label": "提供竞争对手情报", "group": "p3_plus", "direction": 1, "tier": "strong", "behavioral": true },
+    { "key": "referral_to_1k_or_4p", "label": "引荐1K或4P", "group": "p3_plus", "direction": 1, "tier": "strong", "behavioral": true },
+    { "key": "help_control_schedule", "label": "帮助控制项目进度", "group": "p3_plus", "direction": 1, "tier": "strong", "behavioral": true },
+
+    { "key": "guide_next_steps", "label": "指导下一步工作行为", "group": "p3_star", "direction": 1, "tier": "strong", "behavioral": true },
+    { "key": "set_favorable_requirements", "label": "确定有利于我方的商务及技术要求", "group": "p3_star", "direction": 1, "tier": "strong", "behavioral": true },
+    { "key": "exclusive_recommendation", "label": "排他性推荐我方", "group": "p3_star", "direction": 1, "tier": "strong", "behavioral": true },
+    { "key": "set_favorable_procurement_form", "label": "确定有利于我方的采购形式", "group": "p3_star", "direction": 1, "tier": "strong", "behavioral": true },
+    { "key": "pricing_guidance", "label": "指导报价", "group": "p3_star", "direction": 1, "tier": "strong", "behavioral": true },
+    { "key": "help_solve_ab_bi", "label": "协助解决A或D的燃眉之急", "group": "p3_star", "direction": 1, "tier": "strong", "behavioral": true },
+
+    { "key": "proc_strategy_alignment", "label": "与招采关键人密谋评标策略且落实使用", "group": "p2_engagement", "direction": 1, "tier": "strong", "behavioral": true, "mapsToMark": "star", "appliesToSlots": ["PROC_MGMT", "PROC_AGENT", "OWNER_REP"] },
+    { "key": "proc_verbal_commitment", "label": "招采关键人口头承诺采用有利评标策略", "group": "p2_engagement", "direction": 1, "tier": "mid", "behavioral": false, "mapsToMark": "plus", "appliesToSlots": ["PROC_MGMT", "PROC_AGENT", "OWNER_REP"] },
+
+    { "key": "intro_referral", "label": "主动引荐更高层（动用个人政治资本背书）", "group": "behavioral", "direction": 1, "tier": "strong", "behavioral": true },
+    { "key": "spec_alignment", "label": "需求/规格条款向我方独有能力收敛", "group": "behavioral", "direction": 1, "tier": "strong", "behavioral": true },
+    { "key": "attendance_upgrade", "label": "出席级别提升", "group": "behavioral", "direction": 1, "tier": "mid", "behavioral": true },
+    { "key": "verbal_positive", "label": "口头积极表态", "group": "behavioral", "direction": 1, "tier": "weak", "behavioral": false, "note": "言语会诈唬，刻意低权重" },
+    { "key": "reply_latency_up", "label": "回复显著变慢", "group": "behavioral", "direction": -1, "tier": "weak", "behavioral": true },
+    { "key": "meeting_cancel", "label": "关键会议被单方取消/降级", "group": "behavioral", "direction": -1, "tier": "mid", "behavioral": true },
+    { "key": "competitor_quote_request", "label": "主动索要竞品对比", "group": "behavioral", "direction": 0, "tier": "mid", "behavioral": true, "requiresManualDirection": true, "note": "可能是流程要求也可能是倒戈，人工定向" },
+    { "key": "internal_blocker_hint", "label": "主动透露内部反对声音", "group": "behavioral", "direction": 0, "tier": "mid", "behavioral": true, "requiresManualDirection": true, "note": "既可能是负信号也可能是队友递牌" },
+
+    { "key": "bi_identified", "label": "明确摸清D的燃眉之急", "group": "bi_ucv", "direction": 1, "tier": "weak", "behavioral": false, "effect": "C2置为已知；解锁act-solve-bi", "targetItem": "C2" },
+    { "key": "ucv_acknowledged", "label": "UCV方案获D认可（对应C6=3）", "group": "bi_ucv", "direction": 1, "tier": "mid", "behavioral": true, "targetItem": "C6" },
+    { "key": "ucv_delivered", "label": "UCV已落地解决BI（对应C6=5）", "group": "bi_ucv", "direction": 1, "tier": "strong", "behavioral": true, "targetItem": "C6" }
+  ]
+}

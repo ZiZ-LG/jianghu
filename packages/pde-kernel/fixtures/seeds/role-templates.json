@@ -1,0 +1,83 @@
+{
+  "_note": "四类客户 ADURC 角色先验模板 · 来源 G64111 v1.1 sheet③。用于 Diagnose→PDE init：按客户类型生成默认干系人槽位、典型岗位提示、影响力权重。所有初始立场先验统一为 mark=unk/cred=unclear（把'我们还不了解'诚实入模，VoI 自动把未识别角色顶到情报清单前列）。",
+  "schemaVersion": "1.0",
+  "customerTypes": [
+    {
+      "id": "central_soe",
+      "label": "央企发电集团（五大六小）",
+      "examples": "国家能源集团、国家电投、华能、华电、大唐、华润电力、三峡、中广核",
+      "orgLevels": "集团总部 → 区域/二级子公司 → 项目公司/场站",
+      "decisionTraits": "链条最长；总部定标准、二级做主体、项目去使用；强合规重流程；集团集采平台",
+      "slots": {
+        "A": { "typicalPositions": "集团/二级单位主要领导、分管数字化或财务副总、CIO/总会计师；大额上党组会/董事会", "w": 20 },
+        "D": { "typicalPositions": "信息化部/数智化部、财务部、工程管理部、新能源事业部负责人（视归口）", "w": 20 },
+        "PROC_MGMT": { "typicalPositions": "集团/二级单位采购招标管理部门负责人", "w": 4 },
+        "PROC_AGENT": { "typicalPositions": "招标代理机构、集采平台运营方（国能e购、E采通等）", "w": 2 },
+        "OWNER_REP": { "typicalPositions": "甲方项目代表（评标委员会）", "w": 4 },
+        "KEY_INFLUENCER": { "typicalPositions": "D/A最信任的规划、技术、秘书口骨干", "w": 10 },
+        "U": { "typicalPositions": "项目公司/场站成本、计划、工程、物资、合约岗", "slotMapping": "MEMBER" },
+        "R": { "typicalPositions": "信息化技术与规划专家、数据/网络安全部门、外部评标专家库", "slotMapping": "MEMBER 或 KEY_INFLUENCER（招采期）" },
+        "C": { "typicalPositions": "业务/信息化骨干、规划研究院、外部设计院/咨询/总集成商", "slotMapping": "证据信源（教练五级→q系数），通常不占权重槽" }
+      },
+      "biHints": ["数字化转型考核排名", "降本增效硬KPI", "按期投产目标", "审计巡视整改", "个人晋升(处级/部门总)", "安全质量责任"]
+    },
+    {
+      "id": "local_soe",
+      "label": "地方能源国企",
+      "examples": "京能、广东能源、深圳能源、四川能投、浙江新能、甘肃能源",
+      "orgLevels": "集团总部 → 区域/子公司 → 项目公司/场站（层级中等，省/市国资委监管）",
+      "decisionTraits": "省国资委定调、集团做主体、子公司落地；比央企快比民企规范；省内隐性关系网是关键",
+      "slots": {
+        "A": { "typicalPositions": "集团董事长/总经理（省管干部）、分管数字化/财务副总", "w": 20 },
+        "D": { "typicalPositions": "信息化/数字化部、财务部、新能源/工程事业部负责人", "w": 20 },
+        "PROC_MGMT": { "typicalPositions": "集团采购/招标管理部负责人", "w": 4 },
+        "PROC_AGENT": { "typicalPositions": "省(市)公共资源交易中心或省级国企采购平台、招标代理", "w": 2 },
+        "OWNER_REP": { "typicalPositions": "甲方项目代表", "w": 4 },
+        "KEY_INFLUENCER": { "typicalPositions": "董事长/总经理信任圈（战略部、秘书口）、省国资委关系人", "w": 10 },
+        "U": { "typicalPositions": "子公司/项目公司投资、计划、成本、工程、运营岗（一专多能）", "slotMapping": "MEMBER" },
+        "R": { "typicalPositions": "信息化技术骨干、外部设计院/咨询、省级评标专家库", "slotMapping": "MEMBER 或 KEY_INFLUENCER" },
+        "C": { "typicalPositions": "集团内骨干、分管领导秘书、已合作部门负责人、外部顾问", "slotMapping": "证据信源" }
+      },
+      "biHints": ["省国资委对标考核排名", "做强省级平台政绩", "抢并网节点", "资产证券化/混改合规", "省内系统晋升与口碑"]
+    },
+    {
+      "id": "private_dist",
+      "label": "分布式头部民企",
+      "examples": "正泰安能、阳光新能源、创维光伏、TCL光伏",
+      "orgLevels": "集团/公司总部 → 事业部/区域 → 项目公司（扁平）",
+      "decisionTraits": "老板一锤定音、ROI导向、决策快；需防'只搞定老板被下面卡'",
+      "aEqualsD": true,
+      "slots": {
+        "A": { "typicalPositions": "董事长/总裁/实际控制人；老板常既是A又是D（同一人时权重合并=40）", "w": 20 },
+        "D": { "typicalPositions": "总经理/分管副总或数字化/工程负责人；中小项目老板直接拍", "w": 20 },
+        "PROC_MGMT": { "typicalPositions": "采购/商务负责人、老板指定招标对接人", "w": 4 },
+        "PROC_AGENT": { "typicalPositions": "招标代理（部分项目）；直采/邀标时本槽可空置", "w": 2 },
+        "OWNER_REP": { "typicalPositions": "甲方项目代表/商务对接人", "w": 4 },
+        "KEY_INFLUENCER": { "typicalPositions": "老板最信任的财务副总、外部顾问、同行老板", "w": 10 },
+        "U": { "typicalPositions": "投资、工程、成本团队（人少一专多能）", "slotMapping": "MEMBER" },
+        "R": { "typicalPositions": "信息化负责人或外部技术顾问", "slotMapping": "MEMBER" },
+        "C": { "typicalPositions": "老板信任高管、已合作标杆客户", "slotMapping": "证据信源" }
+      },
+      "biHints": ["投资打水漂焦虑", "成本失控", "融资/上市规范", "老板行业话语权与口碑"]
+    },
+    {
+      "id": "epc",
+      "label": "EPC总承包商",
+      "examples": "中国电建、中国能建、特变电工",
+      "orgLevels": "集团 → 工程局/子公司/设计院 → 区域/事业部 → 项目部",
+      "decisionTraits": "项目制驱动；总部立标杆、项目部要落地；看重多项目复制与投标加分",
+      "slots": {
+        "A": { "typicalPositions": "集团/工程局分管信息化或工程的领导（副总、总工、CIO）", "w": 20 },
+        "D": { "typicalPositions": "信息化部/科技部、工程管理部、总工办负责人；多项目时为事业部/区域负责人", "w": 20 },
+        "PROC_MGMT": { "typicalPositions": "物资采购部/招标中心负责人", "w": 4 },
+        "PROC_AGENT": { "typicalPositions": "招标代理", "w": 2 },
+        "OWNER_REP": { "typicalPositions": "项目甲方代表（多为项目部）", "w": 4 },
+        "KEY_INFLUENCER": { "typicalPositions": "前期：总工办技术骨干；招采期：物资/招标对接人", "w": 10 },
+        "U": { "typicalPositions": "项目部——项目经理、总工、商务经理、计划/成本/安全/质量员", "slotMapping": "MEMBER" },
+        "R": { "typicalPositions": "信息化部技术、总工办、企业管理部", "slotMapping": "MEMBER" },
+        "C": { "typicalPositions": "项目部技术/商务骨干、行业协会专家", "slotMapping": "证据信源" }
+      },
+      "biHints": ["项目亏损预警", "工期/履约压力", "投标缺数字化亮点", "局内业绩与晋升"]
+    }
+  ]
+}

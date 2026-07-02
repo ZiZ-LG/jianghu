@@ -1,0 +1,54 @@
+{
+  "_note": "PDE 内核参数 v1.0 · 权威来源是 kernel/reference_impl.py，本文件为其导出。改参数必须先改 reference_impl.py 并重新生成 golden-tests.json。所有参数为租户级可配，此处为 digital-energy 行业包默认值（LG 2026-07-01 标定）。",
+  "schemaVersion": "1.0",
+  "markTarget": {
+    "star":  [0.85, 0.10, 0.05],
+    "plus":  [0.65, 0.25, 0.10],
+    "eq":    [0.20, 0.60, 0.20],
+    "unk":   [0.3333333333, 0.3333333333, 0.3333333333],
+    "minus": [0.10, 0.25, 0.65],
+    "x":     [0.05, 0.10, 0.85]
+  },
+  "credibility": {
+    "consensus": { "label": "共识", "c": 1.0,  "n": 8.0 },
+    "explicit":  { "label": "明确", "c": 0.8,  "n": 5.0 },
+    "inference": { "label": "推理", "c": 0.45, "n": 2.5 },
+    "unclear":   { "label": "不清", "c": 0.15, "n": 1.0 }
+  },
+  "priorStrengthN0": 2.0,
+  "lambdaOpposePenalty": 1.3,
+  "logistic": { "k": 4.0, "sMid": 0.15 },
+  "gate": { "poThreshold": 0.60, "pwinCap": 0.15, "appliesToSlots": ["A"] },
+  "stageMalleability": {
+    "initiation": 1.0, "feasibility": 0.85, "budget_approval": 0.65,
+    "tender_design": 0.40, "tender_execution": 0.20
+  },
+  "c4LegacyScore": { "initiation": 5, "feasibility": 4, "budget_approval": 3, "tender_design": 2, "tender_execution": 1 },
+  "halfLifeDays": { "procurement": 30, "stance": 90, "structural": 180 },
+  "slotWeights": {
+    "A": 20, "D": 20, "PROC_MGMT": 4, "PROC_AGENT": 2, "OWNER_REP": 4,
+    "KEY_INFLUENCER": 10, "MEMBER": 1
+  },
+  "memberPoolCap": 5,
+  "samePersonSlotMerge": "同一自然人占多个slot时权重相加（民企老板 A=D → w=40）",
+  "recommendation": {
+    "checkNeffThreshold": 3.0,
+    "checkKeyStakeholderWNorm": 0.15,
+    "checkScoreGap": 20,
+    "raiseRatioThreshold": 1.5,
+    "raiseMinStageM": 0.40,
+    "foldConsecutiveNegativeEV": 2,
+    "priorityOrder": ["FOLD", "CHECK", "RAISE", "CALL"]
+  },
+  "voiScanDefaults": {
+    "stanceUnknown": { "opt": ["plus", "explicit"], "pess": ["minus", "explicit"] },
+    "cCompScan": { "lo": 0.70, "hi": 1.00 }
+  },
+  "costTierWan": { "low": 0.3, "mid": 1.5, "high": 5.0 },
+  "cCompDefault": 1.0,
+  "cCompSuggestionByStage": {
+    "_note": "UI 建议值，非内核强制：介入越晚在位对手先验越强",
+    "initiation": 1.0, "feasibility": 0.95, "budget_approval": 0.9,
+    "tender_design": 0.8, "tender_execution": 0.7
+  }
+}

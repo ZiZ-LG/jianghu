@@ -30,7 +30,9 @@ server/                  后端 API
   src/ai.ts  suggest.ts  enrich.ts   AI 推演 / 关系推断 / 企查查建图
   src/qccMcp.ts          企查查 MCP（streamable-HTTP）客户端
   prisma/schema.prisma   数据模型
+packages/pde-kernel/     ★ PDE 数学内核（G64111×EV 决策引擎，纯函数零依赖）；权威规范=docs/pde-handoff/（oracle+golden **禁手改**）；硬规则见包内 CLAUDE.md
 docs/                    PRD、G64111-评分规格.md、部署指南（设计权威来源）
+docs/pde-handoff/        PDE 交接包（SPEC/TASKS/DECISIONS/reference_impl.py/golden/seeds）
 参考文件/                 原始原型与方法论素材
 deploy-macmini.sh        单机/内网一键部署（复用生产 Docker 栈）
 docker-compose.yml       生产部署栈（Postgres + 后端 + Nginx 前端）
@@ -55,6 +57,8 @@ cd app && npm install && npm run dev
 ```bash
 cd app && npx tsc --noEmit && npm run test   # 前端类型 + 17 单测
 cd server && npx tsc --noEmit                # 后端类型
+# 改过 packages/pde-kernel 时追加：
+cd packages/pde-kernel && npx tsc --noEmit && npm run test   # 内核类型 + golden(1e-6) + 属性测试
 ```
 
 > 完整脚本以各 `package.json` 的 `scripts` 为准（含 build / preview）。**改算法后务必跑 `app/` 的单测。**

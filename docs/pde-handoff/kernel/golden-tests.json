@@ -1,0 +1,1070 @@
+{
+  "params_echo": {
+    "MARK_TARGET": {
+      "star": [
+        0.85,
+        0.1,
+        0.05
+      ],
+      "plus": [
+        0.65,
+        0.25,
+        0.1
+      ],
+      "eq": [
+        0.2,
+        0.6,
+        0.2
+      ],
+      "unk": [
+        0.333333,
+        0.333333,
+        0.333333
+      ],
+      "minus": [
+        0.1,
+        0.25,
+        0.65
+      ],
+      "x": [
+        0.05,
+        0.1,
+        0.85
+      ]
+    },
+    "CRED": {
+      "consensus": {
+        "c": 1.0,
+        "n": 8.0
+      },
+      "explicit": {
+        "c": 0.8,
+        "n": 5.0
+      },
+      "inference": {
+        "c": 0.45,
+        "n": 2.5
+      },
+      "unclear": {
+        "c": 0.15,
+        "n": 1.0
+      }
+    },
+    "N0": 2.0,
+    "LAMBDA": 1.3,
+    "K": 4.0,
+    "S_MID": 0.15,
+    "GATE_PO": 0.6,
+    "GATE_CAP": 0.15,
+    "M_STAGE": {
+      "initiation": 1.0,
+      "feasibility": 0.85,
+      "budget_approval": 0.65,
+      "tender_design": 0.4,
+      "tender_execution": 0.2
+    },
+    "HALFLIFE": {
+      "procurement": 30.0,
+      "stance": 90.0,
+      "structural": 180.0
+    },
+    "SLOT_W": {
+      "A": 20.0,
+      "D": 20.0,
+      "PROC_MGMT": 4.0,
+      "PROC_AGENT": 2.0,
+      "OWNER_REP": 4.0,
+      "KEY_INFLUENCER": 10.0,
+      "MEMBER": 1.0
+    },
+    "MEMBER_POOL_CAP": 5.0,
+    "CHECK_NEFF": 3.0,
+    "CHECK_W_NORM": 0.15,
+    "CHECK_SCORE_GAP": 20.0,
+    "RAISE_RATIO": 1.5,
+    "RAISE_MIN_M": 0.4
+  },
+  "cases": {
+    "deal_A_raise": {
+      "input": {
+        "id": "golden-deal-A",
+        "pot": 100.0,
+        "planned_cost": 8.0,
+        "stage": "budget_approval",
+        "c_comp": 0.85,
+        "stakeholders": [
+          {
+            "id": "A",
+            "slots": [
+              "A"
+            ],
+            "mark": "plus",
+            "cred": "consensus"
+          },
+          {
+            "id": "D",
+            "slots": [
+              "D"
+            ],
+            "mark": "plus",
+            "cred": "explicit"
+          },
+          {
+            "id": "PM",
+            "slots": [
+              "PROC_MGMT"
+            ],
+            "mark": "eq",
+            "cred": "explicit"
+          },
+          {
+            "id": "AG",
+            "slots": [
+              "PROC_AGENT"
+            ],
+            "mark": "unk"
+          },
+          {
+            "id": "OR",
+            "slots": [
+              "OWNER_REP"
+            ],
+            "mark": "plus",
+            "cred": "inference"
+          },
+          {
+            "id": "KI",
+            "slots": [
+              "KEY_INFLUENCER"
+            ],
+            "mark": "plus",
+            "cred": "explicit"
+          },
+          {
+            "id": "M1",
+            "slots": [
+              "MEMBER"
+            ],
+            "mark": "eq",
+            "cred": "inference"
+          },
+          {
+            "id": "M2",
+            "slots": [
+              "MEMBER"
+            ],
+            "mark": "eq",
+            "cred": "inference"
+          }
+        ],
+        "items": [
+          {
+            "key": "C1",
+            "raw": 8,
+            "cred": "explicit"
+          },
+          {
+            "key": "C2",
+            "raw": 5,
+            "cred": "explicit"
+          },
+          {
+            "key": "C3",
+            "raw": 4,
+            "cred": "explicit"
+          },
+          {
+            "key": "C4",
+            "raw": 3,
+            "cred": "consensus",
+            "volatility": "structural"
+          },
+          {
+            "key": "C5",
+            "raw": 5,
+            "cred": "explicit",
+            "volatility": "procurement"
+          },
+          {
+            "key": "C6",
+            "raw": 3,
+            "cred": "explicit"
+          },
+          {
+            "key": "P1",
+            "raw": 2,
+            "cred": "explicit"
+          },
+          {
+            "key": "P2",
+            "raw": 5,
+            "cred": "explicit"
+          },
+          {
+            "key": "P3",
+            "raw": 10,
+            "cred": "explicit"
+          },
+          {
+            "key": "P4",
+            "raw": 5,
+            "cred": "explicit"
+          },
+          {
+            "key": "1K",
+            "raw": 10,
+            "cred": "consensus"
+          }
+        ]
+      },
+      "eval": {
+        "S": 0.299068,
+        "pwin_raw": 0.644803,
+        "pwin": 0.548083,
+        "gate": false,
+        "m_stage": 0.65,
+        "ev_continue": 46.808257,
+        "stakeholders": [
+          {
+            "id": "A",
+            "w": 20.0,
+            "pS": 0.586667,
+            "pN": 0.266667,
+            "pO": 0.146667,
+            "net": 0.396,
+            "n_eff": 8.0,
+            "entropy": 0.861885,
+            "w_norm": 0.322581
+          },
+          {
+            "id": "D",
+            "w": 20.0,
+            "pS": 0.559524,
+            "pN": 0.27381,
+            "pO": 0.166667,
+            "net": 0.342857,
+            "n_eff": 5.0,
+            "entropy": 0.890393,
+            "w_norm": 0.322581
+          },
+          {
+            "id": "PM",
+            "w": 4.0,
+            "pS": 0.238095,
+            "pN": 0.52381,
+            "pO": 0.238095,
+            "net": -0.071429,
+            "n_eff": 5.0,
+            "entropy": 0.93034,
+            "w_norm": 0.064516
+          },
+          {
+            "id": "AG",
+            "w": 2.0,
+            "pS": 0.333333,
+            "pN": 0.333333,
+            "pO": 0.333333,
+            "net": -0.1,
+            "n_eff": 1.0,
+            "entropy": 1.0,
+            "w_norm": 0.032258
+          },
+          {
+            "id": "OR",
+            "w": 4.0,
+            "pS": 0.509259,
+            "pN": 0.287037,
+            "pO": 0.203704,
+            "net": 0.244444,
+            "n_eff": 2.5,
+            "entropy": 0.933925,
+            "w_norm": 0.064516
+          },
+          {
+            "id": "KI",
+            "w": 10.0,
+            "pS": 0.559524,
+            "pN": 0.27381,
+            "pO": 0.166667,
+            "net": 0.342857,
+            "n_eff": 5.0,
+            "entropy": 0.890393,
+            "w_norm": 0.16129
+          },
+          {
+            "id": "M1",
+            "w": 1.0,
+            "pS": 0.259259,
+            "pN": 0.481481,
+            "pO": 0.259259,
+            "net": -0.077778,
+            "n_eff": 2.5,
+            "entropy": 0.957454,
+            "w_norm": 0.016129
+          },
+          {
+            "id": "M2",
+            "w": 1.0,
+            "pS": 0.259259,
+            "pN": 0.481481,
+            "pO": 0.259259,
+            "net": -0.077778,
+            "n_eff": 2.5,
+            "entropy": 0.957454,
+            "w_norm": 0.016129
+          }
+        ]
+      },
+      "score": {
+        "nominal": 60.0,
+        "weighted": 50.6,
+        "gap": 9.4
+      },
+      "actions": [
+        {
+          "action_id": "act-1k-exec-visit",
+          "d_pwin": 0.05092,
+          "gross": 3.309772,
+          "cost": 1.5,
+          "dEV": 1.809772,
+          "ratio": 2.206515
+        },
+        {
+          "action_id": "act-p3-coplan",
+          "d_pwin": 0.045705,
+          "gross": 2.970793,
+          "cost": 1.0,
+          "dEV": 1.970793,
+          "ratio": 2.970793
+        }
+      ],
+      "recommendation": {
+        "action": "RAISE",
+        "reason": "存在高杠杆动作且阶段窗口未关闭",
+        "best_action": "act-p3-coplan"
+      }
+    },
+    "deal_B_check": {
+      "input": {
+        "id": "golden-deal-B",
+        "pot": 100.0,
+        "planned_cost": 8.0,
+        "stage": "budget_approval",
+        "c_comp": 0.85,
+        "stakeholders": [
+          {
+            "id": "A",
+            "slots": [
+              "A"
+            ],
+            "mark": "plus",
+            "cred": "unclear"
+          },
+          {
+            "id": "D",
+            "slots": [
+              "D"
+            ],
+            "mark": "plus",
+            "cred": "inference"
+          },
+          {
+            "id": "PM",
+            "slots": [
+              "PROC_MGMT"
+            ],
+            "mark": "unk"
+          },
+          {
+            "id": "AG",
+            "slots": [
+              "PROC_AGENT"
+            ],
+            "mark": "unk"
+          },
+          {
+            "id": "OR",
+            "slots": [
+              "OWNER_REP"
+            ],
+            "mark": "unk"
+          },
+          {
+            "id": "KI",
+            "slots": [
+              "KEY_INFLUENCER"
+            ],
+            "mark": "plus",
+            "cred": "unclear"
+          },
+          {
+            "id": "M1",
+            "slots": [
+              "MEMBER"
+            ],
+            "mark": "unk"
+          },
+          {
+            "id": "M2",
+            "slots": [
+              "MEMBER"
+            ],
+            "mark": "unk"
+          }
+        ],
+        "items": [
+          {
+            "key": "C1",
+            "raw": 8,
+            "cred": "inference"
+          },
+          {
+            "key": "C2",
+            "raw": 5,
+            "cred": "unclear"
+          },
+          {
+            "key": "C3",
+            "raw": 4,
+            "cred": "inference"
+          },
+          {
+            "key": "C4",
+            "raw": 3,
+            "cred": "consensus",
+            "volatility": "structural"
+          },
+          {
+            "key": "C5",
+            "raw": 5,
+            "cred": "unclear",
+            "volatility": "procurement"
+          },
+          {
+            "key": "C6",
+            "raw": 3,
+            "cred": "inference"
+          },
+          {
+            "key": "P1",
+            "raw": 2,
+            "cred": "inference"
+          },
+          {
+            "key": "P2",
+            "raw": 5,
+            "cred": "unclear"
+          },
+          {
+            "key": "P3",
+            "raw": 10,
+            "cred": "inference"
+          },
+          {
+            "key": "P4",
+            "raw": 5,
+            "cred": "unclear"
+          },
+          {
+            "key": "1K",
+            "raw": 10,
+            "cred": "unclear"
+          }
+        ]
+      },
+      "eval": {
+        "S": 0.111111,
+        "pwin_raw": 0.461189,
+        "pwin": 0.392011,
+        "gate": false,
+        "m_stage": 0.65,
+        "ev_continue": 31.201094,
+        "stakeholders": [
+          {
+            "id": "A",
+            "w": 20.0,
+            "pS": 0.438889,
+            "pN": 0.305556,
+            "pO": 0.255556,
+            "net": 0.106667,
+            "n_eff": 1.0,
+            "entropy": 0.976105,
+            "w_norm": 0.322581
+          },
+          {
+            "id": "D",
+            "w": 20.0,
+            "pS": 0.509259,
+            "pN": 0.287037,
+            "pO": 0.203704,
+            "net": 0.244444,
+            "n_eff": 2.5,
+            "entropy": 0.933925,
+            "w_norm": 0.322581
+          },
+          {
+            "id": "PM",
+            "w": 4.0,
+            "pS": 0.333333,
+            "pN": 0.333333,
+            "pO": 0.333333,
+            "net": -0.1,
+            "n_eff": 1.0,
+            "entropy": 1.0,
+            "w_norm": 0.064516
+          },
+          {
+            "id": "AG",
+            "w": 2.0,
+            "pS": 0.333333,
+            "pN": 0.333333,
+            "pO": 0.333333,
+            "net": -0.1,
+            "n_eff": 1.0,
+            "entropy": 1.0,
+            "w_norm": 0.032258
+          },
+          {
+            "id": "OR",
+            "w": 4.0,
+            "pS": 0.333333,
+            "pN": 0.333333,
+            "pO": 0.333333,
+            "net": -0.1,
+            "n_eff": 1.0,
+            "entropy": 1.0,
+            "w_norm": 0.064516
+          },
+          {
+            "id": "KI",
+            "w": 10.0,
+            "pS": 0.438889,
+            "pN": 0.305556,
+            "pO": 0.255556,
+            "net": 0.106667,
+            "n_eff": 1.0,
+            "entropy": 0.976105,
+            "w_norm": 0.16129
+          },
+          {
+            "id": "M1",
+            "w": 1.0,
+            "pS": 0.333333,
+            "pN": 0.333333,
+            "pO": 0.333333,
+            "net": -0.1,
+            "n_eff": 1.0,
+            "entropy": 1.0,
+            "w_norm": 0.016129
+          },
+          {
+            "id": "M2",
+            "w": 1.0,
+            "pS": 0.333333,
+            "pN": 0.333333,
+            "pO": 0.333333,
+            "net": -0.1,
+            "n_eff": 1.0,
+            "entropy": 1.0,
+            "w_norm": 0.016129
+          }
+        ]
+      },
+      "score": {
+        "nominal": 60.0,
+        "weighted": 19.65,
+        "gap": 40.35
+      },
+      "actions": [
+        {
+          "action_id": "act-verify-D",
+          "d_pwin": 0.026918,
+          "gross": 1.749673,
+          "cost": 0.3,
+          "dEV": 1.449673,
+          "ratio": 5.832243
+        },
+        {
+          "action_id": "act-1k-exec-visit",
+          "d_pwin": 0.115534,
+          "gross": 7.509725,
+          "cost": 1.5,
+          "dEV": 6.009725,
+          "ratio": 5.006484
+        }
+      ],
+      "recommendation": {
+        "action": "CHECK",
+        "reason": "关键干系人低可信度或名义/加权分差过大",
+        "weak_key_stakeholders": [
+          "A",
+          "D",
+          "KI"
+        ],
+        "score_gap": 40.35
+      }
+    },
+    "deal_B_voi_A": {
+      "stakeholder_id": "A",
+      "pwin_opt": 0.456648,
+      "pwin_pess": 0.225821,
+      "voi": 15.003708
+    },
+    "deal_B_voi_ccomp": {
+      "var": "c_comp",
+      "voi": 8.993192
+    },
+    "deal_Gate": {
+      "input": {
+        "id": "golden-deal-Gate",
+        "pot": 100.0,
+        "planned_cost": 8.0,
+        "stage": "budget_approval",
+        "c_comp": 0.85,
+        "stakeholders": [
+          {
+            "id": "A",
+            "slots": [
+              "A"
+            ],
+            "mark": "x",
+            "cred": "explicit"
+          },
+          {
+            "id": "D",
+            "slots": [
+              "D"
+            ],
+            "mark": "plus",
+            "cred": "explicit"
+          },
+          {
+            "id": "PM",
+            "slots": [
+              "PROC_MGMT"
+            ],
+            "mark": "eq",
+            "cred": "explicit"
+          },
+          {
+            "id": "AG",
+            "slots": [
+              "PROC_AGENT"
+            ],
+            "mark": "unk"
+          },
+          {
+            "id": "OR",
+            "slots": [
+              "OWNER_REP"
+            ],
+            "mark": "plus",
+            "cred": "inference"
+          },
+          {
+            "id": "KI",
+            "slots": [
+              "KEY_INFLUENCER"
+            ],
+            "mark": "plus",
+            "cred": "explicit"
+          },
+          {
+            "id": "M1",
+            "slots": [
+              "MEMBER"
+            ],
+            "mark": "eq",
+            "cred": "inference"
+          },
+          {
+            "id": "M2",
+            "slots": [
+              "MEMBER"
+            ],
+            "mark": "eq",
+            "cred": "inference"
+          }
+        ],
+        "items": [
+          {
+            "key": "C1",
+            "raw": 8,
+            "cred": "explicit"
+          },
+          {
+            "key": "C2",
+            "raw": 5,
+            "cred": "explicit"
+          },
+          {
+            "key": "C3",
+            "raw": 4,
+            "cred": "explicit"
+          },
+          {
+            "key": "C4",
+            "raw": 3,
+            "cred": "consensus",
+            "volatility": "structural"
+          },
+          {
+            "key": "C5",
+            "raw": 5,
+            "cred": "explicit",
+            "volatility": "procurement"
+          },
+          {
+            "key": "C6",
+            "raw": 3,
+            "cred": "explicit"
+          },
+          {
+            "key": "P1",
+            "raw": 2,
+            "cred": "explicit"
+          },
+          {
+            "key": "P2",
+            "raw": 5,
+            "cred": "explicit"
+          },
+          {
+            "key": "P3",
+            "raw": 10,
+            "cred": "explicit"
+          },
+          {
+            "key": "P4",
+            "raw": 5,
+            "cred": "explicit"
+          },
+          {
+            "key": "1K",
+            "raw": 10,
+            "cred": "consensus"
+          }
+        ]
+      },
+      "eval": {
+        "S": -0.080978,
+        "pwin_raw": 0.284161,
+        "pwin": 0.15,
+        "gate": true,
+        "m_stage": 0.65,
+        "ev_continue": 7.0,
+        "stakeholders": [
+          {
+            "id": "A",
+            "w": 20.0,
+            "pS": 0.130952,
+            "pN": 0.166667,
+            "pO": 0.702381,
+            "net": -0.782143,
+            "n_eff": 5.0,
+            "entropy": 0.740006,
+            "w_norm": 0.322581
+          },
+          {
+            "id": "D",
+            "w": 20.0,
+            "pS": 0.559524,
+            "pN": 0.27381,
+            "pO": 0.166667,
+            "net": 0.342857,
+            "n_eff": 5.0,
+            "entropy": 0.890393,
+            "w_norm": 0.322581
+          },
+          {
+            "id": "PM",
+            "w": 4.0,
+            "pS": 0.238095,
+            "pN": 0.52381,
+            "pO": 0.238095,
+            "net": -0.071429,
+            "n_eff": 5.0,
+            "entropy": 0.93034,
+            "w_norm": 0.064516
+          },
+          {
+            "id": "AG",
+            "w": 2.0,
+            "pS": 0.333333,
+            "pN": 0.333333,
+            "pO": 0.333333,
+            "net": -0.1,
+            "n_eff": 1.0,
+            "entropy": 1.0,
+            "w_norm": 0.032258
+          },
+          {
+            "id": "OR",
+            "w": 4.0,
+            "pS": 0.509259,
+            "pN": 0.287037,
+            "pO": 0.203704,
+            "net": 0.244444,
+            "n_eff": 2.5,
+            "entropy": 0.933925,
+            "w_norm": 0.064516
+          },
+          {
+            "id": "KI",
+            "w": 10.0,
+            "pS": 0.559524,
+            "pN": 0.27381,
+            "pO": 0.166667,
+            "net": 0.342857,
+            "n_eff": 5.0,
+            "entropy": 0.890393,
+            "w_norm": 0.16129
+          },
+          {
+            "id": "M1",
+            "w": 1.0,
+            "pS": 0.259259,
+            "pN": 0.481481,
+            "pO": 0.259259,
+            "net": -0.077778,
+            "n_eff": 2.5,
+            "entropy": 0.957454,
+            "w_norm": 0.016129
+          },
+          {
+            "id": "M2",
+            "w": 1.0,
+            "pS": 0.259259,
+            "pN": 0.481481,
+            "pO": 0.259259,
+            "net": -0.077778,
+            "n_eff": 2.5,
+            "entropy": 0.957454,
+            "w_norm": 0.016129
+          }
+        ]
+      },
+      "score": {
+        "nominal": 60.0,
+        "weighted": 50.6,
+        "gap": 9.4
+      },
+      "actions": [
+        {
+          "action_id": "act-flip-A",
+          "d_pwin": 0.271801,
+          "gross": 17.667074,
+          "cost": 2.0,
+          "dEV": 15.667074,
+          "ratio": 8.833537
+        }
+      ],
+      "recommendation": {
+        "action": "RAISE",
+        "reason": "存在高杠杆动作且阶段窗口未关闭",
+        "best_action": "act-flip-A"
+      }
+    },
+    "deal_Fold": {
+      "input": {
+        "id": "golden-deal-Fold",
+        "pot": 10.0,
+        "planned_cost": 8.0,
+        "stage": "budget_approval",
+        "c_comp": 0.85,
+        "stakeholders": [
+          {
+            "id": "A",
+            "slots": [
+              "A"
+            ],
+            "mark": "minus",
+            "cred": "explicit"
+          },
+          {
+            "id": "D",
+            "slots": [
+              "D"
+            ],
+            "mark": "eq",
+            "cred": "inference"
+          },
+          {
+            "id": "PM",
+            "slots": [
+              "PROC_MGMT"
+            ],
+            "mark": "unk"
+          },
+          {
+            "id": "AG",
+            "slots": [
+              "PROC_AGENT"
+            ],
+            "mark": "unk"
+          },
+          {
+            "id": "OR",
+            "slots": [
+              "OWNER_REP"
+            ],
+            "mark": "unk"
+          },
+          {
+            "id": "KI",
+            "slots": [
+              "KEY_INFLUENCER"
+            ],
+            "mark": "unk"
+          },
+          {
+            "id": "M1",
+            "slots": [
+              "MEMBER"
+            ],
+            "mark": "unk"
+          },
+          {
+            "id": "M2",
+            "slots": [
+              "MEMBER"
+            ],
+            "mark": "unk"
+          }
+        ],
+        "items": [
+          {
+            "key": "C1",
+            "raw": 5,
+            "cred": "inference"
+          }
+        ]
+      },
+      "eval": {
+        "S": -0.241449,
+        "pwin_raw": 0.172817,
+        "pwin": 0.146894,
+        "gate": false,
+        "m_stage": 0.65,
+        "ev_continue": -6.53106,
+        "stakeholders": [
+          {
+            "id": "A",
+            "w": 20.0,
+            "pS": 0.166667,
+            "pN": 0.27381,
+            "pO": 0.559524,
+            "net": -0.560714,
+            "n_eff": 5.0,
+            "entropy": 0.890393,
+            "w_norm": 0.322581
+          },
+          {
+            "id": "D",
+            "w": 20.0,
+            "pS": 0.259259,
+            "pN": 0.481481,
+            "pO": 0.259259,
+            "net": -0.077778,
+            "n_eff": 2.5,
+            "entropy": 0.957454,
+            "w_norm": 0.322581
+          },
+          {
+            "id": "PM",
+            "w": 4.0,
+            "pS": 0.333333,
+            "pN": 0.333333,
+            "pO": 0.333333,
+            "net": -0.1,
+            "n_eff": 1.0,
+            "entropy": 1.0,
+            "w_norm": 0.064516
+          },
+          {
+            "id": "AG",
+            "w": 2.0,
+            "pS": 0.333333,
+            "pN": 0.333333,
+            "pO": 0.333333,
+            "net": -0.1,
+            "n_eff": 1.0,
+            "entropy": 1.0,
+            "w_norm": 0.032258
+          },
+          {
+            "id": "OR",
+            "w": 4.0,
+            "pS": 0.333333,
+            "pN": 0.333333,
+            "pO": 0.333333,
+            "net": -0.1,
+            "n_eff": 1.0,
+            "entropy": 1.0,
+            "w_norm": 0.064516
+          },
+          {
+            "id": "KI",
+            "w": 10.0,
+            "pS": 0.333333,
+            "pN": 0.333333,
+            "pO": 0.333333,
+            "net": -0.1,
+            "n_eff": 1.0,
+            "entropy": 1.0,
+            "w_norm": 0.16129
+          },
+          {
+            "id": "M1",
+            "w": 1.0,
+            "pS": 0.333333,
+            "pN": 0.333333,
+            "pO": 0.333333,
+            "net": -0.1,
+            "n_eff": 1.0,
+            "entropy": 1.0,
+            "w_norm": 0.016129
+          },
+          {
+            "id": "M2",
+            "w": 1.0,
+            "pS": 0.333333,
+            "pN": 0.333333,
+            "pO": 0.333333,
+            "net": -0.1,
+            "n_eff": 1.0,
+            "entropy": 1.0,
+            "w_norm": 0.016129
+          }
+        ]
+      },
+      "score": {
+        "nominal": 5.0,
+        "weighted": 2.25,
+        "gap": 2.75
+      },
+      "actions": [
+        {
+          "action_id": "act-fix-A",
+          "d_pwin": 0.194242,
+          "gross": 1.262575,
+          "cost": 1.5,
+          "dEV": -0.237425,
+          "ratio": 0.841717
+        },
+        {
+          "action_id": "act-fix-D",
+          "d_pwin": 0.077876,
+          "gross": 0.506194,
+          "cost": 1.0,
+          "dEV": -0.493806,
+          "ratio": 0.506194
+        }
+      ],
+      "recommendation": {
+        "action": "FOLD",
+        "reason": "EV 连续两期为负且无正 ΔEV 动作"
+      }
+    }
+  }
+}
