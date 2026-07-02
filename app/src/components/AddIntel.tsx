@@ -1,5 +1,5 @@
-// 「＋ 添加情报」单入口（P3，落地 docs/添加情报-单入口原型.html）：
-// 纯人工喂料三合一——✍️口述录入 / 🎧录音转写 / 💬和地图对话，收编原先分散的入口（顶栏录入情报 + 工具条录音接入 + 左栏对话）。
+// 「＋ 添加情报」单入口（P3 · 第1刀收口）：
+// 纯人工喂料二合一——✍️口述录入 / 🎧录音转写；「和地图对话」已收进推演坞坞尾（一处常驻，不再算"喂料"）。
 // 「🔍 自算补全」是 AI 后台主动挖、非「添加」动作 → 留在工具条收件箱旁（产物进收件箱人审），不并入此处。
 // 三个输入体各自已守铁律②（明说直落、推断进收件箱），此处只做单入口容器，不碰落库逻辑。
 import { useState } from 'react';
@@ -7,13 +7,11 @@ import type { Account, Opportunity } from '../types';
 import { Modal } from './Modal';
 import { IntelCapture } from './IntelCapture';
 import { RecordingPanel } from './RecordingPanel';
-import { ChatPanel } from './ChatPanel';
 
-type Way = 'dictate' | 'record' | 'chat';
+type Way = 'dictate' | 'record';
 const WAYS: { key: Way; icon: string; title: string; desc: string; hot?: boolean }[] = [
   { key: 'dictate', icon: '✍️', title: '口述录入', desc: '粘贴拜访口述 / 打字，AI 整理成图', hot: true },
   { key: 'record', icon: '🎧', title: '录音转写', desc: '飞书妙记 · 上传文件 · 得到大脑' },
-  { key: 'chat', icon: '💬', title: '和地图对话', desc: '问一句、补一条，边聊边建' },
 ];
 
 export function AddIntel({ account, opp, role, onClose, onDone }: {
@@ -43,11 +41,6 @@ export function AddIntel({ account, opp, role, onClose, onDone }: {
           )}
           {way === 'record' && (
             <RecordingPanel embedded accountId={account.id} role={role} onClose={onClose} onExtracted={onDone} />
-          )}
-          {way === 'chat' && (
-            opp
-              ? <div className="addintel-chat"><ChatPanel account={account} opp={opp} onDone={onDone} height={340} /></div>
-              : <div className="addintel-empty">先选一个商机，才能和这张地图对话补情报。</div>
           )}
         </div>
       </div>

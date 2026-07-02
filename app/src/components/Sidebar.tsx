@@ -1,11 +1,10 @@
-// 左栏 · 诊断思考台：客户/商机表头 + 趋赢力打分台（每项可展开看依据/提分）+ 可拖拽调高的对话框。
+// 左栏 · 诊断思考台（第1刀纯化）：客户/商机表头 + 趋赢力打分台——对话已收进推演坞（一处入口，解两处冗余）。
 // 干系人名单不再需要——画布的牌桌卡片就是名单。
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import type { Account, Opportunity } from '../types';
 import type { ScoreBreakdown, ItemKey } from '../lib/g64111';
 import { ITEM_MAX, ITEM_LABEL, ITEM_GROUP, BAND_LABEL } from '../lib/g64111';
-import { usePersistentState, useCountUp } from '../ui';
-import { ChatPanel } from './ChatPanel';
+import { useCountUp } from '../ui';
 
 const ITEMS: ItemKey[] = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'P1', 'P2', 'P3', 'P4', '1K'];
 const GROUPS = ['6必清', '4优势', '1决胜'] as const;
@@ -57,7 +56,7 @@ function Item({ k, score, open, onToggle }: { k: ItemKey; score: number; open: b
   );
 }
 
-export function Sidebar({ account, opp, breakdown, onSelectOpp, onAddOpp, onBack, onCollapse, onChatDone, gapCount = 0, onOpenGaps }: {
+export function Sidebar({ account, opp, breakdown, onSelectOpp, onAddOpp, onBack, onCollapse, gapCount = 0, onOpenGaps }: {
   account: Account;
   opp: Opportunity | null;
   breakdown: ScoreBreakdown | null;
@@ -65,24 +64,11 @@ export function Sidebar({ account, opp, breakdown, onSelectOpp, onAddOpp, onBack
   onAddOpp: () => void;
   onBack: () => void;
   onCollapse: () => void;
-  onChatDone: () => void;
   gapCount?: number;          // M3 缺口数（>0 时趋赢力台显示「补分」入口）
   onOpenGaps?: () => void;    // M3 打开缺口刷卡
 }) {
   const [open, setOpen] = useState<Set<ItemKey>>(() => new Set());
   const toggle = (k: ItemKey) => setOpen((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
-
-  // 对话框高度：趋赢力与对话框之间的分隔条可上下拖拽调节；对话变高 → 上方趋赢力出滚动条
-  const [chatH, setChatH] = usePersistentState('jianghu.chatHeight', 280);
-  const dragRef = useRef<{ y: number; h: number } | null>(null);
-  const onResizeDown = (e: React.PointerEvent) => {
-    e.preventDefault();
-    dragRef.current = { y: e.clientY, h: chatH };
-    const onMove = (ev: PointerEvent) => { const d = dragRef.current; if (!d) return; setChatH(Math.max(120, Math.min(640, d.h + (d.y - ev.clientY)))); };
-    const onUp = () => { dragRef.current = null; window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-  };
 
   const pct = useCountUp(breakdown ? Math.round(breakdown.percent * 100) : 0); // 动效：趋赢力数字滚动入场
   const groupScore: Record<string, number> = breakdown
@@ -134,11 +120,6 @@ export function Sidebar({ account, opp, breakdown, onSelectOpp, onAddOpp, onBack
         )}
       </div>
 
-      <div className="diag-resizer" onPointerDown={onResizeDown} title="拖动调节对话框高度">
-        <span className="diag-resizer-grip">⇕</span>
-      </div>
-
-      <ChatPanel account={account} opp={opp} onDone={onChatDone} height={chatH} />
     </aside>
   );
 }

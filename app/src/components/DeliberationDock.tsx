@@ -10,9 +10,11 @@ import { newStrategyCard, newStrategyRisk, newStrategyResource, newPlanAction, n
 import type { ScoreBreakdown, ItemKey, Band741 } from '../lib/g64111';
 import { ITEM_MAX, ITEM_LABEL, ITEM_GROUP, BAND_LABEL, BAND_STRATEGY } from '../lib/g64111';
 import { EngineBar } from './EngineBar';
+import { ChatPanel } from './ChatPanel';
 import { usePersistentState } from '../ui';
 import { api } from '../api';
 import { buildAiContext } from '../aiContext';
+import { ACT_LABEL } from '../lib/pdeUi';
 
 // 741 四档语义色（同 types.ts 硬编码语义色惯例）
 const BAND_TONE: Record<Band741, string> = {
@@ -33,14 +35,8 @@ interface BwdCand { title: string; offsetDays: number; }
 type DrawerState = null | { kind: 'card'; id: string } | { kind: 'milestone'; id: string } | { kind: 'goal' } | { kind: 'action'; id: string };
 type DockHeight = 'collapsed' | 'half' | 'full';
 
-/** 泳道横滚：把纵向滚轮转为横向（泳道内容超宽时） */
-const wheelX = (e: React.WheelEvent<HTMLDivElement>) => {
-  const el = e.currentTarget;
-  if (el.scrollWidth > el.clientWidth && Math.abs(e.deltaY) > Math.abs(e.deltaX)) el.scrollLeft += e.deltaY;
-};
-
 export function DeliberationDock({
-  account, opp, breakdown, dispatch, selectedPersonId, onSelectPerson, openActionId, onActionOpened,
+  account, opp, breakdown, dispatch, selectedPersonId, onSelectPerson, openActionId, onActionOpened, onChatDone,
 }: {
   account: Account;
   opp: Opportunity;
@@ -50,10 +46,21 @@ export function DeliberationDock({
   onSelectPerson?: (id: string | null) => void;
   openActionId?: string | null; // 点画布行动牌 → 打开该行动的编辑抽屉
   onActionOpened?: () => void;
+  onChatDone?: () => void; // 坞尾「和地图对话」落库后刷新（第1刀：对话从左栏收进坞，一处入口）
 }) {
   const itemKeys = Object.keys(ITEM_MAX) as ItemKey[];
   const personById = new Map(account.persons.map((p) => [p.id, p]));
   const [height, setHeight] = usePersistentState<DockHeight>('jianghu.dockHeight', 'half');
+
+  // M5 嵌入：坞头四动作徽章（PDE 引擎建议·赢面带置信）。引擎不可用静默隐藏，不阻塞坞。
+  const [pde, setPde] = useState<{ action: string; pwin: number; flag: string } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api.pdeEv(opp.id)
+      .then((r) => { if (alive) setPde({ action: r.recommendation?.action ?? '', pwin: r.pwin ?? 0, flag: r.confidenceFlag ?? '' }); })
+      .catch(() => { if (alive) setPde(null); });
+    return () => { alive = false; };
+  }, [opp.id, breakdown]);
 
   // 缺口：低于满分的项，按缺口降序
   const gaps = itemKeys
@@ -230,6 +237,12 @@ export function DeliberationDock({
         <button className="dock-grip" title={height === 'collapsed' ? '展开推演坞' : '收起推演坞'}
           onClick={() => setHeight(height === 'collapsed' ? 'half' : 'collapsed')}>{height === 'collapsed' ? '⌃' : '⌄'}</button>
         <span className="sb-band-pill" style={{ color: tone, borderColor: tone }}>● {BAND_LABEL[breakdown.band]} · 趋赢力 {pct}%</span>
+        {pde && ACT_LABEL[pde.action] && (
+          <span className={`mf-act mf-act-${ACT_LABEL[pde.action]!.cls}`}
+            title={`引擎建议（赢面 ${Math.round(pde.pwin * 100)}%${pde.flag ? ` · ${pde.flag.includes('no_pot') ? '未设合同额，金额降级' : '置信偏低，先摸底'}` : ''}）`}>
+            {ACT_LABEL[pde.action]!.icon} {ACT_LABEL[pde.action]!.text} · 赢面 {Math.round(pde.pwin * 100)}%{pde.flag ? ' ⚠︎' : ''}
+          </span>
+        )}
         {focusName && (
           <span className="dock-focus-chip">🎯 聚焦 {focusName}
             <button onClick={() => onSelectPerson?.(null)} title="清除聚焦">✕</button>
@@ -249,17 +262,12 @@ export function DeliberationDock({
 
       {height !== 'collapsed' && (
         <div className="dock-scroll">
-          {/* ── 策略泳道（正推：现状 → 方向）── */}
-          <div className="sb2-lane-head">
-            <span className="sb2-lane-label">策略泳道 · 打法<i>正推：现状 → 方向</i></span>
-            <span className="sb2-lane-acts" onClick={(e) => e.stopPropagation()}>
-              {aiErr && <span className="sb2-ai-err">{aiErr}</span>}
-              <button className="btn ghost xs" onClick={() => addCard()}>＋ 新建</button>
-              <button className="btn ghost xs" disabled={aiBusy === 'forward'} onClick={() => runSuggest('forward')}>{aiBusy === 'forward' ? '推演中…' : '✨ AI 顺推'}</button>
-            </span>
-          </div>
-          <div className="sb2-lane" onWheel={wheelX} onClick={(e) => e.stopPropagation()}>
-            {/* 现状锚 */}
+          {/* ── 第2刀：横向推导流水线 局势 → 策略 → 倒排 → 行动（列间箭头显因果；旁支风险/弹药留坞底汇总）── */}
+          <div className="sb2-cols" onClick={(e) => e.stopPropagation()}>
+
+          {/* 列① 局势 */}
+          <div className="sb2-col">
+            <div className="sb2-col-head"><span>① 局势</span></div>
             <div className="sb2-card sb2-anchor" style={{ borderColor: tone }}>
               <div className="sb2-anchor-tag">现状锚 · 来自地图</div>
               <div className="sb2-anchor-band" style={{ color: tone }}>{pct}% {BAND_LABEL[breakdown.band].split(' · ')[0]}</div>
@@ -278,7 +286,20 @@ export function DeliberationDock({
                 {gaps.length > 3 && <button className="sb2-gap-more" onClick={() => setSummaryOpen(true)}>…共 {gaps.length} 项缺口</button>}
               </div>
             </div>
+          </div>
 
+          <div className="sb2-arrow" title="局势推导出策略">→</div>
+
+          {/* 列② 策略（正推：现状 → 方向） */}
+          <div className="sb2-col">
+            <div className="sb2-col-head">
+              <span>② 策略 · 正推</span>
+              <span className="sb2-lane-acts" onClick={(e) => e.stopPropagation()}>
+                {aiErr && <span className="sb2-ai-err">{aiErr}</span>}
+                <button className="btn ghost xs" onClick={() => addCard()}>＋</button>
+                <button className="btn ghost xs" disabled={aiBusy === 'forward'} onClick={() => runSuggest('forward')}>{aiBusy === 'forward' ? '推演中…' : '✨ 顺推'}</button>
+              </span>
+            </div>
             {/* 策略卡 */}
             {cards.map((card) => {
               const dispatched = (card.dispatchedActionIds?.length ?? 0) > 0;
@@ -321,22 +342,22 @@ export function DeliberationDock({
               </div>
             ))}
             {cards.length === 0 && fwdCands.length === 0 && (
-              <div className="sb2-card sb2-empty-card" onClick={() => addCard()}>还没有策略卡<br /><span>从现状锚缺口点「＋」、「＋新建」，或「✨ AI 顺推」</span></div>
+              <div className="sb2-card sb2-empty-card" onClick={() => addCard()}>还没有策略卡<br /><span>从现状锚缺口点「＋」，或「✨ 顺推」</span></div>
             )}
           </div>
 
-          <div className="sb2-drive">↓ 驱动 · 策略落到里程碑，按最晚时间倒排</div>
+          <div className="sb2-arrow" title="策略按最晚时间倒排成里程碑">→</div>
 
-          {/* ── 里程碑泳道（倒推：终局 → 最晚时间）── */}
-          <div className="sb2-lane-head">
-            <span className="sb2-lane-label">里程碑泳道 · 倒排<i>倒推：终局 → 最晚时间</i></span>
-            <span className="sb2-lane-acts" onClick={(e) => e.stopPropagation()}>
-              <button className="btn ghost xs" onClick={addMilestone}>＋ 里程碑</button>
-              <button className="btn ghost xs" disabled={aiBusy === 'backward' || !opp.expectedSignDate} title={opp.expectedSignDate ? '' : '先在终局锚设置预计签约日'}
-                onClick={() => runSuggest('backward')}>{aiBusy === 'backward' ? '推演中…' : '✨ AI 倒推'}</button>
-            </span>
-          </div>
-          <div className="sb2-lane" onWheel={wheelX} onClick={(e) => e.stopPropagation()}>
+          {/* 列③ 倒排（终局 → 最晚时间） */}
+          <div className="sb2-col">
+            <div className="sb2-col-head">
+              <span>③ 倒排 · 里程碑</span>
+              <span className="sb2-lane-acts" onClick={(e) => e.stopPropagation()}>
+                <button className="btn ghost xs" onClick={addMilestone}>＋</button>
+                <button className="btn ghost xs" disabled={aiBusy === 'backward' || !opp.expectedSignDate} title={opp.expectedSignDate ? '' : '先在终局锚设置预计签约日'}
+                  onClick={() => runSuggest('backward')}>{aiBusy === 'backward' ? '推演中…' : '✨ 倒推'}</button>
+              </span>
+            </div>
             {laneMs.length === 0 && (
               <div className="sb2-card sb2-empty-card" onClick={addMilestone}>从终局倒排关键节点<br /><span>开标 / 立项评审 / 签约…直接落行动计划时间轴</span></div>
             )}
@@ -373,16 +394,16 @@ export function DeliberationDock({
             </div>
           </div>
 
-          <div className="sb2-drive">↓ 执行 · 策略与里程碑落成可勾选的下一步行动</div>
+          <div className="sb2-arrow" title="里程碑落成可执行的行动">→</div>
 
-          {/* ── 行动清单（PlanAction · DealPlanner 网格退役后的轻量替代；调度可视化交企业微信日历）── */}
-          <div className="sb2-lane-head">
-            <span className="sb2-lane-label">行动清单 · 下一步<i>执行 → 结果回填</i></span>
-            <span className="sb2-lane-acts" onClick={(e) => e.stopPropagation()}>
-              <button className="btn ghost xs" onClick={addAction}>＋ 行动</button>
-            </span>
-          </div>
-          <div className="sb2-lane" onWheel={wheelX} onClick={(e) => e.stopPropagation()}>
+          {/* 列④ 行动（执行 → 结果回填；调度可视化交企业微信日历） */}
+          <div className="sb2-col">
+            <div className="sb2-col-head">
+              <span>④ 行动 · 执行</span>
+              <span className="sb2-lane-acts" onClick={(e) => e.stopPropagation()}>
+                <button className="btn ghost xs" onClick={addAction}>＋</button>
+              </span>
+            </div>
             {planActions.length === 0 && (
               <div className="sb2-card sb2-empty-card" onClick={addAction}>还没有行动<br /><span>＋ 加一条，或在策略卡上「→ 派发」生成</span></div>
             )}
@@ -402,6 +423,8 @@ export function DeliberationDock({
                 </div>
               );
             })}
+          </div>
+
           </div>
 
           {/* ── 信号汇总条 ── */}
@@ -475,6 +498,13 @@ export function DeliberationDock({
             </div>
           )}
 
+        </div>
+      )}
+
+      {/* ── 坞尾 · 和地图对话（第1刀：从左栏收进坞的唯一常驻对话入口；改图直落走 voiceExtract 双轨不变）── */}
+      {height !== 'collapsed' && (
+        <div className="dock-chat" onClick={(e) => e.stopPropagation()}>
+          <ChatPanel account={account} opp={opp} onDone={onChatDone ?? (() => {})} height={height === 'full' ? 200 : 150} />
         </div>
       )}
 

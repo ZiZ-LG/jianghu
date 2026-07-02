@@ -446,7 +446,6 @@ export default function App() {
       onAddOpp={addOpp}
       onBack={() => { setAccId(null); selectPerson(null); }}
       onCollapse={() => (isMobile ? setMobileNavOpen(false) : setSidebarCollapsed(true))}
-      onChatDone={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); } catch { /* 静默：保存已成功，仅刷新失败 */ } }}
       gapCount={gaps.length} onOpenGaps={() => setGapsOpen(true)}
     />
   );
@@ -518,7 +517,8 @@ export default function App() {
             {!immersive && breakdown && (
               <DeliberationDock account={account} opp={opp} breakdown={breakdown} dispatch={act}
                 selectedPersonId={selectedId} onSelectPerson={selectPerson}
-                openActionId={openActionId} onActionOpened={() => setOpenActionId(null)} />
+                openActionId={openActionId} onActionOpened={() => setOpenActionId(null)}
+                onChatDone={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); await loadInbox(); } catch { /* 静默：保存已成功，仅刷新失败 */ } }} />
             )}
             </>
           </>

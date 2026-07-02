@@ -7,13 +7,7 @@ import type { Account, PlanAction } from '../types';
 import { SENTIMENT_LABEL, ROLE_LABEL } from '../types';
 import type { InboxPerson, InboxProposal, InboxRel, InboxReminder } from '../api';
 import { previewProposalImpact } from '../lib/impact';
-
-const ACT_LABEL: Record<string, { icon: string; text: string; cls: string }> = {
-  RAISE: { icon: '⬆', text: '强攻', cls: 'raise' },
-  CALL: { icon: '▶', text: '跟进', cls: 'call' },
-  CHECK: { icon: '🔍', text: '摸底', cls: 'check' },
-  FOLD: { icon: '⛔', text: '止损', cls: 'fold' },
-};
+import { ACT_LABEL } from '../lib/pdeUi';
 
 type Page = { kind: 'home' } | { kind: 'visit'; accId: string; oppId: string; personId: string } | { kind: 'review' };
 
