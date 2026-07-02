@@ -266,13 +266,13 @@ export async function applyAction(tenantId: string, action: any): Promise<void> 
         gapItem: a.gapItem ?? '', personId: a.personId ?? null, title: a.title ?? '',
         scene: a.scene ?? '', scripts: a.scripts ?? '', target: a.target ?? '', ownerId: a.ownerId ?? '',
         startDate: a.startDate ?? '', endDate: a.endDate ?? '', half: a.half ?? 'am',
-        done: !!a.done, doneAt: a.doneAt ?? null, review: a.review ?? '', origin: a.origin ?? 'manual', createdBy: a.createdBy ?? '',
+        done: !!a.done, doneAt: a.doneAt ?? null, draft: !!a.draft, review: a.review ?? '', origin: a.origin ?? 'manual', createdBy: a.createdBy ?? '',
         resources: a.resources ?? '', cautions: a.cautions ?? '', props: a.props ?? '',
       } });
       return;
     }
     case 'UPDATE_PLAN_ACTION': {
-      const d = pick(action.patch, ['gapItem', 'personId', 'title', 'scene', 'scripts', 'target', 'ownerId', 'startDate', 'endDate', 'half', 'done', 'doneAt', 'review', 'resources', 'cautions', 'props']);
+      const d = pick(action.patch, ['gapItem', 'personId', 'title', 'scene', 'scripts', 'target', 'ownerId', 'startDate', 'endDate', 'half', 'done', 'doneAt', 'draft', 'review', 'resources', 'cautions', 'props']);
       await prisma.planAction.updateMany({ where: { id: action.actionId, tenantId }, data: d });
       return;
     }

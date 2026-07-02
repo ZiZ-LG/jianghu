@@ -242,6 +242,7 @@ export interface PlanAction {
   half: Half;
   done: boolean;
   doneAt?: string;
+  draft?: boolean;         // 第4刀：坞内草稿（true=只在坞列④不挂画布；false/缺省=已上桌）。语义反转图纸 staged，存量零迁移
   review?: string;
   resources?: string;      // 所需资源（牌·六要素）
   cautions?: string;       // 注意要点（牌·六要素）

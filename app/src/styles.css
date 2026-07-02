@@ -1283,6 +1283,9 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 .sb2-act-status { font-size: 11px; font-weight: 700; color: var(--muted); }
 .sb2-act-status.done { color: #16a34a; }
 .sb2-act-status.late { color: #dc2626; }
+/* 第4刀 · 坞内草稿（draft=未上桌）：虚线边框同候选虚位卡视觉语言；「→ 上桌」复用 .sb2-send */
+.sb2-card.sb2-draft { border-style: dashed; background: var(--panel-2); }
+.sb2-act-draft { color: var(--faint); }
 
 /* ════════ 左栏诊断台（趋赢力打分 + 对话框，替代干系人名单+图例）════════ */
 .diag-score { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 12px 10px; }

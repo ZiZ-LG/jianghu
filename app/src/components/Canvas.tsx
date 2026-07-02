@@ -575,8 +575,8 @@ export function Canvas({
                       </text>
                     </>
                   )}
-                  {/* 行动牌：挂责任人节点右侧（主线·战场+行动令）。②a 先只读展示，②b 接点击开抽屉 */}
-                  {(planActions ?? []).filter((a) => a.personId === p.id && a.opportunityId === opp.id).map((a, i) => (
+                  {/* 行动牌：挂责任人节点右侧（主线·战场+行动令）。第4刀：坞内草稿(draft)不上画布，上桌后才挂牌 */}
+                  {(planActions ?? []).filter((a) => a.personId === p.id && a.opportunityId === opp.id && !a.draft).map((a, i) => (
                     <g key={a.id} transform={`translate(${CHW + 10},${-CHH + 8 + i * 26})`}>
                       <g data-action={a.id} style={{ cursor: 'pointer' }}>
                         <rect width={124} height={22} rx={5} fill="var(--node-fill)" stroke={a.done ? '#16a34a' : 'var(--accent)'} strokeWidth={1.2} />

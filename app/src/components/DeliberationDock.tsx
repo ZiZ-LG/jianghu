@@ -132,6 +132,7 @@ export function DeliberationDock({
     if (card.personId) pa.personId = card.personId;
     if (card.basis) pa.scene = card.basis;
     pa.origin = 'ai';
+    pa.draft = true; // 第4刀：派发产物=坞内草稿，人微调后「→ 上桌」才挂画布
     if (pf) { pa.target = pf.target; pa.resources = pf.resources; pa.cautions = pf.cautions; pa.props = pf.props; }
     dispatch({ type: 'ADD_PLAN_ACTION', accId: account.id, oppId: opp.id, planAction: pa });
     updateCard(card.id, { dispatchedActionIds: [...(card.dispatchedActionIds ?? []), pa.id] });
@@ -235,16 +236,19 @@ export function DeliberationDock({
   const addAction = () => {
     const pa = newPlanAction(account.id, opp.id, todayYmd(), todayYmd(), 'am');
     pa.title = '';
+    pa.draft = true; // 第4刀：坞内手建=草稿，「→ 上桌」才挂画布
     dispatch({ type: 'ADD_PLAN_ACTION', accId: account.id, oppId: opp.id, planAction: pa });
     setActDraft({ title: '', startDate: pa.startDate, personId: undefined, target: '', resources: '', cautions: '', props: '', done: false, wasDone: false });
     setDrawer({ kind: 'action', id: pa.id });
   };
   const deleteAction = (actionId: string) => { dispatch({ type: 'DELETE_PLAN_ACTION', accId: account.id, actionId }); setDrawer(null); };
-  const saveAction = (actionId: string) => {
+  // 第4刀 · 上桌=状态跃迁：草稿→作战令挂画布目标人旁（需先关联干系人）；computeInverse 通用 pick 使上桌可撤销
+  const stageAction = (actionId: string) => dispatch({ type: 'UPDATE_PLAN_ACTION', accId: account.id, actionId, patch: { draft: false } });
+  const saveAction = (actionId: string, andStage = false) => {
     if (!actDraft) return;
     const d = actDraft; const today = todayYmd();
     const title = d.title.trim() || '新行动';
-    dispatch({ type: 'UPDATE_PLAN_ACTION', accId: account.id, actionId, patch: { title, startDate: d.startDate, endDate: d.startDate, personId: d.personId, target: d.target, resources: d.resources, cautions: d.cautions, props: d.props, done: d.done, doneAt: d.done ? today : undefined } });
+    dispatch({ type: 'UPDATE_PLAN_ACTION', accId: account.id, actionId, patch: { title, startDate: d.startDate, endDate: d.startDate, personId: d.personId, target: d.target, resources: d.resources, cautions: d.cautions, props: d.props, done: d.done, doneAt: d.done ? today : undefined, ...(andStage ? { draft: false } : {}) } });
     // 结果回填：完成且关联干系人、选了态度变化 → 录一条互动证据喂策略引擎 E2（守铁律②：人当场拍板，非机器自动改分）
     if (d.done && !d.wasDone && d.personId && (d.outcome === 'up' || d.outcome === 'down')) {
       const ev = newEvidence(account.id, opp.id, d.personId, d.outcome === 'up' ? 'positive_interaction' : 'negative_interaction', d.outcome === 'up' ? 1 : -1, 'mid');
@@ -500,11 +504,21 @@ export function DeliberationDock({
               const target = a.personId ? personById.get(a.personId) : null;
               const focused = !!selectedPersonId && a.personId === selectedPersonId;
               return (
-                <div key={a.id} className={`sb2-card sb2-action${a.done ? ' done' : ''}${drawer?.kind === 'action' && drawer.id === a.id ? ' sel' : ''}${focused ? ' sb2-focus' : ''}`}
+                <div key={a.id} className={`sb2-card sb2-action${a.draft ? ' sb2-draft' : ''}${a.done ? ' done' : ''}${drawer?.kind === 'action' && drawer.id === a.id ? ' sel' : ''}${focused ? ' sb2-focus' : ''}`}
                   onClick={() => { setDrawer({ kind: 'action', id: a.id }); if (a.personId) onSelectPerson?.(a.personId); }}>
                   <div className="sb2-card-top">
-                    <span className={`sb2-act-status${a.done ? ' done' : overdue ? ' late' : ''}`}>{a.done ? '✓ 已完成' : overdue ? '✕ 逾期' : '○ 待办'}</span>
-                    <span className="sb2-ms-date">{mmdd(a.startDate || '')}</span>
+                    {a.draft ? (
+                      <>
+                        <span className="sb2-act-status sb2-act-draft">📝 草稿</span>
+                        <button className="sb2-send" disabled={!a.personId} title={a.personId ? '上桌：挂到画布目标人旁，成为作战令' : '先关联目标干系人（点卡编辑）'}
+                          onClick={(e) => { e.stopPropagation(); stageAction(a.id); }}>→ 上桌</button>
+                      </>
+                    ) : (
+                      <>
+                        <span className={`sb2-act-status${a.done ? ' done' : overdue ? ' late' : ''}`}>{a.done ? '✓ 已完成' : overdue ? '✕ 逾期' : '○ 待办'}</span>
+                        <span className="sb2-ms-date">{mmdd(a.startDate || '')}</span>
+                      </>
+                    )}
                   </div>
                   <div className="sb2-card-title">{a.title || <span className="sb2-dim">（未命名行动 · 点击编辑）</span>}</div>
                   <div className="sb2-card-sub">{target ? `目标：${target.name}` : '未关联干系人'}{a.gapItem ? ` · ${ITEM_LABEL[a.gapItem as ItemKey] || a.gapItem}` : ''}</div>
@@ -661,6 +675,10 @@ export function DeliberationDock({
                 )}
                 <div className="sb2-drawer-acts">
                   <button className="btn primary sm" onClick={() => saveAction(drawer.id)}>保存</button>
+                  {(account.planActions ?? []).find((x) => x.id === drawer.id)?.draft && (
+                    <button className="btn primary sm" disabled={!actDraft.personId} title={actDraft.personId ? '保存并挂到画布目标人旁' : '先选目标干系人'}
+                      onClick={() => saveAction(drawer.id, true)}>📌 保存并上桌</button>
+                  )}
                 </div>
                 <button className="sb2-drawer-del" onClick={() => deleteAction(drawer.id)}>🗑 删除该行动</button>
               </div>

@@ -342,6 +342,7 @@ model PlanAction {
   half          String   @default("am") // 时段：am 上午 | pm 下午 | eve 晚上
   done          Boolean  @default(false) // 是否完成（仅行动有完成态）
   doneAt        String?  // 完成日期 YYYY-MM-DD
+  draft         Boolean  @default(false) // 第4刀：坞内草稿（true=只在坞列④，不挂画布；false=已上桌）。语义反转图纸的 staged——存量默认 false=已上桌，零迁移
   review        String   @default("") // 复盘（喂周复盘）
   resources     String   @default("") // 所需资源（牌·六要素）
   cautions      String   @default("") // 注意要点（牌·六要素）
