@@ -1404,6 +1404,16 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 .chat-send:not(:disabled):hover { background: var(--accent-soft); }
 
 /* 参谋出牌（P2④b）：出牌工具条 + 行动牌候选。待采纳复用 .sb2-stamp/.sb2-cand-acts（橙）；已落画布=绿。状态色沿用项目既有硬编码+color-mix(var(--panel)) 约定，暗色靠 color-mix 自适配 + 下方 dark 覆盖。 */
+/* P1① 参谋 tab 顶部 VoI 问题清单：「下次见他先问这 3 件事」（pdeIntel 确定性引擎，不吃 AI Key） */
+.adv-asks { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel-2); flex-shrink: 0; }
+.adv-asks-head { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; font-size: 11.5px; font-weight: 800; color: var(--ink-2); }
+.adv-asks-head span { font-size: 10px; font-weight: 400; color: var(--faint); white-space: nowrap; }
+.adv-ask { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; }
+.adv-ask-q { flex: 1 1 100%; font-size: 12px; line-height: 1.45; color: var(--ink); }
+.adv-ask-voi { font-size: 10.5px; font-weight: 700; color: var(--act-call); white-space: nowrap; }
+.adv-ask-how { margin-left: auto; font-size: 10.5px; padding: 1px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink-2); cursor: pointer; }
+.adv-ask-how:hover { border-color: var(--accent); color: var(--accent); }
+.adv-ask-how:disabled { opacity: .5; cursor: default; }
 .adv-cardbar { display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-bottom: 1px solid var(--line); background: var(--panel-2); flex-shrink: 0; }
 .adv-cardbar-hint { font-size: 10.5px; color: var(--faint); line-height: 1.3; }
 .adv-cand { align-self: stretch; display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border: 1.5px dashed #d97706; border-radius: 10px; background: color-mix(in srgb, #f59e0b 6%, var(--panel)); }

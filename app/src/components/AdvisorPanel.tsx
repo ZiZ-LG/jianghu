@@ -29,6 +29,19 @@ export function AdvisorPanel({ account, opp, breakdown, person, dispatch }: {
   const listRef = useRef<HTMLDivElement>(null);
   useEffect(() => { const el = listRef.current; if (el) el.scrollTop = el.scrollHeight; }, [msgs, cands, busy, cardBusy]);
 
+  // P1① VoI 问题清单（pdeIntel·确定性引擎，不吃 AI Key）：商机级一次拉取，切人只重过滤不重拉；
+  // 图上有改动（breakdown 变）→ 重拉，与 FocusPanel 立场条同惯例。引擎不可用 → 静默隐藏。
+  const [intel, setIntel] = useState<{ items: any[] } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api.pdeIntel(opp.id).then((r) => { if (alive) setIntel(r); }).catch(() => { if (alive) setIntel(null); });
+    return () => { alive = false; };
+  }, [opp.id, breakdown]);
+  // 焦点人自己的立场问题优先，其余按 VoI 序补足 3 条（拿别人的事问他＝侧面打探，同拜访卡惯例）
+  const items = intel?.items ?? [];
+  const mineAsks = items.filter((i: any) => i.kind === 'stance' && i.stakeholderId === person.id);
+  const voiAsks = [...mineAsks, ...items.filter((i: any) => !mineAsks.includes(i))].slice(0, 3);
+
   const ask = async (q: string) => {
     const text = q.trim();
     if (!text || busy) return;
@@ -103,6 +116,19 @@ export function AdvisorPanel({ account, opp, breakdown, person, dispatch }: {
         <span className="chat-title">🧭 参谋 · 对着「{person.name}」深想</span>
         <span className="chat-hint">带全图上下文 · 用你的模型</span>
       </div>
+      {voiAsks.length > 0 && (
+        <div className="adv-asks">
+          <div className="adv-asks-head">❓ 下次见他，先问这 {voiAsks.length} 件事<span>按情报价值 · 引擎测算</span></div>
+          {voiAsks.map((q: any, i: number) => (
+            <div className="adv-ask" key={i}>
+              <span className="adv-ask-q">{i + 1}. {q.question}</span>
+              {q.voi != null && <b className="adv-ask-voi">≈值 {Math.round(q.voi)} 万</b>}
+              <button className="adv-ask-how" disabled={busy}
+                onClick={() => ask(`下次拜访我想摸清：「${q.question}」——给我 2~3 句自然的开口话术，别太露痕迹。`)}>怎么问</button>
+            </div>
+          ))}
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '8px 12px', borderBottom: '1px solid var(--line)' }}>
         {quick.map((q) => <button key={q} className="btn ghost xs" onClick={() => ask(q)} disabled={busy}>{q}</button>)}
       </div>
