@@ -1,15 +1,15 @@
 // 推演坞 · 关系地图底部可上拉的策略推演区（在策略沙盘逻辑上增量改造，作为地图的纯增量）。
-// 三档高度：收起(仅局势栏 EngineBar) / 展开(+双泳道) / 全展开(+信号汇总+趋赢力明细)；画布始终在上方可见。
+// 第5刀坞收敛后三层：坞头一句（PDE 徽章=唯一赢面出口 + 741 药丸 + 背离警示行）/ 四列流水线 / 坞底（信号短条+对话）。
+// 三档高度：收起(仅坞头) / 展开(+四列) / 全展开(+信号汇总)；画布始终在上方可见。
 // 画布↔坞双向联动：selectedPersonId 高亮挂靠该人的策略卡；点策略卡 → onSelectPerson 回高亮画布目标。
-// 数据逻辑与 Action 全承自策略沙盘 P0/P1/P2（局势栏=EngineBar；证据/方案/派发/里程碑共享，零改动）。
-import { useEffect, useState } from 'react';
-import type { Account, Opportunity, StrategyCard } from '../types';
-import { SENTIMENT_CHAR, SENTIMENT_COLOR, ROLE_LABEL } from '../types';
+// 老 PDE 适配层（lib/pde）在坞内只剩两职能：列① 姿态解读一句 + E2 背离提案（EngineBar 已退役，EV/赢面老口径废弃）。
+import { useEffect, useMemo, useState } from 'react';
+import type { Account, Opportunity, Sentiment, StrategyCard } from '../types';
 import type { Action } from '../store';
 import { newStrategyCard, newStrategyRisk, newStrategyResource, newPlanAction, newMilestone, newEvidence } from '../store';
 import type { ScoreBreakdown, ItemKey, Band741 } from '../lib/g64111';
 import { ITEM_MAX, ITEM_LABEL, ITEM_GROUP, BAND_LABEL, BAND_STRATEGY } from '../lib/g64111';
-import { EngineBar } from './EngineBar';
+import { analyzeDeal } from '../lib/pde';
 import { ChatPanel } from './ChatPanel';
 import { usePersistentState } from '../ui';
 import { api } from '../api';
@@ -24,6 +24,8 @@ const BAND_TONE: Record<Band741, string> = {
   ABSOLUTE_DISADVANTAGE: '#dc2626',
 };
 const GROUPS = ['6必清', '4优势', '1决胜'] as const;
+// E2 背离警示行用（自 EngineBar 迁入）：六档支持度的界面用语
+const SENT_TEXT: Record<Sentiment, string> = { star: '排他支持', plus: '支持', neutral: '中立', unknown: '未知', minus: '抗拒', x: '倒向对手' };
 const p2 = (n: number) => String(n).padStart(2, '0');
 const fmt = (d: Date) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
 const todayYmd = () => fmt(new Date());
@@ -52,7 +54,7 @@ export function DeliberationDock({
   const personById = new Map(account.persons.map((p) => [p.id, p]));
   const [height, setHeight] = usePersistentState<DockHeight>('jianghu.dockHeight', 'half');
 
-  // M5 嵌入：坞头四动作徽章（PDE 引擎建议·赢面带置信）。引擎不可用静默隐藏，不阻塞坞。
+  // M5 嵌入：坞头四动作徽章（PDE 引擎建议·赢面带置信）——全屏唯一赢面出口。引擎不可用静默隐藏，不阻塞坞。
   const [pde, setPde] = useState<{ action: string; pwin: number; flag: string } | null>(null);
   useEffect(() => {
     let alive = true;
@@ -62,17 +64,20 @@ export function DeliberationDock({
     return () => { alive = false; };
   }, [opp.id, breakdown]);
 
+  // 老 PDE 适配层：只取 列① 姿态解读 + E2 背离提案（EV/赢面老口径随 EngineBar 退役，不再展示）
+  const reading = useMemo(() => analyzeDeal(account, opp, breakdown), [account, opp, breakdown]);
+  const [dismissedShifts, setDismissedShifts] = useState<Set<string>>(new Set()); // 忽略的背离提案 personId
+  const shifts = reading.stanceShifts.filter((s) => !dismissedShifts.has(s.personId));
+  const acceptShift = (personId: string, to: Sentiment) => {
+    dispatch({ type: 'SET_ROLE', accId: account.id, oppId: opp.id, personId, patch: { sentiment: to } });
+    setDismissedShifts((s) => new Set(s).add(personId));
+  };
+
   // 缺口：低于满分的项，按缺口降序
   const gaps = itemKeys
     .map((k) => ({ key: k, score: breakdown.items[k], max: ITEM_MAX[k], deficit: ITEM_MAX[k] - breakdown.items[k] }))
     .filter((g) => g.deficit > 0)
     .sort((a, b) => b.deficit - a.deficit);
-
-  // 关键干系人格局：A / D / 关键影响人
-  const keyPlayers = opp.roles
-    .filter((r) => r.role === 'A' || r.role === 'D' || r.isKeyInfluencer)
-    .map((r) => ({ role: r.role, sentiment: r.sentiment, isKey: !!r.isKeyInfluencer, person: personById.get(r.personId) }))
-    .filter((x) => x.person);
 
   // 本商机的策略卡 / 风险 / 弹药 / 里程碑
   const cards = (account.strategyCards ?? [])
@@ -83,9 +88,8 @@ export function DeliberationDock({
   const milestones = (account.milestones ?? []).filter((m) => m.opportunityId === opp.id);
   const planActions = (account.planActions ?? []).filter((a) => a.opportunityId === opp.id);
 
-  // 就绪度：缺口被策略卡 gapItem 命中的覆盖率
+  // 缺口是否已有策略卡覆盖（列① ✓ 标记）
   const coveredGaps = new Set(cards.map((c) => c.gapItem).filter(Boolean));
-  const coveredCount = gaps.filter((g) => coveredGaps.has(g.key)).length;
 
   const pct = Math.round(breakdown.percent * 100);
   const tone = BAND_TONE[breakdown.band];
@@ -179,8 +183,8 @@ export function DeliberationDock({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
-  // 切商机/客户 → 关抽屉
-  useEffect(() => { setDrawer(null); }, [opp.id, account.id]);
+  // 切商机/客户 → 关抽屉、清背离忽略集
+  useEffect(() => { setDrawer(null); setDismissedShifts(new Set()); }, [opp.id, account.id]);
 
   // ── 行动清单（PlanAction，承接 DealPlanner 网格退役；勾完成→结果回填录证据，闭合执行→证据→局势飞轮）──
   const [actDraft, setActDraft] = useState<{ title: string; startDate: string; personId?: string; target: string; resources: string; cautions: string; props: string; done: boolean; wasDone: boolean; outcome?: 'up' | 'flat' | 'down' } | null>(null);
@@ -255,25 +259,36 @@ export function DeliberationDock({
         </span>
       </div>
 
-      {/* ── 局势栏（始终可见：局势判断 → 打法 → 排期 → 健康度）── */}
-      <div className="dock-engine" onClick={(e) => e.stopPropagation()}>
-        <EngineBar account={account} opp={opp} breakdown={breakdown} dispatch={dispatch} />
-      </div>
+      {/* ── 坞头警示行 · E2 背离提案（证据偏离人审支持度时出现；人审采纳才改 OppRole，守铁律②）── */}
+      {shifts.map((sh) => (
+        <div className="dock-shift" key={sh.personId} onClick={(e) => e.stopPropagation()}>
+          <span className="dock-shift-icon">🔔</span>
+          <span className="dock-shift-text">
+            <b>{sh.name}</b>：{sh.reason}——建议把支持度从「{SENT_TEXT[sh.fromSentiment]}」改为「{SENT_TEXT[sh.toSentiment]}」
+          </span>
+          <button className="btn primary xs" onClick={() => acceptShift(sh.personId, sh.toSentiment)}>采纳改分</button>
+          <button className="btn ghost xs" onClick={() => setDismissedShifts((s) => new Set(s).add(sh.personId))}>忽略</button>
+        </div>
+      ))}
 
       {height !== 'collapsed' && (
         <div className="dock-scroll">
           {/* ── 第2刀：横向推导流水线 局势 → 策略 → 倒排 → 行动（列间箭头显因果；旁支风险/弹药留坞底汇总）── */}
           <div className="sb2-cols" onClick={(e) => e.stopPropagation()}>
 
-          {/* 列① 局势 */}
+          {/* 列① 局势（EngineBar 退役后唯一详情出口：band + 打法方向 + 姿态解读一句 + 全部缺口）*/}
           <div className="sb2-col">
             <div className="sb2-col-head"><span>① 局势</span></div>
             <div className="sb2-card sb2-anchor" style={{ borderColor: tone }}>
               <div className="sb2-anchor-tag">现状锚 · 来自地图</div>
               <div className="sb2-anchor-band" style={{ color: tone }}>{pct}% {BAND_LABEL[breakdown.band].split(' · ')[0]}</div>
               <div className="sb2-anchor-strat">{BAND_STRATEGY[breakdown.band].split('：')[0]}</div>
+              <div className="sb2-anchor-read" title={reading.reasonText ? `依据：${reading.reasonText}` : undefined}>
+                <span className={`sb2-anchor-stance tone-${reading.stanceTone}`}>{reading.stanceLabel}</span>
+                {reading.jointReading}
+              </div>
               <div className="sb2-anchor-gaps">
-                {gaps.slice(0, 3).map((g) => (
+                {gaps.map((g) => (
                   <div className="sb2-gap-row" key={g.key}>
                     <span className="sb2-gap-name">{ITEM_LABEL[g.key]}</span>
                     <span className="sb2-gap-score">{g.score}/{g.max}</span>
@@ -283,7 +298,6 @@ export function DeliberationDock({
                   </div>
                 ))}
                 {gaps.length === 0 && <div className="sb2-gap-row sb2-dim">无明显缺口 🎉</div>}
-                {gaps.length > 3 && <button className="sb2-gap-more" onClick={() => setSummaryOpen(true)}>…共 {gaps.length} 项缺口</button>}
               </div>
             </div>
           </div>
@@ -427,38 +441,15 @@ export function DeliberationDock({
 
           </div>
 
-          {/* ── 信号汇总条 ── */}
+          {/* ── 信号短条 · 只剩旁支（缺口详情在列①，关键干系人在画布牌桌/焦点面板）── */}
           <div className="sb2-signal" onClick={(e) => { e.stopPropagation(); setSummaryOpen((v) => !v); }}>
-            <span className={gaps.length - coveredCount > 0 ? 'sb2-sig-bad' : 'sb2-sig-ok'}>▢ 未覆盖缺口 {gaps.length - coveredCount}</span>
-            <span>策略覆盖 {coveredCount}/{gaps.length}</span>
             <span className={highRisks > 0 ? 'sb2-sig-warn' : ''}>⚠ 风险 {risks.length}{highRisks > 0 ? ` · 高 ${highRisks}` : ''}</span>
             <span>🎒 弹药 {resources.length}</span>
-            <span className="sb2-sig-toggle">{showSummary ? '收起汇总 ⌃' : '展开汇总 ⌄'}</span>
+            <span className="sb2-sig-toggle">{showSummary ? '收起 ⌃' : '展开 ⌄'}</span>
           </div>
 
           {showSummary && (
             <div className="sb2-summary" onClick={(e) => e.stopPropagation()}>
-              <div className="sb2-sum-col">
-                <h4>📉 全部缺口<span className="sb2-sum-hint">点 ＋ 挂策略卡</span></h4>
-                {gaps.map((g) => (
-                  <div className="sb2-gap-row" key={g.key}>
-                    <span className="sb2-gap-name">{ITEM_LABEL[g.key]}</span>
-                    <span className="sb2-gap-score">{g.score}/{g.max}</span>
-                    {coveredGaps.has(g.key) ? <span className="sb2-gap-cov">✓</span> : <button className="sb2-gap-add" onClick={() => addCard(g.key)}>＋</button>}
-                  </div>
-                ))}
-                {gaps.length === 0 && <div className="sb2-dim">无明显缺口</div>}
-                <h4 style={{ marginTop: 12 }}>👥 关键干系人</h4>
-                {keyPlayers.map((x, i) => (
-                  <div className="sb2-gap-row" key={i}>
-                    <span className="sb2-gap-name">{ROLE_LABEL[x.role]} · {x.person?.name}</span>
-                    <span style={{ color: SENTIMENT_COLOR[x.sentiment], fontWeight: 700 }}>{SENTIMENT_CHAR[x.sentiment]}</span>
-                    {x.isKey && <span className="sb2-keytag">关键</span>}
-                  </div>
-                ))}
-                {keyPlayers.length === 0 && <div className="sb2-dim">尚未标记 A/D/关键影响人</div>}
-              </div>
-
               <div className="sb2-sum-col">
                 <h4>⚠️ 风险 / 假设
                   <span className="sb2-sum-acts">
