@@ -10,14 +10,17 @@ WORKDIR /app
 ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
 ENV PRISMA_ENGINES_MIRROR=https://registry.npmmirror.com/-/binary/prisma
 
-# 1) 依赖层（含 devDeps：运行期需要 tsx 跑 TS、prisma CLI 做 db push）
-COPY package.json package-lock.json ./
+# 1) 内核包先行（server 的 file:../packages/pde-kernel 依赖，npm ci 建 symlink 时必须已存在）
+COPY packages /packages
+
+# 2) 依赖层（含 devDeps：运行期需要 tsx 跑 TS、prisma CLI 做 db push）
+COPY server/package.json server/package-lock.json ./
 RUN npm ci
 
-# 2) 源码 + Prisma schema
-COPY . .
+# 3) 源码 + Prisma schema
+COPY server .
 
-# 3) 把 Prisma provider 从 sqlite 切到 postgresql，再生成客户端；并赋予入口脚本可执行权限。
+# 4) 把 Prisma provider 从 sqlite 切到 postgresql，再生成客户端；并赋予入口脚本可执行权限。
 #    （仓库里 schema 默认保持 sqlite 供本地零配置开发；镜像内统一用 PG。）
 RUN sed -i 's/provider = "sqlite"/provider = "postgresql"/' prisma/schema.prisma \
   && npx prisma generate \

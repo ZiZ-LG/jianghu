@@ -144,8 +144,13 @@ export async function applyAction(tenantId: string, action: any): Promise<void> 
           role: p.role ?? 'U', sentiment: p.sentiment ?? 'unknown', confidence: p.confidence ?? '推理',
           sentimentValue: p.sentimentValue ?? null, isKeyInfluencer: !!p.isKeyInfluencer,
           procurementType: p.procurementType ?? null, procurementStatus: p.procurementStatus ?? null,
+          assessedAt: new Date(), // PDE 立场评估时点（时间衰减基准，裁决B：OppRole 承载）
         },
-        update: pick(p, ['role', 'sentiment', 'sentimentValue', 'confidence', 'isKeyInfluencer', 'procurementType', 'procurementStatus']),
+        update: {
+          ...pick(p, ['role', 'sentiment', 'sentimentValue', 'confidence', 'isKeyInfluencer', 'procurementType', 'procurementStatus']),
+          // 改了态度或可信度 = 一次新的立场评估 → 刷新衰减基准
+          ...('sentiment' in p || 'confidence' in p ? { assessedAt: new Date() } : {}),
+        },
       });
       return;
     }

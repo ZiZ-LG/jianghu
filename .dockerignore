@@ -1,0 +1,13 @@
+# 根 context（server 镜像构建用）：控制上传体积 + 防密钥/本地库进镜像
+**/node_modules
+**/dist
+.git
+app
+docs
+参考文件
+*.db
+*.db-journal
+**/.env
+**/.env.*
+.claude
+.DS_Store

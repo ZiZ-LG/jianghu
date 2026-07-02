@@ -219,6 +219,9 @@ model OppRole {
   isKeyInfluencer   Boolean     @default(false)
   procurementType   String?
   procurementStatus String?
+  // ── PDE 立场评估承载（裁决B：不建平行 StanceAssessment 表）──
+  assessedAt        DateTime?   // 立场评估时点（时间衰减基准；null=未记录→不衰减，SET_ROLE 改 sentiment/confidence 时自动刷新）
+  sourceQuality     Float       @default(1.0) // 信源质量（教练五级映射预留，v1 恒 1.0）
 
   @@unique([opportunityId, personId])
 }
@@ -646,4 +649,105 @@ model ScheduleSync {
   updatedAt       DateTime @updatedAt
 
   @@unique([tenantId, kind, refId])
+}
+
+// ═══════════ PDE 决策引擎（M2 数据层 · docs/pde-handoff/SPEC §4 按裁决B修订版）═══════════
+// 铁律③跨库可移植：不用原生 enum/Json/数组——类型/状态用 String，结构化走 String 存 JSON 文本。
+
+// E 类必清项的「已知/可信度」元层（双轨分输入；itemKey 对齐 g64111 十一项，subItemKey=""表示项级）
+model ScoringItemState {
+  id            String    @id // sis_xxx
+  tenantId      String
+  opportunityId String
+  itemKey       String    // C1..C6 / P1..P4 / 1K
+  subItemKey    String    @default("") // 子项如 form7/budget；空串=项级（不用 null，保 unique 语义跨库一致）
+  known         Boolean   @default(false)
+  confidence    String    @default("不清") // 四档中文，对齐 OppRole.confidence（共识/明确/推理/不清）
+  sourceQuality Float     @default(1.0)
+  collectedAt   DateTime?
+  note          String    @default("")
+
+  @@unique([tenantId, opportunityId, itemKey, subItemKey])
+  @@index([tenantId, opportunityId])
+}
+
+// 商机级 PDE 配置（彩池/成本/竞争系数；stage 用 Opportunity.engageStage 映射，不重复存）
+model DealPdeConfig {
+  id              String   @id // pde_xxx
+  tenantId        String
+  opportunityId   String   @unique
+  potValue        Float?   // 万元；null → 回退 Opportunity.expectedAmountW
+  plannedCost     Float    @default(0)
+  sunkCost        Float    @default(0)
+  cComp           Float    @default(1.0)
+  industryPackKey String   @default("digital-energy")
+  updatedAt       DateTime @updatedAt
+
+  @@index([tenantId])
+}
+
+// 行业包：schema+params+signals+actions+roles 的版本化容器（租户级，惰性装载）
+model IndustryPack {
+  id            String   @id // pack_xxx
+  tenantId      String
+  packKey       String   // "digital-energy"
+  schemaVersion String   // "1.1"
+  payload       String   @default("{}") // 五个 seed 文件的合并快照（JSON 文本）
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  @@unique([tenantId, packKey, schemaVersion])
+}
+
+// 动作库（由行业包展开，便于查询与租户级增删）
+model ActionCatalog {
+  id          String @id // ac_xxx
+  tenantId    String
+  packId      String
+  actionKey   String // "act-form7"
+  category    String // info | relationship
+  title       String @default("")
+  effectJson  String @default("{}") // {type: item_resolve|cred_upgrade|mark_shift, targetItem?/targetMark?/targetCred?/resolvedCred?}
+  costTier    String @default("mid") // low/mid/high
+  costWan     Float  @default(0)     // 展开时按 params.costTierWan 换算（租户可单独调）
+  stageWindow String @default("any") // any / "initiation..feasibility"
+  targetSlots String @default("[]")  // JSON 数组文本，如 ["D","KEY_INFLUENCER","any"]
+  gist        String @default("")
+  scriptRef   String @default("")    // 源宝典引用（⑥#1）
+
+  @@unique([tenantId, packId, actionKey])
+  @@index([tenantId])
+}
+
+// 行为信号库（证据→立场分布增量的映射；审核流管线的判定依据，随包展开）
+model SignalCatalog {
+  id         String  @id // sig_xxx
+  tenantId   String
+  packId     String
+  signalKey  String  // "co_plan_budget"
+  label      String  @default("")
+  groupKey   String  @default("") // p3_plus 等
+  direction  Int     @default(1)  // ±1
+  tier       String  @default("mid") // weak/mid/strong → deltaAlpha 0.5/1/2
+  behavioral Boolean @default(true)
+
+  @@unique([tenantId, packId, signalKey])
+  @@index([tenantId])
+}
+
+// 评估快照：inputsJson 完整留痕（DECISIONS#4 硬要求·未来校准训练集）；复盘=还原决策时点
+model EVSnapshot {
+  id             String   @id // evs_xxx
+  tenantId       String
+  opportunityId  String
+  trigger        String   // manual | evidence_approved | stage_gate | scheduled | import
+  inputsJson     String   @default("{}") // 组装后的完整 Deal 输入 + 参数版本
+  resultJson     String   @default("{}") // evaluate + score + recommendation 输出
+  schemaId       String   @default("")
+  schemaVersion  String   @default("")
+  confidenceFlag String   @default("")   // low_confidence / no_pot 等
+  createdBy      String   @default("")
+  createdAt      DateTime @default(now())
+
+  @@index([tenantId, opportunityId, createdAt])
 }

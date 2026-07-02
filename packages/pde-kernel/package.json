@@ -3,9 +3,10 @@
   "version": "0.1.0",
   "description": "江湖 PDE 数学内核（G64111 × 德扑决策引擎）：纯函数、零运行时依赖。权威规范 = docs/pde-handoff/kernel/reference_impl.py，实现须过 fixtures/golden-tests.json（1e-6）。",
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
   "files": [
+    "src",
     "dist"
   ],
   "scripts": {

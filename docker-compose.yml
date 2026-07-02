@@ -20,7 +20,10 @@ services:
     # 仅 compose 内网可达，不对公网暴露端口
 
   server:
-    build: ./server
+    build:
+      # context=仓库根：server 依赖 packages/pde-kernel（file: 协议），构建需两个目录同时可见
+      context: .
+      dockerfile: server/Dockerfile
     restart: unless-stopped
     depends_on:
       db:

@@ -23,6 +23,7 @@ import { recordingRoutes } from './recording.js';
 import { curatedRoutes } from './curated.js';
 import { opportunityRoutes } from './opp.js';
 import { wecomRoutes, syncFromAction } from './wecom.js';
+import { pdeRoutes } from './pde/routes.js';
 import { handleMcpBody } from './mcpServer.js';
 import { accessTokenRoutes, mcpAuthenticate } from './accessToken.js';
 
@@ -88,6 +89,7 @@ curatedRoutes(app);
 opportunityRoutes(app);
 accessTokenRoutes(app);
 wecomRoutes(app); // 企微日历：配置/绑定（江湖→企微同步在 mutate 落库后触发）
+pdeRoutes(app); // PDE 决策引擎（M3 评估主链）：ev / intel-priorities / action-ranking / snapshot
 
 // ── 数据：拉取整树 / 应用变更 ──
 app.get('/api/state', { preHandler: [app.authenticate] }, async (req) => assembleState(req.user.tenantId));
