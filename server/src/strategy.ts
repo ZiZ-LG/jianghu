@@ -14,7 +14,7 @@ const ITEM_LABEL: Record<string, string> = {
 const ITEM_MAX: Record<string, number> = { C1: 10, C2: 5, C3: 5, C4: 5, C5: 5, C6: 5, P1: 5, P2: 10, P3: 20, P4: 10, '1K': 20 };
 
 interface StrategyCand { gapItem: string; title: string; basis: string; }
-interface MilestoneCand { title: string; offsetDays: number; }
+interface MilestoneCand { title: string; offsetDays: number; why: string; } // why=排期依据（P4：候选标注依据）
 
 // ── 顺推 mock：从缺口生成补分打法（无 Key 兜底，用真实 items 数据）──
 const FWD_TMPL: Record<string, string> = {
@@ -39,10 +39,26 @@ function mockForward(ctx: any): StrategyCand[] {
     .map((k) => ({ gapItem: k, title: FWD_TMPL[k] || `补强 ${ITEM_LABEL[k]}`, basis: `当前 ${ITEM_LABEL[k]} = ${items[k]}/${ITEM_MAX[k]}，是趋赢力短板` }));
 }
 
-// ── 倒推 mock：从终局倒排标准里程碑序列 ──
-function mockBackward(_ctx: any): MilestoneCand[] {
+// ── 倒推 mock：从预计签约日倒排标准里程碑序列（P4：真·倒推——终点锚定 expectedSignDate，均匀回排；
+// 未填签约日/太近才回落典型两周节奏，并在 why 里提示补填）──
+function mockBackward(ctx: any): MilestoneCand[] {
   const base = ['需求调研立项', '方案可研获认可', '预算批复', '招标挂网', '开标评标', '商务谈判', '合同双签'];
-  return base.map((t, i) => ({ title: t, offsetDays: (i + 1) * 14 }));
+  const sign = String(ctx?.opportunity?.expectedSignDate || '');
+  const days = sign ? Math.ceil((new Date(sign + 'T00:00:00').getTime() - Date.now()) / 86400000) : NaN; // ceil：末项 offset=days 正好落在签约日当天
+  if (Number.isFinite(days) && days >= base.length) {
+    return base.map((t, i) => {
+      const off = Math.max(1, Math.round(((i + 1) / base.length) * days));
+      return {
+        title: t,
+        offsetDays: off,
+        why: i === base.length - 1 ? `锚定预计签约日 ${sign}` : `距签约 ${days - off} 天 · 从签约日按标准招采序列倒排`,
+      };
+    });
+  }
+  return base.map((t, i) => ({
+    title: t, offsetDays: (i + 1) * 14,
+    why: sign ? `预计签约日 ${sign} 太近，改按典型两周节奏顺排` : '未填预计签约日，按典型两周节奏顺排（终局卡补上签约日可精确倒排）',
+  }));
 }
 
 const grabJsonArray = (text: string): any[] => {
@@ -65,10 +81,10 @@ async function llmForward(cfg: any, ctx: any): Promise<StrategyCand[]> {
 }
 
 async function llmBackward(cfg: any, ctx: any): Promise<MilestoneCand[]> {
-  const system = '你是 B2B 大客户销售策略顾问。基于商机的终局目标(singleSalesGoal)与预计签约日(expectedSignDate)，从终局倒排出 4-7 个关键里程碑（如立项评审/方案认可/预算批复/招标挂网/开标/商务谈判/签约）。只输出 JSON 数组，每项 {title,offsetDays}；title 是里程碑名(≤20字)；offsetDays 是距今天的天数(正整数，越靠后越大)；不要输出 JSON 以外内容。';
-  const text = await callLLM(cfg, system, `# 商机快照\n${JSON.stringify(ctx, null, 1)}`, 600);
+  const system = '你是 B2B 大客户销售策略顾问。基于商机的终局目标(singleSalesGoal)与预计签约日(expectedSignDate)，从终局倒排出 4-7 个关键里程碑（如立项评审/方案认可/预算批复/招标挂网/开标/商务谈判/签约）；若有 expectedSignDate，最后一个里程碑必须锚定它、其余从它回排。只输出 JSON 数组，每项 {title,offsetDays,why}；title 是里程碑名(≤20字)；offsetDays 是距今天的天数(正整数，越靠后越大)；why 是排期依据一句话(≤40字，如"距签约 30 天，招标挂网到开标的法定最短周期")；不要输出 JSON 以外内容。';
+  const text = await callLLM(cfg, system, `# 商机快照\n${JSON.stringify(ctx, null, 1)}`, 700);
   return grabJsonArray(text).slice(0, 7)
-    .map((r) => ({ title: String(r?.title || '').slice(0, 30), offsetDays: Math.max(1, Math.round(Number(r?.offsetDays)) || 14) }))
+    .map((r) => ({ title: String(r?.title || '').slice(0, 30), offsetDays: Math.max(1, Math.round(Number(r?.offsetDays)) || 14), why: String(r?.why || '').slice(0, 60) }))
     .filter((c) => c.title);
 }
 

@@ -35,7 +35,7 @@ const addDaysYmd = (n: number) => { const d = new Date(); d.setDate(d.getDate() 
 const mmdd = (ymd: string) => (ymd && ymd.length >= 10 ? `${ymd.slice(5, 7)}/${ymd.slice(8, 10)}` : '未定');
 
 interface FwdCand { gapItem: string; title: string; basis: string; }
-interface BwdCand { title: string; offsetDays: number; }
+interface BwdCand { title: string; offsetDays: number; why?: string; } // why=排期依据（P4：倒推候选标注依据）
 type DrawerState = null | { kind: 'card'; id: string } | { kind: 'milestone'; id: string } | { kind: 'goal' } | { kind: 'action'; id: string } | { kind: 'whatif' } | { kind: 'engine' };
 type DockHeight = 'collapsed' | 'half' | 'full';
 // 第3刀：AI 可预填的行动四要素（title/personId 由策略卡携带，不在此列）
@@ -240,10 +240,31 @@ export function DeliberationDock({
   // ── 视图状态：详情抽屉 ──
   const [drawer, setDrawer] = useState<DrawerState>(null);
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setDrawer(null); };
+    // Esc 关抽屉前先 blur：抽屉字段走 defaultValue+onBlur 保存，直接卸载会丢正在输入的值（P4③ 空卡治理会误删刚起名的卡）
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { (document.activeElement as HTMLElement | null)?.blur?.(); setDrawer(null); } };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  // P4③ 误操作治理：从「＋/缺口＋」进来开了抽屉又直接关掉（点空白/Esc/✕/切别的卡）→ 留下的空卡自动删除。
+  // 挂在 drawer 变化上统一拦截所有关闭路径；正常删除路径下卡已不在列表，find 不到自然跳过。
+  const prevDrawer = useRef<DrawerState>(null);
+  useEffect(() => {
+    const prev = prevDrawer.current;
+    prevDrawer.current = drawer;
+    if (!prev || (drawer && drawer.kind === prev.kind && (drawer as any).id === (prev as any).id)) return;
+    if (prev.kind === 'card') {
+      const c = cards.find((x) => x.id === prev.id);
+      if (c && !c.title.trim() && !(c.basis ?? '').trim()) dispatch({ type: 'DELETE_STRATEGY_CARD', accId: account.id, cardId: c.id });
+    } else if (prev.kind === 'milestone') {
+      const m = milestones.find((x) => x.id === prev.id);
+      if (m && !m.title.trim()) dispatch({ type: 'DELETE_MILESTONE', accId: account.id, milestoneId: m.id });
+    } else if (prev.kind === 'action') {
+      const a = planActions.find((x) => x.id === prev.id);
+      if (a && a.draft && !a.title.trim() && !(a.target ?? '').trim()) dispatch({ type: 'DELETE_PLAN_ACTION', accId: account.id, actionId: a.id });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drawer]);
   // 切商机/客户 → 关抽屉、清背离忽略集、丢未落库的雷草稿、清字段来源标记、清引擎候选忽略集
   useEffect(() => { setDrawer(null); setDismissedShifts(new Set()); setRiskDraft(null); setAiMark(null); setDismissedActs(new Set()); }, [opp.id, account.id]);
 
@@ -400,10 +421,8 @@ export function DeliberationDock({
 
   return (
     <div className={`dock dock-${height}`} onClick={() => setDrawer(null)}>
-      {/* ── 坞头：抓手 + 聚焦标识 + 三档切换（第8刀：药丸/徽章收编左栏——坞全宽后局势信息在左栏一处）── */}
+      {/* ── 坞头：聚焦标识 + ⚠＋行内加雷 + 三档切换（第8刀收编局势信息；P4：抓手删除——与三档「收起」重复，雷输入行内展开不再另起一行）── */}
       <div className="dock-head" onClick={(e) => e.stopPropagation()}>
-        <button className="dock-grip" title={height === 'collapsed' ? '展开推演坞' : '收起推演坞'}
-          onClick={() => setHeight(height === 'collapsed' ? 'half' : 'collapsed')}>{height === 'collapsed' ? '⌃' : '⌄'}</button>
         <span className="dock-head-cap">♟️ 推演坞</span>
         <EnginePulse patrol={patrol} />
         {focusName && (
@@ -411,7 +430,12 @@ export function DeliberationDock({
             <button onClick={() => onSelectPerson?.(null)} title="清除聚焦">✕</button>
           </span>
         )}
-        <button className="dock-risk-add" title="记一条雷（高危风险，常驻坞头示警）" onClick={() => setRiskDraft('')}>⚠＋</button>
+        {riskDraft === null
+          ? <button className="dock-risk-add" title="记一条雷（高危风险，常驻坞头示警）" onClick={() => setRiskDraft('')}>⚠＋</button>
+          : <input className="dock-risk-inline" autoFocus value={riskDraft} placeholder="一句话记雷（回车落档 · Esc 放弃）"
+              onChange={(e) => setRiskDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') commitRisk(); else if (e.key === 'Escape') setRiskDraft(null); }}
+              onBlur={commitRisk} />}
         <span className="dock-seg">
           {(['collapsed', 'half', 'full'] as const).map((h) => (
             <button key={h} className={height === h ? 'on' : ''} onClick={() => setHeight(h)}>{h === 'collapsed' ? '收起' : h === 'half' ? '展开' : '全展开'}</button>
@@ -446,16 +470,6 @@ export function DeliberationDock({
           <button className="dock-risk-del" title="排雷（删除）" onClick={() => deleteRisk(r.id)}>✕</button>
         </div>
       ))}
-      {riskDraft !== null && (
-        <div className="dock-risk" onClick={(e) => e.stopPropagation()}>
-          <span className="dock-risk-icon">⚠</span>
-          <input className="dock-risk-input" autoFocus value={riskDraft} placeholder="一句话记雷：这局会出事的点（回车落档 · Esc 放弃）"
-            onChange={(e) => setRiskDraft(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') commitRisk(); else if (e.key === 'Escape') setRiskDraft(null); }}
-            onBlur={commitRisk} />
-        </div>
-      )}
-
       {height !== 'collapsed' && (
         <div className="dock-scroll">
           {/* ── 第2刀：横向推导流水线 局势 → 策略 → 倒排 → 行动（列间箭头显因果；第6刀后旁支全退，雷在坞头红条）
@@ -479,7 +493,8 @@ export function DeliberationDock({
                     <span className="sb2-gap-name">{ITEM_LABEL[g.key]}</span>
                     <span className="sb2-gap-score">{g.score}/{g.max}</span>
                     {coveredGaps.has(g.key)
-                      ? <span className="sb2-gap-cov" title="已有策略卡覆盖">✓</span>
+                      ? <button className="sb2-gap-cov" title="已有策略卡覆盖 · 点击打开那张卡"
+                          onClick={() => { const c = cards.find((x) => x.gapItem === g.key); if (c) setDrawer({ kind: 'card', id: c.id }); }}>✓</button>
                       : <button className="sb2-gap-add" title="挂一张策略卡" onClick={() => addCard(g.key)}>＋</button>}
                   </div>
                 ))}
@@ -576,7 +591,7 @@ export function DeliberationDock({
                   <span className="sb2-card-title">{item.c.title}</span>
                   <span className="sb2-stamp">待采纳</span>
                 </div>
-                <div className="sb2-card-sub">AI 倒推 · 约 {item.c.offsetDays} 天后（{mmdd(item.date)}）</div>
+                <div className="sb2-card-sub">AI 倒推 · 约 {item.c.offsetDays} 天后（{mmdd(item.date)}）{item.c.why && <><br />依据：{item.c.why}</>}</div>
                 <div className="sb2-cand-acts">
                   <button className="btn primary xs" onClick={() => acceptBwd(item.i)}>采纳</button>
                   <button className="btn ghost xs" onClick={() => setBwdCands((xs) => xs.filter((_, j) => j !== item.i))}>忽略</button>

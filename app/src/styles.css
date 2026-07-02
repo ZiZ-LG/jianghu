@@ -1066,7 +1066,10 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 .sb2-gap-row { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 0; }
 .sb2-gap-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
 .sb2-gap-score { font-size: 11px; font-weight: 700; color: #dc2626; font-variant-numeric: tabular-nums; }
-.sb2-gap-cov { color: #16a34a; font-weight: 800; width: 20px; text-align: center; flex-shrink: 0; }
+.sb2-gap-cov { color: #16a34a; font-weight: 800; width: 20px; height: 20px; text-align: center; flex-shrink: 0; background: none; border: none; cursor: pointer; border-radius: 5px; font-size: 13px; line-height: 1; padding: 0; } /* P4③：✓ 可点击定位到覆盖卡 */
+.sb2-gap-cov:hover { background: color-mix(in srgb, #16a34a 14%, transparent); }
+/* P4②：⚠＋ 点开后坞头行内展开的雷输入框（替代原独立 .dock-risk 输入行） */
+.dock-risk-inline { flex: 1 1 180px; max-width: 340px; min-width: 120px; font-size: 12px; padding: 4px 9px; border: 1px solid #dc2626; border-radius: 7px; background: var(--panel); color: var(--ink); }
 .sb2-gap-add { width: 20px; height: 20px; border: 1px dashed var(--accent); color: var(--accent); background: none; border-radius: 5px; cursor: pointer; font-size: 13px; line-height: 1; flex-shrink: 0; }
 .sb2-gap-add:hover { background: var(--accent-soft); }
 .sb2-gap-more { border: none; background: none; color: var(--accent); font-size: 11px; cursor: pointer; text-align: left; padding: 2px 0; }
