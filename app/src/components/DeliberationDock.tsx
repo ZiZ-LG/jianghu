@@ -4,7 +4,7 @@
 // 三档高度：收起(仅坞头+警示区) / 展开 / 全展开(四列更高)；画布始终在上方可见。
 // 画布↔坞双向联动：selectedPersonId 高亮挂靠该人的策略卡；点策略卡 → onSelectPerson 回高亮画布目标。
 // 老 PDE 适配层（lib/pde）在坞内只剩两职能：列① 姿态解读一句 + E2 背离提案（EngineBar 已退役，EV/赢面老口径废弃）。
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Account, Opportunity, Sentiment, StrategyCard } from '../types';
 import type { Action } from '../store';
 import { newStrategyCard, newStrategyRisk, newPlanAction, newMilestone, newEvidence } from '../store';
@@ -205,14 +205,17 @@ export function DeliberationDock({
   const [fwdCands, setFwdCands] = useState<FwdCand[]>([]);
   const [bwdCands, setBwdCands] = useState<BwdCand[]>([]);
 
+  const col2Ref = useRef<HTMLDivElement>(null); // P0：顺推出候选后滚回列②顶部（候选置顶渲染，保证在视野内）
   const runSuggest = async (mode: 'forward' | 'backward') => {
     if (aiBusy) return;
     setAiBusy(mode); setAiErr('');
     try {
       const ctx = { ...buildAiContext(account, opp, breakdown), existingCardTitles: cards.map((c) => c.title).filter(Boolean) };
       const r = await api.strategySuggest(opp.id, mode, ctx);
-      if (mode === 'forward') setFwdCands(r.candidates || []);
-      else setBwdCands(r.candidates || []);
+      if (mode === 'forward') {
+        setFwdCands(r.candidates || []);
+        requestAnimationFrame(() => { if (col2Ref.current) col2Ref.current.scrollTop = 0; });
+      } else setBwdCands(r.candidates || []);
     } catch (e: any) {
       setAiErr(e?.message || 'AI 推演失败');
     } finally { setAiBusy(null); }
@@ -485,7 +488,7 @@ export function DeliberationDock({
           <div className="sb2-arrow" title="局势推导出策略">→</div>
 
           {/* 列② 策略（正推：现状 → 方向） */}
-          <div className="sb2-col">
+          <div className="sb2-col" ref={col2Ref}>
             <div className="sb2-col-head">
               <span>② 策略 · 正推</span>
               <span className="sb2-lane-acts" onClick={(e) => e.stopPropagation()}>
@@ -494,6 +497,21 @@ export function DeliberationDock({
                 <button className="btn ghost xs" disabled={aiBusy === 'forward'} onClick={() => runSuggest('forward')}>{aiBusy === 'forward' ? '推演中…' : '✨ 顺推'}</button>
               </span>
             </div>
+            {/* AI 顺推候选虚位卡（P0：置顶渲染——此前排在存量卡之后，列内容一长就出生在视野外=「点了没反应」；对齐列④引擎荐置顶惯例） */}
+            {fwdCands.map((c, i) => (
+              <div key={`fc${i}`} className="sb2-card sb2-cand">
+                <div className="sb2-card-top">
+                  {c.gapItem && <span className="sb2-chip">{ITEM_LABEL[c.gapItem as ItemKey] || c.gapItem}</span>}
+                  <span className="sb2-stamp">待采纳</span>
+                </div>
+                <div className="sb2-card-title">{c.title}</div>
+                <div className="sb2-card-sub">AI 顺推 · {c.basis || '依据见推演'}</div>
+                <div className="sb2-cand-acts">
+                  <button className="btn primary xs" onClick={() => acceptFwd(i)}>采纳</button>
+                  <button className="btn ghost xs" onClick={() => setFwdCands((xs) => xs.filter((_, j) => j !== i))}>忽略</button>
+                </div>
+              </div>
+            ))}
             {/* 策略卡 */}
             {cards.map((card) => {
               const dispatched = (card.dispatchedActionIds?.length ?? 0) > 0;
@@ -520,21 +538,6 @@ export function DeliberationDock({
               );
             })}
 
-            {/* AI 顺推候选虚位卡 */}
-            {fwdCands.map((c, i) => (
-              <div key={`fc${i}`} className="sb2-card sb2-cand">
-                <div className="sb2-card-top">
-                  {c.gapItem && <span className="sb2-chip">{ITEM_LABEL[c.gapItem as ItemKey] || c.gapItem}</span>}
-                  <span className="sb2-stamp">待采纳</span>
-                </div>
-                <div className="sb2-card-title">{c.title}</div>
-                <div className="sb2-card-sub">AI 顺推 · {c.basis || '依据见推演'}</div>
-                <div className="sb2-cand-acts">
-                  <button className="btn primary xs" onClick={() => acceptFwd(i)}>采纳</button>
-                  <button className="btn ghost xs" onClick={() => setFwdCands((xs) => xs.filter((_, j) => j !== i))}>忽略</button>
-                </div>
-              </div>
-            ))}
             {cards.length === 0 && fwdCands.length === 0 && (
               <div className="sb2-card sb2-empty-card" onClick={() => addCard()}>还没有策略卡<br /><span>从现状锚缺口点「＋」，或「✨ 顺推」</span></div>
             )}
