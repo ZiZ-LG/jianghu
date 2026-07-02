@@ -41,6 +41,9 @@ type DockHeight = 'collapsed' | 'half' | 'full';
 type AiFieldKey = 'target' | 'resources' | 'cautions' | 'props';
 type Prefill = Record<AiFieldKey, string>;
 
+// M5 · 列④引擎候选（action-ranking ΔEV 排序，裁决A IntelAndActionPanel 下半落坞）
+interface EngineAction { actionKey: string; title: string; personId: string; personName: string; d_pwin: number; gross: number | null; cost: number; dEV: number | null; ratio: number | null; gist: string; scriptRef: string; }
+
 // M5 复盘台 · 赢面走势 sparkline（快照序列，manual 打点高亮；纯 SVG 无依赖）
 function Sparkline({ snaps }: { snaps: any[] }) {
   const pts = [...snaps].reverse().map((s) => ({ pwin: Number(s.pwin ?? 0), trigger: s.trigger, at: String(s.createdAt ?? '') }));
@@ -89,6 +92,17 @@ export function DeliberationDock({
     return () => { alive = false; };
   }, [opp.id, breakdown]);
   const pde = pdeFull ? { action: pdeFull.recommendation?.action ?? '', pwin: pdeFull.pwin ?? 0, flag: pdeFull.confidenceFlag ?? '' } : null;
+
+  // M5 · 列④引擎候选：action-ranking ΔEV 排序 top3。只展示，人采纳才落草稿（铁律②）；引擎不可用静默。
+  const [engActs, setEngActs] = useState<EngineAction[] | null>(null);
+  const [dismissedActs, setDismissedActs] = useState<Set<string>>(new Set()); // actionKey@personId 会话级忽略
+  useEffect(() => {
+    let alive = true;
+    api.pdeActions(opp.id)
+      .then((r) => { if (alive) setEngActs(r.actions ?? []); })
+      .catch(() => { if (alive) setEngActs(null); });
+    return () => { alive = false; };
+  }, [opp.id, breakdown]);
 
   // 复盘台走势：full 档才懒拉快照序列；📸 手动打点后重拉
   const [snaps, setSnaps] = useState<any[] | null>(null);
@@ -247,8 +261,8 @@ export function DeliberationDock({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
-  // 切商机/客户 → 关抽屉、清背离忽略集、丢未落库的雷草稿、清字段来源标记
-  useEffect(() => { setDrawer(null); setDismissedShifts(new Set()); setRiskDraft(null); setAiMark(null); }, [opp.id, account.id]);
+  // 切商机/客户 → 关抽屉、清背离忽略集、丢未落库的雷草稿、清字段来源标记、清引擎候选忽略集
+  useEffect(() => { setDrawer(null); setDismissedShifts(new Set()); setRiskDraft(null); setAiMark(null); setDismissedActs(new Set()); }, [opp.id, account.id]);
 
   // ── what-if 假设推演（复盘台抽屉 · SPEC §7）：沙盘不落库，关抽屉即散；假设=此刻新情报（服务端 age 归零）──
   const [wiBase, setWiBase] = useState<any>(null);      // 基线 + 当前牌局人员表（开抽屉时空 overrides 拉取）
@@ -319,6 +333,24 @@ export function DeliberationDock({
   const deleteAction = (actionId: string) => { dispatch({ type: 'DELETE_PLAN_ACTION', accId: account.id, actionId }); setDrawer(null); };
   // 第4刀 · 上桌=状态跃迁：草稿→作战令挂画布目标人旁（需先关联干系人）；computeInverse 通用 pick 使上桌可撤销
   const stageAction = (actionId: string) => dispatch({ type: 'UPDATE_PLAN_ACTION', accId: account.id, actionId, patch: { draft: false } });
+
+  // M5 · 引擎候选 top3：忽略集 + 正收益 + 已有同名未完成行动过滤（采纳产物 title/personId 同名 → 刷新后自动不再荐，跨会话防重）
+  const engCands = (engActs ?? [])
+    .filter((a) => !dismissedActs.has(`${a.actionKey}@${a.personId}`))
+    .filter((a) => (a.dEV != null ? a.dEV > 0 : a.d_pwin > 0))
+    .filter((a) => !planActions.some((p) => !p.done && p.title === a.title && p.personId === a.personId))
+    .slice(0, 3);
+  const acceptEngine = (a: EngineAction) => {
+    const pa = newPlanAction(account.id, opp.id, todayYmd(), todayYmd(), 'am');
+    pa.title = a.title;
+    pa.personId = a.personId;
+    pa.target = a.gist || '';
+    pa.origin = 'ai';
+    pa.draft = true; // 第4刀语义：采纳=坞内草稿，人微调「→ 上桌」才挂画布
+    dispatch({ type: 'ADD_PLAN_ACTION', accId: account.id, oppId: opp.id, planAction: pa });
+    setDismissedActs((s) => new Set(s).add(`${a.actionKey}@${a.personId}`));
+    setDrawer({ kind: 'action', id: pa.id });
+  };
   const saveAction = (actionId: string, andStage = false) => {
     if (!actDraft) return;
     const d = actDraft; const today = todayYmd();
@@ -377,7 +409,7 @@ export function DeliberationDock({
         <span className="sb-band-pill" style={{ color: tone, borderColor: tone }}>● {BAND_LABEL[breakdown.band]} · 趋赢力 {pct}%</span>
         {pde && ACT_LABEL[pde.action] && (
           <span className={`mf-act mf-act-${ACT_LABEL[pde.action]!.cls}`}
-            title={`引擎建议（赢面 ${Math.round(pde.pwin * 100)}%${pde.flag ? ` · ${pde.flag.includes('no_pot') ? '未设合同额，金额降级' : '置信偏低，先摸底'}` : ''}）`}>
+            title={`引擎建议（赢面 ${Math.round(pde.pwin * 100)}%${pde.flag ? ` · ${pde.flag.includes('no_pot') ? '未设合同额，金额降级' : '置信偏低，先摸底'}` : ''}）${engCands[0] ? ` · 最优先：${engCands[0].title} → ${engCands[0].personName}（见列④引擎荐）` : ''}`}>
             {ACT_LABEL[pde.action]!.icon} {ACT_LABEL[pde.action]!.text} · 赢面 {Math.round(pde.pwin * 100)}%{pde.flag ? ' ⚠︎' : ''}
           </span>
         )}
@@ -571,7 +603,25 @@ export function DeliberationDock({
                 <button className="btn ghost xs" onClick={addAction}>＋</button>
               </span>
             </div>
-            {planActions.length === 0 && (
+            {/* M5 · 引擎候选（action-ranking ΔEV 降序 top3）：只展示，采纳→草稿开抽屉（铁律②）；pot 缺失降级纯赢面口径 */}
+            {engCands.map((a) => (
+              <div key={`${a.actionKey}@${a.personId}`} className="sb2-card sb2-cand sb2-eng">
+                <div className="sb2-card-top">
+                  <span className="sb2-chip sb2-chip-eng">⚙ 引擎荐</span>
+                  <span className="sb2-ev" title={a.dEV != null ? `预期增益 ≈${a.dEV} 万（赢面 +${(a.d_pwin * 100).toFixed(1)}pp，成本 ${a.cost} 万）` : `赢面 +${(a.d_pwin * 100).toFixed(1)}pp（未设合同额，只给排序）`}>
+                    {a.dEV != null ? `≈+${a.dEV} 万` : `+${(a.d_pwin * 100).toFixed(1)}pp`}
+                  </span>
+                </div>
+                <div className="sb2-card-title">{a.title}</div>
+                <div className="sb2-card-sub">目标：{a.personName}{a.dEV != null ? ` · 赢面 +${(a.d_pwin * 100).toFixed(1)}pp` : ''}</div>
+                {a.gist && <div className="sb2-eng-gist">{a.gist}</div>}
+                <div className="sb2-cand-acts">
+                  <button className="btn primary xs" onClick={() => acceptEngine(a)}>采纳成草稿</button>
+                  <button className="btn ghost xs" onClick={() => setDismissedActs((s) => new Set(s).add(`${a.actionKey}@${a.personId}`))}>忽略</button>
+                </div>
+              </div>
+            ))}
+            {planActions.length === 0 && engCands.length === 0 && (
               <div className="sb2-card sb2-empty-card" onClick={addAction}>还没有行动<br /><span>＋ 加一条，或在策略卡上「→ 派发」生成</span></div>
             )}
             {planActions.map((a) => {

@@ -44,7 +44,7 @@
 > **2026-07-02 裁决 A 嵌入式落地进度**（形态改变，见 DECISIONS.md；E2E 用 preview 实测替代 Playwright）：
 > - ✅ DealPokerDashboard 两级：坞头四动作徽章（`6048b54`）+ 坞 full 档复盘台（双轨分+非考核文案 / 建议卡 reason+薄弱关键人 / 赢面走势 sparkline+📸 手动打点 / gate 红条）
 > - ✅ StanceRangeBar → 焦点面板「档案」tab 头部（三色分布+n_eff 角标+样本薄警示，点击跳「动态」证据时间线）
-> - ✅ IntelAndActionPanel 上半 VoI → 场景 A 拜访卡（`00efe7a`）；下半 ΔEV → 今日一屏 ✅、坞行动列排序未接（坞头最优动作人话化一并留待）
+> - ✅ IntelAndActionPanel 上半 VoI → 场景 A 拜访卡（`00efe7a`）；下半 ΔEV → 今日一屏 ✅ + 坞列④引擎候选（2026-07-02：action-ranking top3 虚线卡=动作+目标人+≈ΔEV[pot 缺失降级纯 pp 口径]+gist；采纳→draft 草稿开抽屉守铁律②、忽略递补、同名未完成行动自动过滤防重；坞头徽章 hover 补人话最优先动作——第5刀 best_action 非人话遗留一并关闭）
 > - ✅ what-if 假设调整抽屉（2026-07-02）：新端点 `POST /api/pde/:oppId/what-if`（纯计算零写库·入出参前端值域·hypo 只算 evaluate 层，四动作建议以实际局面为准）+ 复盘台「🧪 假设推演」抽屉（逐人立场/可信度 select 默认当前值·变更行高亮·赢面/红线/预期回报三项对比·重置）；假设=此刻新情报（age 归零 q 满格）
 > - ⏸ ReviewInbox 第 5 类卡（依赖 M3 审核流 EvidenceEvent 管线）、EvidenceTimeline 的 PDE 证据并入动态 tab——留后续刀
 

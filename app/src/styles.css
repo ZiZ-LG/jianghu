@@ -1302,6 +1302,10 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 .dock-review-weak { margin-top: 6px; font-size: 11px; color: #d97706; font-weight: 600; }
 .dock-spark { display: block; }
 @media (max-width: 900px) { .dock-review-grid { grid-template-columns: 1fr; } }
+/* M5 · 列④引擎候选（action-ranking ΔEV 排序）：⚙引擎荐 chip + 预期增益数字（正收益绿）；卡体复用 .sb2-cand 虚线 */
+.sb2-chip-eng { background: var(--accent-soft); color: var(--accent-ink); }
+.sb2-ev { margin-left: auto; font-size: 11px; font-weight: 800; color: #16a34a; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.sb2-eng-gist { font-size: 11px; color: var(--faint); line-height: 1.5; margin-top: 2px; }
 /* M5 · what-if 假设推演抽屉（复盘台入口 · 沙盘不落库）：变更行 accent 高亮；Δ 涨绿跌红语义色 */
 .dock-review-acts { display: inline-flex; gap: 6px; }
 .wi-hint { font-size: 11px; color: var(--muted); line-height: 1.55; margin-bottom: 10px; }
