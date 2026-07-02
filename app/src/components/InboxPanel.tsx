@@ -50,21 +50,36 @@ export function InboxPanel({ rels, persons, proposals, reminders, accounts, onAc
     return [...m.entries()].map(([id, name]) => ({ id, name }));
   }, [persons, rels, proposals, reminders]);
 
+  // 提案影响（按原始 newValue，供排序用；展示处另按 overrides 现算）
+  const rawImpact = (cp: InboxProposal) => {
+    const acc = accounts.find((a) => a.id === cp.accountId);
+    const opp = acc?.opportunities.find((o) => o.id === cp.opportunityId);
+    return acc ? previewProposalImpact(acc, opp, { entityKind: cp.entityKind, entityId: cp.entityId, field: cp.field, newValue: cp.newValue }) : null;
+  };
+
   const groups = useMemo(() => {
     const items: Item[] = [];
     const ok = (aid: string) => !acctFilter || aid === acctFilter;
-    // 提醒优先排最前（催人行动的「该动了」信号）
     if (typeFilter === 'all' || typeFilter === 'reminder') for (const r of reminders) if (ok(r.accountId)) items.push({ kind: 'reminder', id: r.id, accountId: r.accountId, accountName: r.accountName, data: r });
     if (typeFilter === 'all' || typeFilter === 'proposal') for (const cp of proposals) if (ok(cp.accountId)) items.push({ kind: 'proposal', id: cp.id, accountId: cp.accountId, accountName: cp.accountName, data: cp });
     if (typeFilter === 'all' || typeFilter === 'person') for (const p of persons) if (ok(p.accountId)) items.push({ kind: 'person', id: p.id, accountId: p.accountId, accountName: p.accountName, data: p });
     if (typeFilter === 'all' || typeFilter === 'rel') for (const r of rels) if (ok(r.accountId)) items.push({ kind: 'rel', id: r.id, accountId: r.accountId, accountName: r.accountName, data: r });
+    // 按价值排序（屏效 P0·人审注意力）：类型间优先级不变（提醒=「该动了」信号仍最前），
+    // 类内按价值降序——提案 |趋赢力Δ| / 提醒 warn>info / 人物·关系候选 置信度。影响最大的先见。
+    const rank: Record<Item['kind'], number> = { reminder: 0, proposal: 1, person: 2, rel: 3 };
+    const valueOf = (it: Item): number => {
+      if (it.kind === 'proposal') { const imp = rawImpact(it.data); return imp ? Math.abs(imp.after - imp.before) : 0; }
+      if (it.kind === 'reminder') return it.data.severity === 'warn' ? 1 : 0;
+      return it.data.confidence ?? 0;
+    };
+    items.sort((a, b) => rank[a.kind] - rank[b.kind] || valueOf(b) - valueOf(a));
     const byAcct = new Map<string, { name: string; items: Item[] }>();
     for (const it of items) {
       const g = byAcct.get(it.accountId) ?? { name: it.accountName, items: [] };
       g.items.push(it); byAcct.set(it.accountId, g);
     }
     return [...byAcct.values()];
-  }, [persons, rels, proposals, reminders, acctFilter, typeFilter]);
+  }, [persons, rels, proposals, reminders, acctFilter, typeFilter, accounts]);
 
   const keyOf = (it: Item) => `${it.kind}:${it.id}`;
   const total = persons.length + rels.length + proposals.length + reminders.length;
