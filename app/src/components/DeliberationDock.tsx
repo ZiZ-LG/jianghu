@@ -1,12 +1,13 @@
 // 推演坞 · 关系地图底部可上拉的策略推演区（在策略沙盘逻辑上增量改造，作为地图的纯增量）。
-// 第5刀坞收敛后三层：坞头一句（PDE 徽章=唯一赢面出口 + 741 药丸 + 背离警示行）/ 四列流水线 / 坞底（信号短条+对话）。
-// 三档高度：收起(仅坞头) / 展开(+四列) / 全展开(+信号汇总)；画布始终在上方可见。
+// 第6刀旁支退役后坞真三层：坞头（PDE 徽章=唯一赢面出口 + 741 药丸 + 警示区：🔔机器背离黄条 · ⚠人工雷红条）/ 四列流水线 / 坞底对话。
+// 风险砍容器降级红条（无 severity 分档、无管理窗口——坞头空间即数量约束）；假设/弹药 UI 全退、存量留库（Action 契约零改动）。
+// 三档高度：收起(仅坞头+警示区) / 展开 / 全展开(四列更高)；画布始终在上方可见。
 // 画布↔坞双向联动：selectedPersonId 高亮挂靠该人的策略卡；点策略卡 → onSelectPerson 回高亮画布目标。
 // 老 PDE 适配层（lib/pde）在坞内只剩两职能：列① 姿态解读一句 + E2 背离提案（EngineBar 已退役，EV/赢面老口径废弃）。
 import { useEffect, useMemo, useState } from 'react';
 import type { Account, Opportunity, Sentiment, StrategyCard } from '../types';
 import type { Action } from '../store';
-import { newStrategyCard, newStrategyRisk, newStrategyResource, newPlanAction, newMilestone, newEvidence } from '../store';
+import { newStrategyCard, newStrategyRisk, newPlanAction, newMilestone, newEvidence } from '../store';
 import type { ScoreBreakdown, ItemKey, Band741 } from '../lib/g64111';
 import { ITEM_MAX, ITEM_LABEL, ITEM_GROUP, BAND_LABEL, BAND_STRATEGY } from '../lib/g64111';
 import { analyzeDeal } from '../lib/pde';
@@ -79,12 +80,11 @@ export function DeliberationDock({
     .filter((g) => g.deficit > 0)
     .sort((a, b) => b.deficit - a.deficit);
 
-  // 本商机的策略卡 / 风险 / 弹药 / 里程碑
+  // 本商机的策略卡 / 雷（第6刀：假设与弹药 UI 全退存量留库，风险只剩 kind==='risk' 进坞头红条）/ 里程碑
   const cards = (account.strategyCards ?? [])
     .filter((c) => c.opportunityId === opp.id && c.status !== 'dismissed')
     .sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0));
-  const risks = (account.strategyRisks ?? []).filter((r) => r.opportunityId === opp.id && r.status !== 'dismissed');
-  const resources = (account.strategyResources ?? []).filter((x) => x.opportunityId === opp.id);
+  const risks = (account.strategyRisks ?? []).filter((r) => r.opportunityId === opp.id && r.status !== 'dismissed' && r.kind === 'risk');
   const milestones = (account.milestones ?? []).filter((m) => m.opportunityId === opp.id);
   const planActions = (account.planActions ?? []).filter((a) => a.opportunityId === opp.id);
 
@@ -93,7 +93,6 @@ export function DeliberationDock({
 
   const pct = Math.round(breakdown.percent * 100);
   const tone = BAND_TONE[breakdown.band];
-  const highRisks = risks.filter((r) => (r.severity || 'mid') === 'high').length;
 
   // ── 策略卡 ──
   const addCard = (gapItem = '') => {
@@ -130,17 +129,18 @@ export function DeliberationDock({
     dispatch({ type: 'UPDATE_MILESTONE', accId: account.id, milestoneId, patch });
   const deleteMilestone = (milestoneId: string) => { dispatch({ type: 'DELETE_MILESTONE', accId: account.id, milestoneId }); setDrawer(null); };
 
-  // ── 风险 / 假设 ──
-  const addRisk = (kind: 'risk' | 'assumption') => dispatch({ type: 'ADD_STRATEGY_RISK', accId: account.id, oppId: opp.id, risk: newStrategyRisk(account.id, opp.id, kind) });
-  const updateRisk = (riskId: string, patch: { text?: string; severity?: 'low' | 'mid' | 'high' }) =>
-    dispatch({ type: 'UPDATE_STRATEGY_RISK', accId: account.id, riskId, patch });
+  // ── 人工雷红条（第6刀：风险砍容器降级坞头，行内＋加雷 ✕排雷；severity 留库不展示，无编辑=删了重记）──
+  const [riskDraft, setRiskDraft] = useState<string | null>(null); // null=未在录入；string=inline 输入中
+  const commitRisk = () => {
+    const text = (riskDraft ?? '').trim();
+    if (text) {
+      const risk = newStrategyRisk(account.id, opp.id, 'risk');
+      risk.text = text;
+      dispatch({ type: 'ADD_STRATEGY_RISK', accId: account.id, oppId: opp.id, risk });
+    }
+    setRiskDraft(null);
+  };
   const deleteRisk = (riskId: string) => dispatch({ type: 'DELETE_STRATEGY_RISK', accId: account.id, riskId });
-
-  // ── 弹药清单 ──
-  const addResource = () => dispatch({ type: 'ADD_STRATEGY_RESOURCE', accId: account.id, oppId: opp.id, resource: newStrategyResource(account.id, opp.id) });
-  const updateResource = (resourceId: string, patch: { label?: string; kind?: string }) =>
-    dispatch({ type: 'UPDATE_STRATEGY_RESOURCE', accId: account.id, resourceId, patch });
-  const deleteResource = (resourceId: string) => dispatch({ type: 'DELETE_STRATEGY_RESOURCE', accId: account.id, resourceId });
 
   // ── AI 顺推/倒推（候选本地暂存，采纳才落库；守"AI 绝不自动写库"红线）──
   const [aiBusy, setAiBusy] = useState<'forward' | 'backward' | null>(null);
@@ -175,16 +175,15 @@ export function DeliberationDock({
     setBwdCands((xs) => xs.filter((_, j) => j !== i));
   };
 
-  // ── 视图状态：详情抽屉 + 底部汇总展开 ──
+  // ── 视图状态：详情抽屉 ──
   const [drawer, setDrawer] = useState<DrawerState>(null);
-  const [summaryOpen, setSummaryOpen] = useState(false);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setDrawer(null); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
-  // 切商机/客户 → 关抽屉、清背离忽略集
-  useEffect(() => { setDrawer(null); setDismissedShifts(new Set()); }, [opp.id, account.id]);
+  // 切商机/客户 → 关抽屉、清背离忽略集、丢未落库的雷草稿
+  useEffect(() => { setDrawer(null); setDismissedShifts(new Set()); setRiskDraft(null); }, [opp.id, account.id]);
 
   // ── 行动清单（PlanAction，承接 DealPlanner 网格退役；勾完成→结果回填录证据，闭合执行→证据→局势飞轮）──
   const [actDraft, setActDraft] = useState<{ title: string; startDate: string; personId?: string; target: string; resources: string; cautions: string; props: string; done: boolean; wasDone: boolean; outcome?: 'up' | 'flat' | 'down' } | null>(null);
@@ -231,7 +230,6 @@ export function DeliberationDock({
 
   const drawerCard = drawer?.kind === 'card' ? cards.find((c) => c.id === drawer.id) : null;
   const drawerMs = drawer?.kind === 'milestone' ? milestones.find((m) => m.id === drawer.id) : null;
-  const showSummary = height === 'full' || summaryOpen;
   const focusName = selectedPersonId ? personById.get(selectedPersonId)?.name : null;
 
   return (
@@ -252,6 +250,7 @@ export function DeliberationDock({
             <button onClick={() => onSelectPerson?.(null)} title="清除聚焦">✕</button>
           </span>
         )}
+        <button className="dock-risk-add" title="记一条雷（高危风险，常驻坞头示警）" onClick={() => setRiskDraft('')}>⚠＋</button>
         <span className="dock-seg">
           {(['collapsed', 'half', 'full'] as const).map((h) => (
             <button key={h} className={height === h ? 'on' : ''} onClick={() => setHeight(h)}>{h === 'collapsed' ? '收起' : h === 'half' ? '展开' : '全展开'}</button>
@@ -271,9 +270,27 @@ export function DeliberationDock({
         </div>
       ))}
 
+      {/* ── 坞头警示行 · 人工雷红条（第6刀：风险砍容器降级至此，与背离黄条同族并列；三档高度均可见）── */}
+      {risks.map((r) => (
+        <div className="dock-risk" key={r.id} onClick={(e) => e.stopPropagation()}>
+          <span className="dock-risk-icon">⚠</span>
+          <span className="dock-risk-text">{r.text || <span className="sb2-dim">（空雷 · 点 ✕ 排掉）</span>}</span>
+          <button className="dock-risk-del" title="排雷（删除）" onClick={() => deleteRisk(r.id)}>✕</button>
+        </div>
+      ))}
+      {riskDraft !== null && (
+        <div className="dock-risk" onClick={(e) => e.stopPropagation()}>
+          <span className="dock-risk-icon">⚠</span>
+          <input className="dock-risk-input" autoFocus value={riskDraft} placeholder="一句话记雷：这局会出事的点（回车落档 · Esc 放弃）"
+            onChange={(e) => setRiskDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') commitRisk(); else if (e.key === 'Escape') setRiskDraft(null); }}
+            onBlur={commitRisk} />
+        </div>
+      )}
+
       {height !== 'collapsed' && (
         <div className="dock-scroll">
-          {/* ── 第2刀：横向推导流水线 局势 → 策略 → 倒排 → 行动（列间箭头显因果；旁支风险/弹药留坞底汇总）── */}
+          {/* ── 第2刀：横向推导流水线 局势 → 策略 → 倒排 → 行动（列间箭头显因果；第6刀后旁支全退，雷在坞头红条）── */}
           <div className="sb2-cols" onClick={(e) => e.stopPropagation()}>
 
           {/* 列① 局势（EngineBar 退役后唯一详情出口：band + 打法方向 + 姿态解读一句 + 全部缺口）*/}
@@ -440,54 +457,6 @@ export function DeliberationDock({
           </div>
 
           </div>
-
-          {/* ── 信号短条 · 只剩旁支（缺口详情在列①，关键干系人在画布牌桌/焦点面板）── */}
-          <div className="sb2-signal" onClick={(e) => { e.stopPropagation(); setSummaryOpen((v) => !v); }}>
-            <span className={highRisks > 0 ? 'sb2-sig-warn' : ''}>⚠ 风险 {risks.length}{highRisks > 0 ? ` · 高 ${highRisks}` : ''}</span>
-            <span>🎒 弹药 {resources.length}</span>
-            <span className="sb2-sig-toggle">{showSummary ? '收起 ⌃' : '展开 ⌄'}</span>
-          </div>
-
-          {showSummary && (
-            <div className="sb2-summary" onClick={(e) => e.stopPropagation()}>
-              <div className="sb2-sum-col">
-                <h4>⚠️ 风险 / 假设
-                  <span className="sb2-sum-acts">
-                    <button className="btn ghost xs" onClick={() => addRisk('risk')}>＋风险</button>
-                    <button className="btn ghost xs" onClick={() => addRisk('assumption')}>＋假设</button>
-                  </span>
-                </h4>
-                {risks.length === 0 && <div className="sb2-dim">链路上会出事的、或推演依赖的前提</div>}
-                {risks.map((r) => (
-                  <div className={`sb-risk k-${r.kind}`} key={r.id}>
-                    <div className="sb-risk-head">
-                      <span className="sb-risk-kind">{r.kind === 'risk' ? '风险' : '假设'}</span>
-                      <select className="sb-sev" value={r.severity || 'mid'} onChange={(e) => updateRisk(r.id, { severity: e.target.value as 'low' | 'mid' | 'high' })}>
-                        <option value="low">低</option><option value="mid">中</option><option value="high">高</option>
-                      </select>
-                      <button className="sb-del" title="删除" onClick={() => deleteRisk(r.id)}>✕</button>
-                    </div>
-                    <input className="sb-risk-text" defaultValue={r.text} placeholder={r.kind === 'risk' ? '风险描述' : '依赖的前提假设'}
-                      onBlur={(e) => e.target.value !== r.text && updateRisk(r.id, { text: e.target.value })} />
-                  </div>
-                ))}
-              </div>
-
-              <div className="sb2-sum-col">
-                <h4>🎒 弹药清单<span className="sb2-sum-acts"><button className="btn ghost xs" onClick={addResource}>＋</button></span></h4>
-                {resources.length === 0 && <div className="sb2-dim">可调用的牌：产品演示 / 标杆案例 / 高层关系 / 商务让步…</div>}
-                {resources.map((x) => (
-                  <div className="sb-res" key={x.id}>
-                    <input className="sb-res-label" defaultValue={x.label} placeholder="弹药（如：CP3D 信创实测）"
-                      onBlur={(e) => e.target.value !== x.label && updateResource(x.id, { label: e.target.value })} />
-                    <input className="sb-res-kind" defaultValue={x.kind ?? ''} placeholder="类型"
-                      onBlur={(e) => e.target.value !== (x.kind ?? '') && updateResource(x.id, { kind: e.target.value })} />
-                    <button className="sb-del" title="删除" onClick={() => deleteResource(x.id)}>✕</button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
 
         </div>
       )}

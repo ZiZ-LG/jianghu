@@ -1093,6 +1093,7 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 
 .sb2-drive { text-align: center; font-size: 11px; color: var(--faint); margin: 2px 0 4px; }
 
+/* 信号短条 + 汇总窗口已退役（第6刀：旁支砍容器，雷降级坞头 .dock-risk 红条）；sb2-signal、sb2-sig、sb2-summary、sb2-sum、sb-risk、sb-sev、sb-res 系列照惯例保留不挂载 */
 .sb2-signal { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-top: 8px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); font-size: 12px; color: var(--ink-2); cursor: pointer; user-select: none; }
 .sb2-sig-bad { color: #dc2626; font-weight: 700; }
 .sb2-sig-ok { color: #16a34a; font-weight: 700; }
@@ -1255,6 +1256,16 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 .dock-shift-icon { flex-shrink: 0; }
 .dock-shift-text { flex: 1; min-width: 160px; color: var(--ink-2); line-height: 1.5; }
 .dock-shift-text b { color: var(--ink); }
+/* 坞头警示行 · 人工雷红条（第6刀：风险砍容器降级坞头，与 .dock-shift 同族；#dc2626 为危险语义色） */
+.dock-risk { display: flex; align-items: center; gap: 8px; margin: 6px 12px 0; padding: 6px 11px; border: 1px solid color-mix(in srgb, #dc2626 40%, var(--line)); border-radius: 8px; background: color-mix(in srgb, #dc2626 7%, var(--panel)); font-size: 12px; flex-shrink: 0; }
+.dock-risk-icon { flex-shrink: 0; color: #dc2626; font-weight: 700; }
+.dock-risk-text { flex: 1; min-width: 0; color: var(--ink); line-height: 1.5; overflow-wrap: anywhere; }
+.dock-risk-del { flex-shrink: 0; border: none; background: transparent; color: var(--faint); cursor: pointer; font-size: 12px; padding: 2px 4px; border-radius: 5px; }
+.dock-risk-del:hover { color: #dc2626; background: color-mix(in srgb, #dc2626 12%, transparent); }
+.dock-risk-input { flex: 1; min-width: 0; border: none; background: transparent; color: var(--ink); font-size: 12px; outline: none; }
+.dock-risk-input::placeholder { color: var(--faint); }
+.dock-risk-add { border: 1px solid var(--line); background: transparent; color: var(--muted); border-radius: 7px; font-size: 11px; padding: 3px 8px; cursor: pointer; line-height: 1; flex-shrink: 0; }
+.dock-risk-add:hover { color: #dc2626; border-color: color-mix(in srgb, #dc2626 45%, var(--line)); background: color-mix(in srgb, #dc2626 7%, transparent); }
 .dock-scroll { overflow-y: auto; padding: 4px 16px 14px; }
 .dock-half .dock-scroll { max-height: 240px; }
 .dock-full .dock-scroll { max-height: 46vh; }

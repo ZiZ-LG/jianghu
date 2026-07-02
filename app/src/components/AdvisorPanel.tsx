@@ -94,7 +94,7 @@ export function AdvisorPanel({ account, opp, breakdown, person, dispatch }: {
   const META = {
     action: { ic: '🃏', tag: '行动牌', done: `已挂到「${person.name}」节点旁 · 去画布点牌可标完成 / 记反馈` },
     card: { ic: '📌', tag: '策略卡', done: '已进推演坞「策略泳道」' },
-    risk: { ic: '⚠️', tag: '风险', done: '已进推演坞「风险清单」' },
+    risk: { ic: '⚠️', tag: '风险', done: '已进推演坞坞头 ⚠ 红条，常驻示警' }, // 第6刀：风险砍容器降级坞头红条
   } as const;
 
   return (
