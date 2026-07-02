@@ -12,7 +12,7 @@ import type { ScoreBreakdown } from '../lib/g64111';
 import { api } from '../api';
 
 type Tab = 'profile' | 'dynamic' | 'advisor';
-type DynItem = { date: string; title?: string; body: string; source: string; sensitive?: boolean };
+type DynItem = { date: string; title?: string; body: string; source: string; sensitive?: boolean; pending?: boolean };
 // M5 立场条数据（PDE ev.stakeholders 逐人分布；支持/中立/反对语义色同 types.ts 惯例）
 type StanceDetail = { id: string; pS: number; pN: number; pO: number; n_eff: number };
 
@@ -42,12 +42,22 @@ export function FocusPanel({
   }, [opp.id, breakdown]);
   const myStance = !person.isCompetitor ? stances?.find((s) => s.id === person.id) : undefined;
 
-  // 动态时间线：交往日志(人级) + 该人参与的拜访记录(name 匹配)，按日期倒序、带溯源
+  // 动态时间线：交往日志(人级) + 该人参与的拜访记录(name 匹配) + PDE 行为信号证据(M3/M5 EvidenceTimeline 并入，待审高亮)，按日期倒序、带溯源
+  const evDyn: DynItem[] = (opp.evidenceEvents ?? [])
+    .filter((e) => e.personId === person.id && e.status !== 'rejected')
+    .map((e) => ({
+      date: e.occurredAt || (e.createdAt ?? '').slice(0, 10),
+      title: `⚡ ${e.direction > 0 ? '＋利好' : e.direction < 0 ? '－不利' : '○中性'}信号 · ${e.signalKey}`,
+      body: e.rawContent || '（无原文）',
+      source: `证据 · ${e.origin === 'manual' ? '手动/回填' : e.origin === 'voice' ? '🎙️ 口述' : '🎧 录音'}${e.status === 'pending_review' ? ' · ⏳待审核（未参与计算）' : ''}`,
+      pending: e.status === 'pending_review',
+    }));
   const dyn: DynItem[] = [
     ...person.logs.map((l) => ({ date: l.date, body: l.content, source: '交往日志', sensitive: l.sensitive })),
     ...visitNotes
       .filter((vn) => vn.participants.some((p) => p.name === person.name))
       .map((vn) => ({ date: vn.date, title: vn.topic, body: vn.summary, source: `拜访 · ${vn.origin === 'workbuddy' ? 'WorkBuddy' : '手动'}` })),
+    ...evDyn,
   ].sort((a, b) => (a.date < b.date ? 1 : -1));
 
   return (
@@ -100,7 +110,7 @@ export function FocusPanel({
           dyn.length > 0 ? (
             <div className="focus-tl">
               {dyn.map((it, i) => (
-                <div className="focus-tl-item" key={i}>
+                <div className={`focus-tl-item${it.pending ? ' focus-tl-pending' : ''}`} key={i}>
                   <div className="focus-tl-date">{it.date}{it.sensitive && <span className="sensitive-tag">敏感·仅团队</span>}</div>
                   {it.title && <div className="focus-tl-title">{it.title}</div>}
                   <div className="focus-tl-body">{it.body}</div>

@@ -1,31 +1,35 @@
-// 审核收件箱（机器写初稿·人审）：Hub 级聚合当前租户所有待审——巡检提醒 + 关系/人物候选 + v2.0 字段更新提案。
-// 按客户分组 + 类型筛选 + 多选批量。提案卡带 改前→改后 diff + 趋赢力影响预览 + 改后采纳（下拉）；提醒卡只读（仅「忽略」，不建边/不改值）。
+// 审核收件箱（机器写初稿·人审）：Hub 级聚合当前租户所有待审——巡检提醒 + 关系/人物候选 + v2.0 字段更新提案 + M3 证据待审（第5类）。
+// 按客户分组 + 类型筛选 + 多选批量。提案卡带 改前→改后 diff + 趋赢力影响预览 + 改后采纳（下拉）；提醒卡只读（仅「忽略」，不建边/不改值）；
+// 证据卡=审事实（这条信号是真的吗），批准才进 E2 燃料池——与提案卡（审判断=要不要改分）双层人审各有语义。
 // 采纳/驳回沿用既有链路（采纳后由 App getState 重拉整树保证跨客户一致）。
 import { useMemo, useState } from 'react';
 import type { Account } from '../types';
-import type { InboxRel, InboxPerson, InboxProposal, InboxReminder } from '../api';
+import type { InboxRel, InboxPerson, InboxProposal, InboxReminder, InboxEvidence } from '../api';
 import { previewProposalImpact } from '../lib/impact';
 import { Modal } from './Modal';
 
 const LAYER_COLOR: Record<string, string> = { L1: '#2563eb', L2: '#9333ea', L3: '#16a34a', L4: '#ef4444' };
-const ORIGIN: Record<string, string> = { graph: '📊 图谱', llm: '🤖 AI', qcc: '🏢 企查查', mcp: '🌐 AI 调研', ai: '🤖 AI', voice: '🎙️ 录音', engine: '⚙️ 引擎' };
+const ORIGIN: Record<string, string> = { graph: '📊 图谱', llm: '🤖 AI', qcc: '🏢 企查查', mcp: '🌐 AI 调研', ai: '🤖 AI', voice: '🎙️ 录音', recording: '🎧 录音转写', engine: '⚙️ 引擎' };
 const SENT_LABEL: Record<string, string> = { star: '排他支持', plus: '明确支持', neutral: '中立', unknown: '未知', minus: '负面/抗拒', x: '倒向对手' };
 const FIELD_LABEL: Record<string, string> = { sentiment: '支持度', confidence: '可信度' };
 const KIND_LABEL: Record<string, string> = { stalled: '商机停滞', no_decider: '决策链缺口', sentiment_recheck: '支持度复查' };
 const SENT_OPTS = ['star', 'plus', 'neutral', 'minus', 'x'];
+const TIER_LABEL: Record<string, string> = { weak: '弱', mid: '中', strong: '强' };
 const valLabel = (field: string, v: string) => (field === 'sentiment' ? (SENT_LABEL[v] ?? v) : v);
 
 type Item =
   | { kind: 'reminder'; id: string; accountId: string; accountName: string; data: InboxReminder }
   | { kind: 'person'; id: string; accountId: string; accountName: string; data: InboxPerson }
   | { kind: 'rel'; id: string; accountId: string; accountName: string; data: InboxRel }
-  | { kind: 'proposal'; id: string; accountId: string; accountName: string; data: InboxProposal };
+  | { kind: 'proposal'; id: string; accountId: string; accountName: string; data: InboxProposal }
+  | { kind: 'evidence'; id: string; accountId: string; accountName: string; data: InboxEvidence };
 
-export function InboxPanel({ rels, persons, proposals, reminders, accounts, onAccept, onReject, onAcceptPerson, onRejectPerson, onAcceptProposal, onRejectProposal, onDismissReminder, onClose }: {
+export function InboxPanel({ rels, persons, proposals, reminders, evidences, accounts, onAccept, onReject, onAcceptPerson, onRejectPerson, onAcceptProposal, onRejectProposal, onDismissReminder, onReviewEvidence, onClose }: {
   rels: InboxRel[];
   persons: InboxPerson[];
   proposals: InboxProposal[];
   reminders: InboxReminder[];                            // 巡检提醒（提醒型，只读）
+  evidences: InboxEvidence[];                            // M3 证据待审（机器抽取的行为信号）
   accounts: Account[];                                  // 全树（算影响预览：找目标 account/opp）
   onAccept: (id: string) => void;                       // 关系候选采纳
   onReject: (id: string) => void;
@@ -34,12 +38,14 @@ export function InboxPanel({ rels, persons, proposals, reminders, accounts, onAc
   onAcceptProposal: (id: string, overrideValue?: string) => void; // 字段提案采纳（可改后采纳）
   onRejectProposal: (id: string) => void;
   onDismissReminder: (id: string) => void;              // 提醒忽略（不改业务库）
+  onReviewEvidence: (id: string, action: 'approve' | 'reject', direction?: -1 | 0 | 1) => void; // 证据审核（批准可带定向）
   onClose: () => void;
 }) {
   const [acctFilter, setAcctFilter] = useState('');
-  const [typeFilter, setTypeFilter] = useState<'all' | 'reminder' | 'proposal' | 'person' | 'rel'>('all');
+  const [typeFilter, setTypeFilter] = useState<'all' | 'reminder' | 'proposal' | 'person' | 'rel' | 'evidence'>('all');
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [overrides, setOverrides] = useState<Record<string, string>>({}); // 提案改后采纳：id → 选定值
+  const [evDirs, setEvDirs] = useState<Record<string, -1 | 0 | 1>>({});   // 证据改后采纳：id → 人工定向
 
   const acctList = useMemo(() => {
     const m = new Map<string, string>();
@@ -47,8 +53,9 @@ export function InboxPanel({ rels, persons, proposals, reminders, accounts, onAc
     for (const p of persons) m.set(p.accountId, p.accountName);
     for (const r of rels) m.set(r.accountId, r.accountName);
     for (const cp of proposals) m.set(cp.accountId, cp.accountName);
+    for (const e of evidences) m.set(e.accountId, e.accountName);
     return [...m.entries()].map(([id, name]) => ({ id, name }));
-  }, [persons, rels, proposals, reminders]);
+  }, [persons, rels, proposals, reminders, evidences]);
 
   // 提案影响（按原始 newValue，供排序用；展示处另按 overrides 现算）
   const rawImpact = (cp: InboxProposal) => {
@@ -62,14 +69,16 @@ export function InboxPanel({ rels, persons, proposals, reminders, accounts, onAc
     const ok = (aid: string) => !acctFilter || aid === acctFilter;
     if (typeFilter === 'all' || typeFilter === 'reminder') for (const r of reminders) if (ok(r.accountId)) items.push({ kind: 'reminder', id: r.id, accountId: r.accountId, accountName: r.accountName, data: r });
     if (typeFilter === 'all' || typeFilter === 'proposal') for (const cp of proposals) if (ok(cp.accountId)) items.push({ kind: 'proposal', id: cp.id, accountId: cp.accountId, accountName: cp.accountName, data: cp });
+    if (typeFilter === 'all' || typeFilter === 'evidence') for (const e of evidences) if (ok(e.accountId)) items.push({ kind: 'evidence', id: e.id, accountId: e.accountId, accountName: e.accountName, data: e });
     if (typeFilter === 'all' || typeFilter === 'person') for (const p of persons) if (ok(p.accountId)) items.push({ kind: 'person', id: p.id, accountId: p.accountId, accountName: p.accountName, data: p });
     if (typeFilter === 'all' || typeFilter === 'rel') for (const r of rels) if (ok(r.accountId)) items.push({ kind: 'rel', id: r.id, accountId: r.accountId, accountName: r.accountName, data: r });
     // 按价值排序（屏效 P0·人审注意力）：类型间优先级不变（提醒=「该动了」信号仍最前），
-    // 类内按价值降序——提案 |趋赢力Δ| / 提醒 warn>info / 人物·关系候选 置信度。影响最大的先见。
-    const rank: Record<Item['kind'], number> = { reminder: 0, proposal: 1, person: 2, rel: 3 };
+    // 类内按价值降序——提案 |趋赢力Δ| / 提醒 warn>info / 证据 tier 强>中>弱 / 人物·关系候选 置信度。影响最大的先见。
+    const rank: Record<Item['kind'], number> = { reminder: 0, proposal: 1, evidence: 2, person: 3, rel: 4 };
     const valueOf = (it: Item): number => {
       if (it.kind === 'proposal') { const imp = rawImpact(it.data); return imp ? Math.abs(imp.after - imp.before) : 0; }
       if (it.kind === 'reminder') return it.data.severity === 'warn' ? 1 : 0;
+      if (it.kind === 'evidence') return it.data.tier === 'strong' ? 2 : it.data.tier === 'mid' ? 1 : 0;
       return it.data.confidence ?? 0;
     };
     items.sort((a, b) => rank[a.kind] - rank[b.kind] || valueOf(b) - valueOf(a));
@@ -79,16 +88,17 @@ export function InboxPanel({ rels, persons, proposals, reminders, accounts, onAc
       g.items.push(it); byAcct.set(it.accountId, g);
     }
     return [...byAcct.values()];
-  }, [persons, rels, proposals, reminders, acctFilter, typeFilter, accounts]);
+  }, [persons, rels, proposals, reminders, evidences, acctFilter, typeFilter, accounts]);
 
   const keyOf = (it: Item) => `${it.kind}:${it.id}`;
-  const total = persons.length + rels.length + proposals.length + reminders.length;
+  const total = persons.length + rels.length + proposals.length + reminders.length + evidences.length;
   const toggleSel = (k: string) => setSel((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
 
   const batchApply = (accept: boolean) => {
     for (const g of groups) for (const it of g.items) {
       if (!sel.has(keyOf(it))) continue;
       if (it.kind === 'reminder') { if (!accept) onDismissReminder(it.id); } // 提醒只读：批量仅「忽略」，采纳无意义
+      else if (it.kind === 'evidence') onReviewEvidence(it.id, accept ? 'approve' : 'reject', accept ? (evDirs[it.id] ?? undefined) : undefined);
       else if (it.kind === 'person') accept ? onAcceptPerson(it.id) : onRejectPerson(it.id);
       else if (it.kind === 'rel') accept ? onAccept(it.id) : onReject(it.id);
       else accept ? onAcceptProposal(it.id, overrides[it.id]) : onRejectProposal(it.id);
@@ -120,9 +130,9 @@ export function InboxPanel({ rels, persons, proposals, reminders, accounts, onAc
           {acctList.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
         <div className="inbox-types">
-          {(['all', 'reminder', 'proposal', 'person', 'rel'] as const).map((t) => (
+          {(['all', 'reminder', 'proposal', 'evidence', 'person', 'rel'] as const).map((t) => (
             <button key={t} className={`inbox-type${typeFilter === t ? ' on' : ''}`} onClick={() => setTypeFilter(t)}>
-              {t === 'all' ? '全部' : t === 'reminder' ? `⏰ 提醒 ${reminders.length}` : t === 'proposal' ? `✏️ 改字段 ${proposals.length}` : t === 'person' ? `👤 人物 ${persons.length}` : `🔗 关系 ${rels.length}`}
+              {t === 'all' ? '全部' : t === 'reminder' ? `⏰ 提醒 ${reminders.length}` : t === 'proposal' ? `✏️ 改字段 ${proposals.length}` : t === 'evidence' ? `⚡ 信号 ${evidences.length}` : t === 'person' ? `👤 人物 ${persons.length}` : `🔗 关系 ${rels.length}`}
             </button>
           ))}
         </div>
@@ -173,6 +183,23 @@ export function InboxPanel({ rels, persons, proposals, reminders, accounts, onAc
                             <span className="sug-ev">{cp.evidence}</span>
                           </div>
                         </>);
+                      })() : it.kind === 'evidence' ? (() => {
+                        const ev = it.data;
+                        const dir = evDirs[ev.id] ?? ev.direction;
+                        return (<>
+                          <div className="sug-pair">
+                            <span className="inbox-tag" style={{ background: 'var(--accent-soft)', color: 'var(--accent-ink)', opacity: 1 }}>⚡ 信号</span>
+                            <b>{ev.personName}</b>
+                            <span className="sug-edge" style={{ color: '#64748b' }}>· {ev.signalLabel}</span>
+                            <span className="sug-lyr" style={{ background: dir > 0 ? '#16a34a' : dir < 0 ? '#dc2626' : '#94a3b8' }}>{dir > 0 ? '＋利好' : dir < 0 ? '－不利' : '○待定向'}</span>
+                            <span className="sug-conf" title="信号固有档位（来自信号库）">{TIER_LABEL[ev.tier] ?? ev.tier}档</span>
+                          </div>
+                          <div className="sug-meta">
+                            <span className="sug-origin">{ORIGIN[ev.origin] || ev.origin}</span>
+                            {ev.oppName && <span className="sug-ev" style={{ opacity: 0.65 }}>🎯 {ev.oppName}</span>}
+                            <span className="sug-ev">{ev.rawContent || '（无原文）'}</span>
+                          </div>
+                        </>);
                       })() : it.kind === 'person' ? (<>
                         <div className="sug-pair">
                           <span className="inbox-tag">👤 人物</span>
@@ -207,9 +234,17 @@ export function InboxPanel({ rels, persons, proposals, reminders, accounts, onAc
                           {SENT_OPTS.map((s) => <option key={s} value={s}>{SENT_LABEL[s]}</option>)}
                         </select>
                       )}
+                      {it.kind === 'evidence' && (
+                        <select className="inbox-override" value={String(evDirs[it.id] ?? it.data.direction)} onChange={(e) => setEvDirs((o) => ({ ...o, [it.id]: Number(e.target.value) as -1 | 0 | 1 }))} title="修改后采纳：中性信号需人工定向">
+                          <option value="1">＋利好</option><option value="0">○中性</option><option value="-1">－不利</option>
+                        </select>
+                      )}
                       {it.kind === 'reminder' ? (
                         <button className="btn ghost sm" onClick={() => onDismissReminder(it.id)} title="忽略这条提醒（不影响业务数据）">忽略</button>
-                      ) : (<>
+                      ) : it.kind === 'evidence' ? (<>
+                        <button className="btn primary sm" title="批准：这条信号属实，计入引擎证据池" onClick={() => onReviewEvidence(it.id, 'approve', evDirs[it.id])}>批准</button>
+                        <button className="btn ghost sm" title="拒绝：信号不实，不参与任何计算" onClick={() => onReviewEvidence(it.id, 'reject')}>拒绝</button>
+                      </>) : (<>
                         <button className="btn primary sm" onClick={() => (it.kind === 'person' ? onAcceptPerson(it.id) : it.kind === 'rel' ? onAccept(it.id) : onAcceptProposal(it.id, overrides[it.id]))}>采纳</button>
                         <button className="btn ghost sm" onClick={() => (it.kind === 'person' ? onRejectPerson(it.id) : it.kind === 'rel' ? onReject(it.id) : onRejectProposal(it.id))}>忽略</button>
                       </>)}

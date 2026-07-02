@@ -77,6 +77,7 @@ const EXTRACT_SYSTEM = `你是销售情报结构化助手，精通 G64111 销售
   "relationships": [{"source":"人名","target":"人名","layer":"L1|L2|L3|L4","label":"关系描述","kind":"...","confidence":0到1,"evidence":"..."}],
   "burningIssues": [{"person":"姓名","description":"燃眉之急","category":"类别","kind":"..."}],
   "ucvs": [{"person":"该价值针对谁的BI","biCategory":"对应BI的类别","description":"我方独特价值","competitorCannot":"竞品给不了什么","status":"建议|获认可|已解决","kind":"explicit|inferred","evidence":"原话"}],
+  "evidences": [{"person":"姓名","signalKey":"下方信号键之一","direction":1或-1或0,"evidence":"原话片段"}],
   "rawNote": "把整段口述原样保留作为拜访纪要"
 }
 - pipelineStage 只能取：线索/需求引导/方案认可/客户立项/招投标/合同谈判/合同双签。
@@ -85,11 +86,14 @@ const EXTRACT_SYSTEM = `你是销售情报结构化助手，精通 G64111 销售
 - persons 的 form：把销售提到的该人「家庭/事业/爱好/动机」FORM 情报填进去——子女/配偶/父母/籍贯/年纪/生日/毕业院校填 family7 对应键；爱好志趣（钓鱼、爬山等）填 recreation；职业经历/晋升填 occupation；金钱观/核心诉求填 moneyMotivation。只填销售明说的，没提的字段留空字符串，整个人都没提 FORM 就给 form:{}。这些是 G64111 C1（D 的 FORM 表）计分项，务必抽全。
 - suggestedRole：销售对某人的角色判断要抽出来，哪怕是"可能是/应该是真正的拍板人/这个项目真正的 D"这类推测——给对应 A/D/U/R/C，evidence 保留原话，kind 标 inferred、confidence 给中低值；别因为"可能"就丢掉。
 - 若给了【前文】，用它消解本次口述里的指代（"他""那位副总"等指向前文的人）；但只抽取【本次补充】里新增或变更的人/关系/事实，不要重复输出前文已处理过的。
+- evidences：销售提到的【干系人行为信号】——某人帮我们/卡我们【做了什么行为事实】（帮忙、设卡、引荐、透露信息、表态、拖延等），选下列最贴切的信号键，找不到贴切的就不输出该条（宁缺勿滥）。direction 按该行为对我方 利好+1 / 不利-1 / 方向不明0。只记行为事实不记主观判断（"他人不错"不是信号；"他把评标办法草稿发给我们"是 provide_insider_info）。
+  信号键：co_plan_budget共同策划预算 provide_insider_info提供内幕 co_draft_tender_docs共制招标文件 share_competitor_intel给竞对情报 referral_to_1k_or_4p引荐高层 help_control_schedule帮控进度 guide_next_steps指导下一步 set_favorable_requirements定有利条款 exclusive_recommendation排他推荐 set_favorable_procurement_form定有利采购形式 pricing_guidance指导报价 help_solve_ab_bi助解燃眉 proc_strategy_alignment密谋评标策略 proc_verbal_commitment招采口头承诺 intro_referral动用政治资本引荐 spec_alignment条款向我方收敛 attendance_upgrade出席级别提升 verbal_positive口头积极表态 reply_latency_up回复显著变慢 meeting_cancel会议取消降级 competitor_quote_request索要竞品对比 internal_blocker_hint透露内部反对 bi_identified摸清燃眉之急 ucv_acknowledged价值获认可 ucv_delivered价值已落地
 - 没提到的部分填 null 或空数组 []。绝不编造。`;
 
 interface Extracted {
   account?: any; opportunity?: any;
   persons?: any[]; relationships?: any[]; burningIssues?: any[]; ucvs?: any[];
+  evidences?: any[]; // M3：行为信号证据（→ EvidenceEvent pending_review 待人审）
   rawNote?: string;
 }
 
@@ -328,6 +332,25 @@ export async function ingestVoiceText(tenantId: string, userId: string, input: I
     const uid = 'ucv_' + randomUUID().slice(0, 12);
     await applyAction(tenantId, { type: 'ADD_UCV', accId: acc.id, oppId: opp.id, ucv: { id: uid, targetBiId, description: desc, competitorCannot: S(u.competitorCannot, 500), status } });
     receipt.ucvs.push({ person: personName, status });
+  }
+
+  // ── 5.6) 行为信号证据（M3 审核流：机器抽取 → pending_review 待人审进收件箱，人批准才进 E2 燃料池，守铁律②）──
+  if ((ex.evidences ?? []).length && opp) {
+    const sigCatalog = new Map((await prisma.signalCatalog.findMany({ where: { tenantId } })).map((s) => [s.signalKey, s]));
+    for (const evd of ex.evidences ?? []) {
+      const pid = formalId.get(S(evd.person, 40));
+      const sig = sigCatalog.get(S(evd.signalKey));
+      if (!pid || !sig) continue; // 信号键不在库/人不是正式干系人 → 弃（宁缺勿滥，不造野信号）
+      const dir = evd.direction === -1 || evd.direction === 1 || evd.direction === 0 ? evd.direction : sig.direction;
+      const eid = 'ev_' + randomUUID().slice(0, 12);
+      await applyAction(tenantId, { type: 'ADD_EVIDENCE', accId: acc.id, oppId: opp.id, evidence: {
+        id: eid, accountId: acc.id, opportunityId: opp.id, personId: pid,
+        signalKey: sig.signalKey, direction: dir, tier: sig.tier, // tier 以信号库固有档位为准，不信 LLM
+        rawContent: S(evd.evidence, 500), occurredAt: today,
+        status: 'pending_review', origin: src.origin,
+      } });
+      receipt.evidences = (receipt.evidences ?? 0) + 1;
+    }
   }
 
   // ── 6) 拜访纪要存档（原文 → VisitNote）。从已有纪要抽取(skipVisitNote)时跳过，避免重复 ──

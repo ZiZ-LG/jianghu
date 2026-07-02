@@ -281,11 +281,13 @@ export function suggestRoutes(app: FastifyInstance) {
   // 多租户红线：全程 tenantId 过滤（参考 state.ts 的 assembleState）。采纳/驳回沿用现有 /api/suggest[/persons]/:id/accept|reject。
   app.get('/api/inbox', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     const tenantId = req.user.tenantId;
-    const [relRows, psRows, cpRows, remRows, persons, opps, accounts] = await Promise.all([
+    const [relRows, psRows, cpRows, remRows, evRows, sigRows, persons, opps, accounts] = await Promise.all([
       prisma.relSuggestion.findMany({ where: { tenantId, status: 'pending' }, orderBy: { confidence: 'desc' } }),
       prisma.personSuggestion.findMany({ where: { tenantId, status: 'pending' }, orderBy: { confidence: 'desc' } }),
       prisma.changeProposal.findMany({ where: { tenantId, status: 'pending' }, orderBy: { createdAt: 'desc' } }), // v2.0 字段更新提案
       prisma.reminder.findMany({ where: { tenantId, status: 'pending' }, orderBy: { createdAt: 'desc' } }), // 巡检提醒（提醒型，自带 account/opp 名免 join）
+      prisma.evidenceEvent.findMany({ where: { tenantId, status: 'pending_review' }, orderBy: { createdAt: 'desc' } }), // M3 第5类：机器抽取证据待人审
+      prisma.signalCatalog.findMany({ where: { tenantId }, select: { signalKey: true, label: true, tier: true } }),
       prisma.person.findMany({ where: { tenantId }, select: { id: true, name: true } }),
       prisma.opportunity.findMany({ where: { tenantId }, select: { id: true, name: true, accountId: true } }),
       prisma.account.findMany({ where: { tenantId }, select: { id: true, name: true } }),
@@ -307,7 +309,50 @@ export function suggestRoutes(app: FastifyInstance) {
       field: cp.field, oldValue: cp.oldValue, newValue: cp.newValue, origin: cp.origin, evidence: cp.evidence, confidence: cp.confidence,
     }));
     const reminders = remRows.map((r) => ({ id: r.id, accountId: r.accountId, accountName: r.accountName, opportunityId: r.opportunityId ?? undefined, oppName: r.oppName, kind: r.kind, title: r.title, detail: r.detail, severity: r.severity, entityId: r.entityId ?? undefined }));
-    return { rels, persons: personsOut, proposals, reminders, total: rels.length + personsOut.length + proposals.length + reminders.length };
+    // M3 第5类 · 证据待审：机器抽取的行为信号（人批准才进 E2 燃料池；label 取自信号库）
+    const sigByKey = new Map(sigRows.map((s) => [s.signalKey, s]));
+    const evidences = evRows.map((e) => {
+      const o = oppById.get(e.opportunityId);
+      return {
+        id: e.id, accountId: e.accountId, accountName: accName.get(e.accountId) ?? '?',
+        opportunityId: e.opportunityId, oppName: o?.name ?? '?',
+        personId: e.personId, personName: personName.get(e.personId) ?? '?',
+        signalKey: e.signalKey, signalLabel: sigByKey.get(e.signalKey)?.label ?? e.signalKey,
+        direction: e.direction, tier: e.tier, rawContent: e.rawContent, occurredAt: e.occurredAt, origin: e.origin,
+      };
+    });
+    return { rels, persons: personsOut, proposals, reminders, evidences, total: rels.length + personsOut.length + proposals.length + reminders.length + evidences.length };
+  });
+
+  // M3 · 证据审核（第5类卡三按钮：approve 采纳 / 带 direction·tier 覆盖=修改后采纳 / reject 拒绝）。
+  // approve → 证据进 E2 燃料池（前端 adapter 过滤放行）+ fire-and-forget 落 EVSnapshot(trigger=evidence_review) 留痕；
+  // reject → 不参与任何计算（留库审计）。tenantId 隔离 + 只审 pending_review 防重复处理。无静默生效路径（铁律②）。
+  app.post('/api/evidence/:id/review', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    const p = z.object({
+      action: z.enum(['approve', 'reject']),
+      direction: z.union([z.literal(-1), z.literal(0), z.literal(1)]).optional(), // 修改后采纳：中性信号人工定向
+      tier: z.enum(['weak', 'mid', 'strong']).optional(),
+    }).safeParse(req.body ?? {});
+    if (!p.success) return reply.code(400).send({ error: '参数无效' });
+    const tenantId = req.user.tenantId;
+    const ev = await prisma.evidenceEvent.findFirst({ where: { id: req.params.id, tenantId, status: 'pending_review' } });
+    if (!ev) return reply.code(404).send({ error: '证据不存在或已处理' });
+    const today = new Date().toISOString().slice(0, 10);
+    await prisma.evidenceEvent.update({
+      where: { id: ev.id },
+      data: {
+        status: p.data.action === 'approve' ? 'approved' : 'rejected',
+        ...(p.data.action === 'approve' && p.data.direction !== undefined ? { direction: p.data.direction } : {}),
+        ...(p.data.action === 'approve' && p.data.tier ? { tier: p.data.tier } : {}),
+        reviewedBy: req.user.userId ?? '', reviewedAt: today,
+      },
+    });
+    if (p.data.action === 'approve') {
+      // 审核通过=局面燃料变化 → 落快照留痕（K7 evidence_review 触发；失败静默不阻塞审核）
+      const { takePdeSnapshot } = await import('./pde/routes.js');
+      void takePdeSnapshot(tenantId, ev.opportunityId, 'evidence_review', req.user.userId ?? '').catch(() => {});
+    }
+    return { ok: true, status: p.data.action === 'approve' ? 'approved' : 'rejected' };
   });
 
   // 忽略一条巡检提醒（提醒型提案：只读，人「忽略」→ dismissed；绝不改业务库）。tenantId 隔离 + status=pending 防重复处理。

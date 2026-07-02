@@ -119,6 +119,24 @@ export async function computePde(tenantId: string, oppId: string): Promise<PdeCo
 /** 无彩池时金额类字段降级（屏效护栏：pot 未填→只给排序不给绝对金额）。 */
 const moneyOrNull = (c: PdeComputation, v: number) => (c.asm.potSource === 'missing' ? null : Math.round(v * 100) / 100);
 
+/** 落一张 EVSnapshot（K7 四类触发共用：manual / evidence_review / stage_gate / import）。opp 不存在或引擎失败静默返回 null——快照是留痕不是业务态，绝不阻塞主流程。 */
+export async function takePdeSnapshot(tenantId: string, oppId: string, trigger: string, createdBy = ''): Promise<string | null> {
+  try {
+    const c = await computePde(tenantId, oppId);
+    if (!c) return null;
+    const snap = await prisma.eVSnapshot.create({
+      data: {
+        id: 'evs_' + randomUUID().slice(0, 12), tenantId, opportunityId: oppId, trigger,
+        inputsJson: JSON.stringify({ deal: c.asm.deal, packKey: PACK_KEY, paramsSchemaVersion: c.seeds.params.schemaVersion }),
+        resultJson: JSON.stringify({ eval: c.ev, score: c.score, recommendation: c.recommendation, confidenceFlag: c.confidenceFlag }),
+        schemaId: String(c.seeds.scoringSchema.schemaId ?? ''), schemaVersion: String(c.seeds.scoringSchema.schemaVersion ?? ''),
+        confidenceFlag: c.confidenceFlag, createdBy,
+      },
+    });
+    return snap.id;
+  } catch { return null; }
+}
+
 export function pdeRoutes(app: FastifyInstance) {
   // 牌局评估：赢面（带置信）+ 双轨分 + 四动作建议
   app.get('/api/pde/:oppId/ev', { preHandler: [app.authenticate] }, async (req: any, reply) => {
@@ -197,19 +215,11 @@ export function pdeRoutes(app: FastifyInstance) {
   // 手动快照（K7 的 manual 触发；inputsJson 完整留痕=可回放 evaluate）
   app.post('/api/pde/:oppId/snapshot', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     const tenantId = req.user.tenantId;
-    const c = await computePde(tenantId, req.params.oppId);
-    if (!c) return reply.code(404).send({ error: '商机不存在' });
-    const snap = await prisma.eVSnapshot.create({
-      data: {
-        id: 'evs_' + randomUUID().slice(0, 12), tenantId, opportunityId: req.params.oppId,
-        trigger: 'manual',
-        inputsJson: JSON.stringify({ deal: c.asm.deal, packKey: PACK_KEY, paramsSchemaVersion: c.seeds.params.schemaVersion }),
-        resultJson: JSON.stringify({ eval: c.ev, score: c.score, recommendation: c.recommendation, confidenceFlag: c.confidenceFlag }),
-        schemaId: String(c.seeds.scoringSchema.schemaId ?? ''), schemaVersion: String(c.seeds.scoringSchema.schemaVersion ?? ''),
-        confidenceFlag: c.confidenceFlag, createdBy: req.user.userId ?? '',
-      },
-    });
-    return { ok: true, id: snap.id, pwin: c.ev.pwin, recommendation: c.recommendation.action, confidenceFlag: c.confidenceFlag };
+    const opp = await prisma.opportunity.findFirst({ where: { id: req.params.oppId, tenantId }, select: { id: true } });
+    if (!opp) return reply.code(404).send({ error: '商机不存在' });
+    const id = await takePdeSnapshot(tenantId, req.params.oppId, 'manual', req.user.userId ?? '');
+    if (!id) return reply.code(400).send({ error: '引擎暂不可用，快照未落' });
+    return { ok: true, id };
   });
 
   // what-if 假设推演（M5 复盘台最后一块，SPEC §7「假设调整抽屉」）：假设某些人立场/可信度变化 → 重算赢面对比。

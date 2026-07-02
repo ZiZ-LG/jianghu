@@ -1322,6 +1322,8 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 .wi-delta.down { color: #dc2626; }
 .wi-gate { margin-top: 6px; font-size: 12px; font-weight: 600; color: #d97706; }
 .wi-ev { margin-top: 6px; font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+/* M3 · 动态 tab 待审证据高亮（EvidenceTimeline 并入）：琥珀虚线=已抽取未人审，不参与计算 */
+.focus-tl-item.focus-tl-pending { border: 1px dashed color-mix(in srgb, #d97706 55%, var(--line)); border-radius: 8px; padding: 6px 8px; background: color-mix(in srgb, #d97706 6%, var(--panel)); }
 /* M5 立场条（焦点面板「档案」tab 头部 · StanceRangeBar 嵌入式）：三色堆叠 支持/中立/反对 + n_eff 角标 */
 .stance-bar { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); cursor: pointer; }
 .stance-bar:hover { background: var(--hover); }

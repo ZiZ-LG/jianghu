@@ -458,6 +458,10 @@ model EvidenceEvent {
   tier          String   @default("mid") // weak | mid | strong
   rawContent    String   @default("")    // 原文/纪要片段，可追溯
   occurredAt    String   @default("")    // YYYY-MM-DD
+  status        String   @default("approved") // M3 审核流：pending_review | approved | rejected。默认 approved=人工直落语义，存量零迁移；机器抽取显式 pending_review
+  origin        String   @default("manual")   // manual | voice | recording（溯源）
+  reviewedBy    String   @default("")         // 审计：谁审的
+  reviewedAt    String   @default("")         // 审计：何时审的 YYYY-MM-DD
   createdBy     String   @default("")
   createdAt     DateTime @default(now())
 

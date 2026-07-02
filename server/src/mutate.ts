@@ -80,11 +80,18 @@ export async function applyAction(tenantId: string, action: any): Promise<void> 
       if (action.patch?.c3Items !== undefined) d.c3Items = S(action.patch.c3Items);
       if (action.patch?.c5Items !== undefined) d.c5Items = S(action.patch.c5Items);
       if (action.patch?.meta !== undefined) d.meta = S(action.patch.meta);
+      // M3 stage-gate（K7）：介入阶段实际推进时强制落 PDE 快照留痕。先取旧值比对，写成功后 fire-and-forget（失败静默不阻塞更新）
+      const stageChanging = d.engageStage !== undefined
+        ? (await prisma.opportunity.findFirst({ where: { id: action.oppId, tenantId }, select: { engageStage: true } }))?.engageStage !== d.engageStage
+        : false;
       await lockedUpdate({
         baseVersion: action.baseVersion,
         update: (vw) => prisma.opportunity.updateMany({ where: { id: action.oppId, tenantId, ...vw }, data: { ...d, version: { increment: 1 } } }),
         exists: async () => !!(await prisma.opportunity.findFirst({ where: { id: action.oppId, tenantId }, select: { id: true } })),
       });
+      if (stageChanging) {
+        void import('./pde/routes.js').then(({ takePdeSnapshot }) => takePdeSnapshot(tenantId, action.oppId, 'stage_gate')).catch(() => {});
+      }
       return;
     }
     case 'DELETE_OPP':
@@ -392,6 +399,7 @@ export async function applyAction(tenantId: string, action: any): Promise<void> 
         id: x.id, tenantId, accountId: action.accId, opportunityId: action.oppId, personId: x.personId,
         signalKey: x.signalKey, direction: x.direction ?? 0, tier: x.tier ?? 'mid',
         rawContent: x.rawContent ?? '', occurredAt: x.occurredAt ?? '',
+        status: x.status ?? 'approved', origin: x.origin ?? 'manual', // M3：人工直落 approved；机器路径显式 pending_review
       } });
       return;
     }

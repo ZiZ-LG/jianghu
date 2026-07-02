@@ -118,7 +118,7 @@ export async function assembleState(tenantId: string) {
   const evByOpp = new Map<string, any[]>();
   for (const e of evidences) {
     const arr = evByOpp.get(e.opportunityId) ?? [];
-    arr.push({ id: e.id, accountId: e.accountId, opportunityId: e.opportunityId, personId: e.personId, signalKey: e.signalKey, direction: e.direction, tier: e.tier, rawContent: e.rawContent, occurredAt: e.occurredAt });
+    arr.push({ id: e.id, accountId: e.accountId, opportunityId: e.opportunityId, personId: e.personId, signalKey: e.signalKey, direction: e.direction, tier: e.tier, rawContent: e.rawContent, occurredAt: e.occurredAt, status: e.status ?? 'approved', origin: e.origin ?? 'manual' });
     evByOpp.set(e.opportunityId, arr);
   }
 

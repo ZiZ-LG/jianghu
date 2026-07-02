@@ -171,6 +171,8 @@ export interface EvidenceEvent {
   tier: 'weak' | 'mid' | 'strong';
   rawContent?: string;
   occurredAt?: string;
+  status?: 'pending_review' | 'approved' | 'rejected'; // M3 审核流：缺省=approved（人工直落）；机器抽取 pending_review 待人审
+  origin?: string;          // manual | voice | recording（溯源）
   createdAt?: string;
 }
 

@@ -19,10 +19,13 @@ export const DEFAULT_PDE_PARAMS = { lambda: 1.3, k: 4, s0: 0.15, competition: 1,
 
 const num = (v: unknown): number | undefined => (typeof v === 'number' && !Number.isNaN(v) ? v : undefined);
 
+// M3 审核流：只有已生效证据进 E2 燃料池（pending_review 待人审、rejected 已否决的不参与；缺省=存量人工录入=approved）
+const evLive = (opp: Opportunity) => (opp.evidenceEvents ?? []).filter((e) => (e.status ?? 'approved') === 'approved');
+
 /** 每人已录证据 → 累积三态伪计数增量（E2，喂分布演化） */
 function evidenceAlphaByPerson(opp: Opportunity): Map<string, [number, number, number]> {
   const m = new Map<string, [number, number, number]>();
-  for (const ev of opp.evidenceEvents ?? []) {
+  for (const ev of evLive(opp)) {
     const d = evidenceAlpha(ev.signalKey, ev.direction, ev.tier);
     const cur = m.get(ev.personId) ?? [0, 0, 0];
     m.set(ev.personId, [cur[0] + d[0], cur[1] + d[1], cur[2] + d[2]]);
@@ -134,7 +137,7 @@ const SENT_DIR: Record<Sentiment, number> = { star: 1, plus: 1, neutral: 0, unkn
 
 /** 检测分布与人审 sentiment 的背离 → 支持度变更提案 */
 function detectShifts(account: Account, opp: Opportunity, out: PdeOutput): StanceShift[] {
-  const hasEvidence = new Set((opp.evidenceEvents ?? []).map((e) => e.personId));
+  const hasEvidence = new Set(evLive(opp).map((e) => e.personId));
   const sentByPerson = new Map(opp.roles.map((r) => [r.personId, r.sentiment]));
   const nameById = new Map(account.persons.map((p) => [p.id, p.name]));
   const shifts: StanceShift[] = [];

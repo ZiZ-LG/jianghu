@@ -108,7 +108,10 @@ export const api = {
   personSuggestAccept: (id: string): Promise<{ person: any; accId: string }> => req(`/api/suggest/persons/${id}/accept`, { method: 'POST' }),
   personSuggestReject: (id: string): Promise<{ ok: true }> => req(`/api/suggest/persons/${id}/reject`, { method: 'POST' }),
   // Hub 级审核收件箱：聚合当前租户所有 pending 候选（关系 + 人物），带 account/opp 上下文
-  inboxList: (): Promise<{ rels: InboxRel[]; persons: InboxPerson[]; proposals: InboxProposal[]; reminders: InboxReminder[]; total: number }> => req('/api/inbox'),
+  inboxList: (): Promise<{ rels: InboxRel[]; persons: InboxPerson[]; proposals: InboxProposal[]; reminders: InboxReminder[]; evidences: InboxEvidence[]; total: number }> => req('/api/inbox'),
+  // M3 证据审核：approve（可带 direction 定向=修改后采纳）/ reject。批准落 evidence_review 快照
+  evidenceReview: (id: string, action: 'approve' | 'reject', opts?: { direction?: -1 | 0 | 1 }): Promise<{ ok: true; status: string }> =>
+    req(`/api/evidence/${id}/review`, { method: 'POST', body: JSON.stringify({ action, ...opts }) }),
   // 字段更新提案（v2.0）：采纳（可改后采纳 overrideValue）/ 驳回
   proposalAccept: (id: string, overrideValue?: string): Promise<{ ok: true }> => req(`/api/proposals/${id}/accept`, { method: 'POST', body: JSON.stringify({ overrideValue }) }),
   proposalReject: (id: string): Promise<{ ok: true }> => req(`/api/proposals/${id}/reject`, { method: 'POST' }),
@@ -220,4 +223,11 @@ export interface InboxProposal {
 export interface InboxReminder {
   id: string; accountId: string; accountName: string; opportunityId?: string; oppName: string;
   kind: string; title: string; detail: string; severity: string; entityId?: string;
+}
+// M3 第5类 · 证据待审：机器抽取的干系人行为信号（人批准才进 E2 燃料池；direction 0=中性待人工定向）
+export interface InboxEvidence {
+  id: string; accountId: string; accountName: string; opportunityId: string; oppName: string;
+  personId: string; personName: string;
+  signalKey: string; signalLabel: string; direction: number; tier: string;
+  rawContent: string; occurredAt: string; origin: string;
 }
