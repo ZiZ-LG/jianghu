@@ -452,8 +452,9 @@ export function DeliberationDock({
 
       {height !== 'collapsed' && (
         <div className="dock-scroll">
-          {/* ── 第2刀：横向推导流水线 局势 → 策略 → 倒排 → 行动（列间箭头显因果；第6刀后旁支全退，雷在坞头红条）── */}
-          <div className="sb2-cols" onClick={(e) => e.stopPropagation()}>
+          {/* ── 第2刀：横向推导流水线 局势 → 策略 → 倒排 → 行动（列间箭头显因果；第6刀后旁支全退，雷在坞头红条）
+               第9刀：抽屉打开时 drawer-open 让位——四列 minmax 下限触发横滚，被盖住的列可拖出来看 ── */}
+          <div className={`sb2-cols${drawer ? ' drawer-open' : ''}`} onClick={(e) => e.stopPropagation()}>
 
           {/* 列① 局势（EngineBar 退役后唯一详情出口：band + 打法方向 + 姿态解读一句 + 全部缺口）*/}
           <div className="sb2-col">

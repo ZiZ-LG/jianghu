@@ -551,17 +551,8 @@ export default function App() {
           </div>
         )}
       </main>
-      </div>
 
-      {/* 第8刀：坞全宽横贯底部（提出 .main），列①与左栏纵向对齐——局势信息上下融合 */}
-      {opp && !immersive && breakdown && (
-        <DeliberationDock account={account} opp={opp} breakdown={breakdown} dispatch={act}
-          pdeFull={pdeFull} openEngineSignal={engineSignal}
-          selectedPersonId={selectedId} onSelectPerson={selectPerson}
-          openActionId={openActionId} onActionOpened={() => setOpenActionId(null)}
-          onChatDone={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); await loadInbox(); } catch { /* 静默：保存已成功，仅刷新失败 */ } }} />
-      )}
-
+      {/* 第9刀：右栏面板归位 .app-upper——absolute 于上半区，底边天然止于坞顶，不再遮挡坞内卡片 */}
       {selectedPerson && opp && breakdown && (
         <FocusPanel accId={account.id} oppId={opp.id} account={account} opp={opp} breakdown={breakdown}
           person={selectedPerson} oppRole={selectedRole} bis={selectedBis} ucvs={selectedUcvs}
@@ -574,6 +565,16 @@ export default function App() {
           onUpdate={(patch) => updateEdge(drawerEdge.id, patch)}
           onDelete={() => { deleteEdgeById(drawerEdge.id); setDrawerEdgeId(null); setSelectedEdgeId(null); }}
           onClose={() => setDrawerEdgeId(null)} />
+      )}
+      </div>
+
+      {/* 第8刀：坞全宽横贯底部（提出 .main），列①与左栏纵向对齐——局势信息上下融合 */}
+      {opp && !immersive && breakdown && (
+        <DeliberationDock account={account} opp={opp} breakdown={breakdown} dispatch={act}
+          pdeFull={pdeFull} openEngineSignal={engineSignal}
+          selectedPersonId={selectedId} onSelectPerson={selectPerson}
+          openActionId={openActionId} onActionOpened={() => setOpenActionId(null)}
+          onChatDone={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); await loadInbox(); } catch { /* 静默：保存已成功，仅刷新失败 */ } }} />
       )}
 
       {oppFormOpen && opp && (
