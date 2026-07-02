@@ -667,7 +667,7 @@ export function DeliberationDock({
           </div>
         ) : (
           <button className="dock-chat-line" onClick={(e) => { e.stopPropagation(); setChatOpen(true); }}>
-            💬 和地图对话：改人 / 连关系 / 调打分…（点击展开）
+            💬 和地图对话：说情报 / 改图 / 粘拜访口述…（落库 · 点击展开）
           </button>
         )
       )}

@@ -20,7 +20,7 @@ export function AdvisorPanel({ account, opp, breakdown, person, dispatch }: {
 }) {
   const [msgs, setMsgs] = useState<Msg[]>([{
     role: 'assistant',
-    text: `对着「${person.name}」问我——怎么打、倒戈风险、下一步。我带整张图的上下文（角色/态度/关系/趋赢力/燃点）帮你深想；想落地就点「🎯 出候选」，我给出可采纳的 🃏行动牌 / 📌策略卡 / ⚠️风险。`,
+    text: `对着「${person.name}」问我——怎么打、倒戈风险、下一步。我带整张图的上下文（角色/态度/关系/趋赢力/燃点）帮你深想；想落地就点「🎯 出候选」，我给出可采纳的 🃏行动牌 / 📌策略卡 / ⚠️风险。这里只想不落库——要录情报、改图，去坞底「💬 和地图对话」。`,
   }]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -173,7 +173,7 @@ export function AdvisorPanel({ account, opp, breakdown, person, dispatch }: {
         })}
       </div>
       <div className="chat-input">
-        <textarea rows={1} value={input} placeholder={`问参谋关于「${person.name}」…（Enter 发送）`}
+        <textarea rows={1} value={input} placeholder={`问参谋关于「${person.name}」…（只想不落库 · Enter 发送）`}
           onChange={(e) => setInput(e.target.value)} onKeyDown={onKey} disabled={busy} />
         <button className="chat-send" onClick={() => ask(input)} disabled={busy || !input.trim()} title="发送" aria-label="发送">➤</button>
       </div>

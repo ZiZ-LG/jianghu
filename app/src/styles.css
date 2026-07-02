@@ -1398,7 +1398,14 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 .chat-bub.assistant { background: var(--panel-2); color: var(--ink); align-self: flex-start; border-bottom-left-radius: 3px; }
 .chat-typing { color: var(--faint); }
 .chat-input { display: flex; gap: 6px; align-items: flex-end; padding: 8px 10px; border-top: 1px solid var(--line); }
-.chat-input textarea { flex: 1; resize: none; font-size: 12px; min-height: 34px; max-height: 92px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink); font-family: inherit; }
+.chat-input textarea { flex: 1; resize: none; font-size: 12px; min-height: 34px; max-height: 150px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink); font-family: inherit; }
+/* P3 坞对话承接口述：结构化回执气泡放宽占满 + 「回答追问」提示条 */
+.chat-bub.chat-receipt { max-width: 100%; align-self: stretch; }
+.chat-bub.chat-receipt .intel-receipt { gap: 4px; }
+.chat-bub.chat-receipt .ir-row { font-size: 11.5px; }
+.chat-askhint { display: flex; align-items: center; gap: 6px; margin: 0 10px; padding: 6px 9px; font-size: 11.5px; color: var(--accent-ink); background: var(--accent-soft); border: 1px dashed var(--accent); border-radius: 8px; }
+.chat-askhint b { flex: 1; min-width: 0; font-weight: 600; }
+.chat-askhint .x-btn { flex-shrink: 0; }
 .chat-send { width: 34px; height: 34px; flex-shrink: 0; border: 1px solid var(--accent); color: var(--accent); background: transparent; border-radius: 8px; cursor: pointer; font-size: 13px; }
 .chat-send:disabled { opacity: .4; cursor: default; }
 .chat-send:not(:disabled):hover { background: var(--accent-soft); }
