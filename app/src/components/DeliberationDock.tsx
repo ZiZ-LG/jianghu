@@ -35,7 +35,7 @@ const mmdd = (ymd: string) => (ymd && ymd.length >= 10 ? `${ymd.slice(5, 7)}/${y
 
 interface FwdCand { gapItem: string; title: string; basis: string; }
 interface BwdCand { title: string; offsetDays: number; }
-type DrawerState = null | { kind: 'card'; id: string } | { kind: 'milestone'; id: string } | { kind: 'goal' } | { kind: 'action'; id: string } | { kind: 'whatif' };
+type DrawerState = null | { kind: 'card'; id: string } | { kind: 'milestone'; id: string } | { kind: 'goal' } | { kind: 'action'; id: string } | { kind: 'whatif' } | { kind: 'engine' };
 type DockHeight = 'collapsed' | 'half' | 'full';
 // 第3刀：AI 可预填的行动四要素（title/personId 由策略卡携带，不在此列）
 type AiFieldKey = 'target' | 'resources' | 'cautions' | 'props';
@@ -65,12 +65,13 @@ function Sparkline({ snaps }: { snaps: any[] }) {
 }
 
 export function DeliberationDock({
-  account, opp, breakdown, dispatch, selectedPersonId, onSelectPerson, openActionId, onActionOpened, onChatDone,
+  account, opp, breakdown, dispatch, pdeFull, selectedPersonId, onSelectPerson, openActionId, onActionOpened, onChatDone,
 }: {
   account: Account;
   opp: Opportunity;
   breakdown: ScoreBreakdown;
   dispatch: (a: Action) => void;
+  pdeFull?: any; // 第7刀：PDE 完整评估由 App 层一次 fetch 下发（左栏加权分共用），坞不再自拉
   selectedPersonId?: string | null;
   onSelectPerson?: (id: string | null) => void;
   openActionId?: string | null; // 点画布行动牌 → 打开该行动的编辑抽屉
@@ -80,17 +81,10 @@ export function DeliberationDock({
   const itemKeys = Object.keys(ITEM_MAX) as ItemKey[];
   const personById = new Map(account.persons.map((p) => [p.id, p]));
   const [height, setHeight] = usePersistentState<DockHeight>('jianghu.dockHeight', 'half');
+  const [chatOpen, setChatOpen] = usePersistentState('jianghu.dockChatOpen', false); // 第7刀：对话默认单行，点开才展开
 
-  // M5 嵌入：坞头四动作徽章（PDE 引擎建议·赢面带置信）——全屏唯一赢面出口。引擎不可用静默隐藏，不阻塞坞。
-  // 复盘台（M5 裁决A·DealPokerDashboard 第二级）共用同一响应：双轨分/建议卡/gate 用 pdeFull，坞头徽章从中派生。
-  const [pdeFull, setPdeFull] = useState<any>(null);
-  useEffect(() => {
-    let alive = true;
-    api.pdeEv(opp.id)
-      .then((r) => { if (alive) setPdeFull(r); })
-      .catch(() => { if (alive) setPdeFull(null); });
-    return () => { alive = false; };
-  }, [opp.id, breakdown]);
+  // M5 嵌入：坞头四动作徽章（PDE 引擎建议·赢面带置信）——全屏唯一赢面出口，点击弹「引擎详解」抽屉（第7刀：复盘台解体，徽章=结论 抽屉=解释）。
+  // pdeFull 由 App 层下发（与左栏加权分共用一次 fetch）；引擎不可用为 null 静默隐藏，不阻塞坞。
   const pde = pdeFull ? { action: pdeFull.recommendation?.action ?? '', pwin: pdeFull.pwin ?? 0, flag: pdeFull.confidenceFlag ?? '' } : null;
 
   // M5 · 列④引擎候选：action-ranking ΔEV 排序 top3。只展示，人采纳才落草稿（铁律②）；引擎不可用静默。
@@ -104,24 +98,8 @@ export function DeliberationDock({
     return () => { alive = false; };
   }, [opp.id, breakdown]);
 
-  // 复盘台走势：full 档才懒拉快照序列；📸 手动打点后重拉
+  // 引擎详解抽屉的赢面走势：打开抽屉才懒拉（第7刀：📸 手动打点已砍——审证据/推阶段自动落快照，走势自己生长）
   const [snaps, setSnaps] = useState<any[] | null>(null);
-  const [snapBusy, setSnapBusy] = useState(false);
-  useEffect(() => {
-    if (height !== 'full') return;
-    let alive = true;
-    api.pdeSnapshots(opp.id).then((r) => { if (alive) setSnaps(r.snapshots ?? []); }).catch(() => { if (alive) setSnaps([]); });
-    return () => { alive = false; };
-  }, [height, opp.id, breakdown]);
-  const takeSnapshot = async () => {
-    if (snapBusy) return;
-    setSnapBusy(true);
-    try {
-      await api.pdeSnapshot(opp.id);
-      const r = await api.pdeSnapshots(opp.id);
-      setSnaps(r.snapshots ?? []);
-    } catch { /* 引擎不可用静默 */ } finally { setSnapBusy(false); }
-  };
 
   // 老 PDE 适配层：只取 列① 姿态解读 + E2 背离提案（EV/赢面老口径随 EngineBar 退役，不再展示）
   const reading = useMemo(() => analyzeDeal(account, opp, breakdown), [account, opp, breakdown]);
@@ -264,7 +242,17 @@ export function DeliberationDock({
   // 切商机/客户 → 关抽屉、清背离忽略集、丢未落库的雷草稿、清字段来源标记、清引擎候选忽略集
   useEffect(() => { setDrawer(null); setDismissedShifts(new Set()); setRiskDraft(null); setAiMark(null); setDismissedActs(new Set()); }, [opp.id, account.id]);
 
-  // ── what-if 假设推演（复盘台抽屉 · SPEC §7）：沙盘不落库，关抽屉即散；假设=此刻新情报（服务端 age 归零）──
+  // 引擎详解抽屉打开时才懒拉走势快照（同商机会话内缓存，切商机由下方 useEffect 清）
+  useEffect(() => {
+    if (drawer?.kind !== 'engine' || snaps !== null) return;
+    let alive = true;
+    api.pdeSnapshots(opp.id).then((r) => { if (alive) setSnaps(r.snapshots ?? []); }).catch(() => { if (alive) setSnaps([]); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drawer]);
+  useEffect(() => { setSnaps(null); }, [opp.id]);
+
+  // ── what-if 假设推演（引擎详解的子抽屉 · SPEC §7）：沙盘不落库，关抽屉即散；假设=此刻新情报（服务端 age 归零）──
   const [wiBase, setWiBase] = useState<any>(null);      // 基线 + 当前牌局人员表（开抽屉时空 overrides 拉取）
   const [wiRows, setWiRows] = useState<Record<string, { sentiment: string; confidence: string }>>({});
   const [wiResult, setWiResult] = useState<any>(null);
@@ -408,10 +396,11 @@ export function DeliberationDock({
           onClick={() => setHeight(height === 'collapsed' ? 'half' : 'collapsed')}>{height === 'collapsed' ? '⌃' : '⌄'}</button>
         <span className="sb-band-pill" style={{ color: tone, borderColor: tone }}>● {BAND_LABEL[breakdown.band]} · 趋赢力 {pct}%</span>
         {pde && ACT_LABEL[pde.action] && (
-          <span className={`mf-act mf-act-${ACT_LABEL[pde.action]!.cls}`}
-            title={`引擎建议（赢面 ${Math.round(pde.pwin * 100)}%${pde.flag ? ` · ${pde.flag.includes('no_pot') ? '未设合同额，金额降级' : '置信偏低，先摸底'}` : ''}）${engCands[0] ? ` · 最优先：${engCands[0].title} → ${engCands[0].personName}（见列④引擎荐）` : ''}`}>
+          <button className={`mf-act mf-act-${ACT_LABEL[pde.action]!.cls} dock-act-btn`}
+            onClick={() => setDrawer({ kind: 'engine' })}
+            title={`点开看引擎详解：这个建议怎么来的（理由 / 薄弱关键人 / 赢面走势 / 假设推演）${pde.flag ? ` · ${pde.flag.includes('no_pot') ? '未设合同额，金额降级' : '置信偏低，先摸底'}` : ''}`}>
             {ACT_LABEL[pde.action]!.icon} {ACT_LABEL[pde.action]!.text} · 赢面 {Math.round(pde.pwin * 100)}%{pde.flag ? ' ⚠︎' : ''}
-          </span>
+          </button>
         )}
         {focusName && (
           <span className="dock-focus-chip">🎯 聚焦 {focusName}
@@ -437,6 +426,13 @@ export function DeliberationDock({
           <button className="btn ghost xs" onClick={() => setDismissedShifts((s) => new Set(s).add(sh.personId))}>忽略</button>
         </div>
       ))}
+
+      {/* ── 坞头警示行 · gate 把关人红线（第7刀自复盘台迁入：机器强警示，触发才出现；与背离黄条/人工雷同族）── */}
+      {pdeFull?.gate && (
+        <div className="dock-gate" onClick={(e) => e.stopPropagation()}>
+          ⚠ 把关人红线触发：关键把关人强烈反对，赢面被强制压制——先排雷再谈推进
+        </div>
+      )}
 
       {/* ── 坞头警示行 · 人工雷红条（第6刀：风险砍容器降级至此，与背离黄条同族并列；三档高度均可见）── */}
       {risks.map((r) => (
@@ -465,8 +461,8 @@ export function DeliberationDock({
           <div className="sb2-col">
             <div className="sb2-col-head"><span>① 局势</span></div>
             <div className="sb2-card sb2-anchor" style={{ borderColor: tone }}>
+              {/* 第7刀：band 大字行删——坞头药丸就在头顶（三连显收敛为二：左栏本尊+收起态药丸） */}
               <div className="sb2-anchor-tag">现状锚 · 来自地图</div>
-              <div className="sb2-anchor-band" style={{ color: tone }}>{pct}% {BAND_LABEL[breakdown.band].split(' · ')[0]}</div>
               <div className="sb2-anchor-strat">{BAND_STRATEGY[breakdown.band].split('：')[0]}</div>
               <div className="sb2-anchor-read" title={reading.reasonText ? `依据：${reading.reasonText}` : undefined}>
                 <span className={`sb2-anchor-stance tone-${reading.stanceTone}`}>{reading.stanceLabel}</span>
@@ -654,58 +650,24 @@ export function DeliberationDock({
 
           </div>
 
-          {/* ── M5 复盘台（仅 full 档 · 裁决A：DealPokerDashboard 第二级=坞全展开复盘态；双轨分/建议卡/走势，what-if 留下一刀）── */}
-          {height === 'full' && pdeFull && (
-            <div className="dock-review" onClick={(e) => e.stopPropagation()}>
-              <div className="dock-review-head">
-                <span className="dock-review-cap">🎰 复盘台 · 引擎全景</span>
-                <span className="dock-review-acts">
-                  <button className="btn ghost xs" onClick={() => setDrawer({ kind: 'whatif' })} title="假设某人立场变化，赢面会怎样——沙盘推演不落库">🧪 假设推演</button>
-                  <button className="btn ghost xs" disabled={snapBusy} onClick={takeSnapshot} title="把当前局面存成快照，积累赢面走势">{snapBusy ? '打点中…' : '📸 打个快照'}</button>
-                </span>
-              </div>
-              {pdeFull.gate && (
-                <div className="dock-gate">⚠ 把关人红线触发：关键把关人强烈反对，赢面被强制压制——先排雷再谈推进</div>
-              )}
-              <div className="dock-review-grid">
-                <div className="dock-review-col">
-                  <h5>双轨分</h5>
-                  <div className="dock-dual">
-                    <div className="dock-dual-item"><b>{Math.round(pdeFull.score?.nominal ?? 0)}</b><span>名义分 · 打分表原值</span></div>
-                    <div className="dock-dual-item"><b>{Math.round(pdeFull.score?.weighted ?? 0)}</b><span>加权分 · 按证据可信度折扣</span></div>
-                  </div>
-                  <div className="dock-review-note">差 {Math.round(pdeFull.score?.gap ?? 0)} 分＝情报还没坐实的部分。作战工具，非考核指标。</div>
-                </div>
-                <div className="dock-review-col">
-                  <h5>引擎建议</h5>
-                  {ACT_LABEL[pdeFull.recommendation?.action] && (
-                    <span className={`mf-act mf-act-${ACT_LABEL[pdeFull.recommendation.action]!.cls}`}>
-                      {ACT_LABEL[pdeFull.recommendation.action]!.icon} {ACT_LABEL[pdeFull.recommendation.action]!.text}
-                    </span>
-                  )}
-                  <div className="dock-review-note">{pdeFull.recommendation?.reason || '—'}</div>
-                  {(pdeFull.recommendation?.weak_key_stakeholders?.length ?? 0) > 0 && (
-                    <div className="dock-review-weak">薄弱关键人：{pdeFull.recommendation.weak_key_stakeholders.map((id: string) => pdeFull.stakeholders?.find((s: any) => s.id === id)?.name ?? id).join('、')}</div>
-                  )}
-                </div>
-                <div className="dock-review-col">
-                  <h5>赢面走势</h5>
-                  {(snaps?.length ?? 0) >= 2
-                    ? <Sparkline snaps={snaps!} />
-                    : <div className="dock-review-note">{snaps === null ? '加载中…' : '快照不足两张——每次复盘 📸 打个点，赢面变化就能连成线'}</div>}
-                </div>
-              </div>
-            </div>
-          )}
-
         </div>
       )}
 
-      {/* ── 坞尾 · 和地图对话（第1刀：从左栏收进坞的唯一常驻对话入口；改图直落走 voiceExtract 双轨不变）── */}
+      {/* ── 坞尾 · 和地图对话（第1刀收进坞；第7刀压成单行——对话是输入工具不是展示内容，常驻只留一行入口，点开才展开对话流）── */}
       {height !== 'collapsed' && (
-        <div className="dock-chat" onClick={(e) => e.stopPropagation()}>
-          <ChatPanel account={account} opp={opp} onDone={onChatDone ?? (() => {})} height={height === 'full' ? 200 : 150} />
-        </div>
+        chatOpen ? (
+          <div className="dock-chat" onClick={(e) => e.stopPropagation()}>
+            <div className="dock-chat-bar">
+              <span>💬 和地图对话</span>
+              <button className="btn ghost xs" onClick={() => setChatOpen(false)}>收起 ⌄</button>
+            </div>
+            <ChatPanel account={account} opp={opp} onDone={onChatDone ?? (() => {})} height={height === 'full' ? 200 : 150} />
+          </div>
+        ) : (
+          <button className="dock-chat-line" onClick={(e) => { e.stopPropagation(); setChatOpen(true); }}>
+            💬 和地图对话：改人 / 连关系 / 调打分…（点击展开）
+          </button>
+        )
       )}
 
       {/* ── 详情抽屉（点卡热切换 · Esc/空白关闭）── */}
@@ -850,6 +812,38 @@ export function DeliberationDock({
                   )}
                 </div>
                 <button className="sb2-drawer-del" onClick={() => deleteAction(drawer.id)}>🗑 删除该行动</button>
+              </div>
+            </>
+          )}
+          {drawer.kind === 'engine' && pdeFull && (
+            <>
+              <div className="drawer-head">
+                <span className="t">⚙️ 引擎详解 · 这个建议怎么来的</span>
+                <button className="x-btn" onClick={() => setDrawer(null)}>✕</button>
+              </div>
+              <div className="sb2-drawer-body">
+                {ACT_LABEL[pdeFull.recommendation?.action] && (
+                  <div className="eng-verdict">
+                    <span className={`mf-act mf-act-${ACT_LABEL[pdeFull.recommendation.action]!.cls}`}>
+                      {ACT_LABEL[pdeFull.recommendation.action]!.icon} {ACT_LABEL[pdeFull.recommendation.action]!.text} · 赢面 {Math.round((pdeFull.pwin ?? 0) * 100)}%
+                    </span>
+                    {pdeFull.confidenceFlag && <span className="eng-flag">{pdeFull.confidenceFlag.includes('no_pot') ? '未设合同额，金额类降级为纯排序' : '置信偏低，建议先摸底再下重注'}</span>}
+                  </div>
+                )}
+                <div className="eng-reason"><b>理由</b>{pdeFull.recommendation?.reason || '—'}</div>
+                {(pdeFull.recommendation?.weak_key_stakeholders?.length ?? 0) > 0 && (
+                  <div className="eng-reason"><b>薄弱关键人</b>{pdeFull.recommendation.weak_key_stakeholders.map((id: string) => pdeFull.stakeholders?.find((s: any) => s.id === id)?.name ?? id).join('、')}</div>
+                )}
+                <div className="eng-trend">
+                  <h5>赢面走势</h5>
+                  {(snaps?.length ?? 0) >= 2
+                    ? <Sparkline snaps={snaps!} />
+                    : <div className="sb2-origin">{snaps === null ? '加载中…' : '记录还不够连成线——审核证据、推进阶段时系统会自动记一笔，用一阵子就有了。'}</div>}
+                </div>
+                <div className="sb2-drawer-acts">
+                  <button className="btn primary sm" onClick={() => setDrawer({ kind: 'whatif' })}>🧪 假设推演：搞定某人，赢面会怎样</button>
+                </div>
+                <div className="sb2-origin">名义 / 加权双轨分在左栏趋赢力处（加权＝按证据可信度折扣）。</div>
               </div>
             </>
           )}

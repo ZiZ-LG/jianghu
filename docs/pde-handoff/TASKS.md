@@ -42,7 +42,7 @@
 - **门禁**：`tsc && npm test && npm run test:golden && npx playwright test` 全绿
 
 > **2026-07-02 裁决 A 嵌入式落地进度**（形态改变，见 DECISIONS.md；E2E 用 preview 实测替代 Playwright）：
-> - ✅ DealPokerDashboard 两级：坞头四动作徽章（`6048b54`）+ 坞 full 档复盘台（双轨分+非考核文案 / 建议卡 reason+薄弱关键人 / 赢面走势 sparkline+📸 手动打点 / gate 红条）
+> - ✅ DealPokerDashboard 两级：坞头四动作徽章（`6048b54`）+ ~~坞 full 档复盘台~~ → **第7刀（2026-07-02）复盘台解体重构**：与左栏/坞头信息重复（用户复盘裁决）——双轨分→左栏趋赢力旁「加权 N」小字+hover 非考核文案；建议动作删（徽章本尊）、reason+薄弱关键人+走势→点徽章弹「⚙️引擎详解」抽屉（徽章=结论·抽屉=解释）；gate 红条→坞头警示区；📸 手动打点砍（evidence_review/stage_gate 自动打点覆盖）。要点要求（双轨分并列/走势/gate 警示/非考核文案）全保留，仅落位再收敛
 > - ✅ StanceRangeBar → 焦点面板「档案」tab 头部（三色分布+n_eff 角标+样本薄警示，点击跳「动态」证据时间线）
 > - ✅ IntelAndActionPanel 上半 VoI → 场景 A 拜访卡（`00efe7a`）；下半 ΔEV → 今日一屏 ✅ + 坞列④引擎候选（2026-07-02：action-ranking top3 虚线卡=动作+目标人+≈ΔEV[pot 缺失降级纯 pp 口径]+gist；采纳→draft 草稿开抽屉守铁律②、忽略递补、同名未完成行动自动过滤防重；坞头徽章 hover 补人话最优先动作——第5刀 best_action 非人话遗留一并关闭）
 > - ✅ what-if 假设调整抽屉（2026-07-02）：新端点 `POST /api/pde/:oppId/what-if`（纯计算零写库·入出参前端值域·hypo 只算 evaluate 层，四动作建议以实际局面为准）+ 复盘台「🧪 假设推演」抽屉（逐人立场/可信度 select 默认当前值·变更行高亮·赢面/红线/预期回报三项对比·重置）；假设=此刻新情报（age 归零 q 满格）

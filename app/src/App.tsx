@@ -182,6 +182,17 @@ export default function App() {
   const account = state.accounts.find((a) => a.id === accId) ?? null;
   const opp = account?.opportunities.find((o) => o.id === oppId) ?? null;
   const breakdown = useMemo(() => (account && opp ? scoreFromDomain(account, opp) : null), [account, opp]);
+
+  // PDE 完整评估（App 层一次 fetch 喂两处：左栏加权分小字 + 坞头徽章/引擎详解抽屉）。引擎不可用静默 null 不阻塞。
+  const [pdeFull, setPdeFull] = useState<any>(null);
+  useEffect(() => {
+    if (!opp) { setPdeFull(null); return; }
+    let alive = true;
+    api.pdeEv(opp.id)
+      .then((r) => { if (alive) setPdeFull(r); })
+      .catch(() => { if (alive) setPdeFull(null); });
+    return () => { alive = false; };
+  }, [opp?.id, breakdown]);
   const gaps = useMemo(() => (account && opp ? computeGaps(account, opp) : []), [account, opp]);
   const roleByPerson = useMemo(() => {
     const m = new Map<string, Role>();
@@ -449,6 +460,7 @@ export default function App() {
   const sidebarEl = (
     <Sidebar
       account={account} opp={opp} breakdown={breakdown}
+      weighted={pdeFull?.score?.weighted ?? null}
       onSelectOpp={(id) => { setOppId(id); selectPerson(null); setMobileNavOpen(false); }}
       onAddOpp={addOpp}
       onBack={() => { setAccId(null); selectPerson(null); }}
@@ -523,6 +535,7 @@ export default function App() {
               suggestions={suggestions} planActions={account.planActions ?? []} />
             {!immersive && breakdown && (
               <DeliberationDock account={account} opp={opp} breakdown={breakdown} dispatch={act}
+                pdeFull={pdeFull}
                 selectedPersonId={selectedId} onSelectPerson={selectPerson}
                 openActionId={openActionId} onActionOpened={() => setOpenActionId(null)}
                 onChatDone={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); await loadInbox(); } catch { /* 静默：保存已成功，仅刷新失败 */ } }} />

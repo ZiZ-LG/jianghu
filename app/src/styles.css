@@ -1286,11 +1286,12 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 /* 第4刀 · 坞内草稿（draft=未上桌）：虚线边框同候选虚位卡视觉语言；「→ 上桌」复用 .sb2-send */
 .sb2-card.sb2-draft { border-style: dashed; background: var(--panel-2); }
 .sb2-act-draft { color: var(--faint); }
-/* M5 复盘台（坞 full 档 · DealPokerDashboard 第二级）：双轨分 / 建议卡 / 赢面走势；gate=把关人红线（#dc2626 危险语义色） */
+/* 复盘台已解体（第7刀：双轨分→左栏小字 / 建议理由·走势·what-if→徽章「引擎详解」抽屉 / gate→坞头警示区 / 📸砍）；
+   dock-review 系列照惯例保留不挂载。.dock-gate 迁坞头警示行继续挂载（与 .dock-shift/.dock-risk 同族） */
 .dock-review { margin-top: 12px; border-top: 1px dashed var(--line); padding-top: 10px; }
 .dock-review-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .dock-review-cap { font-size: 12px; font-weight: 700; color: var(--ink-2); }
-.dock-gate { margin-bottom: 8px; padding: 7px 11px; border: 1px solid color-mix(in srgb, #dc2626 45%, var(--line)); border-radius: 8px; background: color-mix(in srgb, #dc2626 8%, var(--panel)); font-size: 12px; font-weight: 600; color: var(--ink); }
+.dock-gate { display: flex; align-items: center; margin: 6px 12px 0; padding: 7px 11px; border: 1px solid color-mix(in srgb, #dc2626 45%, var(--line)); border-radius: 8px; background: color-mix(in srgb, #dc2626 8%, var(--panel)); font-size: 12px; font-weight: 600; color: var(--ink); flex-shrink: 0; }
 .dock-review-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .dock-review-col { border: 1px solid var(--line); border-radius: 9px; background: var(--panel-2); padding: 10px 12px; min-width: 0; }
 .dock-review-col h5 { margin: 0 0 8px; font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: .4px; }
@@ -1301,7 +1302,22 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 .dock-review-note { margin-top: 6px; font-size: 11px; color: var(--muted); line-height: 1.55; }
 .dock-review-weak { margin-top: 6px; font-size: 11px; color: #d97706; font-weight: 600; }
 .dock-spark { display: block; }
-@media (max-width: 900px) { .dock-review-grid { grid-template-columns: 1fr; } }
+/* 第7刀 · 徽章可点（引擎详解入口）+ 引擎详解抽屉 + 对话单行 + 左栏加权小字/展开行 */
+.dock-act-btn { border: none; cursor: pointer; }
+.dock-act-btn:hover { filter: brightness(1.06); box-shadow: 0 0 0 2px var(--accent-soft); }
+.eng-verdict { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.eng-flag { font-size: 11px; color: #d97706; font-weight: 600; }
+.eng-reason { font-size: 12.5px; color: var(--ink-2); line-height: 1.6; margin-bottom: 8px; }
+.eng-reason b { display: inline-block; margin-right: 8px; font-size: 11px; color: var(--muted); }
+.eng-trend { border: 1px solid var(--line); border-radius: 9px; background: var(--panel-2); padding: 10px 12px; margin: 10px 0; }
+.eng-trend h5 { margin: 0 0 8px; font-size: 11px; font-weight: 700; color: var(--muted); }
+.dock-chat-bar { display: flex; align-items: center; justify-content: space-between; padding: 4px 12px 0; }
+.dock-chat-bar span { font-size: 12px; font-weight: 700; color: var(--ink-2); }
+.dock-chat-line { display: block; width: calc(100% - 24px); margin: 8px 12px 10px; padding: 9px 12px; text-align: left; font-size: 12.5px; color: var(--muted); border: 1px solid var(--line); border-radius: 9px; background: var(--panel-2); cursor: text; }
+.dock-chat-line:hover { background: var(--hover); color: var(--ink); }
+.diag-weighted { font-size: 11px; font-weight: 600; color: var(--muted); margin-left: 8px; padding: 2px 7px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2); cursor: help; white-space: nowrap; }
+.diag-expand { display: block; width: 100%; margin-top: 6px; padding: 6px; font-size: 11.5px; color: var(--accent); background: transparent; border: 1px dashed color-mix(in srgb, var(--accent) 35%, var(--line)); border-radius: 8px; cursor: pointer; }
+.diag-expand:hover { background: var(--accent-soft); }
 /* M5 · 列④引擎候选（action-ranking ΔEV 排序）：⚙引擎荐 chip + 预期增益数字（正收益绿）；卡体复用 .sb2-cand 虚线 */
 .sb2-chip-eng { background: var(--accent-soft); color: var(--accent-ink); }
 .sb2-ev { margin-left: auto; font-size: 11px; font-weight: 800; color: #16a34a; font-variant-numeric: tabular-nums; flex-shrink: 0; }

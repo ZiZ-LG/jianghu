@@ -1,10 +1,11 @@
-// 左栏 · 诊断思考台（第1刀纯化）：客户/商机表头 + 趋赢力打分台——对话已收进推演坞（一处入口，解两处冗余）。
+// 左栏 · 诊断思考台（第1刀纯化 + 第7刀屏效§4 落地）：客户/商机表头 + 趋赢力打分台——对话已收进推演坞（一处入口，解两处冗余）。
+// 屏效§4：默认只显 数字+加权小字+band+top3 缺口，点开才见 11 项——分项全列与坞列①缺口行的重复由此收敛。
 // 干系人名单不再需要——画布的牌桌卡片就是名单。
 import { useState } from 'react';
 import type { Account, Opportunity } from '../types';
 import type { ScoreBreakdown, ItemKey } from '../lib/g64111';
 import { ITEM_MAX, ITEM_LABEL, ITEM_GROUP, BAND_LABEL } from '../lib/g64111';
-import { useCountUp } from '../ui';
+import { useCountUp, usePersistentState } from '../ui';
 
 const ITEMS: ItemKey[] = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'P1', 'P2', 'P3', 'P4', '1K'];
 const GROUPS = ['6必清', '4优势', '1决胜'] as const;
@@ -56,10 +57,11 @@ function Item({ k, score, open, onToggle }: { k: ItemKey; score: number; open: b
   );
 }
 
-export function Sidebar({ account, opp, breakdown, onSelectOpp, onAddOpp, onBack, onCollapse, gapCount = 0, onOpenGaps }: {
+export function Sidebar({ account, opp, breakdown, weighted = null, onSelectOpp, onAddOpp, onBack, onCollapse, gapCount = 0, onOpenGaps }: {
   account: Account;
   opp: Opportunity | null;
   breakdown: ScoreBreakdown | null;
+  weighted?: number | null;   // 第7刀：PDE 加权分（按证据可信度折扣）——双轨分归位到趋赢力本尊旁，引擎不可用为 null 隐藏
   onSelectOpp: (id: string) => void;
   onAddOpp: () => void;
   onBack: () => void;
@@ -69,11 +71,16 @@ export function Sidebar({ account, opp, breakdown, onSelectOpp, onAddOpp, onBack
 }) {
   const [open, setOpen] = useState<Set<ItemKey>>(() => new Set());
   const toggle = (k: ItemKey) => setOpen((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  const [showAll, setShowAll] = usePersistentState('jianghu.diagAllItems', false); // 屏效§4：默认 top3 缺口，点开才见 11 项
 
   const pct = useCountUp(breakdown ? Math.round(breakdown.percent * 100) : 0); // 动效：趋赢力数字滚动入场
   const groupScore: Record<string, number> = breakdown
     ? { '6必清': breakdown.clears, '4优势': breakdown.priorities, '1决胜': breakdown.key }
     : { '6必清': 0, '4优势': 0, '1决胜': 0 };
+  // top3 缺口：按缺口绝对值降序（负分项天然靠前）——「一眼短板」
+  const top3 = breakdown
+    ? [...ITEMS].filter((k) => breakdown.items[k] < ITEM_MAX[k]).sort((a, b) => (ITEM_MAX[b] - breakdown.items[b]) - (ITEM_MAX[a] - breakdown.items[a])).slice(0, 3)
+    : [];
 
   return (
     <aside className="sidebar diag-sidebar">
@@ -99,6 +106,11 @@ export function Sidebar({ account, opp, breakdown, onSelectOpp, onAddOpp, onBack
             <div className="diag-top">
               <span className="diag-cap">趋赢力</span>
               <span className="diag-pct" style={{ color: breakdown.total < 0 ? '#b91c1c' : 'var(--ink)' }}>{pct}<small>%</small></span>
+              {weighted != null && (
+                <span className="diag-weighted" title={`双轨分：名义 ${breakdown.total} 分＝打分表原值；加权 ${Math.round(weighted)} 分＝按证据可信度折扣。差 ${Math.round(breakdown.total - weighted)} 分＝情报还没坐实的部分。作战工具，非考核指标。`}>
+                  加权 {Math.round(weighted)}
+                </span>
+              )}
               {onOpenGaps && gapCount > 0 && (
                 <button onClick={onOpenGaps} title="按得分缺口逐项刷卡补分（M3）"
                   style={{ marginLeft: 'auto', fontSize: 11, padding: '3px 9px', borderRadius: 12, border: '1px solid var(--accent)', background: 'transparent', color: 'var(--accent)', cursor: 'pointer', whiteSpace: 'nowrap' }}>
@@ -107,12 +119,24 @@ export function Sidebar({ account, opp, breakdown, onSelectOpp, onAddOpp, onBack
               )}
             </div>
             <div className="diag-band" style={{ background: BAND_COLOR[breakdown.band] }}>{BAND_LABEL[breakdown.band]}</div>
-            {GROUPS.map((g) => (
-              <div className="diag-grp-block" key={g}>
-                <div className="diag-grp"><span>{g}</span><span className="diag-grp-sc">{groupScore[g]} / {GROUP_MAX[g]}</span></div>
-                {ITEMS.filter((k) => ITEM_GROUP[k] === g).map((k) => <Item key={k} k={k} score={breakdown.items[k]} open={open.has(k)} onToggle={() => toggle(k)} />)}
-              </div>
-            ))}
+            {showAll ? (
+              <>
+                {GROUPS.map((g) => (
+                  <div className="diag-grp-block" key={g}>
+                    <div className="diag-grp"><span>{g}</span><span className="diag-grp-sc">{groupScore[g]} / {GROUP_MAX[g]}</span></div>
+                    {ITEMS.filter((k) => ITEM_GROUP[k] === g).map((k) => <Item key={k} k={k} score={breakdown.items[k]} open={open.has(k)} onToggle={() => toggle(k)} />)}
+                  </div>
+                ))}
+                <button className="diag-expand" onClick={() => setShowAll(false)}>收起 ⌃ 只看 top3 短板</button>
+              </>
+            ) : (
+              <>
+                <div className="diag-grp"><span>top3 短板</span></div>
+                {top3.map((k) => <Item key={k} k={k} score={breakdown.items[k]} open={open.has(k)} onToggle={() => toggle(k)} />)}
+                {top3.length === 0 && <div className="diag-total">无明显缺口 🎉</div>}
+                <button className="diag-expand" onClick={() => setShowAll(true)}>展开全部 11 项 ⌄</button>
+              </>
+            )}
             <div className="diag-total">总分 {breakdown.total}/100 · 点每项看依据 / 怎么提分</div>
           </>
         ) : (
