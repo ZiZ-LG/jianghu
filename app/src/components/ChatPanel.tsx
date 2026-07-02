@@ -14,7 +14,7 @@ function summarize(r: any): string {
   return '✓ 已处理：你明说的已直接生效（带溯源），它推断的已进收件箱待你审。地图已刷新。';
 }
 
-export function ChatPanel({ account, opp, onDone, height }: { account: Account; opp: Opportunity | null; onDone: () => void; height?: number }) {
+export function ChatPanel({ account, opp, onDone, height, onCollapse }: { account: Account; opp: Opportunity | null; onDone: () => void; height?: number; onCollapse?: () => void }) {
   const [msgs, setMsgs] = useState<Msg[]>([{
     role: 'assistant',
     text: '改人、连关系、调打分都可以跟我说。例：「把钱大钧标记为抗拒」「加个采购处长王某，连到钱大钧」「钱大钧的 FORM 还差哪几项」。明说的直接生效，推断的进收件箱。',
@@ -46,6 +46,7 @@ export function ChatPanel({ account, opp, onDone, height }: { account: Account; 
       <div className="chat-head">
         <span className="chat-title">💬 和地图对话</span>
         <span className="chat-hint">用你的模型 · 守录入双轨</span>
+        {onCollapse && <button className="btn ghost xs" style={{ marginLeft: 'auto' }} onClick={onCollapse}>收起 ⌄</button>}
       </div>
       <div className="chat-list" ref={listRef}>
         {msgs.map((m, i) => <div key={i} className={`chat-bub ${m.role}`}>{m.text}</div>)}

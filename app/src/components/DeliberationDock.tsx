@@ -657,11 +657,8 @@ export function DeliberationDock({
       {height !== 'collapsed' && (
         chatOpen ? (
           <div className="dock-chat" onClick={(e) => e.stopPropagation()}>
-            <div className="dock-chat-bar">
-              <span>💬 和地图对话</span>
-              <button className="btn ghost xs" onClick={() => setChatOpen(false)}>收起 ⌄</button>
-            </div>
-            <ChatPanel account={account} opp={opp} onDone={onChatDone ?? (() => {})} height={height === 'full' ? 200 : 150} />
+            <ChatPanel account={account} opp={opp} onDone={onChatDone ?? (() => {})} height={height === 'full' ? 200 : 150}
+              onCollapse={() => setChatOpen(false)} />
           </div>
         ) : (
           <button className="dock-chat-line" onClick={(e) => { e.stopPropagation(); setChatOpen(true); }}>
