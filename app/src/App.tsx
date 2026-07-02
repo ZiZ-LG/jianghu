@@ -183,8 +183,9 @@ export default function App() {
   const opp = account?.opportunities.find((o) => o.id === oppId) ?? null;
   const breakdown = useMemo(() => (account && opp ? scoreFromDomain(account, opp) : null), [account, opp]);
 
-  // PDE 完整评估（App 层一次 fetch 喂两处：左栏加权分小字 + 坞头徽章/引擎详解抽屉）。引擎不可用静默 null 不阻塞。
+  // PDE 完整评估（App 层一次 fetch 喂两处：左栏加权分小字+徽章 + 坞引擎详解抽屉）。引擎不可用静默 null 不阻塞。
   const [pdeFull, setPdeFull] = useState<any>(null);
+  const [engineSignal, setEngineSignal] = useState(0); // 第8刀：左栏徽章 → 坞开「引擎详解」抽屉的跨组件信号（照 openActionId 模式）
   useEffect(() => {
     if (!opp) { setPdeFull(null); return; }
     let alive = true;
@@ -461,6 +462,8 @@ export default function App() {
     <Sidebar
       account={account} opp={opp} breakdown={breakdown}
       weighted={pdeFull?.score?.weighted ?? null}
+      pde={pdeFull ? { action: pdeFull.recommendation?.action ?? '', pwin: pdeFull.pwin ?? 0, flag: pdeFull.confidenceFlag ?? '' } : null}
+      onOpenEngine={() => setEngineSignal((n) => n + 1)}
       onSelectOpp={(id) => { setOppId(id); selectPerson(null); setMobileNavOpen(false); }}
       onAddOpp={addOpp}
       onBack={() => { setAccId(null); selectPerson(null); }}
@@ -472,6 +475,8 @@ export default function App() {
   return (
     <div className={`app-shell${isMobile ? ' mobile' : ''}${immersive ? ' immersive' : ''}`}>
       {isMobile && !isLandscape && <OrientationGate />}
+      {/* 第8刀：上半区=侧栏+画布并排；坞提出到 app-shell 级全宽横贯底部（列①落在左栏正下方，局势信息纵向融合） */}
+      <div className="app-upper">
       {!immersive && (isMobile ? (
         <>
           {!mobileNavOpen && <button className="edge-arrow edge-left" onClick={() => setMobileNavOpen(true)} title="展开侧边栏" aria-label="展开侧边栏">›</button>}
@@ -533,13 +538,6 @@ export default function App() {
               onUpdatePerson={updatePerson} onDeletePerson={deletePerson}
               immersive={immersive} onToggleImmersive={toggleImmersive} secondTapOpens={true}
               suggestions={suggestions} planActions={account.planActions ?? []} />
-            {!immersive && breakdown && (
-              <DeliberationDock account={account} opp={opp} breakdown={breakdown} dispatch={act}
-                pdeFull={pdeFull}
-                selectedPersonId={selectedId} onSelectPerson={selectPerson}
-                openActionId={openActionId} onActionOpened={() => setOpenActionId(null)}
-                onChatDone={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); await loadInbox(); } catch { /* 静默：保存已成功，仅刷新失败 */ } }} />
-            )}
             </>
           </>
         ) : (
@@ -553,6 +551,16 @@ export default function App() {
           </div>
         )}
       </main>
+      </div>
+
+      {/* 第8刀：坞全宽横贯底部（提出 .main），列①与左栏纵向对齐——局势信息上下融合 */}
+      {opp && !immersive && breakdown && (
+        <DeliberationDock account={account} opp={opp} breakdown={breakdown} dispatch={act}
+          pdeFull={pdeFull} openEngineSignal={engineSignal}
+          selectedPersonId={selectedId} onSelectPerson={selectPerson}
+          openActionId={openActionId} onActionOpened={() => setOpenActionId(null)}
+          onChatDone={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); await loadInbox(); } catch { /* 静默：保存已成功，仅刷新失败 */ } }} />
+      )}
 
       {selectedPerson && opp && breakdown && (
         <FocusPanel accId={account.id} oppId={opp.id} account={account} opp={opp} breakdown={breakdown}

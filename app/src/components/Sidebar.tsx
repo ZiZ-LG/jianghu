@@ -6,6 +6,7 @@ import type { Account, Opportunity } from '../types';
 import type { ScoreBreakdown, ItemKey } from '../lib/g64111';
 import { ITEM_MAX, ITEM_LABEL, ITEM_GROUP, BAND_LABEL } from '../lib/g64111';
 import { useCountUp, usePersistentState } from '../ui';
+import { ACT_LABEL } from '../lib/pdeUi';
 
 const ITEMS: ItemKey[] = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'P1', 'P2', 'P3', 'P4', '1K'];
 const GROUPS = ['6必清', '4优势', '1决胜'] as const;
@@ -57,11 +58,13 @@ function Item({ k, score, open, onToggle }: { k: ItemKey; score: number; open: b
   );
 }
 
-export function Sidebar({ account, opp, breakdown, weighted = null, onSelectOpp, onAddOpp, onBack, onCollapse, gapCount = 0, onOpenGaps }: {
+export function Sidebar({ account, opp, breakdown, weighted = null, pde = null, onOpenEngine, onSelectOpp, onAddOpp, onBack, onCollapse, gapCount = 0, onOpenGaps }: {
   account: Account;
   opp: Opportunity | null;
   breakdown: ScoreBreakdown | null;
   weighted?: number | null;   // 第7刀：PDE 加权分（按证据可信度折扣）——双轨分归位到趋赢力本尊旁，引擎不可用为 null 隐藏
+  pde?: { action: string; pwin: number; flag: string } | null; // 第8刀：四动作徽章收编左栏（坞头药丸/徽章退役，局势信息一处）
+  onOpenEngine?: () => void;  // 点徽章 → 坞开「引擎详解」抽屉（跨组件信号）
   onSelectOpp: (id: string) => void;
   onAddOpp: () => void;
   onBack: () => void;
@@ -118,7 +121,15 @@ export function Sidebar({ account, opp, breakdown, weighted = null, onSelectOpp,
                 </button>
               )}
             </div>
-            <div className="diag-band" style={{ background: BAND_COLOR[breakdown.band] }}>{BAND_LABEL[breakdown.band]}</div>
+            <div className="diag-band-row">
+              <div className="diag-band" style={{ background: BAND_COLOR[breakdown.band] }}>{BAND_LABEL[breakdown.band]}</div>
+              {pde && ACT_LABEL[pde.action] && (
+                <button className={`mf-act mf-act-${ACT_LABEL[pde.action]!.cls} dock-act-btn`} onClick={onOpenEngine}
+                  title={`引擎建议（点开看详解：理由 / 薄弱关键人 / 赢面走势 / 假设推演）${pde.flag ? ` · ${pde.flag.includes('no_pot') ? '未设合同额，金额降级' : '置信偏低，先摸底'}` : ''}`}>
+                  {ACT_LABEL[pde.action]!.icon} {ACT_LABEL[pde.action]!.text} · 赢面 {Math.round(pde.pwin * 100)}%{pde.flag ? ' ⚠︎' : ''}
+                </button>
+              )}
+            </div>
             {showAll ? (
               <>
                 {GROUPS.map((g) => (

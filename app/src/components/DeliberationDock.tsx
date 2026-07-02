@@ -65,13 +65,14 @@ function Sparkline({ snaps }: { snaps: any[] }) {
 }
 
 export function DeliberationDock({
-  account, opp, breakdown, dispatch, pdeFull, selectedPersonId, onSelectPerson, openActionId, onActionOpened, onChatDone,
+  account, opp, breakdown, dispatch, pdeFull, openEngineSignal, selectedPersonId, onSelectPerson, openActionId, onActionOpened, onChatDone,
 }: {
   account: Account;
   opp: Opportunity;
   breakdown: ScoreBreakdown;
   dispatch: (a: Action) => void;
   pdeFull?: any; // 第7刀：PDE 完整评估由 App 层一次 fetch 下发（左栏加权分共用），坞不再自拉
+  openEngineSignal?: number; // 第8刀：左栏徽章点击 → 开「引擎详解」抽屉（counter 信号，照 openActionId 模式）
   selectedPersonId?: string | null;
   onSelectPerson?: (id: string | null) => void;
   openActionId?: string | null; // 点画布行动牌 → 打开该行动的编辑抽屉
@@ -83,9 +84,8 @@ export function DeliberationDock({
   const [height, setHeight] = usePersistentState<DockHeight>('jianghu.dockHeight', 'half');
   const [chatOpen, setChatOpen] = usePersistentState('jianghu.dockChatOpen', false); // 第7刀：对话默认单行，点开才展开
 
-  // M5 嵌入：坞头四动作徽章（PDE 引擎建议·赢面带置信）——全屏唯一赢面出口，点击弹「引擎详解」抽屉（第7刀：复盘台解体，徽章=结论 抽屉=解释）。
-  // pdeFull 由 App 层下发（与左栏加权分共用一次 fetch）；引擎不可用为 null 静默隐藏，不阻塞坞。
-  const pde = pdeFull ? { action: pdeFull.recommendation?.action ?? '', pwin: pdeFull.pwin ?? 0, flag: pdeFull.confidenceFlag ?? '' } : null;
+  // 第8刀：四动作徽章收编左栏（坞头药丸/徽章退役——坞全宽后列①在左栏正下方，局势信息一处不重复）。
+  // pdeFull 仍由 App 下发（引擎详解抽屉/gate 红条用）；左栏徽章点击经 openEngineSignal 开抽屉。
 
   // M5 · 列④引擎候选：action-ranking ΔEV 排序 top3。只展示，人采纳才落草稿（铁律②）；引擎不可用静默。
   const [engActs, setEngActs] = useState<EngineAction[] | null>(null);
@@ -310,6 +310,11 @@ export function DeliberationDock({
     if (openActionId) { setHeight('half'); setDrawer({ kind: 'action', id: openActionId }); onActionOpened?.(); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openActionId]);
+  // 第8刀：左栏徽章点击 → 展开坞 + 开「引擎详解」抽屉
+  useEffect(() => {
+    if (openEngineSignal) { if (height === 'collapsed') setHeight('half'); setDrawer({ kind: 'engine' }); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openEngineSignal]);
   const addAction = () => {
     const pa = newPlanAction(account.id, opp.id, todayYmd(), todayYmd(), 'am');
     pa.title = '';
@@ -390,18 +395,11 @@ export function DeliberationDock({
 
   return (
     <div className={`dock dock-${height}`} onClick={() => setDrawer(null)}>
-      {/* ── 坞头：抓手 + 趋赢力 + 聚焦标识 + 三档切换 ── */}
+      {/* ── 坞头：抓手 + 聚焦标识 + 三档切换（第8刀：药丸/徽章收编左栏——坞全宽后局势信息在左栏一处）── */}
       <div className="dock-head" onClick={(e) => e.stopPropagation()}>
         <button className="dock-grip" title={height === 'collapsed' ? '展开推演坞' : '收起推演坞'}
           onClick={() => setHeight(height === 'collapsed' ? 'half' : 'collapsed')}>{height === 'collapsed' ? '⌃' : '⌄'}</button>
-        <span className="sb-band-pill" style={{ color: tone, borderColor: tone }}>● {BAND_LABEL[breakdown.band]} · 趋赢力 {pct}%</span>
-        {pde && ACT_LABEL[pde.action] && (
-          <button className={`mf-act mf-act-${ACT_LABEL[pde.action]!.cls} dock-act-btn`}
-            onClick={() => setDrawer({ kind: 'engine' })}
-            title={`点开看引擎详解：这个建议怎么来的（理由 / 薄弱关键人 / 赢面走势 / 假设推演）${pde.flag ? ` · ${pde.flag.includes('no_pot') ? '未设合同额，金额降级' : '置信偏低，先摸底'}` : ''}`}>
-            {ACT_LABEL[pde.action]!.icon} {ACT_LABEL[pde.action]!.text} · 赢面 {Math.round(pde.pwin * 100)}%{pde.flag ? ' ⚠︎' : ''}
-          </button>
-        )}
+        <span className="dock-head-cap">♟️ 推演坞</span>
         {focusName && (
           <span className="dock-focus-chip">🎯 聚焦 {focusName}
             <button onClick={() => onSelectPerson?.(null)} title="清除聚焦">✕</button>
