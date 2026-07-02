@@ -20,6 +20,7 @@ import { IntelCapture } from './components/IntelCapture';
 import { NewOpportunityDialog } from './components/NewOpportunityDialog';
 import { layoutSkeleton, type SkeletonRole } from './data/skeletons';
 import { computeGaps } from './lib/gaps';
+import { computeToday, needsYouByAccount } from './lib/today';
 import { GapCards } from './components/GapCards';
 import { nextFreeSlot } from './lib/layout';
 import { PersonForm } from './components/PersonForm';
@@ -61,6 +62,10 @@ export default function App() {
   const [inboxOpen, setInboxOpen] = useState(false);
   const [inbox, setInbox] = useState<{ rels: InboxRel[]; persons: InboxPerson[]; proposals: InboxProposal[]; reminders: InboxReminder[]; evidences: InboxEvidence[]; total: number; patrol?: PatrolInfo | null }>({ rels: [], persons: [], proposals: [], reminders: [], evidences: [], total: 0 });
   const [gapsOpen, setGapsOpen] = useState(false); // M3 缺口刷卡补分（enrichOpen 随重构删 EnrichPanel 移除）
+  // P5 Hub 今日一屏：三源聚合「今日三件事」+ 客户卡「需要你」角标（纯前端零 schema）
+  const hubTodayYmd = new Date().toISOString().slice(0, 10);
+  const hubToday = useMemo(() => computeToday(state.accounts, inbox.reminders, hubTodayYmd), [state.accounts, inbox.reminders, hubTodayYmd]);
+  const hubNeedsYou = useMemo(() => needsYouByAccount(state.accounts, inbox, hubTodayYmd), [state.accounts, inbox, hubTodayYmd]);
   const [selfComputeBusy, setSelfComputeBusy] = useState(false); // 江湖自算·补全干系人 进行中
   const [addIntelOpen, setAddIntelOpen] = useState(false); // 🎧 接入录音（P3 文本入口收敛：口述/对话归坞尾「和地图对话」，AddIntel 容器退役）
   const [helpOpen, setHelpOpen] = useState(false);
@@ -414,6 +419,7 @@ export default function App() {
         ) : (
         <CustomerHub
           accounts={state.accounts} onOpen={openAccount} onCreate={createAccount} onLoadDemo={loadDemo}
+          today={hubToday} needsYou={hubNeedsYou}
           onDeleteAccount={(id) => act({ type: 'DELETE_ACCOUNT', accId: id })}
           tenantName={auth.tenant.name} userName={auth.user.name} plan={auth.tenant.plan}
           onOpenTeam={() => setTeamOpen(true)} onLogout={logout} onOpenAiSettings={() => setAiSettingsOpen(true)} onOpenWecom={() => setWecomSettingsOpen(true)}

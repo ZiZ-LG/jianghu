@@ -5,10 +5,11 @@ import { Modal } from './Modal';
 import { OverflowMenu } from './OverflowMenu';
 import { EnginePulse } from './EnginePulse';
 import type { PatrolInfo } from '../api';
+import type { TodayItem } from '../lib/today';
 
 export function CustomerHub({
   accounts, onOpen, onCreate, onLoadDemo, onDeleteAccount,
-  tenantName, userName, plan, onOpenTeam, onLogout, onOpenAiSettings, onOpenWecom, theme, onToggleTheme, onOpenHelp, onOpenMcpAccess, onOpenIntel, onOpenInbox, inboxCount = 0, patrol,
+  tenantName, userName, plan, onOpenTeam, onLogout, onOpenAiSettings, onOpenWecom, theme, onToggleTheme, onOpenHelp, onOpenMcpAccess, onOpenIntel, onOpenInbox, inboxCount = 0, patrol, today = [], needsYou,
 }: {
   accounts: Account[];
   onOpen: (accId: string) => void;
@@ -30,6 +31,8 @@ export function CustomerHub({
   onOpenInbox: () => void;     // 打开 Hub 级审核收件箱
   inboxCount?: number;         // 待审候选数（角标）
   patrol?: PatrolInfo | null;  // P2 引擎心跳（本租户最近一轮巡检统计）
+  today?: TodayItem[];         // P5 今日三件事（三源聚合，App 算好下发）
+  needsYou?: Map<string, number>; // P5 客户卡「需要你」计数（待审+逾期行动），并驱动排序
 }) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
@@ -81,6 +84,21 @@ export function CustomerHub({
         </div>
       </div>
 
+      {/* P5 今日三件事：逾期行动 / 巡检提醒 / 最大缺口 三源聚合，点击直达客户 */}
+      {today.length > 0 && accounts.length > 0 && (
+        <div className="hub-today">
+          <div className="hub-today-head">📌 今日三件事</div>
+          {today.map((t, i) => (
+            <button key={i} className="hub-today-item" onClick={() => onOpen(t.accId)}>
+              <span className="ht-ico">{t.icon}</span>
+              <span className="ht-text">{t.text}</span>
+              <span className="ht-sub">{t.sub}</span>
+              <span className="ht-go">›</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {accounts.length === 0 ? (
         <div className="hub-empty">
           <div className="hub-empty-emoji">🗺️</div>
@@ -94,10 +112,13 @@ export function CustomerHub({
         </div>
       ) : (
         <div className="hub-grid">
-          {accounts.map((a) => (
+          {[...accounts].sort((a, b) => (needsYou?.get(b.id) ?? 0) - (needsYou?.get(a.id) ?? 0)).map((a) => (
             <div key={a.id} className="acc-card" onClick={() => onOpen(a.id)}>
               <div className="acc-card-top">
                 <div className="acc-emoji">🏢</div>
+                {(needsYou?.get(a.id) ?? 0) > 0 && (
+                  <span className="acc-needs" title="待你拍板的候选/提案/提醒 + 逾期行动">需要你 · {needsYou!.get(a.id)}</span>
+                )}
                 <button className="acc-del" title="删除客户"
                   onClick={(e) => { e.stopPropagation(); if (confirm(`删除客户「${a.name}」及其全部商机/干系人？`)) onDeleteAccount(a.id); }}>🗑</button>
               </div>
