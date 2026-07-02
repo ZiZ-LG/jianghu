@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>江湖 · 三场景核心界面设计稿（静态·传达意图）</title>
+<style>
+  :root{
+    --bg:#eef1f5; --frame:#ffffff; --ink:#1a2333; --sub:#6b7686; --line:#e3e8ef; --soft:#f6f8fb;
+    --accent:#2563eb; --accent-soft:#eaf1fe;
+    --raise:#2563eb; --call:#059669; --check:#d97706; --fold:#991b1b;
+    --star:#b8860b; --plus:#059669; --eq:#64748b; --unk:#d97706; --minus:#dc2626; --x:#7f1d1d;
+    --band-blue:#2563eb; --band-amber:#d97706;
+    --good:#059669; --bad:#dc2626;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{background:var(--bg); color:var(--ink); font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; padding:36px 4vw 80px;}
+  h1{font-size:22px; margin-bottom:6px;}
+  .meta{color:var(--sub); font-size:13px; line-height:1.7; margin-bottom:18px;}
+  .laws{display:flex; gap:10px; flex-wrap:wrap; margin-bottom:36px;}
+  .law{background:var(--frame); border:1px solid var(--line); border-radius:10px; padding:8px 14px; font-size:13px; font-weight:600;}
+  .law em{color:var(--accent); font-style:normal; margin-right:6px;}
+
+  .section{margin:44px 0 10px; font-size:17px; font-weight:800; letter-spacing:.5px;}
+  .section small{font-weight:400; color:var(--sub); margin-left:10px; font-size:13px;}
+  .row{display:flex; gap:28px; align-items:flex-start; flex-wrap:wrap; margin-bottom:34px;}
+
+  /* ---------- 手机壳 ---------- */
+  .phone{width:330px; background:#10141c; border-radius:34px; padding:10px; box-shadow:0 18px 44px rgba(20,30,60,.18); flex-shrink:0;}
+  .phone .scr{background:var(--frame); border-radius:26px; overflow:hidden; min-height:600px; display:flex; flex-direction:column;}
+  .pbody{padding:14px 14px 12px; display:flex; flex-direction:column; gap:11px; flex:1;}
+
+  /* ---------- 桌面壳 ---------- */
+  .desk{flex:1 1 700px; min-width:680px; background:#10141c; border-radius:14px; padding:8px; box-shadow:0 18px 44px rgba(20,30,60,.18);}
+  .desk .scr{background:var(--frame); border-radius:8px; overflow:hidden;}
+
+  /* ---------- 意图注释卡 ---------- */
+  .intent{flex:1 1 300px; min-width:280px; max-width:420px; background:var(--frame); border:1px solid var(--line); border-left:4px solid var(--accent); border-radius:12px; padding:16px 18px;}
+  .intent h3{font-size:14px; margin-bottom:10px;}
+  .intent li{font-size:13px; color:#3a4657; line-height:1.75; margin-left:18px;}
+  .intent b{color:var(--ink);}
+
+  /* ---------- 通用元件 ---------- */
+  .chip{display:inline-flex; align-items:center; gap:4px; border-radius:999px; padding:2px 10px; font-size:11.5px; font-weight:700;}
+  .c-raise{background:#e5edff; color:var(--raise);} .c-check{background:#fdf0dd; color:var(--check);}
+  .c-call{background:#e2f5ee; color:var(--call);}   .c-fold{background:#f8e5e5; color:var(--fold);}
+  .c-plus{background:#e2f5ee; color:var(--plus);}   .c-eq{background:#eceff3; color:var(--eq);}
+  .c-x{background:#f5e0e0; color:var(--x);}         .c-unk{background:#fdf0dd; color:var(--unk);}
+  .card{border:1px solid var(--line); border-radius:12px; padding:11px 12px; background:var(--frame);}
+  .muted{color:var(--sub);} .tiny{font-size:11px;} .sm{font-size:12.5px;} .b{font-weight:700;}
+  .flex{display:flex; align-items:center; gap:8px;} .between{justify-content:space-between;}
+  .cta{background:var(--accent); color:#fff; border:none; border-radius:14px; padding:14px; font-size:15.5px; font-weight:800; width:100%;}
+  .ghost{background:var(--soft); border:1px solid var(--line); border-radius:10px; padding:9px 0; font-size:13.5px; font-weight:700; flex:1; text-align:center;}
+  .ok{background:var(--call); color:#fff; border:none; border-radius:10px; padding:9px 0; font-size:13.5px; font-weight:800; flex:1; text-align:center;}
+  .price{color:var(--call); font-weight:800; white-space:nowrap;}
+  .warn{color:var(--check); font-weight:700;}
+  .arrow-red{color:var(--bad); font-weight:800;}
+  .hr{border-top:1px dashed var(--line); margin:2px 0;}
+  .tag-src{font-size:10.5px; color:var(--sub); background:var(--soft); border-radius:6px; padding:1px 6px;}
+</style>
+</head>
+<body>
+
+<h1>江湖 · 三场景核心界面设计稿</h1>
+<div class="meta">
+  静态设计稿 · 只传达设计意图，不做交互 ｜ 依据：《产品优化-屏效优先》三场景架构 + 《pde-handoff》结合三裁决（内核嵌入、0 新面板、EV 统一货币）<br>
+  示例数据沿用演示客户「西部电力建设集团 · 西部风光储项目」，数字口径：名义分 60 / 加权分 48 / 赢面 54% / pot 800 万。<b>v1.1</b> · 2026-07-02（修订：四动作改销售用语 强攻/跟进/摸底/止损；人员卡恢复牌桌全量形态，缩放只控同屏卡数）
+</div>
+<div class="laws">
+  <span class="law"><em>定律一</em>说 &gt; 打 &gt; 点 &gt; 拖</span>
+  <span class="law"><em>定律二</em>推 &gt; 拉（系统找人）</span>
+  <span class="law"><em>定律三</em>一屏一决策 · 手机 ≤7 信息元素</span>
+  <span class="law"><em>PDE</em>四动作：强攻 / 跟进 / 摸底 / 止损 · 情报与行动按 ≈万元计价（可溯依据）</span>
+</div>
+
+<!-- ═══════════════ 场景 A ═══════════════ -->
+<div class="section">场景 A · 手机竖屏「时刻流」<small>高频 · 每天多次 · 每次 ≤2 分钟 · 只消费与回填</small></div>
+
+<!-- A1 今日一屏 -->
+<div class="row">
+  <div class="phone"><div class="scr"><div class="pbody">
+    <div class="flex between">
+      <div><div style="font-size:17px;font-weight:800;">7月2日 周四 · 早</div></div>
+      <div class="tiny muted">⚙️ 昨夜巡检 4 商机</div>
+    </div>
+    <div class="flex" style="gap:8px;">
+      <div class="card" style="flex:1;border-left:3px solid var(--raise);">
+        <div class="sm b">西部风光储</div>
+        <div class="flex between" style="margin-top:4px;"><span class="chip c-raise">⬆ 强攻</span><span class="sm b">62%</span></div>
+      </div>
+      <div class="card" style="flex:1;border-left:3px solid var(--check);">
+        <div class="sm b">智慧矿山二期</div>
+        <div class="flex between" style="margin-top:4px;"><span class="chip c-check">🔍 摸底</span><span class="sm b">41%</span></div>
+      </div>
+    </div>
+    <div class="tiny muted b" style="margin-top:2px;">📅 今日 2 场拜访</div>
+    <div class="card flex between">
+      <div><div class="sm b">10:00 张总 <span class="muted">· 西部风光储</span></div>
+        <div class="tiny muted" style="margin-top:3px;">❓ 3 个问题已备好 · 🎒 POC 报告</div></div>
+      <div style="color:var(--accent);font-weight:800;">›</div>
+    </div>
+    <div class="card flex between">
+      <div><div class="sm b">15:00 李处长 <span class="muted">· 智慧矿山</span></div>
+        <div class="tiny muted" style="margin-top:3px;">❓ 2 个问题 · 首次拜访</div></div>
+      <div style="color:var(--accent);font-weight:800;">›</div>
+    </div>
+    <div class="tiny muted b" style="margin-top:2px;">📥 待你拍板 3 条</div>
+    <div class="card flex between" style="background:var(--soft);">
+      <div class="sm">钱大钧：支持 → <span class="arrow-red">倒向对手</span> <span class="tiny muted">影响最大 −12%</span></div>
+      <div style="color:var(--accent);font-weight:800;">›</div>
+    </div>
+    <div style="flex:1;"></div>
+    <button class="cta">🎙️ 说点什么</button>
+  </div></div></div>
+  <div class="intent">
+    <h3>A1 · 今日一屏（手机新首页，替代 Hub）</h3>
+    <ul>
+      <li><b>30 秒定完今天</b>：见谁 / 审什么 / 战略基调，7 个信息元素封顶。</li>
+      <li><b>四动作徽章置顶</b>（PDE K5）：每单一个词定调——强攻/跟进/摸底/止损。「摸底」直接告诉销售这单先补情报再行动。</li>
+      <li><b>心跳一行字</b>：让后台巡检被感知，建立「AI 在替我工作」的信任。</li>
+      <li>待拍板只露<b>影响最大的一条</b>（按 |Δ赢面| 排序），其余进速审流。</li>
+      <li><b>🎙️ 是全局唯一录入口</b>：说的是事实→双轨落库，问的是问题→参谋应答（三口合一）。</li>
+      <li>客户列表 Hub 降为二级页，按「需要你」信号排序。</li>
+    </ul>
+  </div>
+</div>
+
+<!-- A2 拜访卡 -->
+<div class="row">
+  <div class="phone"><div class="scr"><div class="pbody">
+    <div class="flex between"><span class="tiny muted">‹ 今日</span><span class="tiny muted">拜访前 · 10:00</span></div>
+    <div class="flex" style="gap:10px;">
+      <div style="width:44px;height:44px;border-radius:50%;background:var(--accent-soft);display:flex;align-items:center;justify-content:center;font-weight:800;color:var(--accent);">张</div>
+      <div><div style="font-size:16px;font-weight:800;">张总 <span class="tiny" style="color:var(--accent);">D · 拍板人</span></div>
+        <div class="tiny muted">信息化副总 · 西部风光储</div></div>
+    </div>
+    <div class="card flex between" style="background:#fdf6ec;border-color:#f3ddba;">
+      <span class="sm">支持度：<span class="chip c-eq">中立 =</span></span>
+      <span class="tiny warn">⚠️ 32 天未验证 · 依据仅为推理</span>
+    </div>
+    <div class="card">
+      <div class="tiny muted b">最近动态（AI 梳理）</div>
+      <div class="sm" style="margin-top:5px;line-height:1.6;">6/18 陪同参观工厂，<b>对投资回收期敏感</b>；6/25 出现在竞品技术交流会。</div>
+    </div>
+    <div class="card" style="border-left:3px solid var(--call);">
+      <div class="tiny muted b">❓ 这次问什么（按情报价值排序）</div>
+      <div class="sm flex between" style="margin-top:7px;"><span>1. 二期预算走集团还是子公司审批？</span><span class="price">≈值 9 万</span></div>
+      <div class="tiny" style="margin:1px 0 6px;"><span class="tag-src">C5 招采缺口</span></div>
+      <div class="sm flex between"><span>2. 他与王总监的真实关系？</span><span class="price">≈值 6 万</span></div>
+      <div class="tiny" style="margin:1px 0 6px;"><span class="tag-src">L2 权力断链</span></div>
+      <div class="sm flex between"><span>3. 女儿高考发挥如何？</span><span class="tiny muted">破冰</span></div>
+      <div class="tiny" style="margin-top:1px;"><span class="tag-src">FORM · 家庭</span></div>
+    </div>
+    <div class="card flex between"><span class="sm">🎒 带上：POC 测试报告 v2</span><span class="tiny" style="color:var(--call);font-weight:700;">已生成</span></div>
+    <div style="flex:1;"></div>
+    <div class="tiny muted" style="text-align:center;border:1px dashed var(--line);border-radius:12px;padding:9px;">拜访结束后 → 🎙️ 说两句，我来记</div>
+  </div></div></div>
+  <div class="intent">
+    <h3>A2 · 拜访卡（call prep，20 秒读完就走）</h3>
+    <ul>
+      <li><b>「这次问什么」由 VoI 引擎驱动</b>（PDE intel-priorities）：每个问题标价——销售第一次知道哪个问题值钱。这是「机器主动向人提问」的落地形态，缺口不再是补分表单，而是塞进口袋的问题清单。</li>
+      <li><b>新鲜度警告 = n_eff 时间衰减的人话</b>：「32 天未验证·依据仅为推理」，数学事实而非 UI 文案。</li>
+      <li>动态默认 <b>AI 梳理 2 行</b>，原始记录下钻可查（架构 v1 三层信息）。</li>
+      <li>问题来源徽章（C5 / L2 / FORM）让销售知道「为什么问」，方法论隐在背后。</li>
+      <li>结尾埋口述钩子——拜访闭环回 🎙️，与企微日程联动触发。</li>
+    </ul>
+  </div>
+</div>
+
+<!-- A3 速审流 -->
+<div class="row">
+  <div class="phone"><div class="scr"><div class="pbody">
+    <div class="flex between"><span class="tiny muted">‹ 今日</span><span class="tiny muted">待你拍板 <b>1/3</b> · ●○○</span></div>
+    <div class="card" style="border-left:3px solid var(--check);">
+      <div class="tiny muted">✏️ 态度变更提案 · 来自录音分析 · 置信 0.78</div>
+      <div style="font-size:15.5px;font-weight:800;margin:10px 0 8px;">钱大钧 <span class="tiny muted">A · 批准人</span></div>
+      <div class="flex" style="gap:8px;">
+        <span class="chip c-plus">支持 +</span><span style="font-weight:800;">→</span><span class="chip c-x">倒向对手 ✕</span>
+      </div>
+      <div class="card sm" style="background:var(--soft);margin-top:10px;line-height:1.6;">「…上周五他出现在竞品的答谢宴，<b>还带了采购处的人</b>…」<div class="tiny muted" style="margin-top:4px;">原文 47s ⌄ 展开</div></div>
+      <div class="hr" style="margin:10px 0;"></div>
+      <div class="sm flex between"><span class="muted">采纳后影响</span><span><b>赢面 54% <span class="arrow-red">→ 42% ▼</span></b></span></div>
+      <div class="tiny warn" style="margin-top:4px;">⚠️ 将逼近否决门（A 倒向对手 → 胜率封顶 15%）</div>
+    </div>
+    <div class="flex" style="gap:10px;margin-top:4px;">
+      <div class="ghost">✗ 驳回</div><div class="ok">✓ 采纳</div>
+    </div>
+    <div class="tiny muted" style="text-align:center;">改个值再采纳 ›</div>
+    <div style="flex:1;"></div>
+    <div class="tiny muted" style="text-align:center;">下一条：新人物候选「王总监」（企查查）</div>
+  </div></div></div>
+  <div class="intent">
+    <h3>A3 · 速审流（收件箱手机形态）</h3>
+    <ul>
+      <li><b>一次一卡、一屏一决策</b>，5 秒一条；按 <b>|Δ赢面| 降序</b>——最重要的先审，人审不再是低价值队列劳动。</li>
+      <li><b>影响前置 = 知情授权</b>：批准之前就看见后果（54%→42%、逼近否决门）。</li>
+      <li>原文引证可展开——机器的每句话都对得回「你从哪知道的」。</li>
+      <li>三动作齐全：驳回 / 采纳 / 改后采纳（弱化为文字链）。</li>
+      <li>桌面收件箱批量模式保留给周复盘，此处只服务碎片时间。</li>
+    </ul>
+  </div>
+</div>
+
+<!-- A4 口述回执 -->
+<div class="row">
+  <div class="phone"><div class="scr"><div class="pbody">
+    <div style="text-align:center;padding:8px 0 2px;">
+      <div style="font-size:26px;">🎙️</div>
+      <div class="sm b" style="margin-top:4px;">已听清 · 47 秒</div>
+      <div class="tiny muted" style="letter-spacing:2px;margin-top:2px;">▂▄▆▄▂▁▃▅▃▂▄▂</div>
+    </div>
+    <div class="card tiny muted" style="background:var(--soft);line-height:1.7;">「刚见完张总，他说方案整体认可，预算他拍不了要走集团……对了他下面新来个李处长管采购，好像跟王总监是校友…」</div>
+    <div class="card" style="border-left:3px solid var(--call);">
+      <div class="tiny b" style="color:var(--call);">🟢 已直接记下（你明说的）</div>
+      <div class="sm" style="margin-top:6px;line-height:1.9;">
+        张总 态度 → <span class="chip c-plus">支持 +</span>（明确）<br>
+        新增 <b>李处长</b> · 采购处长 · 已上图<br>
+        C5 线索：预算走集团 · 拜访纪要已存
+      </div>
+    </div>
+    <div class="card" style="border-left:3px solid var(--check);">
+      <div class="tiny b" style="color:var(--check);">🔴 待你确认（AI 推断的）</div>
+      <div class="sm" style="margin-top:6px;line-height:1.9;">
+        李处长 —— 王总监 <span class="tiny muted">疑似校友 L3 · 置信 0.5</span><br>
+        <span class="tiny muted">已进收件箱，闲时再审</span>
+      </div>
+    </div>
+    <div style="flex:1;"></div>
+    <div class="flex" style="gap:10px;"><div class="ghost">继续说</div><div class="ok">完成</div></div>
+  </div></div></div>
+  <div class="intent">
+    <h3>A4 · 口述回执（拜访后 2 分钟）</h3>
+    <ul>
+      <li><b>说话是唯一重录入通道</b>：30 秒说话替代 3–5 分钟表单（表单降为修正用途）。</li>
+      <li><b>双轨透明</b>：明说的直落（绿）、AI 推断的进候选（红）——铁律②的用户可见形态，回执给足安全感：错了事后可改。</li>
+      <li>推断项不逼当场处理——「已进收件箱，闲时再审」，不打断在车里的人。</li>
+      <li>入口由企微钩子触发（拜访日程结束 30 分钟后推「说两句？」）。</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ═══════════════ 场景 B ═══════════════ -->
+<div class="section">场景 B · 企业微信内<small>零打开成本 · 江湖长出腿，走到销售已经在的地方</small></div>
+<div class="row">
+  <div class="phone"><div class="scr">
+    <div style="background:#2e3b4e;color:#fff;padding:12px 14px;font-size:14px;font-weight:700;">‹ 江湖助手</div>
+    <div class="pbody" style="background:#f2f3f7;">
+      <div class="tiny muted" style="text-align:center;">周三 21:30</div>
+      <div class="card" style="max-width:92%;">
+        <div class="tiny b" style="color:var(--accent);">📅 明日日程（来自行动牌）</div>
+        <div class="sm" style="margin-top:5px;">10:00 拜访张总 · 西部风光储<br><span class="tiny muted">❓ 拜访卡已备好 · 3 个问题 + 1 个道具</span></div>
+        <div class="hr" style="margin:8px 0;"></div>
+        <div class="tiny" style="color:var(--accent);font-weight:700;">查看拜访卡 ›</div>
+      </div>
+      <div class="tiny muted" style="text-align:center;">周四 08:00</div>
+      <div class="card" style="max-width:92%;border-left:3px solid var(--check);">
+        <div class="tiny b" style="color:var(--check);">🔍 摸底提醒 · 智慧矿山二期</div>
+        <div class="sm" style="margin-top:5px;line-height:1.6;">关键人支持度 32 天未验证，加权分已跌至 <b>19.65</b>（名义 60）——<b>这单的判断大多建立在推测上</b>。建议本周复核。</div>
+        <div class="hr" style="margin:8px 0;"></div>
+        <div class="flex" style="gap:14px;"><span class="tiny" style="color:var(--accent);font-weight:700;">打开拜访卡</span><span class="tiny muted">知道了</span></div>
+      </div>
+      <div class="tiny muted" style="text-align:center;">周四 11:42</div>
+      <div class="card" style="max-width:92%;">
+        <div class="tiny b">✏️ 待拍板 · 钱大钧 支持→倒向对手（影响 −12%）</div>
+        <div class="flex" style="gap:14px;margin-top:8px;"><span class="tiny" style="color:var(--call);font-weight:800;">✓ 采纳</span><span class="tiny" style="color:var(--sub);font-weight:700;">✗ 驳回</span><span class="tiny" style="color:var(--accent);">详情 ›</span></div>
+      </div>
+      <div class="tiny muted" style="text-align:center;">周四 11:35（拜访结束后）</div>
+      <div class="card" style="max-width:92%;background:var(--accent-soft);border-color:#cdddfb;">
+        <div class="sm b">刚结束与张总的拜访？</div>
+        <div class="tiny" style="color:var(--accent);font-weight:700;margin-top:5px;">🎙️ 说两句，我来记 ›</div>
+      </div>
+    </div>
+  </div></div>
+  <div class="intent">
+    <h3>B · 企微推送（四类卡片）</h3>
+    <ul>
+      <li><b>推 &gt; 拉的主载体</b>：日程卡（行动牌双向同步）/ 摸底警报（PDE CHECK 触发）/ 待拍板卡（一键采纳）/ 口述钩子（日程结束后自动发）。</li>
+      <li>双轨分警报翻译成人话：「这单的判断大多建立在推测上」——deal_B 案例（名义 60 / 加权 19.65）的推送形态。</li>
+      <li>销售<b>不打开江湖也能完成授权</b>——环一与环三之间的物理通道。</li>
+      <li>PIPL 白名单：推送内容绝不含 FORM/态度明细，点开进 App 才见全量。</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ═══════════════ 场景 C ═══════════════ -->
+<div class="section">场景 C · 桌面「作战室」<small>低频 · 每周 1–2 次 · 唯一保留丰富度的场景 · 日常极简，复盘极深</small></div>
+
+<!-- C1 作战室全貌 -->
+<div class="row">
+  <div class="desk"><div class="scr">
+    <!-- 顶栏 -->
+    <div class="flex between" style="padding:9px 14px;border-bottom:1px solid var(--line);">
+      <div class="flex" style="gap:10px;">
+        <span class="b" style="font-size:13.5px;">西部电力建设集团 <span class="muted">/ 西部风光储 ⌄</span></span>
+        <span class="tiny" style="background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:3px 8px;">视角：<b>组织</b> · 权力 · 阵营</span>
+      </div>
+      <div class="flex" style="gap:8px;">
+        <span class="tiny muted">⚙️ 昨夜巡检 4 商机</span>
+        <span class="tiny" style="background:var(--accent);color:#fff;border-radius:8px;padding:4px 10px;font-weight:700;">🎙️ 说点什么</span>
+        <span class="tiny" style="border:1px solid var(--line);border-radius:8px;padding:4px 10px;">📥 3</span>
+        <span class="tiny" style="border:1px solid var(--line);border-radius:8px;padding:4px 8px;">⚙️</span>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:150px 1fr 218px;min-height:430px;">
+      <!-- 左栏 -->
+      <div style="border-right:1px solid var(--line);padding:14px 12px;">
+        <div style="font-size:30px;font-weight:800;color:var(--band-blue);">62%</div>
+        <div class="tiny" style="color:var(--band-blue);font-weight:700;">相对优势</div>
+        <div class="tiny muted" style="margin-top:6px;line-height:1.7;">名义 60 / 加权 48<br><span class="warn">31% 建立在推测上</span></div>
+        <div class="hr" style="margin:10px 0;"></div>
+        <div class="tiny b muted">TOP3 缺口</div>
+        <div class="tiny" style="line-height:2;">C5 招采要素 <span class="muted">−6</span><br>P3 拍板人关系 <span class="muted">−5</span><br>C2 燃眉之急 <span class="muted">−3</span></div>
+        <div class="tiny" style="color:var(--accent);margin-top:8px;">11 项明细 ›</div>
+      </div>
+      <!-- 画布 -->
+      <div style="position:relative;background:radial-gradient(circle at 30% 30%, #fafbfd, #f1f4f8);">
+        <svg width="100%" height="100%" viewBox="0 0 520 430" style="position:absolute;inset:0;">
+          <line x1="180" y1="120" x2="300" y2="205" stroke="#8aa3c8" stroke-width="1.6"/>
+          <line x1="300" y1="205" x2="170" y2="290" stroke="#8aa3c8" stroke-width="1.6"/>
+          <line x1="300" y1="205" x2="415" y2="130" stroke="#c99" stroke-width="1.6" stroke-dasharray="5 4"/>
+          <text x="352" y="158" font-size="9" fill="#b06">L3 疑似校友 ❓</text>
+          <text x="228" y="152" font-size="9" fill="#68c">L1 汇报</text>
+        </svg>
+        <!-- 节点：中景 4 元素 -->
+        <div style="position:absolute;left:112px;top:78px;width:138px;" class="card">
+          <div style="border-left:3px solid var(--eq);padding-left:7px;">
+            <div class="sm b">张总 <span class="tiny" style="color:var(--accent);">D</span></div>
+            <div class="tiny muted">信息化副总</div>
+            <div class="tiny" style="margin-top:2px;">贡献 <b style="color:var(--call);">+6</b><span class="muted">/可再+9 · FORM 3/7</span></div>
+            <div class="tiny"><span class="chip c-eq" style="font-size:10px;">中立 =</span> <span class="muted">32天未验</span></div>
+          </div>
+          <div class="tiny" style="position:absolute;top:-8px;right:-6px;background:#fdf0dd;border-radius:8px;padding:0 6px;color:var(--check);font-weight:700;">⚠︎</div>
+          <div class="tiny" style="margin-top:5px;background:var(--accent-soft);border-radius:6px;padding:2px 6px;color:var(--accent);">🃏 高层共创会 · 7/10</div>
+        </div>
+        <div style="position:absolute;left:246px;top:174px;width:138px;" class="card">
+          <div style="border-left:3px solid var(--x);padding-left:7px;">
+            <div class="sm b">钱大钧 <span class="tiny" style="color:var(--accent);">A</span></div>
+            <div class="tiny muted">分管副总裁</div>
+            <div class="tiny" style="margin-top:2px;">贡献 <b style="color:var(--bad);">−8</b><span class="muted">/可再+18 · FORM 2/4</span></div>
+            <div class="tiny"><span class="chip c-x" style="font-size:10px;">倒向对手 ✕</span></div>
+          </div>
+          <div class="tiny" style="position:absolute;top:-8px;right:-6px;background:#f5e0e0;border-radius:8px;padding:0 7px;color:var(--x);font-weight:800;">失血</div>
+        </div>
+        <div style="position:absolute;left:106px;top:258px;width:132px;" class="card">
+          <div style="border-left:3px solid var(--plus);padding-left:7px;">
+            <div class="sm b">李处长 <span class="tiny" style="color:var(--accent);">R</span></div>
+            <div class="tiny muted">采购处长</div>
+            <div class="tiny" style="margin-top:2px;">贡献 <b style="color:var(--call);">+4</b><span class="muted"> · FORM 1/4</span></div>
+            <div class="tiny"><span class="chip c-plus" style="font-size:10px;">支持 +</span></div>
+          </div>
+        </div>
+        <div style="position:absolute;left:360px;top:96px;width:112px;" class="card" style="position:absolute;left:360px;top:96px;width:112px;border-style:dashed;">
+          <div style="border-left:3px solid var(--unk);padding-left:7px;">
+            <div class="sm b">王总监 <span class="tiny muted">?</span></div>
+            <div class="tiny muted">待核实</div>
+          </div>
+        </div>
+        <div class="tiny" style="position:absolute;right:12px;bottom:12px;background:var(--frame);border:1px solid var(--line);border-radius:8px;padding:4px 10px;">🧭 自动布局</div>
+      </div>
+      <!-- 右栏 -->
+      <div style="border-left:1px solid var(--line);padding:12px;">
+        <div class="sm b">张总 <span class="tiny muted">信息化副总</span></div>
+        <div class="flex" style="gap:5px;margin:7px 0;">
+          <span class="tiny" style="padding:3px 9px;border-radius:8px;background:var(--soft);">档案</span>
+          <span class="tiny" style="padding:3px 9px;border-radius:8px;background:var(--soft);">动态</span>
+          <span class="tiny" style="padding:3px 9px;border-radius:8px;background:var(--accent);color:#fff;font-weight:700;">参谋</span>
+        </div>
+        <div class="card tiny" style="background:var(--soft);line-height:1.7;">他是典型的「认可但不担责」：方案认可、预算推给集团。<b>破局在钱大钧</b>，但钱已有倒向对手迹象——本周关键是借共创会把张总从中立推到公开支持。<span class="muted">全文 ⌄</span></div>
+        <div class="card" style="margin-top:8px;border-left:3px solid var(--accent);">
+          <div class="tiny b">🃏 行动牌 · 高层共创方案会</div>
+          <div class="tiny muted" style="margin:3px 0;">ΔEV +14.6 万 (2.97x) · 打谁:张总</div>
+          <div class="flex" style="gap:8px;"><span class="tiny" style="color:var(--call);font-weight:700;">采纳</span><span class="tiny muted">忽略</span></div>
+        </div>
+        <div class="card" style="margin-top:6px;border-left:3px solid var(--check);">
+          <div class="tiny b">⚠️ 风险 · 采购线已被渗透</div>
+          <div class="tiny muted" style="margin:3px 0;">钱大钧携采购赴竞品宴</div>
+          <div class="flex" style="gap:8px;"><span class="tiny" style="color:var(--call);font-weight:700;">登记</span><span class="tiny muted">忽略</span></div>
+        </div>
+      </div>
+    </div>
+    <!-- 坞收起条 -->
+    <div class="flex between" style="border-top:1px solid var(--line);padding:8px 14px;background:var(--soft);">
+      <div class="flex" style="gap:10px;">
+        <span class="chip c-raise">⬆ 强攻</span>
+        <span class="sm">赢面 <b>54%</b> <span class="tiny muted">(置信:中)</span></span>
+        <span class="sm muted">最优动作：高层共创方案会 <b class="price">ΔEV +14.6万</b></span>
+      </div>
+      <span class="tiny" style="color:var(--accent);font-weight:700;">展开推演 ⌃</span>
+    </div>
+  </div></div>
+  <div class="intent">
+    <h3>C1 · 作战室全貌（周复盘主场）</h3>
+    <ul>
+      <li>左栏纯诊断台：<b>一个数字 + 双轨分一行 + top3 缺口</b>，11 项明细一处点开（原三处呈现收敛）。</li>
+      <li>画布节点沿用<b>牌桌全量卡</b>（名/职/角色章/贡献分/潜力/FORM/支持度/新鲜度）——单卡信息丰富 = 一张卡看清一个人，少一次双击进档案；徽章每卡限 1 枚；连线随层配色，<b>候选关系灰虚线❓</b>；手工美化取消，右下一键自动布局。</li>
+      <li>行动牌挂在节点旁 = 发给这个人的作战令。</li>
+      <li>右栏参谋默认 <b>3 行结论 + 候选卡</b>，长分析折叠——产出即候选，阅后不再焚。</li>
+      <li>坞收起也能行动：<b>四动作 + 赢面(带置信) + 最优动作</b>一条局势句（DealPokerDashboard 的日常态）。</li>
+    </ul>
+  </div>
+</div>
+
+<!-- C2 坞展开 -->
+<div class="row">
+  <div class="desk"><div class="scr" style="padding:14px;">
+    <div class="flex between" style="margin-bottom:10px;">
+      <div class="flex" style="gap:10px;">
+        <span class="b" style="font-size:14px;">推演坞 · 西部风光储</span>
+        <span class="chip c-raise">⬆ 强攻</span>
+        <span class="tiny muted">pot 800万 · 阶段:预算审批(可塑 0.65)</span>
+      </div>
+      <span class="tiny" style="color:var(--accent);font-weight:700;">收起 ⌄</span>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 26px 1fr 26px 1fr 26px 1.15fr;align-items:stretch;gap:0;">
+      <!-- 列1 局势 -->
+      <div>
+        <div class="tiny b muted" style="margin-bottom:6px;">① 局势</div>
+        <div class="card" style="background:var(--soft);">
+          <div style="font-size:20px;font-weight:800;color:var(--band-blue);">62% <span class="tiny" style="font-weight:600;">相对优势</span></div>
+          <div class="tiny" style="margin-top:5px;line-height:1.8;">名义 60 / 加权 48<br><span class="warn">31% 建立在推测上</span><br>赢面 54% <span class="muted">(置信:中)</span></div>
+          <div class="hr" style="margin:7px 0;"></div>
+          <div class="tiny muted">缺口：C5 −6 · P3 −5 · C2 −3</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:center;color:#9db0cb;font-size:18px;font-weight:800;">→</div>
+      <!-- 列2 策略 -->
+      <div>
+        <div class="tiny b muted" style="margin-bottom:6px;">② 策略</div>
+        <div class="card" style="margin-bottom:6px;">
+          <div class="tiny b">借力打力 · 拉张总入局</div>
+          <div class="tiny muted" style="margin-top:3px;">对缺口 P3 · 目标:张总</div>
+        </div>
+        <div class="card" style="margin-bottom:6px;">
+          <div class="tiny b">阵地反渗透 · 稳采购线</div>
+          <div class="tiny muted" style="margin-top:3px;">对风险:竞品宴 · 目标:李处长</div>
+        </div>
+        <div class="card" style="border-style:dashed;background:var(--soft);">
+          <div class="tiny b muted">✨ AI 顺推：高层背书路线</div>
+          <div class="flex" style="gap:8px;margin-top:4px;"><span class="tiny" style="color:var(--call);font-weight:700;">采纳</span><span class="tiny muted">忽略</span></div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:center;color:#9db0cb;font-size:18px;font-weight:800;">→</div>
+      <!-- 列3 倒排 -->
+      <div>
+        <div class="tiny b muted" style="margin-bottom:6px;">③ 倒排</div>
+        <div class="card" style="margin-bottom:6px;background:#f4f9f6;border-color:#cfe6da;">
+          <div class="tiny b">🏁 9/30 签约 · pot 800万</div>
+          <div class="tiny muted" style="margin-top:2px;">终局锚</div>
+        </div>
+        <div class="card" style="margin-bottom:6px;"><div class="tiny b">8/20 入围招标短名单</div></div>
+        <div class="card"><div class="tiny b">7/15 集团预算过会</div><div class="tiny muted" style="margin-top:2px;">← AI 倒推 · 依赖问题1（预算路径）</div></div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:center;color:#9db0cb;font-size:18px;font-weight:800;">→</div>
+      <!-- 列4 行动 -->
+      <div>
+        <div class="tiny b muted" style="margin-bottom:6px;">④ 行动（按 ΔEV 排序）</div>
+        <div class="card" style="margin-bottom:6px;border-left:3px solid var(--raise);">
+          <div class="tiny b flex between"><span>🔍 核实钱大钧真实态度</span><span class="price">5.83x</span></div>
+          <div class="tiny muted" style="margin:3px 0;">信息动作 · 可信度升级 · 成本低</div>
+          <div class="tiny" style="color:var(--accent);font-weight:700;">→ 上桌</div>
+        </div>
+        <div class="card" style="margin-bottom:6px;border-left:3px solid var(--raise);">
+          <div class="tiny b flex between"><span>🃏 高层共创方案会</span><span class="price">+14.6万</span></div>
+          <div class="tiny muted" style="margin:3px 0;">打谁:张总 · 谁执行:我+销售总</div>
+          <div class="tiny" style="color:var(--accent);font-weight:700;">→ 上桌</div>
+        </div>
+        <div class="card" style="border-left:3px solid var(--call);">
+          <div class="tiny b flex between"><span>🃏 李处长工厂回访</span><span class="price">+9.8万</span></div>
+          <div class="tiny muted" style="margin:3px 0;">741:固本 · 稳采购线</div>
+          <div class="tiny" style="color:var(--accent);font-weight:700;">→ 上桌</div>
+        </div>
+      </div>
+    </div>
+    <div class="flex" style="gap:14px;border-top:1px dashed var(--line);margin-top:12px;padding-top:9px;">
+      <span class="tiny b muted">📡 情报作战清单（VoI）：</span>
+      <span class="tiny">①预算路径 <b class="price">≈9万</b></span>
+      <span class="tiny">②钱大钧真实立场 <b class="price">≈15万</b></span>
+      <span class="tiny">③竞品强度 c_comp <b class="price">≈9万</b></span>
+      <span class="tiny muted" style="margin-left:auto;">≈ 金额均可点开看依据 · what-if 假设推演 ›</span>
+    </div>
+  </div></div>
+  <div class="intent">
+    <h3>C2 · 推演坞展开态（横向推导流水线 + PDE 仪表合体）</h3>
+    <ul>
+      <li><b>第 2 刀落地</b>：局势→策略→倒排→行动，因果链左→右一眼可读，列间箭头替代竖堆泳道。</li>
+      <li><b>EV 万元是全坞统一货币</b>：行动按 ΔEV 排序；「核实钱大钧态度」（信息动作 5.83x）排第一——引擎主动把「去搞情报」排成最高性价比动作。</li>
+      <li>AI 出初稿（虚位卡/倒推里程碑），<b>人做选择题</b>；「→ 上桌」按钮替代拖拽（第 4 刀减配）。</li>
+      <li>坞底 VoI 清单与拜访卡同源（intel-priorities API）——桌面看全量，手机取 top3。</li>
+      <li>局势卡集成双轨分与置信 flag：赢面数字永不脱离置信标识单独出现。</li>
+      <li>所有 ≈ 金额可点开依据抽屉：合同额（你填的）× 阶段折扣 × 赢面变化 − 动作成本；冷启动期<b>排序与倍数比绝对金额可靠</b>。</li>
+    </ul>
+  </div>
+</div>
+
+<!-- C3 缩放三级 -->
+<div class="row">
+  <div style="flex:1 1 620px;min-width:600px;display:flex;gap:16px;">
+    <div class="card" style="flex:1;text-align:center;padding:18px 10px;">
+      <div class="tiny b muted" style="margin-bottom:12px;">远景 &lt;60% · 看格局（2 元素）</div>
+      <div style="display:inline-block;border:1px solid var(--line);border-radius:8px;padding:5px 12px;border-left:4px solid var(--x);">
+        <span class="sm b">钱大钧</span>
+      </div>
+      <div class="tiny muted" style="margin-top:12px;">姓名 + 支持度色条<br>阵营分布一眼可辨</div>
+    </div>
+    <div class="card" style="flex:1.4;text-align:center;padding:18px 10px;">
+      <div class="tiny b muted" style="margin-bottom:12px;">中景 60–120% · 牌桌全量卡（默认档）</div>
+      <div style="display:inline-block;border:1px solid var(--line);border-radius:10px;padding:8px 14px;border-left:4px solid var(--x);text-align:left;position:relative;">
+        <div class="sm b">钱大钧 <span class="tiny" style="color:var(--accent);">A · 批准人</span></div>
+        <div class="tiny muted">分管副总裁</div>
+        <div class="tiny" style="margin-top:3px;">贡献 <b style="color:var(--bad);">−8</b> / 可再 +18 · FORM 2/4</div>
+        <div class="tiny"><span class="chip c-x" style="font-size:10px;">倒向对手 ✕</span></div>
+        <div class="tiny" style="position:absolute;top:-9px;right:-8px;background:#f5e0e0;border-radius:8px;padding:0 7px;color:var(--x);font-weight:800;">失血</div>
+      </div>
+      <div class="tiny muted" style="margin-top:12px;">沿用五轮迭代的牌桌卡全量形态<br>名/职/角色/贡献/潜力/FORM/支持度</div>
+    </div>
+    <div class="card" style="flex:1.8;text-align:center;padding:18px 10px;">
+      <div class="tiny b muted" style="margin-bottom:12px;">近景 &gt;120% · 牌桌卡 + 情报增强层</div>
+      <div style="display:inline-block;border:1px solid var(--line);border-radius:10px;padding:8px 14px;border-left:4px solid var(--x);text-align:left;position:relative;">
+        <div class="sm b">钱大钧 <span class="tiny" style="color:var(--accent);">A · 批准人</span></div>
+        <div class="tiny muted">分管副总裁 · 集团采购口</div>
+        <div class="tiny" style="margin-top:3px;">贡献 <b style="color:var(--bad);">−8</b> / 可再 +18 · FORM 2/4</div>
+        <div class="tiny"><span class="chip c-x" style="font-size:10px;">倒向对手 ✕</span> <span class="warn">依据:推理 · 12天前</span></div>
+        <div class="tiny muted" style="margin-top:3px;border-top:1px dashed var(--line);padding-top:3px;">最近：6/27 携采购赴竞品答谢宴<br>🔥 BI：年内数字化考核压力 · 🃏 挂牌 1</div>
+        <div class="tiny" style="position:absolute;top:-9px;right:-8px;background:#f5e0e0;border-radius:8px;padding:0 7px;color:var(--x);font-weight:800;">失血</div>
+      </div>
+      <div class="tiny muted" style="margin-top:12px;">+ 依据可信度与新鲜度 + 最近动态一行<br>+ 燃眉之急 BI + 挂牌摘要（徽章仍限 1）</div>
+    </div>
+  </div>
+  <div class="intent">
+    <h3>C3 · 画布节点三级缩放（修订：单卡丰富，全屏靠缩放控卡数）</h3>
+    <ul>
+      <li><b>修订采纳</b>：单卡信息丰富是对的——一张卡 = 一个人的全貌，正是「极短时间获取主要信息」，还省一次双击进档案。<b>信息预算控的是同屏卡数与全屏叠加物，不是单卡元素</b>。</li>
+      <li>中景（默认档）= 现有<b>牌桌卡全量形态</b>不减配；近景在其上叠<b>情报增强层</b>：依据可信度与新鲜度、最近动态一行、BI 燃点、挂牌摘要。</li>
+      <li>只有远景（&lt;60%，看全局阵营时）简化为 姓名+支持度色——那个档位的任务是看格局，不是看人。</li>
+      <li>徽章仍限 1 枚：失血 &gt; 缺口 &gt; 待核实 &gt; ★P4，按严重度取最高。</li>
+    </ul>
+  </div>
+</div>
+
+<div class="meta" style="margin-top:30px;border-top:1px solid var(--line);padding-top:14px;">
+  八屏覆盖：A1 今日一屏 / A2 拜访卡 / A3 速审流 / A4 口述回执 ｜ B 企微四卡 ｜ C1 作战室全貌 / C2 推演坞四列 / C3 节点三级缩放。<br>
+  未画的次级界面（收件箱批量态、xlsx 导入向导、设置）沿用现有形态按信息预算规则精简，不改交互模型。
+</div>
+</body>
+</html>
