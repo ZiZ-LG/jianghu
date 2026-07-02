@@ -41,6 +41,26 @@ type DockHeight = 'collapsed' | 'half' | 'full';
 type AiFieldKey = 'target' | 'resources' | 'cautions' | 'props';
 type Prefill = Record<AiFieldKey, string>;
 
+// M5 复盘台 · 赢面走势 sparkline（快照序列，manual 打点高亮；纯 SVG 无依赖）
+function Sparkline({ snaps }: { snaps: any[] }) {
+  const pts = [...snaps].reverse().map((s) => ({ pwin: Number(s.pwin ?? 0), trigger: s.trigger, at: String(s.createdAt ?? '') }));
+  const W = 220, H = 56, PAD = 7;
+  const xs = (i: number) => PAD + (i / Math.max(1, pts.length - 1)) * (W - PAD * 2);
+  const ys = (p: number) => H - PAD - Math.max(0, Math.min(1, p)) * (H - PAD * 2);
+  const last = pts[pts.length - 1]!;
+  return (
+    <svg className="dock-spark" viewBox={`0 0 ${W} ${H}`} width="100%" height={H} role="img" aria-label="赢面走势">
+      <polyline points={pts.map((p, i) => `${xs(i)},${ys(p.pwin)}`).join(' ')} fill="none" stroke="var(--accent)" strokeWidth="1.5" />
+      {pts.map((p, i) => (
+        <circle key={i} cx={xs(i)} cy={ys(p.pwin)} r={i === pts.length - 1 ? 3 : 2} fill={p.trigger === 'manual' ? 'var(--accent)' : 'var(--faint)'}>
+          <title>{`${p.at.slice(0, 10)} · 赢面 ${Math.round(p.pwin * 100)}%（${p.trigger === 'manual' ? '手动打点' : p.trigger}）`}</title>
+        </circle>
+      ))}
+      <text x={W - PAD} y={Math.max(10, ys(last.pwin) - 6)} textAnchor="end" fontSize="10" fill="var(--ink-2)">{Math.round(last.pwin * 100)}%</text>
+    </svg>
+  );
+}
+
 export function DeliberationDock({
   account, opp, breakdown, dispatch, selectedPersonId, onSelectPerson, openActionId, onActionOpened, onChatDone,
 }: {
@@ -59,14 +79,35 @@ export function DeliberationDock({
   const [height, setHeight] = usePersistentState<DockHeight>('jianghu.dockHeight', 'half');
 
   // M5 嵌入：坞头四动作徽章（PDE 引擎建议·赢面带置信）——全屏唯一赢面出口。引擎不可用静默隐藏，不阻塞坞。
-  const [pde, setPde] = useState<{ action: string; pwin: number; flag: string } | null>(null);
+  // 复盘台（M5 裁决A·DealPokerDashboard 第二级）共用同一响应：双轨分/建议卡/gate 用 pdeFull，坞头徽章从中派生。
+  const [pdeFull, setPdeFull] = useState<any>(null);
   useEffect(() => {
     let alive = true;
     api.pdeEv(opp.id)
-      .then((r) => { if (alive) setPde({ action: r.recommendation?.action ?? '', pwin: r.pwin ?? 0, flag: r.confidenceFlag ?? '' }); })
-      .catch(() => { if (alive) setPde(null); });
+      .then((r) => { if (alive) setPdeFull(r); })
+      .catch(() => { if (alive) setPdeFull(null); });
     return () => { alive = false; };
   }, [opp.id, breakdown]);
+  const pde = pdeFull ? { action: pdeFull.recommendation?.action ?? '', pwin: pdeFull.pwin ?? 0, flag: pdeFull.confidenceFlag ?? '' } : null;
+
+  // 复盘台走势：full 档才懒拉快照序列；📸 手动打点后重拉
+  const [snaps, setSnaps] = useState<any[] | null>(null);
+  const [snapBusy, setSnapBusy] = useState(false);
+  useEffect(() => {
+    if (height !== 'full') return;
+    let alive = true;
+    api.pdeSnapshots(opp.id).then((r) => { if (alive) setSnaps(r.snapshots ?? []); }).catch(() => { if (alive) setSnaps([]); });
+    return () => { alive = false; };
+  }, [height, opp.id, breakdown]);
+  const takeSnapshot = async () => {
+    if (snapBusy) return;
+    setSnapBusy(true);
+    try {
+      await api.pdeSnapshot(opp.id);
+      const r = await api.pdeSnapshots(opp.id);
+      setSnaps(r.snapshots ?? []);
+    } catch { /* 引擎不可用静默 */ } finally { setSnapBusy(false); }
+  };
 
   // 老 PDE 适配层：只取 列① 姿态解读 + E2 背离提案（EV/赢面老口径随 EngineBar 退役，不再展示）
   const reading = useMemo(() => analyzeDeal(account, opp, breakdown), [account, opp, breakdown]);
@@ -528,6 +569,47 @@ export function DeliberationDock({
           </div>
 
           </div>
+
+          {/* ── M5 复盘台（仅 full 档 · 裁决A：DealPokerDashboard 第二级=坞全展开复盘态；双轨分/建议卡/走势，what-if 留下一刀）── */}
+          {height === 'full' && pdeFull && (
+            <div className="dock-review" onClick={(e) => e.stopPropagation()}>
+              <div className="dock-review-head">
+                <span className="dock-review-cap">🎰 复盘台 · 引擎全景</span>
+                <button className="btn ghost xs" disabled={snapBusy} onClick={takeSnapshot} title="把当前局面存成快照，积累赢面走势">{snapBusy ? '打点中…' : '📸 打个快照'}</button>
+              </div>
+              {pdeFull.gate && (
+                <div className="dock-gate">⚠ 把关人红线触发：关键把关人强烈反对，赢面被强制压制——先排雷再谈推进</div>
+              )}
+              <div className="dock-review-grid">
+                <div className="dock-review-col">
+                  <h5>双轨分</h5>
+                  <div className="dock-dual">
+                    <div className="dock-dual-item"><b>{Math.round(pdeFull.score?.nominal ?? 0)}</b><span>名义分 · 打分表原值</span></div>
+                    <div className="dock-dual-item"><b>{Math.round(pdeFull.score?.weighted ?? 0)}</b><span>加权分 · 按证据可信度折扣</span></div>
+                  </div>
+                  <div className="dock-review-note">差 {Math.round(pdeFull.score?.gap ?? 0)} 分＝情报还没坐实的部分。作战工具，非考核指标。</div>
+                </div>
+                <div className="dock-review-col">
+                  <h5>引擎建议</h5>
+                  {ACT_LABEL[pdeFull.recommendation?.action] && (
+                    <span className={`mf-act mf-act-${ACT_LABEL[pdeFull.recommendation.action]!.cls}`}>
+                      {ACT_LABEL[pdeFull.recommendation.action]!.icon} {ACT_LABEL[pdeFull.recommendation.action]!.text}
+                    </span>
+                  )}
+                  <div className="dock-review-note">{pdeFull.recommendation?.reason || '—'}</div>
+                  {(pdeFull.recommendation?.weak_key_stakeholders?.length ?? 0) > 0 && (
+                    <div className="dock-review-weak">薄弱关键人：{pdeFull.recommendation.weak_key_stakeholders.map((id: string) => pdeFull.stakeholders?.find((s: any) => s.id === id)?.name ?? id).join('、')}</div>
+                  )}
+                </div>
+                <div className="dock-review-col">
+                  <h5>赢面走势</h5>
+                  {(snaps?.length ?? 0) >= 2
+                    ? <Sparkline snaps={snaps!} />
+                    : <div className="dock-review-note">{snaps === null ? '加载中…' : '快照不足两张——每次复盘 📸 打个点，赢面变化就能连成线'}</div>}
+                </div>
+              </div>
+            </div>
+          )}
 
         </div>
       )}

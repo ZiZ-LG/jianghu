@@ -81,6 +81,7 @@ export const api = {
   pdeIntel: (oppId: string): Promise<any> => req(`/api/pde/${oppId}/intel-priorities`), // 拜访卡「这次问什么」
   pdeActions: (oppId: string): Promise<any> => req(`/api/pde/${oppId}/action-ranking`),
   pdeSnapshot: (oppId: string) => req(`/api/pde/${oppId}/snapshot`, { method: 'POST' }),
+  pdeSnapshots: (oppId: string): Promise<{ snapshots: any[] }> => req(`/api/pde/${oppId}/snapshots`), // 复盘台走势（M5）
   aiTest: (): Promise<{ ok: boolean; message?: string }> => req('/api/ai/test', { method: 'POST' }),
   aiSimulate: (context: any, hypothesis: string): Promise<{ analysis: string; provider: string }> =>
     req('/api/ai/simulate', { method: 'POST', body: JSON.stringify({ context, hypothesis }) }),

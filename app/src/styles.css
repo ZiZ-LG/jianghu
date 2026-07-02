@@ -1286,6 +1286,32 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 /* 第4刀 · 坞内草稿（draft=未上桌）：虚线边框同候选虚位卡视觉语言；「→ 上桌」复用 .sb2-send */
 .sb2-card.sb2-draft { border-style: dashed; background: var(--panel-2); }
 .sb2-act-draft { color: var(--faint); }
+/* M5 复盘台（坞 full 档 · DealPokerDashboard 第二级）：双轨分 / 建议卡 / 赢面走势；gate=把关人红线（#dc2626 危险语义色） */
+.dock-review { margin-top: 12px; border-top: 1px dashed var(--line); padding-top: 10px; }
+.dock-review-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.dock-review-cap { font-size: 12px; font-weight: 700; color: var(--ink-2); }
+.dock-gate { margin-bottom: 8px; padding: 7px 11px; border: 1px solid color-mix(in srgb, #dc2626 45%, var(--line)); border-radius: 8px; background: color-mix(in srgb, #dc2626 8%, var(--panel)); font-size: 12px; font-weight: 600; color: var(--ink); }
+.dock-review-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.dock-review-col { border: 1px solid var(--line); border-radius: 9px; background: var(--panel-2); padding: 10px 12px; min-width: 0; }
+.dock-review-col h5 { margin: 0 0 8px; font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: .4px; }
+.dock-dual { display: flex; gap: 14px; }
+.dock-dual-item { display: flex; flex-direction: column; gap: 2px; }
+.dock-dual-item b { font-size: 22px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; color: var(--ink); }
+.dock-dual-item span { font-size: 10.5px; color: var(--faint); }
+.dock-review-note { margin-top: 6px; font-size: 11px; color: var(--muted); line-height: 1.55; }
+.dock-review-weak { margin-top: 6px; font-size: 11px; color: #d97706; font-weight: 600; }
+.dock-spark { display: block; }
+@media (max-width: 900px) { .dock-review-grid { grid-template-columns: 1fr; } }
+/* M5 立场条（焦点面板「档案」tab 头部 · StanceRangeBar 嵌入式）：三色堆叠 支持/中立/反对 + n_eff 角标 */
+.stance-bar { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); cursor: pointer; }
+.stance-bar:hover { background: var(--hover); }
+.stance-bar-cap { flex-shrink: 0; font-size: 10.5px; font-weight: 700; color: var(--muted); }
+.stance-bar-track { flex: 1; display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: var(--panel); }
+.stance-bar-track i.s { background: #16a34a; }
+.stance-bar-track i.n { background: color-mix(in srgb, var(--muted) 45%, var(--panel)); }
+.stance-bar-track i.o { background: #dc2626; }
+.stance-bar-neff { flex-shrink: 0; font-size: 10px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.stance-bar-neff.thin { color: #d97706; font-weight: 700; }
 
 /* ════════ 左栏诊断台（趋赢力打分 + 对话框，替代干系人名单+图例）════════ */
 .diag-score { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 12px 10px; }

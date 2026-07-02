@@ -1,16 +1,20 @@
 // 右栏「焦点面板」：跟选中的人走，身份头 + 三 tab（档案 / 动态 / 参谋）。
 // tab 受控（App 管：单击节点→参谋、双击→档案；选中即现面板）。
-// 档案＝复用 DetailDrawer(embedded)；动态＝person.logs + 该人参与的 VisitNote，按日期倒序、带溯源；参谋＝ChatPanel(P2 升级为带全图上下文的深度参谋)。
-import type { Dispatch } from 'react';
+// 档案＝复用 DetailDrawer(embedded) + 头部引擎立场条（M5 StanceRangeBar 嵌入式：三色分布+n_eff 角标，点击跳动态看证据）；
+// 动态＝person.logs + 该人参与的 VisitNote，按日期倒序、带溯源；参谋＝ChatPanel(P2 升级为带全图上下文的深度参谋)。
+import { useEffect, useState, type Dispatch } from 'react';
 import type { Account, Opportunity, Person, OppRole, BurningIssue, UCV, VisitNote } from '../types';
 import { ROLE_LABEL, SENTIMENT_LABEL } from '../types';
 import type { Action } from '../store';
 import { DetailDrawer } from './DetailDrawer';
 import { AdvisorPanel } from './AdvisorPanel';
 import type { ScoreBreakdown } from '../lib/g64111';
+import { api } from '../api';
 
 type Tab = 'profile' | 'dynamic' | 'advisor';
 type DynItem = { date: string; title?: string; body: string; source: string; sensitive?: boolean };
+// M5 立场条数据（PDE ev.stakeholders 逐人分布；支持/中立/反对语义色同 types.ts 惯例）
+type StanceDetail = { id: string; pS: number; pN: number; pO: number; n_eff: number };
 
 export function FocusPanel({
   accId, oppId, account, opp, breakdown, person, oppRole, bis, ucvs, visitNotes, tab, onTabChange, dispatch, onRefresh, onClose,
@@ -26,6 +30,17 @@ export function FocusPanel({
 }) {
   const f = person.form;
   const formFilled = [f.family, f.occupation, f.recreation, f.moneyMotivation].filter(Boolean).length;
+
+  // M5 · 引擎立场分布（商机级 fetch，切人不重拉；引擎不可用/该人不在牌局→静默隐藏，同坞头徽章惯例）
+  const [stances, setStances] = useState<StanceDetail[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api.pdeEv(opp.id)
+      .then((r) => { if (alive) setStances(r.stakeholders ?? null); })
+      .catch(() => { if (alive) setStances(null); });
+    return () => { alive = false; };
+  }, [opp.id, breakdown]);
+  const myStance = !person.isCompetitor ? stances?.find((s) => s.id === person.id) : undefined;
 
   // 动态时间线：交往日志(人级) + 该人参与的拜访记录(name 匹配)，按日期倒序、带溯源
   const dyn: DynItem[] = [
@@ -63,8 +78,22 @@ export function FocusPanel({
 
       <div className="focus-body">
         {tab === 'profile' && (
-          <DetailDrawer embedded accId={accId} oppId={oppId} person={person}
-            oppRole={oppRole} bis={bis} ucvs={ucvs} dispatch={dispatch} onClose={onClose} />
+          <>
+            {myStance && (
+              <div className="stance-bar" title={`引擎立场分布：支持 ${Math.round(myStance.pS * 100)}% / 中立 ${Math.round(myStance.pN * 100)}% / 反对 ${Math.round(myStance.pO * 100)}%（等效样本 n≈${myStance.n_eff.toFixed(1)}）。点击看证据时间线`}
+                onClick={() => onTabChange('dynamic')}>
+                <span className="stance-bar-cap">引擎立场</span>
+                <div className="stance-bar-track">
+                  <i className="s" style={{ width: `${myStance.pS * 100}%` }} />
+                  <i className="n" style={{ width: `${myStance.pN * 100}%` }} />
+                  <i className="o" style={{ width: `${myStance.pO * 100}%` }} />
+                </div>
+                <span className={`stance-bar-neff${myStance.n_eff < 3 ? ' thin' : ''}`}>n≈{myStance.n_eff.toFixed(1)}{myStance.n_eff < 3 ? ' · 样本薄' : ''}</span>
+              </div>
+            )}
+            <DetailDrawer embedded accId={accId} oppId={oppId} person={person}
+              oppRole={oppRole} bis={bis} ucvs={ucvs} dispatch={dispatch} onClose={onClose} />
+          </>
         )}
 
         {tab === 'dynamic' && (
