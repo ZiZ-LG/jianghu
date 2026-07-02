@@ -35,7 +35,7 @@ const mmdd = (ymd: string) => (ymd && ymd.length >= 10 ? `${ymd.slice(5, 7)}/${y
 
 interface FwdCand { gapItem: string; title: string; basis: string; }
 interface BwdCand { title: string; offsetDays: number; }
-type DrawerState = null | { kind: 'card'; id: string } | { kind: 'milestone'; id: string } | { kind: 'goal' } | { kind: 'action'; id: string };
+type DrawerState = null | { kind: 'card'; id: string } | { kind: 'milestone'; id: string } | { kind: 'goal' } | { kind: 'action'; id: string } | { kind: 'whatif' };
 type DockHeight = 'collapsed' | 'half' | 'full';
 // 第3刀：AI 可预填的行动四要素（title/personId 由策略卡携带，不在此列）
 type AiFieldKey = 'target' | 'resources' | 'cautions' | 'props';
@@ -249,6 +249,40 @@ export function DeliberationDock({
   }, []);
   // 切商机/客户 → 关抽屉、清背离忽略集、丢未落库的雷草稿、清字段来源标记
   useEffect(() => { setDrawer(null); setDismissedShifts(new Set()); setRiskDraft(null); setAiMark(null); }, [opp.id, account.id]);
+
+  // ── what-if 假设推演（复盘台抽屉 · SPEC §7）：沙盘不落库，关抽屉即散；假设=此刻新情报（服务端 age 归零）──
+  const [wiBase, setWiBase] = useState<any>(null);      // 基线 + 当前牌局人员表（开抽屉时空 overrides 拉取）
+  const [wiRows, setWiRows] = useState<Record<string, { sentiment: string; confidence: string }>>({});
+  const [wiResult, setWiResult] = useState<any>(null);
+  const [wiBusy, setWiBusy] = useState(false);
+  useEffect(() => {
+    if (drawer?.kind !== 'whatif') { setWiBase(null); setWiRows({}); setWiResult(null); return; }
+    let alive = true;
+    api.pdeWhatIf(opp.id, [])
+      .then((r) => {
+        if (!alive) return;
+        setWiBase(r);
+        setWiRows(Object.fromEntries(r.stakeholders.map((s) => [s.id, { sentiment: s.sentiment, confidence: s.confidence }])));
+      })
+      .catch(() => { if (alive) setWiBase(null); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drawer]);
+  const wiChanged = wiBase ? wiBase.stakeholders.filter((s: any) => { const r = wiRows[s.id]; return r && (r.sentiment !== s.sentiment || r.confidence !== s.confidence); }) : [];
+  const runWhatIf = async () => {
+    if (wiBusy || !wiBase || wiChanged.length === 0) return;
+    const overrides = wiChanged.map((s: any) => {
+      const r = wiRows[s.id]!;
+      return { personId: s.id, ...(r.sentiment !== s.sentiment ? { sentiment: r.sentiment } : {}), ...(r.confidence !== s.confidence ? { confidence: r.confidence } : {}) };
+    });
+    setWiBusy(true);
+    try { setWiResult(await api.pdeWhatIf(opp.id, overrides)); } catch { /* 引擎不可用静默 */ } finally { setWiBusy(false); }
+  };
+  const resetWhatIf = () => {
+    if (!wiBase) return;
+    setWiRows(Object.fromEntries(wiBase.stakeholders.map((s: any) => [s.id, { sentiment: s.sentiment, confidence: s.confidence }])));
+    setWiResult(null);
+  };
 
   // ── 行动清单（PlanAction，承接 DealPlanner 网格退役；勾完成→结果回填录证据，闭合执行→证据→局势飞轮）──
   const [actDraft, setActDraft] = useState<{ title: string; startDate: string; personId?: string; target: string; resources: string; cautions: string; props: string; done: boolean; wasDone: boolean; outcome?: 'up' | 'flat' | 'down' } | null>(null);
@@ -575,7 +609,10 @@ export function DeliberationDock({
             <div className="dock-review" onClick={(e) => e.stopPropagation()}>
               <div className="dock-review-head">
                 <span className="dock-review-cap">🎰 复盘台 · 引擎全景</span>
-                <button className="btn ghost xs" disabled={snapBusy} onClick={takeSnapshot} title="把当前局面存成快照，积累赢面走势">{snapBusy ? '打点中…' : '📸 打个快照'}</button>
+                <span className="dock-review-acts">
+                  <button className="btn ghost xs" onClick={() => setDrawer({ kind: 'whatif' })} title="假设某人立场变化，赢面会怎样——沙盘推演不落库">🧪 假设推演</button>
+                  <button className="btn ghost xs" disabled={snapBusy} onClick={takeSnapshot} title="把当前局面存成快照，积累赢面走势">{snapBusy ? '打点中…' : '📸 打个快照'}</button>
+                </span>
               </div>
               {pdeFull.gate && (
                 <div className="dock-gate">⚠ 把关人红线触发：关键把关人强烈反对，赢面被强制压制——先排雷再谈推进</div>
@@ -763,6 +800,60 @@ export function DeliberationDock({
                   )}
                 </div>
                 <button className="sb2-drawer-del" onClick={() => deleteAction(drawer.id)}>🗑 删除该行动</button>
+              </div>
+            </>
+          )}
+          {drawer.kind === 'whatif' && (
+            <>
+              <div className="drawer-head">
+                <span className="t">🧪 假设推演 · 沙盘不落库</span>
+                <button className="x-btn" onClick={() => setDrawer(null)}>✕</button>
+              </div>
+              <div className="sb2-drawer-body">
+                {!wiBase && <div className="sb2-dim">引擎加载中…（无关键干系人或引擎不可用时无法推演）</div>}
+                {wiBase && (
+                  <>
+                    <div className="wi-hint">调任意人的立场 / 可信度假设 → 推演赢面变化。纯沙盘：不写库不改分，建议动作以实际局面为准。</div>
+                    {wiBase.stakeholders.map((s: any) => {
+                      const r = wiRows[s.id];
+                      if (!r) return null;
+                      const changed = r.sentiment !== s.sentiment || r.confidence !== s.confidence;
+                      return (
+                        <div className={`wi-row${changed ? ' changed' : ''}`} key={s.id}>
+                          <span className="wi-name" title={s.name}>{s.name}</span>
+                          <select value={r.sentiment} onChange={(e) => setWiRows({ ...wiRows, [s.id]: { ...r, sentiment: e.target.value } })}>
+                            {(Object.keys(SENT_TEXT) as Sentiment[]).map((k) => <option key={k} value={k}>{SENT_TEXT[k]}</option>)}
+                          </select>
+                          <select value={r.confidence} onChange={(e) => setWiRows({ ...wiRows, [s.id]: { ...r, confidence: e.target.value } })}>
+                            {['共识', '明确', '推理', '不清'].map((cnf) => <option key={cnf} value={cnf}>{cnf}</option>)}
+                          </select>
+                        </div>
+                      );
+                    })}
+                    <div className="sb2-drawer-acts wi-acts">
+                      <button className="btn primary sm" disabled={wiBusy || wiChanged.length === 0} title={wiChanged.length ? '' : '先调整至少一人的假设'}
+                        onClick={runWhatIf}>{wiBusy ? '推演中…' : `🧪 推演（改 ${wiChanged.length} 人）`}</button>
+                      <button className="btn ghost sm" onClick={resetWhatIf}>重置</button>
+                    </div>
+                    {wiResult && (
+                      <div className="wi-result">
+                        <div className="wi-pwin">
+                          赢面 {Math.round(wiResult.base.pwin * 100)}% → <b>{Math.round(wiResult.hypo.pwin * 100)}%</b>
+                          <span className={`wi-delta ${wiResult.dPwin > 0 ? 'up' : wiResult.dPwin < 0 ? 'down' : ''}`}>
+                            {wiResult.dPwin > 0 ? '↑' : wiResult.dPwin < 0 ? '↓' : '—'}{Math.abs(Math.round(wiResult.dPwin * 100))}pp
+                          </span>
+                        </div>
+                        {wiResult.base.gate !== wiResult.hypo.gate && (
+                          <div className="wi-gate">{wiResult.hypo.gate ? '⚠ 该假设会触发把关人红线（赢面被强制压制）' : '✓ 该假设解除了把关人红线'}</div>
+                        )}
+                        {wiResult.base.ev_continue != null && wiResult.hypo.ev_continue != null && (
+                          <div className="wi-ev">预期回报 {wiResult.base.ev_continue} → {wiResult.hypo.ev_continue} 万</div>
+                        )}
+                        <div className="sb2-origin">沙盘结果不落库。要坐实假设，去实际拜访拿证据，回来更新支持度。</div>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             </>
           )}

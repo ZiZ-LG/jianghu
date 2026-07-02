@@ -82,6 +82,9 @@ export const api = {
   pdeActions: (oppId: string): Promise<any> => req(`/api/pde/${oppId}/action-ranking`),
   pdeSnapshot: (oppId: string) => req(`/api/pde/${oppId}/snapshot`, { method: 'POST' }),
   pdeSnapshots: (oppId: string): Promise<{ snapshots: any[] }> => req(`/api/pde/${oppId}/snapshots`), // 复盘台走势（M5）
+  // what-if 假设推演（复盘台抽屉）：假设立场/可信度变化→赢面对比。纯计算零写库；overrides 用前端值域。
+  pdeWhatIf: (oppId: string, overrides: { personId: string; sentiment?: string; confidence?: string }[]): Promise<{ base: any; hypo: any; dPwin: number; stakeholders: { id: string; name: string; sentiment: string; confidence: string }[]; potSource: string; confidenceFlag: string }> =>
+    req(`/api/pde/${oppId}/what-if`, { method: 'POST', body: JSON.stringify({ overrides }) }),
   aiTest: (): Promise<{ ok: boolean; message?: string }> => req('/api/ai/test', { method: 'POST' }),
   aiSimulate: (context: any, hypothesis: string): Promise<{ analysis: string; provider: string }> =>
     req('/api/ai/simulate', { method: 'POST', body: JSON.stringify({ context, hypothesis }) }),

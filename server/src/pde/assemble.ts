@@ -6,6 +6,7 @@ import { scoreFromState, type ItemKey } from '../g64111.js';
 
 // ── 值域映射（江湖 ↔ 内核）──
 export const SENT2MARK: Record<string, Mark> = { star: 'star', plus: 'plus', neutral: 'eq', unknown: 'unk', minus: 'minus', x: 'x' };
+export const MARK2SENT: Record<Mark, string> = { star: 'star', plus: 'plus', eq: 'neutral', unk: 'unknown', minus: 'minus', x: 'x' };
 export const CONF2CRED: Record<string, Cred> = { 共识: 'consensus', 明确: 'explicit', 推理: 'inference', 不清: 'unclear' };
 export const CRED2CONF: Record<Cred, string> = { consensus: '共识', explicit: '明确', inference: '推理', unclear: '不清' };
 export const STAGE_MAP: Record<string, Stage> = {

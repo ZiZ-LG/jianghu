@@ -9,8 +9,9 @@ import {
   type Recommendation, type ScoreResult, type Stage, type Stakeholder,
 } from 'pde-kernel';
 import { prisma } from '../prisma.js';
-import { assembleDeal, type AssembledPde } from './assemble.js';
+import { assembleDeal, CONF2CRED, CRED2CONF, MARK2SENT, SENT2MARK, type AssembledPde } from './assemble.js';
 import { ensureIndustryPack, PACK_KEY } from './pack.js';
+import { z } from 'zod';
 
 const STAGE_ORDER: Stage[] = ['initiation', 'feasibility', 'budget_approval', 'tender_design', 'tender_execution'];
 
@@ -209,6 +210,52 @@ export function pdeRoutes(app: FastifyInstance) {
       },
     });
     return { ok: true, id: snap.id, pwin: c.ev.pwin, recommendation: c.recommendation.action, confidenceFlag: c.confidenceFlag };
+  });
+
+  // what-if 假设推演（M5 复盘台最后一块，SPEC §7「假设调整抽屉」）：假设某些人立场/可信度变化 → 重算赢面对比。
+  // 铁律：纯计算零写库（假设不是事实，连快照都不落）；入出参用前端值域（sentiment 六档 / confidence 中文四档），本层映射内核 Mark/Cred；
+  // hypo 只算 evaluate 层（pwin/gate/ΔEV）——四动作建议不对假设态重算，以实际局面为准（v1 简化）。
+  app.post('/api/pde/:oppId/what-if', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    const p = z.object({
+      overrides: z.array(z.object({
+        personId: z.string(),
+        sentiment: z.enum(['star', 'plus', 'neutral', 'unknown', 'minus', 'x']).optional(),
+        confidence: z.enum(['共识', '明确', '推理', '不清']).optional(),
+      })).max(30),
+    }).safeParse(req.body ?? {});
+    if (!p.success) return reply.code(400).send({ error: '参数无效' });
+    const c = await computePde(req.user.tenantId, req.params.oppId);
+    if (!c) return reply.code(404).send({ error: '商机不存在' });
+
+    const ovById = new Map(p.data.overrides.map((o) => [o.personId, o]));
+    const hypoDeal = {
+      ...c.asm.deal,
+      stakeholders: c.asm.deal.stakeholders.map((st) => {
+        const ov = ovById.get(st.id);
+        if (!ov || (!ov.sentiment && !ov.confidence)) return st;
+        // 假设=此刻确认的新情报：年龄归零、信源质量满格（衰减/折扣不吃在假设上）
+        return {
+          ...st,
+          mark: ov.sentiment ? (SENT2MARK[ov.sentiment] ?? st.mark) : st.mark,
+          cred: ov.confidence ? (CONF2CRED[ov.confidence] ?? st.cred) : st.cred,
+          age_days: 0, q: 1.0,
+        };
+      }),
+    };
+    const hypo = evaluate(hypoDeal);
+    const brief = (e: EvalResult) => ({ pwin: e.pwin, pwin_raw: e.pwin_raw, gate: e.gate, ev_continue: moneyOrNull(c, e.ev_continue) });
+    return {
+      base: brief(c.ev),
+      hypo: brief(hypo),
+      dPwin: Math.round((hypo.pwin - c.ev.pwin) * 1000) / 1000,
+      // 当前牌局人员表（抽屉初始化用；值域=前端 sentiment/confidence）
+      stakeholders: c.asm.deal.stakeholders.map((st) => ({
+        id: st.id, name: c.asm.personName.get(st.id) ?? st.id,
+        sentiment: MARK2SENT[st.mark] ?? 'unknown',
+        confidence: CRED2CONF[(st.mark === 'unk' ? 'unclear' : (st.cred ?? 'unclear'))] ?? '不清',
+      })),
+      potSource: c.asm.potSource, confidenceFlag: c.confidenceFlag,
+    };
   });
 
   // 快照列表（复盘走势；不回 inputsJson 大字段）
