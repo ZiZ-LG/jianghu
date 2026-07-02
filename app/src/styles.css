@@ -246,9 +246,12 @@ select { font-family: inherit; }
 .intel-receipt-wrap .ir-head { display: flex; align-items: center; justify-content: space-between; font-weight: 700; font-size: 12px; margin-bottom: 6px; }
 /* M2 骨架预填：决策链角色徽标 */
 .skel-role-badge { display: inline-block; min-width: 20px; text-align: center; font-size: 10px; font-weight: 800; padding: 1px 5px; border-radius: 6px; background: var(--accent-soft); color: var(--accent-ink); margin-right: 6px; }
-/* M3 补分清单（缺口卡片）：低分项 → 待确认卡片，点选即补分 */
+/* M3 补情报清单（缺口卡片）：P1③ 两货架——拜访带着问（问句 framing）/ 案头当场勾 */
 .win-gaps-btn { margin-left: 8px; font-size: 11px; padding: 1px 8px; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent-ink); font-weight: 700; cursor: pointer; }
 .gap-list { display: flex; flex-direction: column; gap: 10px; }
+.gap-shelf { display: flex; flex-direction: column; gap: 10px; }
+.gap-shelf-head { font-size: 12px; font-weight: 800; color: var(--ink-2); margin-bottom: -2px; }
+.gap-shelf + .gap-shelf { margin-top: 8px; padding-top: 12px; border-top: 1px dashed var(--line); }
 .gap-card { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--panel-2); }
 .gap-head { display: flex; align-items: center; gap: 8px; }
 .gap-item { font-size: 10px; font-weight: 800; padding: 1px 6px; border-radius: 6px; background: var(--accent-soft); color: var(--accent-ink); }

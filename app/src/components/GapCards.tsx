@@ -9,8 +9,9 @@ import { computeGaps } from '../lib/gaps';
 const SENT_OPTS: Sentiment[] = ['star', 'plus', 'neutral', 'minus', 'x'];
 
 /**
- * 补分清单（M3）：把 G64111 低分项变成一叠「待确认卡片」，按性价比排序，点选即更新趋赢力——
- * 把周复盘/补分从「面对表单填空」变成「刷卡」。复用现有 Action 落库，0 schema。
+ * 补情报清单（M3 → P1③ 问题化 framing）：同一份缺口两种货架——
+ * 「下次拜访带着问」（态度/BI/FORM/UCV/招采关键人，标题即问句，见完回来点选）在前，
+ * 「案头当场能勾」（C3/C5 材料等）在后。把「补分」从填表动作变回销售动作。
  */
 export function GapCards({ account, opp, dispatch, onClose }: {
   account: Account;
@@ -21,11 +22,15 @@ export function GapCards({ account, opp, dispatch, onClose }: {
   const gaps = useMemo(() => computeGaps(account, opp), [account, opp]);
   const influencerCandidates = opp.roles.filter((r) => r.role !== 'A' && r.role !== 'D');
   const nameOf = (id: string) => account.persons.find((p) => p.id === id)?.name ?? '?';
+  const shelves = [
+    { key: 'visit', head: '🚶 下次拜访带着问', items: gaps.filter((g) => g.shelf === 'visit') },
+    { key: 'desk', head: '🪑 案头当场能勾', items: gaps.filter((g) => g.shelf === 'desk') },
+  ].filter((s) => s.items.length > 0);
 
   return (
-    <Modal title="📋 补分清单 · 点一下就记下" width={520} onClose={onClose}
+    <Modal title="🎒 下次拜访问什么 · 缺口即问题" width={520} onClose={onClose}
       footer={<>
-        <span className="hint-text" style={{ marginRight: 'auto' }}>按性价比排序 · 点选即更新趋赢力，不必填表</span>
+        <span className="hint-text" style={{ marginRight: 'auto' }}>按情报性价比排序 · 问到/勾上即更新趋赢力</span>
         <button className="btn primary" onClick={onClose}>完成</button>
       </>}>
       {gaps.length === 0 ? (
@@ -35,13 +40,15 @@ export function GapCards({ account, opp, dispatch, onClose }: {
         </div>
       ) : (
         <div className="gap-list">
-          {gaps.map((g) => (
+          {shelves.map((shelf) => (<div key={shelf.key} className="gap-shelf">
+          <div className="gap-shelf-head">{shelf.head}</div>
+          {shelf.items.map((g) => (
             <div key={g.id} className="gap-card">
               <div className="gap-head">
                 <span className="gap-item">{g.item}</span>
-                <b className="gap-title">{g.title}</b>
+                <b className="gap-title">{g.ask ?? g.title}</b>
               </div>
-              <div className="gap-hint">{g.hint}</div>
+              <div className="gap-hint">{g.ask ? `${g.title} · ${g.hint}` : g.hint}</div>
               <div className="gap-ops">
                 {g.action.kind === 'sentiment' && SENT_OPTS.map((s) => (
                   <button key={s} className="gap-sent" style={{ color: SENTIMENT_COLOR[s] }} title={SENTIMENT_LABEL[s]}
@@ -67,6 +74,7 @@ export function GapCards({ account, opp, dispatch, onClose }: {
               </div>
             </div>
           ))}
+          </div>))}
         </div>
       )}
     </Modal>

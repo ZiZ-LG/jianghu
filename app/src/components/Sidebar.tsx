@@ -115,9 +115,9 @@ export function Sidebar({ account, opp, breakdown, weighted = null, pde = null, 
                 </span>
               )}
               {onOpenGaps && gapCount > 0 && (
-                <button onClick={onOpenGaps} title="按得分缺口逐项刷卡补分（M3）"
+                <button onClick={onOpenGaps} title="缺什么情报一目了然：要问的下次拜访带着问，能勾的案头当场勾"
                   style={{ marginLeft: 'auto', fontSize: 11, padding: '3px 9px', borderRadius: 12, border: '1px solid var(--accent)', background: 'transparent', color: 'var(--accent)', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                  📋 补分·{gapCount}
+                  🎒 补情报·{gapCount}
                 </button>
               )}
             </div>

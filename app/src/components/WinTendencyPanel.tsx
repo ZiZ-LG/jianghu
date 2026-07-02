@@ -71,7 +71,7 @@ export function WinTendencyPanel({
       <div className="win-items">
         <div className="grp">
           6 必清（{breakdown.clears}/35） · 4 优势（{breakdown.priorities}/45） · 1 决胜（{breakdown.key}/20）→ 总分 {breakdown.total}/100
-          {onOpenGaps && <button className="win-gaps-btn" onClick={onOpenGaps} title="把低分项变成待确认卡片，点选即补分">📋 补分{gapCount > 0 ? ` · ${gapCount}` : ''}</button>}
+          {onOpenGaps && <button className="win-gaps-btn" onClick={onOpenGaps} title="缺什么情报一目了然：要问的下次拜访带着问，能勾的案头当场勾">🎒 补情报{gapCount > 0 ? ` · ${gapCount}` : ''}</button>}
           {onToggle && !grabber && <button className="win-toggle" onClick={onToggle} title="折叠趋赢力面板">折叠 ⌄</button>}
         </div>
         <div className="item-grid">
