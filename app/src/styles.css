@@ -1404,6 +1404,13 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 .chat-send:not(:disabled):hover { background: var(--accent-soft); }
 
 /* 参谋出牌（P2④b）：出牌工具条 + 行动牌候选。待采纳复用 .sb2-stamp/.sb2-cand-acts（橙）；已落画布=绿。状态色沿用项目既有硬编码+color-mix(var(--panel)) 约定，暗色靠 color-mix 自适配 + 下方 dark 覆盖。 */
+/* P2 引擎心跳：一行「引擎 · 昨夜巡检 N 商机 · M 条新提醒」+ 呼吸绿点（Hub 标题区 / 坞头共用） */
+.engine-pulse { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--faint); white-space: nowrap; }
+.engine-pulse::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--act-call); animation: pulse-breathe 2.4s ease-in-out infinite; flex-shrink: 0; }
+@keyframes pulse-breathe { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .engine-pulse::before { animation: none; opacity: .8; } }
+.hub-titlewrap .engine-pulse { margin-top: 2px; }
+
 /* P1① 参谋 tab 顶部 VoI 问题清单：「下次见他先问这 3 件事」（pdeIntel 确定性引擎，不吃 AI Key） */
 .adv-asks { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel-2); flex-shrink: 0; }
 .adv-asks-head { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; font-size: 11.5px; font-weight: 800; color: var(--ink-2); }

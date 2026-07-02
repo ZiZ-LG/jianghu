@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'r
 import type { Layer, Role, CustomerType, Edge, Person } from './types';
 import { LAYER_LABEL } from './types';
 import { reducer, computeInverse, injectBaseVersion, newAccount, newPerson, newEvidence, uid, type Action } from './store';
-import { api, type AuthResult, type Suggestion, type InboxRel, type InboxPerson, type InboxProposal, type InboxReminder, type InboxEvidence } from './api';
+import { api, type AuthResult, type Suggestion, type InboxRel, type InboxPerson, type InboxProposal, type InboxReminder, type InboxEvidence, type PatrolInfo } from './api';
 import { scoreFromDomain } from './lib/g64111';
 import { usePersistentState, useTheme, useViewport } from './ui';
 import { Auth } from './components/Auth';
@@ -59,7 +59,7 @@ export default function App() {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]); // 当前商机的关系候选 → 喂 Canvas 画灰虚线候选边；审核统一走收件箱
   // 审核收件箱（Hub 级聚合，全租户 pending 候选）
   const [inboxOpen, setInboxOpen] = useState(false);
-  const [inbox, setInbox] = useState<{ rels: InboxRel[]; persons: InboxPerson[]; proposals: InboxProposal[]; reminders: InboxReminder[]; evidences: InboxEvidence[]; total: number }>({ rels: [], persons: [], proposals: [], reminders: [], evidences: [], total: 0 });
+  const [inbox, setInbox] = useState<{ rels: InboxRel[]; persons: InboxPerson[]; proposals: InboxProposal[]; reminders: InboxReminder[]; evidences: InboxEvidence[]; total: number; patrol?: PatrolInfo | null }>({ rels: [], persons: [], proposals: [], reminders: [], evidences: [], total: 0 });
   const [gapsOpen, setGapsOpen] = useState(false); // M3 缺口刷卡补分（enrichOpen 随重构删 EnrichPanel 移除）
   const [selfComputeBusy, setSelfComputeBusy] = useState(false); // 江湖自算·补全干系人 进行中
   const [addIntelOpen, setAddIntelOpen] = useState(false); // ＋添加情报 单入口（口述 / 录音 / 对话 三合一）
@@ -420,7 +420,7 @@ export default function App() {
           theme={theme} onToggleTheme={toggleTheme} onOpenHelp={() => setHelpOpen(true)}
           onOpenMcpAccess={() => setMcpAccessOpen(true)}
           onOpenIntel={() => setIntelOpen(true)}
-          onOpenInbox={() => setInboxOpen(true)} inboxCount={inbox.total}
+          onOpenInbox={() => setInboxOpen(true)} inboxCount={inbox.total} patrol={inbox.patrol}
         />
         )}
         {phonePortrait && forceDesktop && <button className="mf-exit-desktop" onClick={() => setForceDesktop(false)}>📱 回手机版</button>}
@@ -571,7 +571,7 @@ export default function App() {
       {/* 第8刀：坞全宽横贯底部（提出 .main），列①与左栏纵向对齐——局势信息上下融合 */}
       {opp && !immersive && breakdown && (
         <DeliberationDock account={account} opp={opp} breakdown={breakdown} dispatch={act}
-          pdeFull={pdeFull} openEngineSignal={engineSignal}
+          patrol={inbox.patrol} pdeFull={pdeFull} openEngineSignal={engineSignal}
           selectedPersonId={selectedId} onSelectPerson={selectPerson}
           openActionId={openActionId} onActionOpened={() => setOpenActionId(null)}
           onChatDone={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); await loadInbox(); } catch { /* 静默：保存已成功，仅刷新失败 */ } }} />

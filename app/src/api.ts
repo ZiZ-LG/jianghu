@@ -107,8 +107,8 @@ export const api = {
   personSuggestList: (accountId: string): Promise<{ suggestions: PersonSuggestion[] }> => req(`/api/suggest/persons?accountId=${encodeURIComponent(accountId)}`),
   personSuggestAccept: (id: string): Promise<{ person: any; accId: string }> => req(`/api/suggest/persons/${id}/accept`, { method: 'POST' }),
   personSuggestReject: (id: string): Promise<{ ok: true }> => req(`/api/suggest/persons/${id}/reject`, { method: 'POST' }),
-  // Hub 级审核收件箱：聚合当前租户所有 pending 候选（关系 + 人物），带 account/opp 上下文
-  inboxList: (): Promise<{ rels: InboxRel[]; persons: InboxPerson[]; proposals: InboxProposal[]; reminders: InboxReminder[]; evidences: InboxEvidence[]; total: number }> => req('/api/inbox'),
+  // Hub 级审核收件箱：聚合当前租户所有 pending 候选（关系 + 人物），带 account/opp 上下文 + P2 引擎心跳
+  inboxList: (): Promise<{ rels: InboxRel[]; persons: InboxPerson[]; proposals: InboxProposal[]; reminders: InboxReminder[]; evidences: InboxEvidence[]; total: number; patrol?: PatrolInfo | null }> => req('/api/inbox'),
   // M3 证据审核：approve（可带 direction 定向=修改后采纳）/ reject。批准落 evidence_review 快照
   evidenceReview: (id: string, action: 'approve' | 'reject', opts?: { direction?: -1 | 0 | 1 }): Promise<{ ok: true; status: string }> =>
     req(`/api/evidence/${id}/review`, { method: 'POST', body: JSON.stringify({ action, ...opts }) }),
@@ -210,6 +210,8 @@ export interface PersonSuggestion {
   existingPersonId?: string; // 该客户下已有同名正式干系人时给出，供"合并/新建"提示
 }
 
+// P2 引擎心跳：本租户最近一轮后台巡检统计（服务刚重启未跑完首轮 / 无活跃商机 → null）
+export interface PatrolInfo { at: string; scanned: number; created: number; resolved: number }
 // 收件箱聚合视图：关系/人物候选附带 account/opp 上下文（供 Hub 级跨客户分组 + 采纳后定位）
 export interface InboxRel extends Suggestion { opportunityId: string; oppName: string; accountId: string; accountName: string }
 export interface InboxPerson extends PersonSuggestion { accountName: string }

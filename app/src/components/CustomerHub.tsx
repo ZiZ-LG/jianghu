@@ -3,10 +3,12 @@ import type { Account, CustomerType } from '../types';
 import { CUSTOMER_TYPE_LABEL } from '../types';
 import { Modal } from './Modal';
 import { OverflowMenu } from './OverflowMenu';
+import { EnginePulse } from './EnginePulse';
+import type { PatrolInfo } from '../api';
 
 export function CustomerHub({
   accounts, onOpen, onCreate, onLoadDemo, onDeleteAccount,
-  tenantName, userName, plan, onOpenTeam, onLogout, onOpenAiSettings, onOpenWecom, theme, onToggleTheme, onOpenHelp, onOpenMcpAccess, onOpenIntel, onOpenInbox, inboxCount = 0,
+  tenantName, userName, plan, onOpenTeam, onLogout, onOpenAiSettings, onOpenWecom, theme, onToggleTheme, onOpenHelp, onOpenMcpAccess, onOpenIntel, onOpenInbox, inboxCount = 0, patrol,
 }: {
   accounts: Account[];
   onOpen: (accId: string) => void;
@@ -27,6 +29,7 @@ export function CustomerHub({
   onOpenIntel: () => void; // 从零口述建客户
   onOpenInbox: () => void;     // 打开 Hub 级审核收件箱
   inboxCount?: number;         // 待审候选数（角标）
+  patrol?: PatrolInfo | null;  // P2 引擎心跳（本租户最近一轮巡检统计）
 }) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
@@ -57,6 +60,7 @@ export function CustomerHub({
         <div className="hub-titlewrap">
           <div className="hub-title">{tenantName}</div>
           <div className="hub-sub">江湖 · 销售干系人作战地图 · 客户工作台</div>
+          <EnginePulse patrol={patrol} />
         </div>
         {/* 桌面：整排操作 */}
         <div className="hub-actions-desktop">

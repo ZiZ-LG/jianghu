@@ -44,6 +44,15 @@ export interface ReminderDraft {
 const SENT_LABEL: Record<string, string> = { star: '排他支持', plus: '明确支持', neutral: '中立', unknown: '未明', minus: '负面', x: '倒向对手' };
 const EXPLICIT_SENT = new Set(['star', 'plus', 'minus', 'x']); // 明确表过态（值得复查时效）
 
+// ── P2 心跳：最近一轮巡检的按租户统计（内存即可——重启后首轮巡检回填；无活跃商机的租户无条目→前端不显示心跳）。
+// 状态放这里（而非 jobs.ts）：suggest.ts /api/inbox 要读，jobs.ts 已 import suggest.js，放 jobs 会成循环。
+export type PatrolInfo = { at: string; scanned: number; created: number; resolved: number };
+const lastPatrolByTenant = new Map<string, PatrolInfo>();
+export function recordPatrol(byTenant: Map<string, { scanned: number; created: number; resolved: number }>, at: string): void {
+  for (const [tid, b] of byTenant) lastPatrolByTenant.set(tid, { at, ...b });
+}
+export function getPatrolInfo(tenantId: string): PatrolInfo | null { return lastPatrolByTenant.get(tenantId) ?? null; }
+
 const daysBetween = (a: Date, b: Date) => Math.floor((a.getTime() - b.getTime()) / DAY);
 
 /**

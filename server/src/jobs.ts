@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { prisma } from './prisma.js';
 import { discoverPersons } from './enrich.js';
 import { generateRelSuggestions } from './suggest.js';
-import { computeReminders, type PatrolOpp, type PatrolRole } from './patrol.js';
+import { computeReminders, recordPatrol, type PatrolOpp, type PatrolRole } from './patrol.js';
 
 // 江湖自算 · 轻量后台任务队列（DB-backed）。
 // 设计取舍（对齐架构纲领「加轻量 job 队列」）：单实例 setInterval 消费，原子 claim；
@@ -202,6 +202,8 @@ export async function runPatrol(): Promise<{ scanned: number; created: number; r
   const accs = accIds.length ? await prisma.account.findMany({ where: { id: { in: accIds } } }) : [];
   const accName = new Map(accs.map((a) => [a.id, a.name]));
   let created = 0, resolved = 0;
+  const byTenant = new Map<string, { scanned: number; created: number; resolved: number }>(); // P2 心跳：按租户分桶（红线：绝不把全平台数字给单租户看）
+  const bucket = (tid: string) => { let b = byTenant.get(tid); if (!b) { b = { scanned: 0, created: 0, resolved: 0 }; byTenant.set(tid, b); } return b; };
 
   for (const opp of opps) {
     // 最近活动 = max(evidence / visitNote / planAction)；并按人取最近证据（支持度复查用）
@@ -229,16 +231,18 @@ export async function runPatrol(): Promise<{ scanned: number; created: number; r
 
     const drafts = computeReminders(patrolOpp, now);
     const draftKeys = new Set(drafts.map((d) => d.dedupeKey));
+    const b = bucket(opp.tenantId); b.scanned++;
     for (const d of drafts) {
       const existing = await prisma.reminder.findUnique({ where: { tenantId_dedupeKey: { tenantId: d.tenantId, dedupeKey: d.dedupeKey } } });
-      if (!existing) { await prisma.reminder.create({ data: { id: 'rem_' + randomUUID().slice(0, 12), ...d } }); created++; }
+      if (!existing) { await prisma.reminder.create({ data: { id: 'rem_' + randomUUID().slice(0, 12), ...d } }); created++; b.created++; }
       else if (existing.status === 'pending') { await prisma.reminder.update({ where: { id: existing.id }, data: { title: d.title, detail: d.detail, severity: d.severity } }); }
       // dismissed / done → 跳过，不复活
     }
     // 自动消除：本轮 draft 已不含的 pending 提醒（条件消失）→ done
     const pendings = await prisma.reminder.findMany({ where: { tenantId: opp.tenantId, opportunityId: opp.id, status: 'pending' } });
-    for (const p of pendings) if (!draftKeys.has(p.dedupeKey)) { await prisma.reminder.update({ where: { id: p.id }, data: { status: 'done' } }); resolved++; }
+    for (const p of pendings) if (!draftKeys.has(p.dedupeKey)) { await prisma.reminder.update({ where: { id: p.id }, data: { status: 'done' } }); resolved++; b.resolved++; }
   }
+  recordPatrol(byTenant, now.toISOString()); // P2 心跳：按租户落最近一轮统计（状态在 patrol.ts，避免 suggest↔jobs 循环 import）
   return { scanned: opps.length, created, resolved };
 }
 

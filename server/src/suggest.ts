@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from './prisma.js';
 import { loadAiConfig, callLLM } from './ai.js';
 import { nextFreeSlot } from './layout.js';
+import { getPatrolInfo } from './patrol.js';
 
 const pairKey = (a: string, b: string) => [a, b].sort().join('|');
 const LAYER_COLOR: Record<string, string> = { L1: '#2563eb', L2: '#9333ea', L3: '#16a34a', L4: '#ef4444' };
@@ -321,7 +322,11 @@ export function suggestRoutes(app: FastifyInstance) {
         direction: e.direction, tier: e.tier, rawContent: e.rawContent, occurredAt: e.occurredAt, origin: e.origin,
       };
     });
-    return { rels, persons: personsOut, proposals, reminders, evidences, total: rels.length + personsOut.length + proposals.length + reminders.length + evidences.length };
+    return {
+      rels, persons: personsOut, proposals, reminders, evidences,
+      total: rels.length + personsOut.length + proposals.length + reminders.length + evidences.length,
+      patrol: getPatrolInfo(tenantId), // P2 心跳：本租户最近一轮巡检统计（服务刚重启未跑完首轮时为 null）
+    };
   });
 
   // M3 · 证据审核（第5类卡三按钮：approve 采纳 / 带 direction·tier 覆盖=修改后采纳 / reject 拒绝）。

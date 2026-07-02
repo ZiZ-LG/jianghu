@@ -13,7 +13,8 @@ import { ITEM_MAX, ITEM_LABEL, ITEM_GROUP, BAND_LABEL, BAND_STRATEGY } from '../
 import { analyzeDeal } from '../lib/pde';
 import { ChatPanel } from './ChatPanel';
 import { usePersistentState } from '../ui';
-import { api } from '../api';
+import { api, type PatrolInfo } from '../api';
+import { EnginePulse } from './EnginePulse';
 import { buildAiContext } from '../aiContext';
 import { ACT_LABEL } from '../lib/pdeUi';
 
@@ -65,12 +66,13 @@ function Sparkline({ snaps }: { snaps: any[] }) {
 }
 
 export function DeliberationDock({
-  account, opp, breakdown, dispatch, pdeFull, openEngineSignal, selectedPersonId, onSelectPerson, openActionId, onActionOpened, onChatDone,
+  account, opp, breakdown, dispatch, patrol, pdeFull, openEngineSignal, selectedPersonId, onSelectPerson, openActionId, onActionOpened, onChatDone,
 }: {
   account: Account;
   opp: Opportunity;
   breakdown: ScoreBreakdown;
   dispatch: (a: Action) => void;
+  patrol?: PatrolInfo | null; // P2 引擎心跳（坞头一行，collapsed 也可见）
   pdeFull?: any; // 第7刀：PDE 完整评估由 App 层一次 fetch 下发（左栏加权分共用），坞不再自拉
   openEngineSignal?: number; // 第8刀：左栏徽章点击 → 开「引擎详解」抽屉（counter 信号，照 openActionId 模式）
   selectedPersonId?: string | null;
@@ -403,6 +405,7 @@ export function DeliberationDock({
         <button className="dock-grip" title={height === 'collapsed' ? '展开推演坞' : '收起推演坞'}
           onClick={() => setHeight(height === 'collapsed' ? 'half' : 'collapsed')}>{height === 'collapsed' ? '⌃' : '⌄'}</button>
         <span className="dock-head-cap">♟️ 推演坞</span>
+        <EnginePulse patrol={patrol} />
         {focusName && (
           <span className="dock-focus-chip">🎯 聚焦 {focusName}
             <button onClick={() => onSelectPerson?.(null)} title="清除聚焦">✕</button>
