@@ -500,7 +500,7 @@ model ChangeProposal {
 model EnrichJob {
   id            String   @id
   tenantId      String
-  type          String   @default("enrich_account") // enrich_account | suggest_relations | pull_recording
+  type          String   @default("enrich_account") // enrich_account | suggest_relations | pull_recording | account_profile(P9)
   accountId     String                              // 目标客户（两类任务都带，便于隔离/分组）
   opportunityId String?                             // suggest_relations 的目标商机
   mode          String   @default("auto")           // auto | web（enrich 数据源）

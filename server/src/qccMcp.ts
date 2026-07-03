@@ -298,6 +298,44 @@ function dedupeBy<T>(arr: T[], key: (x: T) => string): T[] {
   return arr.filter((x) => { const k = key(x); if (!k || seen.has(k)) return false; seen.add(k); return true; });
 }
 
+// ── P9 企业背景档案：工商概况 → 可读文本（get_company_profile 为主、注册信息兜底）。
+// 工具名按企查查 MCP 标准工具集（与 get_key_personnel 同族；⚠️ 未实测真实返回——抽不到已知键则存原文截断兜底）──
+const PROFILE_KEYS = ['企业名称', '统一社会信用代码', '法定代表人', '注册资本', '成立日期', '企业状态', '登记状态', '所属行业', '企业类型', '企业地址', '注册地址', '经营范围', '员工人数', '参保人数', '官网', '简介', '企业简介'];
+function profileTextFrom(result: any): string {
+  const t = toolResultText(result);
+  if (!t) return '';
+  let data: any;
+  try { data = JSON.parse(t); } catch { return t.slice(0, 1500); }
+  const lines: string[] = [];
+  const walk = (o: any) => {
+    if (!o || typeof o !== 'object') return;
+    if (Array.isArray(o)) { o.forEach(walk); return; }
+    for (const [k, v] of Object.entries(o)) {
+      if (PROFILE_KEYS.includes(k) && (typeof v === 'string' || typeof v === 'number') && String(v).trim()) lines.push(`${k}：${String(v).slice(0, 300)}`);
+      else if (v && typeof v === 'object') walk(v);
+    }
+  };
+  walk(data);
+  return lines.length ? [...new Set(lines)].join('\n') : t.slice(0, 1500);
+}
+export async function qccMcpCompanyProfile(cfg: QccMcpConfig, company: string): Promise<string> {
+  const sessionId = await mcpSession(cfg);
+  const tools = ['get_company_profile', 'get_company_registration_info'];
+  let lastErr = '';
+  for (const tool of tools) {
+    try {
+      const r = await rpc(cfg, {
+        jsonrpc: '2.0', id: 5, method: 'tools/call',
+        params: { name: tool, arguments: { searchKey: company } },
+      }, sessionId);
+      if (r.json?.error) { lastErr = r.json.error?.message || ''; continue; }
+      const text = profileTextFrom(r.json?.result);
+      if (text) return text;
+    } catch (e: any) { lastErr = e?.message || ''; }
+  }
+  throw new Error(lastErr ? `企查查 MCP 未返回企业档案（${lastErr}）` : '企查查 MCP 未返回企业档案');
+}
+
 /**
  * 查询某公司的股权（股东）+ 对外投资数据（应传完整登记名；建议先经 qccMcpResolve 锚定）。
  * 复用同一 MCP 会话连发两个工具调用；任一工具失败不影响另一个（各自降级为空数组）。

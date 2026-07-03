@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
 import { enc, dec, loadAiConfig, callLLM } from './ai.js';
-import { qccMcpFetch, qccMcpResolve, qccMcpCompanyData, parseQccMcpConfig } from './qccMcp.js';
+import { qccMcpFetch, qccMcpResolve, qccMcpCompanyData, qccMcpCompanyProfile, parseQccMcpConfig } from './qccMcp.js';
 
 interface DiscoveredPerson { name: string; title: string; }
 
@@ -73,6 +73,28 @@ export async function discoverPersons(tenantId: string, name: string, mode: 'aut
     if (persons.length) return { source: 'ai', persons, note: note || 'AI 联想·质量有限，请后续核实' };
   }
   return { source: 'mock', persons: mockProfile(), note: note || (ai ? 'AI 未给出结果，已用角色清单兜底' : '未配置企查查 MCP 与 AI 模型，先给 G64111 典型角色清单') };
+}
+
+// ── P9 建客户自动研究企业背景：企查查（有 Key，工商数据）→ LLM（凭公开知识，明标未核实）→ null（无源跳过）。
+// 产物由调用方（jobs.ts runProfileJob）落 account 级 Note（source=ai 带前缀溯源），经 curated 素材层进「AI 整理·待核」——绝不写结构化字段（铁律②）。──
+export interface ProfileResearch { source: 'qcc' | 'ai'; content: string }
+export async function researchCompanyProfile(tenantId: string, name: string): Promise<ProfileResearch | null> {
+  const qcc = await prisma.qccConfig.findUnique({ where: { tenantId } });
+  if (qcc?.appKey === 'mcp' && qcc?.secretKeyEnc) {
+    try {
+      const text = await qccMcpCompanyProfile({ url: qcc.baseUrl, token: dec(qcc.secretKeyEnc) }, name);
+      if (text.trim()) return { source: 'qcc', content: text.trim() };
+    } catch { /* 企查查失败 → 回退 LLM */ }
+  }
+  const ai = await loadAiConfig(tenantId);
+  if (ai && ai.provider !== 'mock' && ai.baseUrl && ai.model) {
+    const sys = '你是企业情报助手。根据公司名写一段简明的企业背景概述：主营业务/所属行业/规模体量/组织特点/近期公开动向。只写你确定的公开知识；不确定的方面明说「不确定」，绝不编造具体数字、人名或项目。300 字以内，简洁中文，不用 markdown 标题。';
+    try {
+      const text = (await callLLM(ai, sys, `公司：${name}`, 800)).replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+      if (text) return { source: 'ai', content: text };
+    } catch { /* 无产出 → null */ }
+  }
+  return null;
 }
 
 // QccConfig 复用约定（避免改 schema）：appKey='mcp' 标记 MCP 模式；

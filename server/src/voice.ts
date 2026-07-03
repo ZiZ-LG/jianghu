@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
 import { loadAiConfig, callLLM } from './ai.js';
-import { enqueueEnrichJob, enqueueSuggestJob } from './jobs.js';
+import { enqueueEnrichJob, enqueueSuggestJob, enqueueProfileJob } from './jobs.js';
 import { applyAction } from './mutate.js';
 import { createFieldProposal } from './proposals.js';
 import { nextFreeSlot } from './layout.js';
@@ -184,6 +184,8 @@ export async function ingestVoiceText(tenantId: string, userId: string, input: I
       // 江湖自算：语音建客户后后台入队 enrich（企查查/AI 补充发现关键干系人 → 候选进收件箱人审）。
       // 与口述明说的干系人互补、按名去重；不阻塞回执、失败不影响建客户。
       try { await enqueueEnrichJob(tenantId, id, 'auto'); } catch { /* 超上限等，忽略 */ }
+      // P9：同时入队企业背景研究（企查查/LLM 双轨 → account 级 Note 带溯源 → curated「AI 整理·待核」吸收）
+      try { await enqueueProfileJob(tenantId, id); } catch { /* 超上限等，忽略 */ }
     }
   }
   if (!acc) return { ok: true, receipt: { ...receipt, note: '未能确定客户：请在某个客户/商机里录入，或在口述中说明客户名称。', raw: S(ex.rawNote, 4000) || text } };

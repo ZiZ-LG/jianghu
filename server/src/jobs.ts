@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
-import { discoverPersons } from './enrich.js';
+import { discoverPersons, researchCompanyProfile } from './enrich.js';
 import { generateRelSuggestions } from './suggest.js';
 import { computeReminders, recordPatrol, type PatrolOpp, type PatrolRole } from './patrol.js';
 
@@ -31,6 +31,24 @@ export async function enqueueEnrichJob(tenantId: string, accountId: string, mode
 
   const id = 'job_' + randomUUID().slice(0, 12);
   await prisma.enrichJob.create({ data: { id, tenantId, type: 'enrich_account', accountId, mode, status: 'pending' } });
+  return { id, enqueued: true };
+}
+
+/**
+ * P9 入队一个 account_profile 任务（建客户自动研究企业背景：企查查/LLM 双轨）。
+ * 幂等：同客户已有 pending/processing 则复用。
+ */
+export async function enqueueProfileJob(tenantId: string, accountId: string): Promise<{ id: string; enqueued: boolean }> {
+  const active = await prisma.enrichJob.findFirst({
+    where: { tenantId, accountId, type: 'account_profile', status: { in: ['pending', 'processing'] } },
+  });
+  if (active) return { id: active.id, enqueued: false };
+
+  const activeCount = await prisma.enrichJob.count({ where: { tenantId, status: { in: ['pending', 'processing'] } } });
+  if (activeCount >= MAX_ACTIVE_JOBS_PER_TENANT) throw new Error(`在途自算任务已达上限（${MAX_ACTIVE_JOBS_PER_TENANT}），请稍候`);
+
+  const id = 'job_' + randomUUID().slice(0, 12);
+  await prisma.enrichJob.create({ data: { id, tenantId, type: 'account_profile', accountId, status: 'pending' } });
   return { id, enqueued: true };
 }
 
@@ -131,10 +149,33 @@ async function runSuggestJob(job: { id: string; tenantId: string; opportunityId:
   await finish(job.id, 'done', JSON.stringify({ added: r.added, total: r.total }), '');
 }
 
+// P9 企业背景研究产物的笔记前缀（溯源 + 防重复研究的判重键）
+const PROFILE_NOTE_PREFIX = '【AI 企业背景研究·待核】';
+
+/** P9 执行一个 account_profile 任务：研究企业背景（企查查/LLM 双轨）→ 落 account 级 Note（source=ai 带前缀溯源）。
+ *  产物经 curated 素材层进「AI 整理·待核」综述，绝不写结构化字段（铁律②）；已研究过（同前缀笔记在）则跳过不重复堆。 */
+async function runProfileJob(job: { id: string; tenantId: string; accountId: string }): Promise<void> {
+  const acc = await prisma.account.findFirst({ where: { id: job.accountId, tenantId: job.tenantId } });
+  if (!acc) { await finish(job.id, 'failed', '', '目标客户不存在或已删除'); return; }
+  const dup = await prisma.note.findFirst({ where: { tenantId: job.tenantId, accountId: acc.id, source: 'ai', content: { startsWith: PROFILE_NOTE_PREFIX } } });
+  if (dup) { await finish(job.id, 'done', JSON.stringify({ skipped: 'exists' }), ''); return; }
+  const r = await researchCompanyProfile(job.tenantId, acc.name);
+  if (!r) { await finish(job.id, 'done', JSON.stringify({ source: 'none', note: '未配置企查查/AI，跳过背景研究' }), ''); return; }
+  await prisma.note.create({
+    data: {
+      id: 'note_' + randomUUID().slice(0, 12), tenantId: job.tenantId, accountId: acc.id,
+      content: `${PROFILE_NOTE_PREFIX}（来源：${r.source === 'qcc' ? '企查查工商数据' : 'AI 生成·未联网核实'}）\n${r.content}`,
+      source: 'ai',
+    },
+  });
+  await finish(job.id, 'done', JSON.stringify({ source: r.source, chars: r.content.length }), '');
+}
+
 /** 按 type 分派任务执行。 */
 async function runJob(job: { id: string; tenantId: string; type: string; accountId: string; opportunityId: string | null; mode: string }): Promise<void> {
   if (job.type === 'suggest_relations') return runSuggestJob(job);
   if (job.type === 'pull_recording') return runPullRecordingJob(job);
+  if (job.type === 'account_profile') return runProfileJob(job);
   return runEnrichJob(job);
 }
 
