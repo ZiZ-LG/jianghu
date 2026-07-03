@@ -112,12 +112,18 @@ export function CustomerHub({
         </div>
       ) : (
         <div className="hub-grid">
-          {[...accounts].sort((a, b) => (needsYou?.get(b.id) ?? 0) - (needsYou?.get(a.id) ?? 0)).map((a) => (
+          {[...accounts].sort((a, b) => (needsYou?.get(b.id) ?? 0) - (needsYou?.get(a.id) ?? 0)).map((a) => {
+            const mcpMark = (a.profile as any)?._mcpOrigin;
+            const mcpNeedsReview = !!(mcpMark && mcpMark.needsReview);
+            return (
             <div key={a.id} className="acc-card" onClick={() => onOpen(a.id)}>
               <div className="acc-card-top">
                 <div className="acc-emoji">🏢</div>
                 {(needsYou?.get(a.id) ?? 0) > 0 && (
                   <span className="acc-needs" title="待你拍板的候选/提案/提醒 + 逾期行动">需要你 · {needsYou!.get(a.id)}</span>
+                )}
+                {mcpNeedsReview && (
+                  <span className="acc-mcp" title={`外部 MCP 工具写入·待你核实（最近一次 ${mcpMark.at?.slice(0,10) ?? ''}）。进入客户后编辑档案即可清除标记。`}>外部·MCP·待核</span>
                 )}
                 <button className="acc-del" title="删除客户"
                   onClick={(e) => { e.stopPropagation(); if (confirm(`删除客户「${a.name}」及其全部商机/干系人？`)) onDeleteAccount(a.id); }}>🗑</button>
@@ -129,7 +135,8 @@ export function CustomerHub({
               )}
               <div className="acc-meta">{a.opportunities.length} 个商机 · {a.persons.length} 位干系人</div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

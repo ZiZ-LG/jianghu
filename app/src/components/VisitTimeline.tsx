@@ -30,6 +30,7 @@ export function VisitTimeline({ visits, oppNameById, onExtract, extractingId, ex
               {v.topic && <span className="visit-topic"> · {v.topic}</span>}
               {oppName && <span className="visit-opp">📌 {oppName}</span>}
               {v.origin === 'workbuddy' && <span className="visit-origin">WorkBuddy</span>}
+              {v.origin === 'mcp' && <span className="visit-origin" style={{ background: '#f59e0b', color: '#fff' }} title="外部 MCP 工具写入·待你核实">外部·MCP·待核</span>}
               {canExtract && (
                 <button className="btn ghost sm visit-extract" disabled={busy} onClick={() => onExtract!(v)}
                   title="把这条纪要自动整理成图上的人物 / 角色 / 关系，拿不准的进候选待你确认">

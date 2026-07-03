@@ -206,7 +206,7 @@ export interface VisitNote {
   topic: string;
   summary: string;            // WorkBuddy 提炼正文
   participants: VisitParticipant[];
-  origin?: string;            // workbuddy | manual
+  origin?: string;            // workbuddy | manual | mcp（外部 MCP 直写·待核，P12）
   createdBy?: string;         // 提交者 userId
   createdAt?: string;         // ISO
 }

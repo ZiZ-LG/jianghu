@@ -607,6 +607,10 @@ async function upsertAccount(tenantId: string, _userId: string, args: Record<str
     existing = await prisma.account.findFirst({ where: { tenantId, unifiedCreditCode } });
   }
 
+  // P12：外部来源·待核标记（铁律②：内外一致——MCP 直写路径也要可辨识、可审）。
+  // 落在 profile._mcpOrigin：每次外部 upsert 都刷新 at 与 needsReview，人在江湖里改任何字段（走 UPDATE_ACCOUNT 覆盖 profile 时清空）视为已核。
+  const mcpMark = { source: 'mcp', at: new Date().toISOString(), needsReview: true };
+
   if (existing) {
     // 命中 → UPDATE：仅 patch 入参提供的字段（避免把未传字段清空）
     const patch: Record<string, unknown> = {};
@@ -617,9 +621,12 @@ async function upsertAccount(tenantId: string, _userId: string, args: Record<str
     if (args.region !== undefined) patch.region = str(args.region, 40);
     if (args.group !== undefined) patch.group = str(args.group, 100);
     if (args.primaryOwner !== undefined) patch.primaryOwner = str(args.primaryOwner, 40);
-    if (profile !== undefined) patch.profile = profile;
+    // 合并 profile：保留原字段（人已填的不丢）+ 覆盖入参传的 + 追加/刷新 _mcpOrigin 标记
+    let curProfile: Record<string, unknown> = {};
+    try { curProfile = JSON.parse(existing.profile || '{}'); } catch { /* 存量坏值，覆盖为空对象 */ }
+    patch.profile = { ...curProfile, ...(profile ?? {}), _mcpOrigin: mcpMark };
     await applyAction(tenantId, { type: 'UPDATE_ACCOUNT', accId: existing.id, patch });
-    return { id: existing.id, updated: true, origin: 'workbuddy', note: `已按幂等锚命中现有客户「${existing.name}」并更新。` };
+    return { id: existing.id, updated: true, origin: 'mcp', note: `已按幂等锚命中现有客户「${existing.name}」并更新（外部来源·待核，见客户卡）。` };
   }
 
   // 未命中 → CREATE（新建必须有 name）
@@ -634,7 +641,7 @@ async function upsertAccount(tenantId: string, _userId: string, args: Record<str
       region: str(args.region, 40),
       group: str(args.group, 100),
       primaryOwner: str(args.primaryOwner, 40),
-      profile: profile ?? {},
+      profile: { ...(profile ?? {}), _mcpOrigin: mcpMark },
     },
   });
   // 江湖自算：新建客户后后台入队 enrich 任务（企查查/AI 发现干系人 → 候选进收件箱人审，铁律②）。
@@ -643,7 +650,7 @@ async function upsertAccount(tenantId: string, _userId: string, args: Record<str
   try { selfCompute = (await enqueueEnrichJob(tenantId, id, 'auto')).enqueued; } catch { /* 超上限等，忽略 */ }
   // P9：同时入队企业背景研究（企查查/LLM 双轨 → account 级 Note 带溯源 → curated「AI 整理·待核」吸收）
   try { await enqueueProfileJob(tenantId, id); } catch { /* 超上限等，忽略 */ }
-  return { id, created: true, origin: 'workbuddy', note: `已新建客户「${name}」。${selfCompute ? '已启动后台自算补全干系人+企业背景研究，完成后见收件箱/客户档案。' : ''}` };
+  return { id, created: true, origin: 'mcp', note: `已新建客户「${name}」（外部来源·待核，见客户卡）。${selfCompute ? '已启动后台自算补全干系人+企业背景研究，完成后见收件箱/客户档案。' : ''}` };
 }
 
 /** upsert_opportunity：定位父客户 → 按商机 externalRef 幂等 upsert。守"winProbability 不由 WB 推/覆盖"。 */
@@ -693,12 +700,18 @@ async function upsertOpportunity(tenantId: string, _userId: string, args: Record
     ? await prisma.opportunity.findFirst({ where: { tenantId, accountId: account.id, externalRef } })
     : null;
 
+  // P12：外部来源·待核标记落 meta._mcpOrigin（与 upsertAccount 同惯例）
+  const mcpMark = { source: 'mcp', at: new Date().toISOString(), needsReview: true };
+
   if (existing) {
-    const patch: Record<string, unknown> = { ...fields };
+    // 合并 meta：保留原字段 + 入参传的 + 追加/刷新 _mcpOrigin
+    let curMeta: Record<string, unknown> = {};
+    try { curMeta = JSON.parse(existing.meta || '{}'); } catch { /* 存量坏值 */ }
+    const patch: Record<string, unknown> = { ...fields, meta: { ...curMeta, ...(fields.meta as Record<string, unknown> ?? {}), _mcpOrigin: mcpMark } };
     if (name) patch.name = name;
     if (externalRef && !existing.externalRef) patch.externalRef = externalRef;
     await applyAction(tenantId, { type: 'UPDATE_OPP', accId: account.id, oppId: existing.id, patch });
-    return { id: existing.id, accountId: account.id, updated: true, origin: 'workbuddy', note: `已命中商机「${existing.name}」并更新（winProbability 留给销售自填，未改）。` };
+    return { id: existing.id, accountId: account.id, updated: true, origin: 'mcp', note: `已命中商机「${existing.name}」并更新（外部来源·待核；winProbability 留给销售自填，未改）。` };
   }
 
   if (!name) throw new Error('未命中现有商机，新建需提供 name');
@@ -712,12 +725,13 @@ async function upsertOpportunity(tenantId: string, _userId: string, args: Record
       engageStage: engageStage ?? '需求调研立项',
       status: status ?? 'active',
       ...fields,
+      meta: { ...(fields.meta as Record<string, unknown> ?? {}), _mcpOrigin: mcpMark },
     },
   });
   // 江湖自算：新建商机后后台入队关系推断（图算法+LLM 推断商机内关系 → 候选进收件箱人审）。不阻塞、失败不影响落库。
   let selfCompute = false;
   try { selfCompute = (await enqueueSuggestJob(tenantId, account.id, id)).enqueued; } catch { /* 超上限等，忽略 */ }
-  return { id, accountId: account.id, created: true, origin: 'workbuddy', note: `已在客户「${account.name}」下新建商机「${name}」。${selfCompute ? '已启动后台关系推断，候选见收件箱。' : ''}` };
+  return { id, accountId: account.id, created: true, origin: 'mcp', note: `已在客户「${account.name}」下新建商机「${name}」（外部来源·待核）。${selfCompute ? '已启动后台关系推断，候选见收件箱。' : ''}` };
 }
 
 /** append_visit_note：定位父客户(+可选商机) → 按 externalRef 幂等 upsert 拜访记录。 */
@@ -764,15 +778,16 @@ async function appendVisitNote(tenantId: string, userId: string, args: Record<st
     if (opportunityId) patch.opportunityId = opportunityId;
     if (participants !== undefined) patch.participants = participants;
     await applyAction(tenantId, { type: 'UPDATE_VISIT', accId: account.id, visitId: existing.id, patch });
-    return { id: existing.id, accountId: account.id, opportunityId: opportunityId ?? existing.opportunityId ?? undefined, updated: true, origin: 'workbuddy', note: `已按 externalRef 命中拜访记录并更新（${date}）。` };
+    return { id: existing.id, accountId: account.id, opportunityId: opportunityId ?? existing.opportunityId ?? undefined, updated: true, origin: 'mcp', note: `已按 externalRef 命中拜访记录并更新（${date}·外部来源·待核）。` };
   }
 
   const id = 'visit_' + randomUUID().slice(0, 12);
+  // P12：origin 从硬编码 'workbuddy' 改为 'mcp'——精确辨识外部 MCP 直写路径（前端 VisitTimeline/FocusPanel 已扩相应显示）
   await applyAction(tenantId, {
     type: 'ADD_VISIT', accId: account.id,
-    visit: { id, accountId: account.id, opportunityId, externalRef, date, topic, summary, participants: participants ?? [], origin: 'workbuddy', createdBy: userId },
+    visit: { id, accountId: account.id, opportunityId, externalRef, date, topic, summary, participants: participants ?? [], origin: 'mcp', createdBy: userId },
   });
-  return { id, accountId: account.id, opportunityId: opportunityId ?? undefined, created: true, origin: 'workbuddy', note: `已记录拜访（${date}）。` };
+  return { id, accountId: account.id, opportunityId: opportunityId ?? undefined, created: true, origin: 'mcp', note: `已记录拜访（${date}·外部来源·待核）。` };
 }
 
 // ── 阶段1.5 评分状态工具：WorkBuddy 推 ADUR/BI/UCV，G64111 由引擎据此实时算（守硬规则⑥不存死分）──

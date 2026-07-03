@@ -56,7 +56,7 @@ export function FocusPanel({
     ...person.logs.map((l) => ({ date: l.date, body: l.content, source: '交往日志', sensitive: l.sensitive })),
     ...visitNotes
       .filter((vn) => vn.participants.some((p) => p.name === person.name))
-      .map((vn) => ({ date: vn.date, title: vn.topic, body: vn.summary, source: `拜访 · ${vn.origin === 'workbuddy' ? 'WorkBuddy' : '手动'}` })),
+      .map((vn) => ({ date: vn.date, title: vn.topic, body: vn.summary, source: `拜访 · ${vn.origin === 'mcp' ? '外部·MCP·待核' : vn.origin === 'workbuddy' ? 'WorkBuddy' : '手动'}` })),
     ...evDyn,
   ].sort((a, b) => (a.date < b.date ? 1 : -1));
 
