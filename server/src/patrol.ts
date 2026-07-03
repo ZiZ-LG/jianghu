@@ -1,11 +1,12 @@
 // 后台巡检引擎（确定性·零 LLM）：扫描活跃商机，发现「该动了」的信号 → 提醒型提案草稿。
 // 纯函数(computeReminders)便于单测；DB 读写 / 去重 / 自动消除在 jobs.ts。
-// 三规则互补于前端 GapCards(g64111 缺口)——这里只管「时间 / 覆盖」维度。
+// 五规则互补于前端 GapCards(g64111 缺口)——这里只管「时间 / 覆盖」维度。
 // 严守铁律②：只产出草稿(进收件箱人审)，绝不直接改库。
 
 const DAY = 24 * 60 * 60 * 1000;
 export const STALL_DAYS = 7; // 商机多久无新动作算停滞
 export const RECHECK_DAYS = 14; // 关键人支持度多久没新证据该复查
+export const FORM_GRACE_DAYS = 21; // 关键人 FORM 允许空缺的宽限期（建立起 N 天内不催）
 
 // 巡检输入：单个商机的轻量快照（jobs.ts 从 prisma 组装；不依赖 prisma 类型，便于单测）
 export interface PatrolRole {
@@ -14,6 +15,16 @@ export interface PatrolRole {
   role: string; // A | D | U | R | C
   sentiment: string; // star|plus|neutral|unknown|minus|x
   lastEvidenceAt: Date | null; // 该人最近一条证据时间
+  personCreatedAt: Date;        // 该人建立时间（P14 FORM 空缺规则用宽限期判断）
+  formFilledCount: number;      // FORM 四大项（family/occupation/recreation/moneyMotivation）非空数量 0..4
+}
+// 行动牌逾期规则的最小输入（P14）
+export interface PatrolAction {
+  actionId: string;
+  title: string;
+  personId: string | null; // 责任人（可空）
+  endDate: string;         // YYYY-MM-DD 最晚完成日
+  personName?: string;     // 冗余便于文案（jobs 组装时填）
 }
 export interface PatrolOpp {
   tenantId: string;
@@ -24,9 +35,10 @@ export interface PatrolOpp {
   createdAt: Date; // 商机建立时间（无任何活动时的停滞基准）
   lastActivityAt: Date | null; // max(visitNote/evidence/planAction createdAt)
   roles: PatrolRole[];
+  overdueActions: PatrolAction[]; // 已上桌·未完成·endDate 已过 的行动牌（jobs.ts 预筛，patrol.ts 不再查库）
 }
 
-export type ReminderKind = 'stalled' | 'no_decider' | 'sentiment_recheck';
+export type ReminderKind = 'stalled' | 'no_decider' | 'sentiment_recheck' | 'action_overdue' | 'form_empty';
 export interface ReminderDraft {
   tenantId: string;
   accountId: string;
@@ -102,6 +114,34 @@ export function computeReminders(opp: PatrolOpp, now: Date): ReminderDraft[] {
       title: `${r.personName}(${r.role}) 的支持度该复查了`,
       detail: `当前支持度「${SENT_LABEL[r.sentiment] ?? r.sentiment}」，${since}，建议复查是否仍成立。`,
       dedupeKey: `${opp.opportunityId}:sentiment_recheck:${r.personId}`,
+    });
+  }
+
+  // P14 规则④：行动牌逾期——已上桌未完成，endDate 已过。每张牌一条，警戒等级按逾期天数分档
+  for (const a of opp.overdueActions) {
+    const overdueDays = daysBetween(now, new Date(a.endDate + 'T00:00:00'));
+    if (overdueDays <= 0) continue; // 防御：入参已过滤，双保险
+    const who = a.personName ? `【责任人 ${a.personName}】` : '（未指定责任人）';
+    out.push({
+      ...base, kind: 'action_overdue', entityId: a.actionId,
+      severity: overdueDays >= 7 ? 'warn' : 'info',
+      title: `行动逾期 ${overdueDays} 天：${a.title || '（未命名）'}`,
+      detail: `${who} 计划最晚 ${a.endDate} 完成，已逾期 ${overdueDays} 天。做完就打卡反馈；跟不上就调期。`,
+      dedupeKey: `${opp.opportunityId}:action_overdue:${a.actionId}`,
+    });
+  }
+
+  // P14 规则⑤：关键人 FORM 长期空缺——A/D 建立 ≥ FORM_GRACE_DAYS，FORM 四大项全空。1 个人一条
+  for (const r of opp.roles) {
+    if (r.role !== 'A' && r.role !== 'D') continue;
+    if (r.formFilledCount > 0) continue; // 四大项任一有值就算跑起来了
+    const ageDays = daysBetween(now, r.personCreatedAt);
+    if (ageDays < FORM_GRACE_DAYS) continue; // 建立宽限期内不催
+    out.push({
+      ...base, kind: 'form_empty', entityId: r.personId, severity: 'info',
+      title: `${r.personName}(${r.role}) 的 FORM 一片空白（${ageDays} 天）`,
+      detail: `FORM 家庭/事业/爱好/动机 四大项都没记录，${ageDays} 天没长东西。下次拜访聊两句人情就能补上——不用一次填全。`,
+      dedupeKey: `${opp.opportunityId}:form_empty:${r.personId}`,
     });
   }
 

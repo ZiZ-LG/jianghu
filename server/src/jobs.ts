@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { prisma } from './prisma.js';
 import { discoverPersons, researchCompanyProfile } from './enrich.js';
 import { generateRelSuggestions } from './suggest.js';
-import { computeReminders, recordPatrol, type PatrolOpp, type PatrolRole } from './patrol.js';
+import { computeReminders, recordPatrol, type PatrolOpp, type PatrolRole, type PatrolAction } from './patrol.js';
 
 // 江湖自算 · 轻量后台任务队列（DB-backed）。
 // 设计取舍（对齐架构纲领「加轻量 job 队列」）：单实例 setInterval 消费，原子 claim；
@@ -260,14 +260,36 @@ export async function runPatrol(): Promise<{ scanned: number; created: number; r
 
     const roles = await prisma.oppRole.findMany({ where: { opportunityId: opp.id } });
     const persons = roles.length ? await prisma.person.findMany({ where: { id: { in: roles.map((r) => r.personId) } } }) : [];
+    const personById = new Map(persons.map((p) => [p.id, p]));
     const nameOf = new Map(persons.map((p) => [p.id, p.name]));
+    // P14：FORM 四大项非空计数（family/occupation/recreation/moneyMotivation）——FORM 空缺规则的量化输入
+    const formFilled = (formStr: string): number => {
+      try { const f = JSON.parse(formStr || '{}');
+        return ['family', 'occupation', 'recreation', 'moneyMotivation'].filter((k) => String(f?.[k] || '').trim() !== '').length;
+      } catch { return 0; }
+    };
     const patrolRoles: PatrolRole[] = roles.map((r) => ({
       personId: r.personId, personName: nameOf.get(r.personId) ?? '某干系人',
       role: r.role, sentiment: r.sentiment, lastEvidenceAt: lastEvByPerson.get(r.personId) ?? null,
+      // Person 表无 createdAt——用 OppRole.assessedAt（M2 有，SET_ROLE 时刷新）代理，兜底商机 createdAt
+      personCreatedAt: r.assessedAt ?? opp.createdAt,
+      formFilledCount: formFilled(personById.get(r.personId)?.form ?? '{}'),
     }));
+
+    // P14：预筛已上桌未完成、endDate 已过的行动牌（草稿=没上桌不算逾期）
+    const nowYmd = now.toISOString().slice(0, 10);
+    const overdueRaw = await prisma.planAction.findMany({
+      where: { opportunityId: opp.id, done: false, draft: false, endDate: { lt: nowYmd, not: '' } },
+      select: { id: true, title: true, personId: true, endDate: true },
+    });
+    const overdueActions: PatrolAction[] = overdueRaw.map((a) => ({
+      actionId: a.id, title: a.title, personId: a.personId ?? null, endDate: a.endDate,
+      personName: a.personId ? nameOf.get(a.personId) : undefined,
+    }));
+
     const patrolOpp: PatrolOpp = {
       tenantId: opp.tenantId, accountId: opp.accountId, accountName: accName.get(opp.accountId) ?? '',
-      opportunityId: opp.id, oppName: opp.name, createdAt: opp.createdAt, lastActivityAt, roles: patrolRoles,
+      opportunityId: opp.id, oppName: opp.name, createdAt: opp.createdAt, lastActivityAt, roles: patrolRoles, overdueActions,
     };
 
     const drafts = computeReminders(patrolOpp, now);
