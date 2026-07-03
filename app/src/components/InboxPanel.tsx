@@ -11,11 +11,17 @@ import { Modal } from './Modal';
 const LAYER_COLOR: Record<string, string> = { L1: '#2563eb', L2: '#9333ea', L3: '#16a34a', L4: '#ef4444' };
 const ORIGIN: Record<string, string> = { graph: '📊 图谱', llm: '🤖 AI', qcc: '🏢 企查查', mcp: '🌐 AI 调研', ai: '🤖 AI', voice: '🎙️ 录音', recording: '🎧 录音转写', engine: '⚙️ 引擎' };
 const SENT_LABEL: Record<string, string> = { star: '排他支持', plus: '明确支持', neutral: '中立', unknown: '未知', minus: '负面/抗拒', x: '倒向对手' };
-const FIELD_LABEL: Record<string, string> = { sentiment: '支持度', confidence: '可信度' };
+const FIELD_LABEL: Record<string, string> = { sentiment: '支持度', confidence: '可信度', isKeyInfluencer: '关键影响人' }; // P13 扩广度
 const KIND_LABEL: Record<string, string> = { stalled: '商机停滞', no_decider: '决策链缺口', sentiment_recheck: '支持度复查' };
 const SENT_OPTS = ['star', 'plus', 'neutral', 'minus', 'x'];
+const CONFIDENCE_OPTS = ['共识', '明确', '推理', '不清']; // P13：可信度四档，OppRole.confidence 值域
 const TIER_LABEL: Record<string, string> = { weak: '弱', mid: '中', strong: '强' };
-const valLabel = (field: string, v: string) => (field === 'sentiment' ? (SENT_LABEL[v] ?? v) : v);
+// P13：值→显示文案泛化——sentiment 走标签映射；isKeyInfluencer 布尔→是/否；其余原样
+const valLabel = (field: string, v: string) => (
+  field === 'sentiment' ? (SENT_LABEL[v] ?? v)
+  : field === 'isKeyInfluencer' ? (v === 'true' ? '是' : v === 'false' ? '否' : v)
+  : v
+);
 
 type Item =
   | { kind: 'reminder'; id: string; accountId: string; accountName: string; data: InboxReminder }
@@ -236,6 +242,17 @@ export function InboxPanel({ rels, persons, proposals, reminders, evidences, acc
                       {it.kind === 'proposal' && it.data.field === 'sentiment' && (
                         <select className="inbox-override" value={overrides[it.id] ?? it.data.newValue} onChange={(e) => setOverrides((o) => ({ ...o, [it.id]: e.target.value }))} title="改后采纳：选一个不同的值再采纳">
                           {SENT_OPTS.map((s) => <option key={s} value={s}>{SENT_LABEL[s]}</option>)}
+                        </select>
+                      )}
+                      {/* P13 扩广度：可信度四档 / 关键影响人是否 */}
+                      {it.kind === 'proposal' && it.data.field === 'confidence' && (
+                        <select className="inbox-override" value={overrides[it.id] ?? it.data.newValue} onChange={(e) => setOverrides((o) => ({ ...o, [it.id]: e.target.value }))} title="改后采纳：选一档可信度再采纳">
+                          {CONFIDENCE_OPTS.map((c) => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      )}
+                      {it.kind === 'proposal' && it.data.field === 'isKeyInfluencer' && (
+                        <select className="inbox-override" value={overrides[it.id] ?? it.data.newValue} onChange={(e) => setOverrides((o) => ({ ...o, [it.id]: e.target.value }))} title="改后采纳：是否为关键影响人">
+                          <option value="true">是</option><option value="false">否</option>
                         </select>
                       )}
                       {it.kind === 'evidence' && (

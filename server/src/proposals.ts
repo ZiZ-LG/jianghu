@@ -22,11 +22,29 @@ export async function createFieldProposal(tenantId: string, p: {
   void import('./wecom.js').then((w) => w.pushProposalCard(tenantId, cpId)).catch(() => {});
 }
 
-/** 采纳：据 entityKind/field 走既有 applyAction 落库（v2.0 = oppRole.sentiment）。value 为最终值（改后采纳时是覆盖值）。 */
+// P13 提案值域校验：非法值直接抛错（改后采纳的兜底），SET_ROLE.patch 精确对齐已有字段类型
+const SENT_VALUES = new Set(['star', 'plus', 'neutral', 'unknown', 'minus', 'x']);
+const CONFIDENCE_VALUES = new Set(['共识', '明确', '推理', '不清']);
+const BOOL_VALUES = new Set(['true', 'false']);
+
+/** 采纳：据 entityKind/field 走既有 applyAction 落库。P13 扩：sentiment/confidence/isKeyInfluencer 三种 oppRole 字段。 */
 async function applyProposal(tenantId: string, cp: { accountId: string; opportunityId: string | null; entityKind: string; entityId: string; field: string }, value: string): Promise<void> {
-  if (cp.entityKind === 'oppRole' && cp.opportunityId && cp.field === 'sentiment') {
-    await applyAction(tenantId, { type: 'SET_ROLE', accId: cp.accountId, oppId: cp.opportunityId, personId: cp.entityId, patch: { sentiment: value } } as any);
-    return;
+  if (cp.entityKind === 'oppRole' && cp.opportunityId) {
+    if (cp.field === 'sentiment') {
+      if (!SENT_VALUES.has(value)) throw new Error(`sentiment 值非法：${value}`);
+      await applyAction(tenantId, { type: 'SET_ROLE', accId: cp.accountId, oppId: cp.opportunityId, personId: cp.entityId, patch: { sentiment: value } } as any);
+      return;
+    }
+    if (cp.field === 'confidence') {
+      if (!CONFIDENCE_VALUES.has(value)) throw new Error(`confidence 值非法：${value}`);
+      await applyAction(tenantId, { type: 'SET_ROLE', accId: cp.accountId, oppId: cp.opportunityId, personId: cp.entityId, patch: { confidence: value } } as any);
+      return;
+    }
+    if (cp.field === 'isKeyInfluencer') {
+      if (!BOOL_VALUES.has(value)) throw new Error(`isKeyInfluencer 值非法：${value}`);
+      await applyAction(tenantId, { type: 'SET_ROLE', accId: cp.accountId, oppId: cp.opportunityId, personId: cp.entityId, patch: { isKeyInfluencer: value === 'true' } } as any);
+      return;
+    }
   }
   throw new Error(`暂不支持的提案类型：${cp.entityKind}.${cp.field}`);
 }
