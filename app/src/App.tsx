@@ -335,40 +335,20 @@ export default function App() {
   // AI 关系/人物候选的【生成】= selfCompute（自算补全，异步入队，见下）；【审核】统一走收件箱（inbox* 系列）。
 
   // ── 江湖自算·补全：后台入队 enrich(客户·发现干系人) + suggest_relations(当前商机·推断关系) → 轮询 → 刷新候选。产物走人审，铁律② ──
+  // P11：彻底异步——点完即走。入队立刻返回、砍 2-50s 前台轮询；进度看收件箱角标（P2 心跳/巡检提醒同套感知模型）。
+  // 任务真终态由 worker 消费后自然反映到 inbox（下一次 loadInbox 或 hub 刷新）；这里只负责启动+提示。
   const selfCompute = async () => {
     if (!account || selfComputeBusy) return;
     setSelfComputeBusy(true);
     try {
       const tasks: string[] = [];
       const er = await api.enrichEnqueue(account.id, 'auto');
-      tasks.push(er.enqueued ? '发现干系人' : '发现干系人(进行中)');
+      tasks.push(er.enqueued ? '发现干系人' : '发现干系人（进行中）');
       if (opp) {
         const sr = await api.suggestEnqueue(opp.id);
-        tasks.push(sr.enqueued ? '推断关系' : '推断关系(进行中)');
+        tasks.push(sr.enqueued ? '推断关系' : '推断关系（进行中）');
       }
-      setSyncErr(`🔍 已启动自算·${tasks.join(' + ')}，完成后进收件箱…`);
-      // 轮询：等该客户名下所有任务跑完（worker 每 5s 一次，最多 ~50s）
-      for (let i = 0; i < 25; i++) {
-        await new Promise((s) => setTimeout(s, 2000));
-        const { jobs } = await api.enrichJobs(account.id);
-        const active = jobs.filter((j) => j.status === 'pending' || j.status === 'processing');
-        if (active.length) continue;
-        // 全部终态：汇总结果并刷新候选
-        let persons = 0, rels = 0, onlyMock = true;
-        for (const j of jobs.slice(0, 4)) {
-          try {
-            const res = JSON.parse(j.result || '{}');
-            if (j.type === 'enrich_account') { persons += res.created ?? 0; if (res.source && res.source !== 'mock') onlyMock = false; }
-            if (j.type === 'suggest_relations') { rels += res.added ?? 0; onlyMock = false; }
-          } catch { /* 摘要解析失败忽略 */ }
-        }
-        if (opp) { try { setSuggestions((await api.suggestList(opp.id)).suggestions); } catch { /* 下次同步 */ } }
-        await loadInbox();
-        setSyncErr(onlyMock && persons === 0 && rels === 0
-          ? '🔍 自算完成：未配置企查查 MCP / AI 模型，暂无可发现内容（可在设置里配置数据源）。'
-          : `🔍 自算完成：发现 ${persons} 位候选干系人 + ${rels} 条候选关系，请到收件箱人审。`);
-        break;
-      }
+      setSyncErr(`🔍 已启动自算·${tasks.join(' + ')}——后台跑，完成后候选进 📥 收件箱`);
     } catch (e: any) { setSyncErr('自算失败：' + (e?.message || e)); }
     finally { setSelfComputeBusy(false); }
   };
@@ -510,7 +490,7 @@ export default function App() {
                 {!isMobile && (<>
                   <button className="btn cta xs" onClick={() => setAddIntelOpen(true)} title="接入录音：飞书妙记 / 上传音频 / 得到大脑——转写后一键抽取成图（打字/粘口述走坞底「和地图对话」）">🎧 接入录音</button>
                   <button className="btn ghost xs" onClick={() => setMdDocOpen(true)} title="客户档案 / 商机档案 / 拜访记录（.md 文档）">📋 作战档案</button>
-                  <button className="btn ghost xs" onClick={selfCompute} disabled={selfComputeBusy} title="江湖自算：后台用企查查/AI 发现关键干系人 + 推断当前商机内关系，候选进收件箱待人审">{selfComputeBusy ? '⏳ 自算中…' : '🔍 自算补全'}</button>
+                  <button className="btn ghost xs" onClick={selfCompute} disabled={selfComputeBusy} title="再跑一遍自算：后台用企查查/AI 发现干系人 + 推断商机内关系 + 补企业背景研究，候选进收件箱人审。建客户已自动跑过一次，这里是「再来一遍」。">{selfComputeBusy ? '⏳ 已启动…' : '↻ 重新补全'}</button>
                   <button className="btn ghost xs" onClick={() => setInboxOpen(true)}>📥 收件箱{inbox.total > 0 ? ` (${inbox.total})` : ''}</button>
                   <span style={{ marginLeft: 'auto' }}>
                     <OverflowMenu align="right" label="⚙️" items={[
@@ -525,7 +505,7 @@ export default function App() {
                   <OverflowMenu align="left" label="⋯ 操作" items={[
                     { label: '🎧 接入录音', primary: true, onClick: () => setAddIntelOpen(true) },
                     { label: '📋 作战档案', onClick: () => setMdDocOpen(true) },
-                    { label: selfComputeBusy ? '⏳ 自算中…' : '🔍 自算补全', onClick: selfCompute },
+                    { label: selfComputeBusy ? '⏳ 自算中…' : '↻ 重新补全', onClick: selfCompute },
                     { label: '📥 收件箱', badge: inbox.total > 0 ? String(inbox.total) : undefined, onClick: () => setInboxOpen(true) },
                     { label: '❓ 帮助', onClick: () => setHelpOpen(true) },
                     { label: theme === 'dark' ? '☀️ 白天模式' : '🌙 黑夜模式', onClick: toggleTheme },

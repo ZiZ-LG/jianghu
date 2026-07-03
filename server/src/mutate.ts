@@ -1,4 +1,5 @@
 import { prisma } from './prisma.js';
+import { enqueueEnrichJob, enqueueProfileJob } from './jobs.js';
 
 /** 乐观锁冲突：目标实体 version 与客户端 baseVersion 不一致（他人已先改）。index.ts 据此回 409。 */
 class ConflictError extends Error {
@@ -48,6 +49,9 @@ export async function applyAction(tenantId: string, action: any): Promise<void> 
         externalRef: a.externalRef ?? null, region: a.region ?? '', group: a.group ?? '', primaryOwner: a.primaryOwner ?? '',
         profile: S(a.profile ?? {}),
       } });
+      // P11：UI 建客户补自动入队（voice/MCP 路径已入队，UI 遗漏=不对称）——干系人发现 + 企业背景研究
+      try { await enqueueEnrichJob(tenantId, a.id, 'auto'); } catch { /* 超上限等，忽略 */ }
+      try { await enqueueProfileJob(tenantId, a.id); } catch { /* 超上限等，忽略 */ }
       return;
     }
     case 'UPDATE_ACCOUNT': {
