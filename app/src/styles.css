@@ -1606,6 +1606,11 @@ html[data-theme="dark"] .modal { box-shadow: 0 24px 60px rgba(0,0,0,.6), 0 0 44p
 .inbox-diff .diff-new { color: var(--accent); font-weight: 600; }
 .inbox-impact { font-size: 10px; padding: 1px 7px; border-radius: 8px; color: #fff; white-space: nowrap; margin-left: 4px; font-weight: 600; }
 .inbox-override { padding: 3px 6px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); font-size: 11px; }
+/* P10 人物/关系候选改后采纳：actions 区 inline 编辑行 + 主体「✍️改」标记 */
+.inbox-editrow { display: flex; gap: 4px; }
+.inbox-edit { width: 76px; padding: 3px 6px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); font-size: 11px; }
+.inbox-edit:focus { border-color: var(--accent); outline: none; }
+.inbox-edited { margin-left: 4px; font-size: 10px; font-weight: 600; color: var(--accent); }
 
 /* ═══ 场景 A · 手机竖屏时刻流（MomentFlow）═══ */
 :root {

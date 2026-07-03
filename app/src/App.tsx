@@ -380,9 +380,9 @@ export default function App() {
     if (opp) { try { setSuggestions((await api.suggestList(opp.id)).suggestions); } catch { /* 下次同步 */ } } // 采纳/忽略关系候选后刷新画布灰虚线候选边
     await loadInbox();
   };
-  const inboxAcceptRel = async (id: string) => { try { await api.suggestAccept(id); await refreshAfterAccept(); } catch (e: any) { setSyncErr('采纳失败：' + e.message); } };
+  const inboxAcceptRel = async (id: string, override?: { layer?: string; label?: string }) => { try { await api.suggestAccept(id, override); await refreshAfterAccept(); } catch (e: any) { setSyncErr('采纳失败：' + e.message); } };
   const inboxRejectRel = async (id: string) => { try { await api.suggestReject(id); await loadInbox(); } catch (e: any) { setSyncErr('忽略失败：' + e.message); } };
-  const inboxAcceptPerson = async (id: string) => { try { await api.personSuggestAccept(id); await refreshAfterAccept(); } catch (e: any) { setSyncErr('采纳失败：' + e.message); } };
+  const inboxAcceptPerson = async (id: string, override?: { name?: string; title?: string }) => { try { await api.personSuggestAccept(id, override); await refreshAfterAccept(); } catch (e: any) { setSyncErr('采纳失败：' + e.message); } };
   const inboxRejectPerson = async (id: string) => { try { await api.personSuggestReject(id); await loadInbox(); } catch (e: any) { setSyncErr('忽略失败：' + e.message); } };
   const inboxAcceptProposal = async (id: string, overrideValue?: string) => { try { await api.proposalAccept(id, overrideValue); await refreshAfterAccept(); } catch (e: any) { setSyncErr('采纳失败：' + e.message); } };
   const inboxRejectProposal = async (id: string) => { try { await api.proposalReject(id); await loadInbox(); } catch (e: any) { setSyncErr('忽略失败：' + e.message); } };

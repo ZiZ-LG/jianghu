@@ -31,9 +31,9 @@ export function InboxPanel({ rels, persons, proposals, reminders, evidences, acc
   reminders: InboxReminder[];                            // 巡检提醒（提醒型，只读）
   evidences: InboxEvidence[];                            // M3 证据待审（机器抽取的行为信号）
   accounts: Account[];                                  // 全树（算影响预览：找目标 account/opp）
-  onAccept: (id: string) => void;                       // 关系候选采纳
+  onAccept: (id: string, override?: { layer?: string; label?: string }) => void;   // 关系候选采纳（P10 可改层级/标签后采纳）
   onReject: (id: string) => void;
-  onAcceptPerson: (id: string) => void;                 // 人物候选采纳
+  onAcceptPerson: (id: string, override?: { name?: string; title?: string }) => void; // 人物候选采纳（P10 可改名字/职务后采纳）
   onRejectPerson: (id: string) => void;
   onAcceptProposal: (id: string, overrideValue?: string) => void; // 字段提案采纳（可改后采纳）
   onRejectProposal: (id: string) => void;
@@ -46,6 +46,9 @@ export function InboxPanel({ rels, persons, proposals, reminders, evidences, acc
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [overrides, setOverrides] = useState<Record<string, string>>({}); // 提案改后采纳：id → 选定值
   const [evDirs, setEvDirs] = useState<Record<string, -1 | 0 | 1>>({});   // 证据改后采纳：id → 人工定向
+  // P10 改后采纳扩到最后两类二元卡：人物（名字/职务）、关系（层级/标签）——编辑才建条目，采纳时带上
+  const [personEdits, setPersonEdits] = useState<Record<string, { name: string; title: string }>>({});
+  const [relEdits, setRelEdits] = useState<Record<string, { layer: string; label: string }>>({});
 
   const acctList = useMemo(() => {
     const m = new Map<string, string>();
@@ -99,8 +102,8 @@ export function InboxPanel({ rels, persons, proposals, reminders, evidences, acc
       if (!sel.has(keyOf(it))) continue;
       if (it.kind === 'reminder') { if (!accept) onDismissReminder(it.id); } // 提醒只读：批量仅「忽略」，采纳无意义
       else if (it.kind === 'evidence') onReviewEvidence(it.id, accept ? 'approve' : 'reject', accept ? (evDirs[it.id] ?? undefined) : undefined);
-      else if (it.kind === 'person') accept ? onAcceptPerson(it.id) : onRejectPerson(it.id);
-      else if (it.kind === 'rel') accept ? onAccept(it.id) : onReject(it.id);
+      else if (it.kind === 'person') accept ? onAcceptPerson(it.id, personEdits[it.id]) : onRejectPerson(it.id);
+      else if (it.kind === 'rel') accept ? onAccept(it.id, relEdits[it.id]) : onReject(it.id);
       else accept ? onAcceptProposal(it.id, overrides[it.id]) : onRejectProposal(it.id);
     }
     setSel(new Set());
@@ -203,8 +206,8 @@ export function InboxPanel({ rels, persons, proposals, reminders, evidences, acc
                       })() : it.kind === 'person' ? (<>
                         <div className="sug-pair">
                           <span className="inbox-tag">👤 人物</span>
-                          <b>{it.data.name}</b>
-                          {it.data.title && <span className="sug-edge" style={{ color: '#64748b' }}>· {it.data.title}</span>}
+                          <b>{personEdits[it.id]?.name ?? it.data.name}{personEdits[it.id] && personEdits[it.id].name !== it.data.name && <span className="inbox-edited">✍️改</span>}</b>
+                          {(personEdits[it.id]?.title ?? it.data.title) && <span className="sug-edge" style={{ color: '#64748b' }}>· {personEdits[it.id]?.title ?? it.data.title}</span>}
                           <span className="sug-conf">{Math.round(it.data.confidence * 100)}%</span>
                         </div>
                         <div className="sug-meta">
@@ -216,13 +219,14 @@ export function InboxPanel({ rels, persons, proposals, reminders, evidences, acc
                         <div className="sug-pair">
                           <span className="inbox-tag">🔗 关系</span>
                           <b>{it.data.sourceName}</b>
-                          <span className="sug-edge" style={{ color: LAYER_COLOR[it.data.layer] }}>— {it.data.label} —</span>
+                          <span className="sug-edge" style={{ color: LAYER_COLOR[relEdits[it.id]?.layer ?? it.data.layer] }}>— {relEdits[it.id]?.label ?? it.data.label} —</span>
                           <b>{it.data.targetName}</b>
+                          {relEdits[it.id] && (relEdits[it.id].layer !== it.data.layer || relEdits[it.id].label !== it.data.label) && <span className="inbox-edited">✍️改</span>}
                           <span className="sug-conf">{Math.round(it.data.confidence * 100)}%</span>
                         </div>
                         <div className="sug-meta">
                           <span className="sug-origin">{ORIGIN[it.data.origin] || it.data.origin}</span>
-                          <span className="sug-lyr" style={{ background: LAYER_COLOR[it.data.layer] }}>{it.data.layer}</span>
+                          <span className="sug-lyr" style={{ background: LAYER_COLOR[relEdits[it.id]?.layer ?? it.data.layer] }}>{relEdits[it.id]?.layer ?? it.data.layer}</span>
                           {it.data.oppName && <span className="sug-ev" style={{ opacity: 0.65 }}>🎯 {it.data.oppName}</span>}
                           <span className="sug-ev">{it.data.evidence}</span>
                         </div>
@@ -239,13 +243,32 @@ export function InboxPanel({ rels, persons, proposals, reminders, evidences, acc
                           <option value="1">＋利好</option><option value="0">○中性</option><option value="-1">－不利</option>
                         </select>
                       )}
+                      {/* P10 改后采纳：人物=名字/职务 inline 改；关系=层级/标签——改完点采纳即以改后值落库 */}
+                      {it.kind === 'person' && (() => {
+                        const ed = personEdits[it.id] ?? { name: it.data.name, title: it.data.title || '' };
+                        const set = (patch: Partial<typeof ed>) => setPersonEdits((o) => ({ ...o, [it.id]: { ...ed, ...patch } }));
+                        return (<span className="inbox-editrow">
+                          <input className="inbox-edit" value={ed.name} placeholder="名字" title="改名字后采纳" onChange={(e) => set({ name: e.target.value })} />
+                          <input className="inbox-edit" value={ed.title} placeholder="职务" title="改职务后采纳" onChange={(e) => set({ title: e.target.value })} />
+                        </span>);
+                      })()}
+                      {it.kind === 'rel' && (() => {
+                        const ed = relEdits[it.id] ?? { layer: it.data.layer, label: it.data.label };
+                        const set = (patch: Partial<typeof ed>) => setRelEdits((o) => ({ ...o, [it.id]: { ...ed, ...patch } }));
+                        return (<span className="inbox-editrow">
+                          <select className="inbox-override" value={ed.layer} title="改层级后采纳" onChange={(e) => set({ layer: e.target.value })}>
+                            {(['L1', 'L2', 'L3', 'L4'] as const).map((l) => <option key={l} value={l}>{l}</option>)}
+                          </select>
+                          <input className="inbox-edit" value={ed.label} placeholder="关系标签" title="改标签后采纳" onChange={(e) => set({ label: e.target.value })} />
+                        </span>);
+                      })()}
                       {it.kind === 'reminder' ? (
                         <button className="btn ghost sm" onClick={() => onDismissReminder(it.id)} title="忽略这条提醒（不影响业务数据）">忽略</button>
                       ) : it.kind === 'evidence' ? (<>
                         <button className="btn primary sm" title="批准：这条信号属实，计入引擎证据池" onClick={() => onReviewEvidence(it.id, 'approve', evDirs[it.id])}>批准</button>
                         <button className="btn ghost sm" title="拒绝：信号不实，不参与任何计算" onClick={() => onReviewEvidence(it.id, 'reject')}>拒绝</button>
                       </>) : (<>
-                        <button className="btn primary sm" onClick={() => (it.kind === 'person' ? onAcceptPerson(it.id) : it.kind === 'rel' ? onAccept(it.id) : onAcceptProposal(it.id, overrides[it.id]))}>采纳</button>
+                        <button className="btn primary sm" onClick={() => (it.kind === 'person' ? onAcceptPerson(it.id, personEdits[it.id]) : it.kind === 'rel' ? onAccept(it.id, relEdits[it.id]) : onAcceptProposal(it.id, overrides[it.id]))}>采纳</button>
                         <button className="btn ghost sm" onClick={() => (it.kind === 'person' ? onRejectPerson(it.id) : it.kind === 'rel' ? onReject(it.id) : onRejectProposal(it.id))}>忽略</button>
                       </>)}
                     </div>

@@ -111,11 +111,11 @@ export const api = {
   suggestList: (opportunityId: string): Promise<{ suggestions: Suggestion[] }> => req(`/api/suggest?opportunityId=${encodeURIComponent(opportunityId)}`),
   suggestGenerate: (opportunityId: string): Promise<{ added: number; suggestions: Suggestion[] }> => req('/api/suggest/generate', { method: 'POST', body: JSON.stringify({ opportunityId }) }),
   // 采纳关系：可能级联建新 Person（端点是候选人物时），返回 createdPersons 供前端先 ADD_PERSON 再 ADD_EDGE
-  suggestAccept: (id: string): Promise<{ edge: any; createdPersons?: any[] }> => req(`/api/suggest/${id}/accept`, { method: 'POST' }),
+  suggestAccept: (id: string, override?: { layer?: string; label?: string }): Promise<{ edge: any; createdPersons?: any[] }> => req(`/api/suggest/${id}/accept`, { method: 'POST', body: JSON.stringify(override ?? {}) }), // P10 改后采纳
   suggestReject: (id: string): Promise<{ ok: true }> => req(`/api/suggest/${id}/reject`, { method: 'POST' }),
   // 候选干系人（外部 agent 经 MCP propose_person 写入，待人审）
   personSuggestList: (accountId: string): Promise<{ suggestions: PersonSuggestion[] }> => req(`/api/suggest/persons?accountId=${encodeURIComponent(accountId)}`),
-  personSuggestAccept: (id: string): Promise<{ person: any; accId: string }> => req(`/api/suggest/persons/${id}/accept`, { method: 'POST' }),
+  personSuggestAccept: (id: string, override?: { name?: string; title?: string }): Promise<{ person: any; accId: string }> => req(`/api/suggest/persons/${id}/accept`, { method: 'POST', body: JSON.stringify(override ?? {}) }), // P10 改后采纳
   personSuggestReject: (id: string): Promise<{ ok: true }> => req(`/api/suggest/persons/${id}/reject`, { method: 'POST' }),
   // Hub 级审核收件箱：聚合当前租户所有 pending 候选（关系 + 人物），带 account/opp 上下文 + P2 引擎心跳
   inboxList: (): Promise<{ rels: InboxRel[]; persons: InboxPerson[]; proposals: InboxProposal[]; reminders: InboxReminder[]; evidences: InboxEvidence[]; total: number; patrol?: PatrolInfo | null }> => req('/api/inbox'),

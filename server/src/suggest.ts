@@ -202,11 +202,16 @@ export function suggestRoutes(app: FastifyInstance) {
   // 返回 { edge, createdPersons }：前端须先 dispatch 这些 ADD_PERSON 再 ADD_EDGE，否则画布找不到端点。
   app.post('/api/suggest/:id/accept', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     const tenantId = req.user.tenantId;
+    // P10 改后采纳：可选 override（层级/标签），采纳时以改后值建边并写回候选留审计
+    const ov = z.object({ layer: z.enum(['L1', 'L2', 'L3', 'L4']).optional(), label: z.string().trim().min(1).max(30).optional() }).safeParse(req.body ?? {});
+    if (!ov.success) return reply.code(400).send({ error: '改后采纳参数无效' });
     const s = await prisma.relSuggestion.findFirst({ where: { id: req.params.id, tenantId } });
     if (!s) return reply.code(404).send({ error: '候选不存在' });
     if (s.status !== 'pending') return reply.code(400).send({ error: '该候选已处理' });
     const opp = await prisma.opportunity.findFirst({ where: { id: s.opportunityId, tenantId } });
     if (!opp) return reply.code(404).send({ error: '商机不存在' });
+    const layer = ov.data.layer ?? s.layer;
+    const label = ov.data.label ?? s.label;
 
     try {
       const result = await prisma.$transaction(async (tx) => {
@@ -226,10 +231,10 @@ export function suggestRoutes(app: FastifyInstance) {
         const targetId = await resolveEnd(s.targetKind, s.targetPersonId, 'target');
 
         const edgeId = 'e_' + randomUUID().slice(0, 12);
-        const color = LAYER_COLOR[s.layer] || '#16a34a';
-        await tx.edge.create({ data: { id: edgeId, tenantId, accountId: opp.accountId, opportunityId: s.opportunityId, source: sourceId, target: targetId, layer: s.layer, label: s.label, color, style: 'solid', width: null, directed: false, origin: 'ai' } });
-        await tx.relSuggestion.update({ where: { id: s.id }, data: { status: 'accepted', sourceKind: 'person', sourcePersonId: sourceId, targetKind: 'person', targetPersonId: targetId } });
-        return { edge: { id: edgeId, source: sourceId, target: targetId, layer: s.layer, label: s.label, color, style: 'solid', directed: false, origin: 'ai' }, createdPersons };
+        const color = LAYER_COLOR[layer] || '#16a34a';
+        await tx.edge.create({ data: { id: edgeId, tenantId, accountId: opp.accountId, opportunityId: s.opportunityId, source: sourceId, target: targetId, layer, label, color, style: 'solid', width: null, directed: false, origin: 'ai' } });
+        await tx.relSuggestion.update({ where: { id: s.id }, data: { status: 'accepted', layer, label, sourceKind: 'person', sourcePersonId: sourceId, targetKind: 'person', targetPersonId: targetId } });
+        return { edge: { id: edgeId, source: sourceId, target: targetId, layer, label, color, style: 'solid', directed: false, origin: 'ai' }, createdPersons };
       });
       return result;
     } catch (e: any) {
@@ -259,9 +264,18 @@ export function suggestRoutes(app: FastifyInstance) {
   // 采纳候选干系人 → 建正式 Person（带溯源日志）。返回 { person } 供前端 dispatch ADD_PERSON。
   app.post('/api/suggest/persons/:id/accept', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     const tenantId = req.user.tenantId;
+    // P10 改后采纳：可选 override（名字/职务），先写回候选（留审计+物化读的就是改后值）再物化
+    const ov = z.object({ name: z.string().trim().min(1).max(40).optional(), title: z.string().trim().max(60).optional() }).safeParse(req.body ?? {});
+    if (!ov.success) return reply.code(400).send({ error: '改后采纳参数无效' });
     const ps = await prisma.personSuggestion.findFirst({ where: { id: req.params.id, tenantId } });
     if (!ps) return reply.code(404).send({ error: '候选不存在' });
     if (ps.status !== 'pending') return reply.code(400).send({ error: '该候选已处理' });
+    if (ov.data.name !== undefined || ov.data.title !== undefined) {
+      await prisma.personSuggestion.update({
+        where: { id: ps.id },
+        data: { ...(ov.data.name !== undefined ? { name: ov.data.name } : {}), ...(ov.data.title !== undefined ? { title: ov.data.title } : {}) },
+      });
+    }
     try {
       const r = await prisma.$transaction((tx) => materializePerson(tx, tenantId, ps.id));
       const acc = await prisma.account.findFirst({ where: { id: ps.accountId, tenantId } });
