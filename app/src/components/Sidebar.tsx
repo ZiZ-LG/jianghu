@@ -106,27 +106,31 @@ export function Sidebar({ account, opp, breakdown, weighted = null, pde = null, 
       <div className="diag-score">
         {breakdown ? (
           <>
+            {/* P7 头部重排：左=趋赢力+大字% 横排；右=加权/补情报药丸竖叠——四元素不再挤一行（252px 曾把「趋赢力」压成竖排） */}
             <div className="diag-top">
-              <span className="diag-cap">趋赢力</span>
-              <span className="diag-pct" style={{ color: breakdown.total < 0 ? '#b91c1c' : 'var(--ink)' }}>{pct}<small>%</small></span>
-              {weighted != null && (
-                <span className="diag-weighted" title={`双轨分：名义 ${breakdown.total} 分＝打分表原值；加权 ${Math.round(weighted)} 分＝按证据可信度折扣。差 ${Math.round(breakdown.total - weighted)} 分＝情报还没坐实的部分。作战工具，非考核指标。`}>
-                  加权 {Math.round(weighted)}
-                </span>
-              )}
-              {onOpenGaps && gapCount > 0 && (
-                <button onClick={onOpenGaps} title="缺什么情报一目了然：要问的下次拜访带着问，能勾的案头当场勾"
-                  style={{ marginLeft: 'auto', fontSize: 11, padding: '3px 9px', borderRadius: 12, border: '1px solid var(--accent)', background: 'transparent', color: 'var(--accent)', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                  🎒 补情报·{gapCount}
-                </button>
-              )}
+              <div className="diag-top-main">
+                <span className="diag-cap">趋赢力</span>
+                <span className="diag-pct" style={{ color: breakdown.total < 0 ? '#b91c1c' : 'var(--ink)' }}>{pct}<small>%</small></span>
+              </div>
+              <div className="diag-pills">
+                {weighted != null && (
+                  <span className="diag-weighted" title={`双轨分：名义 ${breakdown.total} 分＝打分表原值；加权 ${Math.round(weighted)} 分＝按证据可信度折扣。差 ${Math.round(breakdown.total - weighted)} 分＝情报还没坐实的部分。作战工具，非考核指标。`}>
+                    加权 {Math.round(weighted)}
+                  </span>
+                )}
+                {onOpenGaps && gapCount > 0 && (
+                  <button className="diag-gaps-pill" onClick={onOpenGaps} title="缺什么情报一目了然：要问的下次拜访带着问，能勾的案头当场勾">
+                    🎒 补情报·{gapCount}
+                  </button>
+                )}
+              </div>
             </div>
             <div className="diag-band-row">
               <div className="diag-band" style={{ background: BAND_COLOR[breakdown.band] }}>{BAND_LABEL[breakdown.band]}</div>
               {pde && ACT_LABEL[pde.action] && (
                 <button className={`mf-act mf-act-${ACT_LABEL[pde.action]!.cls} dock-act-btn`} onClick={onOpenEngine}
-                  title={`引擎建议（点开看详解：理由 / 薄弱关键人 / 赢面走势 / 假设推演）${pde.flag ? ` · ${pde.flag.includes('no_pot') ? '未设合同额，金额降级' : '置信偏低，先摸底'}` : ''}`}>
-                  {ACT_LABEL[pde.action]!.icon} {ACT_LABEL[pde.action]!.text} · 赢面 {Math.round(pde.pwin * 100)}%{pde.flag ? ' ⚠︎' : ''}
+                  title={`引擎建议：赢面 ${Math.round(pde.pwin * 100)}%（点开看详解：理由 / 薄弱关键人 / 赢面走势 / 假设推演）${pde.flag ? ` · ${pde.flag.includes('no_pot') ? '未设合同额，金额降级' : '置信偏低，先摸底'}` : ''}`}>
+                  {ACT_LABEL[pde.action]!.icon}{ACT_LABEL[pde.action]!.text}·赢面{Math.round(pde.pwin * 100)}%{pde.flag ? '⚠︎' : ''}
                 </button>
               )}
             </div>
