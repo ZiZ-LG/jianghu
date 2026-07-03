@@ -14,7 +14,6 @@ import { DeliberationDock } from './components/DeliberationDock';
 import { FocusPanel } from './components/FocusPanel';
 import { EdgeDrawer } from './components/EdgeDrawer';
 import { OpportunityForm } from './components/OpportunityForm';
-import { CustomerProfile } from './components/CustomerProfile';
 import { MdDocPanel } from './components/MdDocPanel';
 import { IntelCapture } from './components/IntelCapture';
 import { NewOpportunityDialog } from './components/NewOpportunityDialog';
@@ -50,7 +49,6 @@ export default function App() {
   const toggleLayer = (l: Layer) => setVisibleLayers((s) => { const n = new Set(s); n.has(l) ? n.delete(l) : n.add(l); if (n.size === 0) n.add(l); return n; });
   const [oppFormOpen, setOppFormOpen] = useState(false);
   const [personFormOpen, setPersonFormOpen] = useState(false);
-  const [profileOpen, setProfileOpen] = useState(false);
   const [mdDocOpen, setMdDocOpen] = useState(false);
   const [intelOpen, setIntelOpen] = useState(false);
   const [newOppOpen, setNewOppOpen] = useState(false);
@@ -570,11 +568,6 @@ export default function App() {
       )}
       {newOppOpen && (
         <NewOpportunityDialog account={account} onClose={() => setNewOppOpen(false)} onCreate={createOpportunity} />
-      )}
-      {profileOpen && (
-        <CustomerProfile account={account} onClose={() => setProfileOpen(false)}
-          onSave={(patch) => act({ type: 'UPDATE_ACCOUNT', accId: account.id, patch })}
-          onDone={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); } catch { /* 静默：保存已成功，仅刷新失败 */ } }} />
       )}
       {mdDocOpen && <MdDocPanel account={account} dispatch={act} onClose={() => setMdDocOpen(false)} />}
       {addIntelOpen && (
