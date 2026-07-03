@@ -421,6 +421,16 @@ export function Canvas({
       {visible.length === 0 && (
         <div className="canvas-empty">👤 这个商机还没有干系人<br /><span>在空白处<b>双击</b>新建人物，或点左侧「干系人 ＋」</span></div>
       )}
+      {/* P16：L2/L4 空层引导——独显该层且无边时，提示这层承载什么、怎么建（红线：层数不动，L2 实权 vs L1 名义是 G64111 破局关键） */}
+      {visible.length > 0 && edges.length === 0 && visibleLayers.size === 1 && (visibleLayers.has('L2') || visibleLayers.has('L4')) && (
+        <div className="canvas-layer-hint">
+          {visibleLayers.has('L2') ? (
+            <>🎯 <b>L2 决策权力</b>还没画。<br /><span>它跟 L1 组织架构常不重合——比如「王处长实际听副总的招呼，不是总经理」。这条错位就是 G64111 破局的关键。<br />点亮 L1 对比后，在两个人之间拖一条 L2 线（选「决策/汇报/听命」），可看两图错位。</span></>
+          ) : (
+            <>🧭 <b>L4 战略本质</b>还没画。<br /><span>它标利益/立场的深层根因——「谁跟谁在本质上共谋 or 对抗」。<br />看清 L4 才能判断能不能撬动某个人，不然只在 L1/L2/L3 表面打转。</span></>
+          )}
+        </div>
+      )}
       <svg>
         <defs>
           {ARROW_COLORS.map((c) => (

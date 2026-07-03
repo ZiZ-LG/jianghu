@@ -406,6 +406,7 @@ export default function App() {
           theme={theme} onToggleTheme={toggleTheme} onOpenHelp={() => setHelpOpen(true)}
           onOpenMcpAccess={() => setMcpAccessOpen(true)}
           onOpenIntel={() => setIntelOpen(true)}
+          onIntelDone={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); await loadInbox(); } catch { /* 静默：保存已成功 */ } }}
           onOpenInbox={() => setInboxOpen(true)} inboxCount={inbox.total} patrol={inbox.patrol}
         />
         )}

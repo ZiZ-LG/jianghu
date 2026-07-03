@@ -4,12 +4,13 @@ import { CUSTOMER_TYPE_LABEL } from '../types';
 import { Modal } from './Modal';
 import { OverflowMenu } from './OverflowMenu';
 import { EnginePulse } from './EnginePulse';
+import { IntelCapture } from './IntelCapture';
 import type { PatrolInfo } from '../api';
 import type { TodayItem } from '../lib/today';
 
 export function CustomerHub({
   accounts, onOpen, onCreate, onLoadDemo, onDeleteAccount,
-  tenantName, userName, plan, onOpenTeam, onLogout, onOpenAiSettings, onOpenWecom, theme, onToggleTheme, onOpenHelp, onOpenMcpAccess, onOpenIntel, onOpenInbox, inboxCount = 0, patrol, today = [], needsYou,
+  tenantName, userName, plan, onOpenTeam, onLogout, onOpenAiSettings, onOpenWecom, theme, onToggleTheme, onOpenHelp, onOpenMcpAccess, onOpenIntel: _unusedOnOpenIntel, onOpenInbox, inboxCount = 0, patrol, today = [], needsYou, onIntelDone,
 }: {
   accounts: Account[];
   onOpen: (accId: string) => void;
@@ -33,10 +34,14 @@ export function CustomerHub({
   patrol?: PatrolInfo | null;  // P2 引擎心跳（本租户最近一轮巡检统计）
   today?: TodayItem[];         // P5 今日三件事（三源聚合，App 算好下发）
   needsYou?: Map<string, number>; // P5 客户卡「需要你」计数（待审+逾期行动），并驱动排序
+  onIntelDone?: () => void | Promise<void>; // P16：Hub 内嵌 IntelCapture 建客户后回调（父 App 做 hydrate）
 }) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
   const [ctype, setCtype] = useState<CustomerType>(2);
+  // P16 双入口合并：默认口述路径（多数用户走这条·AI 可用时说一句自动建），底部保底切「只建空档案」表单填字段（无 AI Key 或需要精细控制）
+  const [createMode, setCreateMode] = useState<'dictate' | 'form'>('dictate');
+  const openCreate = () => { setCreateMode('dictate'); setCreating(true); };
 
   const submit = () => {
     if (!name.trim()) return;
@@ -69,16 +74,15 @@ export function CustomerHub({
         <div className="hub-actions-desktop">
           <span className="who">{userName}</span>
           <button className="team-chip inbox-chip" onClick={onOpenInbox} title="审核机器写入的候选（关系 / 人物），采纳后才落库">📥 收件箱{inboxCount > 0 ? ` · ${inboxCount}` : ''}</button>
-          <button className="btn cta" onClick={onOpenIntel}>🎙️ 录入情报</button>
-          <button className="btn primary" onClick={() => setCreating(true)}>＋ 新建客户</button>
+          {/* P16：入口合并——「录入情报」按钮退役，新客户单入口默认走口述路径，Modal 内切换「只建空档案」保底 */}
+          <button className="btn primary" onClick={openCreate}>＋ 新客户</button>
           <OverflowMenu align="right" label="⚙️ 设置" items={settingsItems} />
         </div>
         {/* 移动：主题 + 新建 + ⋯ 菜单 */}
         <div className="hub-actions-mobile">
-          <button className="btn primary xs" onClick={() => setCreating(true)}>＋ 新建</button>
+          <button className="btn primary xs" onClick={openCreate}>＋ 新客户</button>
           <OverflowMenu align="right" label="⚙️" items={[
             { label: '📥 收件箱', badge: inboxCount > 0 ? String(inboxCount) : undefined, onClick: onOpenInbox },
-            { label: '🎙️ 录入情报', primary: true, onClick: onOpenIntel },
             ...settingsItems,
           ]} />
         </div>
@@ -105,8 +109,7 @@ export function CustomerHub({
           <div className="hub-empty-t">还没有客户</div>
           <div className="hub-empty-s">从「新建客户」开始你的第一张作战地图，或先「载入示例数据」体验完整功能。</div>
           <div style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap', justifyContent: 'center' }}>
-            <button className="btn cta" onClick={onOpenIntel}>🎙️ 口述建客户</button>
-            <button className="btn primary" onClick={() => setCreating(true)}>＋ 新建客户</button>
+            <button className="btn primary" onClick={openCreate}>＋ 新客户</button>
             <button className="btn ghost" onClick={onLoadDemo}>载入示例（西部电力建设集团）</button>
           </div>
         </div>
@@ -141,22 +144,40 @@ export function CustomerHub({
       )}
 
       {creating && (
-        <Modal title="新建客户" onClose={() => setCreating(false)}
-          footer={<>
+        <Modal title={createMode === 'dictate' ? '＋ 新客户 · 说一句就建（推荐）' : '＋ 新客户 · 只建空档案（自己填字段）'} onClose={() => setCreating(false)}
+          footer={createMode === 'form' ? (<>
             <button className="btn ghost" onClick={() => setCreating(false)}>取消</button>
             <button className="btn primary" onClick={submit} disabled={!name.trim()}>创建</button>
-          </>}>
-          <label className="fld">
-            <span>客户名称</span>
-            <input autoFocus value={name} onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && submit()} placeholder="如：西部电力建设集团" />
-          </label>
-          <label className="fld">
-            <span>客户类型</span>
-            <select value={ctype} onChange={(e) => setCtype(Number(e.target.value) as CustomerType)}>
-              {([1, 2, 3, 4] as CustomerType[]).map((t) => <option key={t} value={t}>{CUSTOMER_TYPE_LABEL[t]}</option>)}
-            </select>
-          </label>
+          </>) : null}>
+          {createMode === 'dictate' ? (<>
+            <div className="intel-demo-hint" style={{ marginBottom: 12 }}>说一句拜访概况——江湖会解析成客户+关键干系人+关系上图，比手填快得多；拿不准的进「📥 收件箱」等你核。</div>
+            <IntelCapture embedded onClose={() => setCreating(false)}
+              onDone={() => { void onIntelDone?.(); }}
+              onEnterAccount={(id) => { setCreating(false); onOpen(id); }} />
+            <div style={{ marginTop: 14, paddingTop: 10, borderTop: '1px solid var(--line)', fontSize: 12, textAlign: 'center' }}>
+              没配 AI 模型？或想手动填字段？
+              <button type="button" onClick={() => setCreateMode('form')} style={{ marginLeft: 6, background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', textDecoration: 'underline', font: 'inherit', padding: 0 }}>
+                只建空档案 →
+              </button>
+            </div>
+          </>) : (<>
+            <label className="fld">
+              <span>客户名称</span>
+              <input autoFocus value={name} onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && submit()} placeholder="如：西部电力建设集团" />
+            </label>
+            <label className="fld">
+              <span>客户类型</span>
+              <select value={ctype} onChange={(e) => setCtype(Number(e.target.value) as CustomerType)}>
+                {([1, 2, 3, 4] as CustomerType[]).map((t) => <option key={t} value={t}>{CUSTOMER_TYPE_LABEL[t]}</option>)}
+              </select>
+            </label>
+            <div style={{ marginTop: 10, fontSize: 11.5, textAlign: 'center' }}>
+              <button type="button" onClick={() => setCreateMode('dictate')} style={{ background: 'none', border: 'none', color: 'var(--faint)', cursor: 'pointer', textDecoration: 'underline', font: 'inherit', padding: 0 }}>
+                ← 换回口述模式（说一句自动建）
+              </button>
+            </div>
+          </>)}
         </Modal>
       )}
     </div>
