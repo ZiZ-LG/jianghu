@@ -12,6 +12,19 @@ import { scoreFromDomain, BAND_LABEL, BAND_STRATEGY, ITEM_MAX, type ItemKey } fr
 /** .md 侧维护的版本日志条目（决策 b：存 localStorage，不入系统库） */
 export interface VersionLogEntry { version: string; date: string; editor: string; summary: string; trigger: string; }
 
+// P15：PDE 引擎裁决摘要（面板异步 fetch 后传入；无引擎结果时 skip 该章不 crash）
+export interface PdeBrief {
+  pwin?: number;             // 赢面 0..1
+  action?: string;           // RAISE|CALL|CHECK|FOLD
+  actionLabel?: string;      // 「⬆强攻/▶跟进/🔍摸底/⛔止损」（前端 ACT_LABEL 映射结果）
+  reason?: string;           // 引擎给的理由
+  weakNames?: string[];      // 薄弱关键人（已解析为姓名）
+  nominal?: number;          // 名义分
+  weighted?: number;         // 加权分（可信度折扣）
+  snapshotsTrend?: string;   // 近 N 次快照走势文案（如 "62% → 58% → 44%（近3次）"）
+  gate?: 'clear' | 'no_pot' | 'low_confidence'; // 门控（金额/置信降级提示）
+}
+
 const pct = (p: number) => `${Math.round(p * 100)}%`;
 const v = (s: string | undefined | null) => (s && String(s).trim() ? String(s).trim() : '⏳ 待补充');
 const mark = (b: boolean | undefined) => (b ? '✅ 已掌握' : '⏳ 待补充');
@@ -149,7 +162,7 @@ export function renderCustomerMd(account: Account, log: VersionLogEntry[] = []):
 
 // ───────────────────────── 商机档案（Opportunity 级） ─────────────────────────
 
-export function renderOpportunityMd(account: Account, opp: Opportunity, log: VersionLogEntry[] = []): string {
+export function renderOpportunityMd(account: Account, opp: Opportunity, log: VersionLogEntry[] = [], pde?: PdeBrief | null): string {
   const b = scoreFromDomain(account, opp);
   const last = log[log.length - 1];
   const nameById = new Map(account.persons.map((p) => [p.id, p.name]));
@@ -218,15 +231,78 @@ export function renderOpportunityMd(account: Account, opp: Opportunity, log: Ver
   } else L.push('> ⏳ 暂无行动计划。');
   L.push('');
 
-  // 六、笔记 · 情报（自由文本层 · 挂本商机的零散信息，全量导出）
-  L.push('## 六、笔记 · 情报', '');
+  // ── P15 商机档案叙事组装（数据全在库/引擎，纯拼装；缺则跳过该章）──
+
+  // 六、引擎裁决摘要（PDE：动作 + 理由 + 薄弱关键人 + 双轨分 + 走势）
+  if (pde) {
+    L.push('## 六、引擎裁决摘要（PDE · 只读）', '');
+    L.push('<!-- f:opp.pde -->');
+    if (pde.actionLabel || pde.action) L.push(`- **建议动作**：${pde.actionLabel || pde.action}${pde.pwin != null ? ` · **赢面** ${Math.round(pde.pwin * 100)}%` : ''}`);
+    if (pde.reason) L.push(`- **理由**：${pde.reason}`);
+    if (pde.weakNames && pde.weakNames.length) L.push(`- **薄弱关键人**：${pde.weakNames.join('、')}（先修这几个人，回报最高）`);
+    if (pde.nominal != null || pde.weighted != null) L.push(`- **双轨分**：名义 ${round1(pde.nominal ?? 0)} / 加权 ${round1(pde.weighted ?? 0)}（差 = 情报未坐实的部分）`);
+    if (pde.snapshotsTrend) L.push(`- **赢面走势**：${pde.snapshotsTrend}`);
+    if (pde.gate && pde.gate !== 'clear') L.push(`- ⚠️ **门控提示**：${pde.gate === 'no_pot' ? '未填合同额，金额已降级为纯排序' : '置信度偏低，建议先摸底再动手'}`);
+    L.push('');
+  }
+
+  // 七、策略卡（打法方向）——挂 Account 层，按 opp.id 过滤
+  const cards = (account.strategyCards ?? []).filter((c) => c.opportunityId === opp.id && c.status !== 'dismissed');
+  if (cards.length) {
+    L.push('## 七、策略卡（打法方向）', '');
+    L.push('<!-- f:opp.cards -->');
+    L.push('| 缺口 | 打法标题 | 目标人 | 依据 | 来源 | 已派发 |', '|------|---------|--------|------|------|--------|');
+    for (const c of cards) {
+      const who = c.personId ? (nameById.get(c.personId) ?? '') : '';
+      const dispatched = c.dispatchedActionIds?.length ? `${c.dispatchedActionIds.length}` : '—';
+      L.push(`| ${v(c.gapItem)} | ${v(c.title)} | ${v(who)} | ${v(c.basis)} | ${c.origin === 'ai' ? '🤖 AI' : '✍️ 手'} | ${dispatched} |`);
+    }
+    L.push('');
+  }
+
+  // 八、⚠ 雷（人工登记的高危风险）——挂 Account 层，按 opp.id 过滤；kind='risk'，assumption 不展示
+  const risks = (account.strategyRisks ?? []).filter((r) => r.opportunityId === opp.id && r.kind === 'risk' && r.status !== 'dismissed');
+  if (risks.length) {
+    L.push('## 八、⚠ 雷（高危风险登记）', '');
+    L.push('<!-- f:opp.risks -->');
+    L.push('| 雷 | 严重度 | 缓解措施 | 状态 |', '|----|--------|----------|------|');
+    for (const r of risks) {
+      const sev = r.severity === 'high' ? '🔴 高' : r.severity === 'mid' ? '🟠 中' : r.severity === 'low' ? '🟡 低' : '—';
+      L.push(`| ${v(r.text)} | ${sev} | ${v(r.mitigation)} | ${r.status === 'resolved' ? '✅ 已解' : '📌 未解'} |`);
+    }
+    L.push('');
+  }
+
+  // 九、证据时间线（M3 approved 才入正式叙事；pending/rejected 跳过）
+  const evs = (opp.evidenceEvents ?? []).filter((e) => e.status !== 'rejected').slice().sort((a, b) => {
+    const da = a.occurredAt || a.createdAt || ''; const db = b.occurredAt || b.createdAt || '';
+    return db.localeCompare(da);
+  }).slice(0, 30);
+  if (evs.length) {
+    L.push('## 九、证据时间线（近期 30 条 · 按时间倒序）', '');
+    L.push('<!-- f:opp.evidence -->');
+    L.push('| 日期 | 人 | 方向 | 档 | 内容 | 溯源 | 状态 |', '|------|----|------|----|------|------|------|');
+    for (const e of evs) {
+      const d = (e.occurredAt || e.createdAt || '').slice(0, 10) || '⏳';
+      const who = nameById.get(e.personId) ?? '?';
+      const dir = e.direction > 0 ? '➕' : e.direction < 0 ? '➖' : '○';
+      const tier = e.tier === 'strong' ? '强' : e.tier === 'mid' ? '中' : e.tier === 'weak' ? '弱' : '—';
+      const src = e.origin === 'voice' ? '🎙️口述' : e.origin === 'recording' ? '🎧录音' : e.origin === 'manual' ? '✍️手动' : (e.origin ?? '—');
+      const st = e.status === 'pending_review' ? '⏳待审' : '✅已批';
+      L.push(`| ${d} | ${who} | ${dir} | ${tier} | ${v(e.rawContent)} | ${src} | ${st} |`);
+    }
+    L.push('');
+  }
+
+  // 十、笔记 · 情报（自由文本层 · 挂本商机的零散信息，全量导出）
+  L.push('## 十、笔记 · 情报', '');
   const oNotes = (account.notes ?? []).filter((n) => n.opportunityId === opp.id);
   if (oNotes.length) for (const n of oNotes) L.push(`- ${n.content}${n.source && n.source !== 'manual' ? `（来源：${n.source}）` : ''}`);
   else L.push('> ⏳ 暂无笔记。');
   L.push('');
 
-  // 七、更新日志
-  L.push('## 七、更新日志（商机级 · .md 侧维护）', '');
+  // 十一、更新日志
+  L.push('## 十一、更新日志（商机级 · .md 侧维护）', '');
   L.push(renderVersionLog(log, '商机档案'), '');
 
   return L.join('\n');

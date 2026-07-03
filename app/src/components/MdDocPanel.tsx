@@ -1,12 +1,14 @@
 // 作战档案面板（路 A · 字段内联编辑）：左侧导航选文档，右侧 MdDocView 文档视图（点字段原地改、失焦写回系统）。
 // 导出/复制用 mdProfile 渲染的 .md 文本（实时反映系统数据）；版本日志走 localStorage（决策 b）。
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Account } from '../types';
-import { renderCustomerMd, renderOpportunityMd, renderVisitMd, type VersionLogEntry } from '../lib/mdProfile';
+import { renderCustomerMd, renderOpportunityMd, renderVisitMd, type VersionLogEntry, type PdeBrief } from '../lib/mdProfile';
 import type { Action } from '../store';
 import { usePersistentState } from '../ui';
 import { Modal } from './Modal';
 import { MdDocView } from './MdDocView';
+import { api } from '../api';
+import { ACT_LABEL } from '../lib/pdeUi';
 
 type DocSel = { kind: 'customer' } | { kind: 'opp'; id: string } | { kind: 'visit'; id: string };
 const keyOf = (s: DocSel) => (s.kind === 'customer' ? 'customer' : `${s.kind}:${s.id}`);
@@ -23,11 +25,42 @@ export function MdDocPanel({ account, dispatch, onClose }: { account: Account; d
   const docKey = keyOf(sel);
   const isVisit = sel.kind === 'visit';
 
+  // P15：切到商机档案时懒 fetch PDE 摘要 + 走势（用于新增的引擎裁决章）；失败/无 → null 该章跳过
+  const [pdeByOpp, setPdeByOpp] = useState<Record<string, PdeBrief | null>>({});
+  useEffect(() => {
+    if (sel.kind !== 'opp' || sel.id in pdeByOpp) return;
+    const oppId = sel.id;
+    const nameById = new Map(account.persons.map((p) => [p.id, p.name]));
+    (async () => {
+      try {
+        const [ev, sns] = await Promise.all([
+          api.pdeEv(oppId).catch(() => null),
+          api.pdeSnapshots(oppId).catch(() => ({ snapshots: [] })),
+        ]);
+        if (!ev) return setPdeByOpp((m) => ({ ...m, [oppId]: null }));
+        const rec = ev.recommendation ?? {};
+        const act = ACT_LABEL[rec.action];
+        const weakNames = (rec.weak_key_stakeholders ?? []).map((id: string) => nameById.get(id) ?? id).slice(0, 4);
+        const snapshots = (sns?.snapshots ?? []).slice(-3);
+        const trend = snapshots.length >= 2
+          ? snapshots.map((s: any) => `${Math.round((s.pwin ?? 0) * 100)}%`).join(' → ') + `（近${snapshots.length}次）`
+          : undefined;
+        const brief: PdeBrief = {
+          pwin: ev.pwin, action: rec.action, actionLabel: act ? `${act.icon} ${act.text}` : rec.action,
+          reason: rec.reason, weakNames, nominal: ev.score?.nominal, weighted: ev.score?.weighted,
+          snapshotsTrend: trend,
+          gate: (ev.confidenceFlag ?? '').includes('no_pot') ? 'no_pot' : (ev.confidenceFlag ?? '').includes('low_confidence') ? 'low_confidence' : 'clear',
+        };
+        setPdeByOpp((m) => ({ ...m, [oppId]: brief }));
+      } catch { setPdeByOpp((m) => ({ ...m, [oppId]: null })); }
+    })();
+  }, [sel, account.persons, pdeByOpp]);
+
   const mdText = useMemo(() => {
     if (sel.kind === 'customer') return renderCustomerMd(account, logs.customer ?? []);
-    if (sel.kind === 'opp') { const o = account.opportunities.find((x) => x.id === sel.id); return o ? renderOpportunityMd(account, o, logs[docKey] ?? []) : ''; }
+    if (sel.kind === 'opp') { const o = account.opportunities.find((x) => x.id === sel.id); return o ? renderOpportunityMd(account, o, logs[docKey] ?? [], pdeByOpp[sel.id]) : ''; }
     const vn = visits.find((x) => x.id === sel.id); return vn ? renderVisitMd(account, vn) : '';
-  }, [sel, account, logs, docKey, visits]);
+  }, [sel, account, logs, docKey, visits, pdeByOpp]);
 
   const title = sel.kind === 'customer' ? `${account.name}-客户档案`
     : sel.kind === 'opp' ? `${account.opportunities.find((o) => o.id === sel.id)?.name ?? '商机'}-商机档案`
@@ -60,10 +93,13 @@ export function MdDocPanel({ account, dispatch, onClose }: { account: Account; d
   return (
     <Modal title="📋 作战档案" width={960} onClose={onClose}
       footer={<>
-        <span className="hint-text" style={{ marginRight: 'auto', fontSize: 12, opacity: 0.7 }}>点字段原地改、失焦即写回系统 · 打分与角色只读（在画布改）</span>
+        <span className="hint-text" style={{ marginRight: 'auto', fontSize: 12, opacity: 0.7 }}>
+          点字段原地改、失焦即写回系统 · 打分与角色只读（在画布改）
+          <span style={{ display: 'block', fontSize: 11, opacity: 0.75, marginTop: 2 }}>💡 .md 用途：复制→喂给外部 AI 深聊 / 粘进 WorkBuddy；导出→归档 / 发同事 / Git 版本追踪</span>
+        </span>
         {!isVisit && <button className="btn ghost" onClick={stamp} title="在 .md 更新日志记一版（数据已实时写回）">🔖 记一版</button>}
-        <button className="btn ghost" onClick={copy}>{copied ? '✓ 已复制' : '📋 复制 .md'}</button>
-        <button className="btn primary" onClick={exportMd}>⬇ 导出 .md</button>
+        <button className="btn ghost" onClick={copy} title="复制到剪贴板——喂给外部 AI 深聊 / 粘进 WorkBuddy / 贴到内部知识库">{copied ? '✓ 已复制' : '📋 复制 .md'}</button>
+        <button className="btn primary" onClick={exportMd} title="下载 .md 文件——归档、随邮件发同事、Git 里做长期版本追踪">⬇ 导出 .md</button>
       </>}>
       <div style={{ display: 'flex', gap: 12, height: 'min(66vh, 580px)' }}>
         <div style={{ width: 220, flexShrink: 0, overflowY: 'auto', borderRight: '1px solid var(--line)', paddingRight: 8 }}>
