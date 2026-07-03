@@ -15,19 +15,48 @@ type Msg = { role: 'user' | 'assistant'; text: string };
 type Cand = AdvisorCand & { accepted?: boolean };
 const todayYmd = () => new Date().toISOString().slice(0, 10);
 
+const welcome = (name: string): Msg => ({
+  role: 'assistant',
+  text: `对着「${name}」问我——怎么打、倒戈风险、下一步。我带整张图的上下文（角色/态度/关系/趋赢力/燃点）帮你深想；想落地就点「🎯 出候选」，我给出可采纳的 🃏行动牌 / 📌策略卡 / ⚠️风险。这里只想不落库——要录情报、改图，去坞底「💬 和地图对话」。`,
+});
+
 export function AdvisorPanel({ account, opp, breakdown, person, dispatch }: {
   account: Account; opp: Opportunity; breakdown: ScoreBreakdown; person: Person; dispatch: Dispatch<Action>;
 }) {
-  const [msgs, setMsgs] = useState<Msg[]>([{
-    role: 'assistant',
-    text: `对着「${person.name}」问我——怎么打、倒戈风险、下一步。我带整张图的上下文（角色/态度/关系/趋赢力/燃点）帮你深想；想落地就点「🎯 出候选」，我给出可采纳的 🃏行动牌 / 📌策略卡 / ⚠️风险。这里只想不落库——要录情报、改图，去坞底「💬 和地图对话」。`,
-  }]);
+  const [msgs, setMsgs] = useState<Msg[]>([welcome(person.name)]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [cardBusy, setCardBusy] = useState(false);
   const [cands, setCands] = useState<Cand[]>([]);
+  const [savedIdx, setSavedIdx] = useState<Set<number>>(new Set()); // P8 已挂到动态的消息下标（会话级标记）
   const listRef = useRef<HTMLDivElement>(null);
   useEffect(() => { const el = listRef.current; if (el) el.scrollTop = el.scrollHeight; }, [msgs, cands, busy, cardBusy]);
+
+  // P8 会话历史落库：切 商机/焦点人 → 拉回放重置对话流（原阅后即焚+切人不重置的旧欢迎语一并修掉）
+  useEffect(() => {
+    let alive = true;
+    setMsgs([welcome(person.name)]); setCands([]); setSavedIdx(new Set()); setInput('');
+    api.advisorHistory(opp.id, person.id)
+      .then((r) => { if (alive && r.messages.length) setMsgs([welcome(person.name), ...r.messages.map((m) => ({ role: m.role, text: m.text }))]); })
+      .catch(() => { /* 历史拉取失败不影响对话 */ });
+    return () => { alive = false; };
+  }, [opp.id, person.id, person.name]);
+
+  // P8 沉淀①：把一条参谋分析挂到焦点人动态（ADD_LOG 走现有云同步；动态 tab 立刻可见）
+  const saveToLog = (i: number) => {
+    const m = msgs[i]; if (!m || savedIdx.has(i)) return;
+    dispatch({
+      type: 'ADD_LOG', accId: account.id, personId: person.id,
+      log: { date: todayYmd(), content: `【参谋分析】${m.text}`, visibility: 'org' },
+    });
+    setSavedIdx((s) => new Set(s).add(i));
+  };
+  // P8 沉淀②：清空该 商机×人 的会话历史
+  const clearHistory = async () => {
+    if (!confirm(`清空与「${person.name}」的参谋对话历史？（已挂到动态的笔记不受影响）`)) return;
+    try { await api.advisorClear(opp.id, person.id); setMsgs([welcome(person.name)]); setCands([]); setSavedIdx(new Set()); }
+    catch (e: any) { setMsgs((m) => [...m, { role: 'assistant', text: '清空失败：' + (e?.message || '未知') }]); }
+  };
 
   // P1① VoI 问题清单（pdeIntel·确定性引擎，不吃 AI Key）：商机级一次拉取，切人只重过滤不重拉；
   // 图上有改动（breakdown 变）→ 重拉，与 FocusPanel 立场条同惯例。引擎不可用 → 静默隐藏。
@@ -51,6 +80,7 @@ export function AdvisorPanel({ account, opp, breakdown, person, dispatch }: {
       const ctx = { ...buildAiContext(account, opp, breakdown), focus: { name: person.name, title: person.title } };
       const r = await api.aiSimulate(ctx, `围绕干系人「${person.name}」：${text}`);
       setMsgs((m) => [...m, { role: 'assistant', text: r.analysis }]);
+      void api.advisorAppend(opp.id, person.id, [{ role: 'user', text }, { role: 'assistant', text: r.analysis }]).catch(() => { /* P8 落历史失败不阻塞对话 */ });
     } catch (e: any) {
       setMsgs((m) => [...m, { role: 'assistant', text: '推演失败：' + (e?.message || '未知') + '（若未配模型，去「🧠 AI 模型」填一个自己的 Key；也可先看演示分析）' }]);
     } finally { setBusy(false); }
@@ -114,7 +144,8 @@ export function AdvisorPanel({ account, opp, breakdown, person, dispatch }: {
     <div className="chat-panel" style={{ height: '100%' }}>
       <div className="chat-head">
         <span className="chat-title">🧭 参谋 · 对着「{person.name}」深想</span>
-        <span className="chat-hint">带全图上下文 · 用你的模型</span>
+        <span className="chat-hint">带全图上下文 · 会话已留档</span>
+        <button className="adv-clear" onClick={clearHistory} title={`清空与「${person.name}」的参谋对话历史（已挂到动态的笔记不受影响）`}>🧹</button>
       </div>
       {voiAsks.length > 0 && (
         <div className="adv-asks">
@@ -137,7 +168,17 @@ export function AdvisorPanel({ account, opp, breakdown, person, dispatch }: {
         <span className="adv-cardbar-hint">AI 产 行动牌 / 策略卡 / 风险 · 采纳挂「{person.name}」</span>
       </div>
       <div className="chat-list" ref={listRef}>
-        {msgs.map((m, i) => <div key={i} className={`chat-bub ${m.role}`}>{m.text}</div>)}
+        {msgs.map((m, i) => (
+          <div key={i} className={`chat-bub ${m.role}`}>
+            {m.text}
+            {/* P8 沉淀：分析可一键挂到焦点人动态（欢迎语/失败提示不给存钮） */}
+            {m.role === 'assistant' && i > 0 && !/^(推演失败|出候选失败|清空失败)/.test(m.text) && (
+              savedIdx.has(i)
+                ? <div className="adv-saved">✓ 已挂到「{person.name}」的动态（📝 动态 tab 可见）</div>
+                : <div><button className="adv-save" onClick={() => saveToLog(i)} title="存为交往日志，挂到他的动态时间线——团队都能看到这条参谋结论">💾 挂到动态</button></div>
+            )}
+          </div>
+        ))}
         {busy && <div className="chat-bub assistant chat-typing">结合整张图思考中…</div>}
         {cardBusy && <div className="chat-bub assistant chat-typing">正在拟 行动 / 策略 / 风险 候选…</div>}
         {cands.map((c, i) => {

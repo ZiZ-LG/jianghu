@@ -100,6 +100,13 @@ export const api = {
   // P6 里程碑「→ 排行动」：为达成里程碑拆 2-3 个行动候选（只返回候选，前端落 draft 草稿人审）
   milestoneActions: (opportunityId: string, milestone: { title: string; date?: string }, context: any, existingTitles: string[]): Promise<{ candidates: { title: string; target: string; cautions: string }[]; provider: string }> =>
     req('/api/strategy/milestone-actions', { method: 'POST', body: JSON.stringify({ opportunityId, milestone, context, existingTitles }) }),
+  // P8 参谋会话历史（商机×焦点人 分桶）：读回放 / 追加一问一答 / 清空
+  advisorHistory: (opportunityId: string, personId: string): Promise<{ messages: { id: string; role: 'user' | 'assistant'; text: string; createdAt: string }[] }> =>
+    req(`/api/advisor/messages?opportunityId=${encodeURIComponent(opportunityId)}&personId=${encodeURIComponent(personId)}`),
+  advisorAppend: (opportunityId: string, personId: string, entries: { role: 'user' | 'assistant'; text: string }[]): Promise<{ ok: true }> =>
+    req('/api/advisor/messages', { method: 'POST', body: JSON.stringify({ opportunityId, personId, entries }) }),
+  advisorClear: (opportunityId: string, personId: string): Promise<{ ok: true }> =>
+    req(`/api/advisor/messages?opportunityId=${encodeURIComponent(opportunityId)}&personId=${encodeURIComponent(personId)}`, { method: 'DELETE' }),
   // AI 关系推断（待确认候选）
   suggestList: (opportunityId: string): Promise<{ suggestions: Suggestion[] }> => req(`/api/suggest?opportunityId=${encodeURIComponent(opportunityId)}`),
   suggestGenerate: (opportunityId: string): Promise<{ added: number; suggestions: Suggestion[] }> => req('/api/suggest/generate', { method: 'POST', body: JSON.stringify({ opportunityId }) }),

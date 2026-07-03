@@ -618,6 +618,21 @@ model Reminder {
   @@index([tenantId, status])
 }
 
+// P8 参谋会话历史：右栏参谋 tab 的问答流落库（原阅后即焚→可回看）。
+// 会话按 商机×焦点人 分桶；纯分析文本，不参与任何计算（沉淀结论走 ADD_LOG 挂人动态）。
+model AdvisorMsg {
+  id            String   @id // adv_xxx
+  tenantId      String
+  accountId     String
+  opportunityId String
+  personId      String                     // 焦点人
+  role          String                     // user | assistant
+  text          String
+  createdAt     DateTime @default(now())
+
+  @@index([tenantId, opportunityId, personId, createdAt])
+}
+
 // ── 企业微信日历双向同步（交互升级纲领 P2·出口闭环）──
 // 租户级 BYO 凭据：用租户自己企微自建应用凭据，江湖代调其日程 API（平台不需公司资质，照 QccConfig/AiConfig 范式）。
 model WeComConfig {

@@ -1445,6 +1445,14 @@ html[data-theme="dark"] .acc-needs { color: #f87171; }
 @media (prefers-reduced-motion: reduce) { .engine-pulse::before { animation: none; opacity: .8; } }
 .hub-titlewrap .engine-pulse { margin-top: 2px; }
 
+/* P8 推演产出沉淀：分析「💾 挂到动态」+ 已存标记 + 🧹 清空会话 */
+.adv-save { margin-top: 6px; font-size: 10.5px; padding: 2px 9px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink-2); cursor: pointer; }
+.adv-save:hover { border-color: var(--accent); color: var(--accent); }
+.adv-saved { margin-top: 6px; font-size: 10.5px; font-weight: 600; color: #16a34a; }
+html[data-theme="dark"] .adv-saved { color: #4ade80; }
+.adv-clear { margin-left: auto; border: none; background: none; cursor: pointer; font-size: 13px; opacity: .55; }
+.adv-clear:hover { opacity: 1; }
+
 /* P1① 参谋 tab 顶部 VoI 问题清单：「下次见他先问这 3 件事」（pdeIntel 确定性引擎，不吃 AI Key） */
 .adv-asks { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel-2); flex-shrink: 0; }
 .adv-asks-head { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; font-size: 11.5px; font-weight: 800; color: var(--ink-2); }
