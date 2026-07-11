@@ -5,12 +5,14 @@ import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
+import { denyViewer } from './scope.js';
 
 const MAX_KEEP = 200; // 每个 商机×人 会话保留上限（超出丢最旧——防止无限膨胀）
 
 export function advisorRoutes(app: FastifyInstance) {
   // 读会话（按时间升序，最近 100 条）
   app.get('/api/advisor/messages', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可拍板/操作
     const p = z.object({ opportunityId: z.string().min(1), personId: z.string().min(1) }).safeParse(req.query);
     if (!p.success) return reply.code(400).send({ error: '参数无效' });
     const tenantId = req.user.tenantId;
@@ -25,6 +27,7 @@ export function advisorRoutes(app: FastifyInstance) {
 
   // 追加消息（一次可批量：一问一答两条）
   app.post('/api/advisor/messages', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可拍板/操作
     const p = z.object({
       opportunityId: z.string().min(1),
       personId: z.string().min(1),
@@ -59,6 +62,7 @@ export function advisorRoutes(app: FastifyInstance) {
 
   // 清空该 商机×人 的会话
   app.delete('/api/advisor/messages', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可拍板/操作
     const p = z.object({ opportunityId: z.string().min(1), personId: z.string().min(1) }).safeParse(req.query);
     if (!p.success) return reply.code(400).send({ error: '参数无效' });
     const tenantId = req.user.tenantId;

@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
+import { denyViewer } from './scope.js';
 import { discoverPersons, researchCompanyProfile } from './enrich.js';
 import { generateRelSuggestions } from './suggest.js';
 import { computeReminders, recordPatrol, type PatrolOpp, type PatrolRole, type PatrolAction } from './patrol.js';
@@ -353,7 +354,8 @@ export function jobRoutes(app: FastifyInstance): void {
   });
 
   // 查某客户最近的自算任务状态（前端轮询展示进度）。
-  app.get('/api/enrich/jobs', { preHandler: [app.authenticate] }, async (req: any) => {
+  app.get('/api/enrich/jobs', { preHandler: [app.authenticate] }, async (req: any, reply: any) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可操作
     const accountId = typeof req.query?.accountId === 'string' ? req.query.accountId : undefined;
     const jobs = await prisma.enrichJob.findMany({
       where: { tenantId: req.user.tenantId, ...(accountId ? { accountId } : {}) },

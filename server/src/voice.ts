@@ -9,6 +9,7 @@ import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
+import { denyViewer } from './scope.js';
 import { loadAiConfig, callLLM } from './ai.js';
 import { enqueueEnrichJob, enqueueSuggestJob, enqueueProfileJob } from './jobs.js';
 import { applyAction } from './mutate.js';
@@ -369,6 +370,7 @@ export async function ingestVoiceText(tenantId: string, userId: string, input: I
 export function voiceRoutes(app: FastifyInstance) {
   // 手动口述录入（Typeless 转文字）→ 抽取落库。录音转写走 recording.ts，复用同一 ingestVoiceText。
   app.post('/api/voice/extract', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可拍板/操作
     const p = z.object({ text: z.string().min(1), accountId: z.string().optional(), opportunityId: z.string().optional(), priorText: z.string().optional(), sourceVisitId: z.string().optional() }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '请输入要录入的文字' });
     const r = await ingestVoiceText(req.user.tenantId, req.user.userId || '', p.data);

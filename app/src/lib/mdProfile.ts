@@ -355,7 +355,8 @@ export function parseCustomerMd(md: string, account: Account): Partial<Account> 
   const group = meta(md, '集团/母公司'); if (group !== undefined) patch.group = unv(group);
   const owner = meta(md, '主负责人'); if (owner !== undefined) patch.primaryOwner = unv(owner);
   const prof: AccountProfile = { ...(account.profile ?? {}) };
-  const fields: [string, keyof AccountProfile][] = [
+  // 排除 _mcpOrigin（溯源标记非文本字段），保证 prof[k] 的值域是 string
+  const fields: [string, Exclude<keyof AccountProfile, '_mcpOrigin'>][] = [
     ['工商基础', 'business'], ['集团关系', 'group'], ['招投标', 'bidding'],
     ['风险信号', 'risk'], ['我方现有合作', 'ourCooperation'], ['销售背景', 'salesNote'],
   ];

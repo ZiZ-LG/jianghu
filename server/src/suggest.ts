@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
+import { denyViewer, viewerCanReadAccount, viewerCanReadOpp } from './scope.js';
 import { loadAiConfig, callLLM } from './ai.js';
 import { nextFreeSlot } from './layout.js';
 import { getPatrolInfo } from './patrol.js';
@@ -181,6 +182,7 @@ export function suggestRoutes(app: FastifyInstance) {
   app.get('/api/suggest', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     const oppId = String(req.query?.opportunityId || '');
     if (!oppId) return reply.code(400).send({ error: '缺少 opportunityId' });
+    if (!(await viewerCanReadOpp(req, reply, oppId))) return; // viewer 归属校验（契约 v1.0 §四）
     const g = await loadGraph(req.user.tenantId, oppId);
     if (!g) return reply.code(404).send({ error: '商机不存在' });
     const rows = await prisma.relSuggestion.findMany({ where: { opportunityId: oppId, tenantId: req.user.tenantId, status: 'pending' }, orderBy: { confidence: 'desc' } });
@@ -188,6 +190,7 @@ export function suggestRoutes(app: FastifyInstance) {
   });
 
   app.post('/api/suggest/generate', { preHandler: [app.authenticate] }, async (req, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可拍板/操作
     const p = z.object({ opportunityId: z.string() }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '缺少 opportunityId' });
     const tenantId = req.user.tenantId;
@@ -201,6 +204,7 @@ export function suggestRoutes(app: FastifyInstance) {
   // 采纳候选关系：级联事务——若端点是候选人物先落正式 Person，再建 Edge。
   // 返回 { edge, createdPersons }：前端须先 dispatch 这些 ADD_PERSON 再 ADD_EDGE，否则画布找不到端点。
   app.post('/api/suggest/:id/accept', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可拍板/操作
     const tenantId = req.user.tenantId;
     // P10 改后采纳：可选 override（层级/标签），采纳时以改后值建边并写回候选留审计
     const ov = z.object({ layer: z.enum(['L1', 'L2', 'L3', 'L4']).optional(), label: z.string().trim().min(1).max(30).optional() }).safeParse(req.body ?? {});
@@ -243,6 +247,7 @@ export function suggestRoutes(app: FastifyInstance) {
   });
 
   app.post('/api/suggest/:id/reject', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可拍板/操作
     const r = await prisma.relSuggestion.updateMany({ where: { id: req.params.id, tenantId: req.user.tenantId }, data: { status: 'rejected' } });
     if (!r.count) return reply.code(404).send({ error: '候选不存在' });
     return { ok: true };
@@ -252,6 +257,7 @@ export function suggestRoutes(app: FastifyInstance) {
   app.get('/api/suggest/persons', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     const accountId = String(req.query?.accountId || '');
     if (!accountId) return reply.code(400).send({ error: '缺少 accountId' });
+    if (!(await viewerCanReadAccount(req, reply, accountId))) return; // viewer 归属校验
     const acc = await prisma.account.findFirst({ where: { id: accountId, tenantId: req.user.tenantId } });
     if (!acc) return reply.code(404).send({ error: '客户不存在' });
     const rows = await prisma.personSuggestion.findMany({ where: { accountId, tenantId: req.user.tenantId, status: 'pending' }, orderBy: { confidence: 'desc' } });
@@ -263,6 +269,7 @@ export function suggestRoutes(app: FastifyInstance) {
 
   // 采纳候选干系人 → 建正式 Person（带溯源日志）。返回 { person } 供前端 dispatch ADD_PERSON。
   app.post('/api/suggest/persons/:id/accept', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可拍板/操作
     const tenantId = req.user.tenantId;
     // P10 改后采纳：可选 override（名字/职务），先写回候选（留审计+物化读的就是改后值）再物化
     const ov = z.object({ name: z.string().trim().min(1).max(40).optional(), title: z.string().trim().max(60).optional() }).safeParse(req.body ?? {});
@@ -286,6 +293,7 @@ export function suggestRoutes(app: FastifyInstance) {
   });
 
   app.post('/api/suggest/persons/:id/reject', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可拍板/操作
     const r = await prisma.personSuggestion.updateMany({ where: { id: req.params.id, tenantId: req.user.tenantId, status: 'pending' }, data: { status: 'rejected' } });
     if (!r.count) return reply.code(404).send({ error: '候选不存在或已处理' });
     return { ok: true };
@@ -295,6 +303,7 @@ export function suggestRoutes(app: FastifyInstance) {
   // 「机器写初稿·人审」主线 v1：零 schema，复用 RelSuggestion/PersonSuggestion 表 + withNames。
   // 多租户红线：全程 tenantId 过滤（参考 state.ts 的 assembleState）。采纳/驳回沿用现有 /api/suggest[/persons]/:id/accept|reject。
   app.get('/api/inbox', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可拍板/操作
     const tenantId = req.user.tenantId;
     const [relRows, psRows, cpRows, remRows, evRows, sigRows, persons, opps, accounts] = await Promise.all([
       prisma.relSuggestion.findMany({ where: { tenantId, status: 'pending' }, orderBy: { confidence: 'desc' } }),
@@ -347,6 +356,7 @@ export function suggestRoutes(app: FastifyInstance) {
   // approve → 证据进 E2 燃料池（前端 adapter 过滤放行）+ fire-and-forget 落 EVSnapshot(trigger=evidence_review) 留痕；
   // reject → 不参与任何计算（留库审计）。tenantId 隔离 + 只审 pending_review 防重复处理。无静默生效路径（铁律②）。
   app.post('/api/evidence/:id/review', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可拍板/操作
     const p = z.object({
       action: z.enum(['approve', 'reject']),
       direction: z.union([z.literal(-1), z.literal(0), z.literal(1)]).optional(), // 修改后采纳：中性信号人工定向
@@ -376,6 +386,7 @@ export function suggestRoutes(app: FastifyInstance) {
 
   // 忽略一条巡检提醒（提醒型提案：只读，人「忽略」→ dismissed；绝不改业务库）。tenantId 隔离 + status=pending 防重复处理。
   app.post('/api/reminders/:id/dismiss', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可拍板/操作
     const r = await prisma.reminder.updateMany({ where: { id: req.params.id, tenantId: req.user.tenantId, status: 'pending' }, data: { status: 'dismissed' } });
     if (!r.count) return reply.code(404).send({ error: '提醒不存在或已处理' });
     return { ok: true };

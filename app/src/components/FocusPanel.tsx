@@ -7,6 +7,7 @@ import type { Account, Opportunity, Person, OppRole, BurningIssue, UCV, VisitNot
 import { ROLE_LABEL, SENTIMENT_LABEL } from '../types';
 import type { Action } from '../store';
 import { DetailDrawer } from './DetailDrawer';
+import { ReadonlyProfile } from './ReadonlyProfile';
 import { AdvisorPanel } from './AdvisorPanel';
 import type { ScoreBreakdown } from '../lib/g64111';
 import { api } from '../api';
@@ -17,7 +18,7 @@ type DynItem = { date: string; title?: string; body: string; source: string; sen
 type StanceDetail = { id: string; pS: number; pN: number; pO: number; n_eff: number };
 
 export function FocusPanel({
-  accId, oppId, account, opp, breakdown, person, oppRole, bis, ucvs, visitNotes, tab, onTabChange, dispatch, onRefresh, onClose,
+  accId, oppId, account, opp, breakdown, person, oppRole, bis, ucvs, visitNotes, tab, onTabChange, dispatch, onRefresh, onClose, readonly = false,
 }: {
   accId: string; oppId: string;
   account: Account; opp: Opportunity; breakdown: ScoreBreakdown;
@@ -27,6 +28,7 @@ export function FocusPanel({
   dispatch: Dispatch<Action>;
   onRefresh: () => void; // 参谋改图后刷新整树
   onClose: () => void;
+  readonly?: boolean; // viewer 只读投影：档案纯呈现、参谋 tab 不渲染（契约 v1.0 §二-1）
 }) {
   const f = person.form;
   const formFilled = [f.family, f.occupation, f.recreation, f.moneyMotivation].filter(Boolean).length;
@@ -83,11 +85,11 @@ export function FocusPanel({
       <div className="focus-tabs">
         <button className={`focus-tab ${tab === 'profile' ? 'on' : ''}`} onClick={() => onTabChange('profile')}>📇 档案</button>
         <button className={`focus-tab ${tab === 'dynamic' ? 'on' : ''}`} onClick={() => onTabChange('dynamic')}>📝 动态</button>
-        <button className={`focus-tab ${tab === 'advisor' ? 'on' : ''}`} onClick={() => onTabChange('advisor')}>🧭 参谋</button>
+        {!readonly && <button className={`focus-tab ${tab === 'advisor' ? 'on' : ''}`} onClick={() => onTabChange('advisor')}>🧭 参谋</button>}
       </div>
 
       <div className="focus-body">
-        {tab === 'profile' && (
+        {(tab === 'profile' || (readonly && tab === 'advisor')) && (
           <>
             {myStance && (
               <div className="stance-bar" title={`引擎立场分布：支持 ${Math.round(myStance.pS * 100)}% / 中立 ${Math.round(myStance.pN * 100)}% / 反对 ${Math.round(myStance.pO * 100)}%（等效样本 n≈${myStance.n_eff.toFixed(1)}）。点击看证据时间线`}
@@ -101,8 +103,10 @@ export function FocusPanel({
                 <span className={`stance-bar-neff${myStance.n_eff < 3 ? ' thin' : ''}`}>n≈{myStance.n_eff.toFixed(1)}{myStance.n_eff < 3 ? ' · 样本薄' : ''}</span>
               </div>
             )}
-            <DetailDrawer embedded accId={accId} oppId={oppId} person={person}
-              oppRole={oppRole} bis={bis} ucvs={ucvs} dispatch={dispatch} onClose={onClose} />
+            {readonly
+              ? <ReadonlyProfile person={person} oppRole={oppRole} bis={bis} ucvs={ucvs} />
+              : <DetailDrawer embedded accId={accId} oppId={oppId} person={person}
+                  oppRole={oppRole} bis={bis} ucvs={ucvs} dispatch={dispatch} onClose={onClose} />}
           </>
         )}
 
@@ -119,11 +123,11 @@ export function FocusPanel({
               ))}
             </div>
           ) : (
-            <div className="focus-empty">暂无动态。<br />在「档案」记一次交往日志，或用录音 / 口述录入，都会汇到这条时间线。</div>
+            <div className="focus-empty">暂无动态。{!readonly && <><br />在「档案」记一次交往日志，或用录音 / 口述录入，都会汇到这条时间线。</>}</div>
           )
         )}
 
-        {tab === 'advisor' && (
+        {tab === 'advisor' && !readonly && (
           <AdvisorPanel account={account} opp={opp} breakdown={breakdown} person={person} dispatch={dispatch} />
         )}
       </div>

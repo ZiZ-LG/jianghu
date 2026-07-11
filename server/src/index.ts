@@ -65,9 +65,10 @@ app.decorate('authenticate', async (req: any, reply: any) => {
   try { await req.jwtVerify(); } catch { reply.code(401).send({ error: 'unauthorized' }); return; }
   // 验签后查库：①成员已被移除 → 旧会话立即失效 ②角色取库中最新（改权即生效，JWT 内 role 仅是签发时快照）。
   // 主键查询亚毫秒级，正确性优先不加缓存；/api/mcp 走 mcpAuthenticate 已有同等校验。
-  const u = await prisma.user.findFirst({ where: { id: req.user.userId, tenantId: req.user.tenantId }, select: { role: true } });
+  const u = await prisma.user.findFirst({ where: { id: req.user.userId, tenantId: req.user.tenantId }, select: { role: true, name: true } });
   if (!u) { reply.code(401).send({ error: 'unauthorized' }); return; }
   req.user.role = u.role;
+  req.user.name = u.name; // viewer 归属过滤锚（Account.primaryOwner === User.name，契约 v1.0 §四）
 });
 
 const requireRole = (req: any, reply: any, roles: string[]): boolean => {
@@ -94,7 +95,12 @@ wecomRoutes(app); // 企微日历：配置/绑定（江湖→企微同步在 mut
 pdeRoutes(app); // PDE 决策引擎（M3 评估主链）：ev / intel-priorities / action-ranking / snapshot
 
 // ── 数据：拉取整树 / 应用变更 ──
-app.get('/api/state', { preHandler: [app.authenticate] }, async (req) => assembleState(req.user.tenantId));
+// viewer（只读投影）：只下发名下客户（primaryOwner === 姓名）；User.name 有 min(1) 校验，
+// 空名兜底传不可能匹配的哨兵，绝不让空串匹配到"未归属"客户。
+app.get('/api/state', { preHandler: [app.authenticate] }, async (req) =>
+  req.user.role === 'viewer'
+    ? assembleState(req.user.tenantId, { primaryOwner: req.user.name || '\u0000' })
+    : assembleState(req.user.tenantId));
 
 app.post('/api/mutate', { preHandler: [app.authenticate] }, async (req, reply) => {
   // 写总入口：applyAction 全是写操作（create/update/delete），viewer 只读须一律拒绝；owner/admin/member 放行（对齐 /api/members 的 RBAC）
@@ -113,12 +119,14 @@ app.post('/api/mutate', { preHandler: [app.authenticate] }, async (req, reply) =
   }
 });
 
-app.post('/api/demo', { preHandler: [app.authenticate] }, async (req) => {
+app.post('/api/demo', { preHandler: [app.authenticate] }, async (req, reply) => {
+  if (!requireRole(req, reply, ['owner', 'admin', 'member'])) return; // viewer 只读
   await createDemoForTenant(req.user.tenantId);
   return { ok: true };
 });
 
-app.post('/api/reset', { preHandler: [app.authenticate] }, async (req) => {
+app.post('/api/reset', { preHandler: [app.authenticate] }, async (req, reply) => {
+  if (!requireRole(req, reply, ['owner', 'admin', 'member'])) return; // viewer 只读
   await prisma.account.deleteMany({ where: { tenantId: req.user.tenantId } });
   return { ok: true };
 });

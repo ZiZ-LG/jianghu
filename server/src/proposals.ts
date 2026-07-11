@@ -3,6 +3,7 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'crypto';
 import { prisma } from './prisma.js';
+import { denyViewer } from './scope.js';
 import { applyAction } from './mutate.js';
 
 /** 建字段更新提案（去重：同 实体+字段 已有 pending 则覆盖最新值，避免堆叠重复打扰）。供 voice/MCP 等机器写源调用。 */
@@ -69,6 +70,7 @@ export async function rejectProposal(tenantId: string, id: string): Promise<'ok'
 export function proposalRoutes(app: FastifyInstance) {
   // 采纳 / 改后采纳（body.overrideValue 给则用它落库）
   app.post('/api/proposals/:id/accept', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可拍板/操作
     const override = typeof req.body?.overrideValue === 'string' && req.body.overrideValue ? req.body.overrideValue : undefined;
     try {
       const r = await acceptProposal(req.user.tenantId, req.params.id, override);
@@ -78,6 +80,7 @@ export function proposalRoutes(app: FastifyInstance) {
     } catch (e: any) { return reply.code(400).send({ error: e?.message || '采纳失败' }); }
   });
   app.post('/api/proposals/:id/reject', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可拍板/操作
     const r = await rejectProposal(req.user.tenantId, req.params.id);
     if (r === 'already') return reply.code(404).send({ error: '提案不存在或已处理' });
     return { ok: true };

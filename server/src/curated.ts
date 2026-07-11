@@ -7,6 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
+import { viewerCanReadAccount, viewerCanReadOpp } from './scope.js';
 import { loadAiConfig, callLLM } from './ai.js';
 
 type EntityKind = 'account' | 'opportunity';
@@ -97,6 +98,15 @@ export function curatedRoutes(app: FastifyInstance): void {
     const eid = typeof req.query?.entityId === 'string' ? req.query.entityId : '';
     if ((kind !== 'account' && kind !== 'opportunity') || !eid) return reply.code(400).send({ error: '参数错误' });
     if (!(await entityOwned(req.user.tenantId, kind, eid))) return reply.code(404).send({ error: '实体不存在' });
+    // viewer 归属校验（契约 v1.0 §四）+ 只读缓存：不触发懒生成（不花租户 AI 额度、不写缓存行）
+    if (req.user.role === 'viewer') {
+      const okScope = kind === 'account'
+        ? await viewerCanReadAccount(req, reply, eid)
+        : await viewerCanReadOpp(req, reply, eid);
+      if (!okScope) return;
+      const cur = await prisma.curatedSummary.findUnique({ where: { tenantId_entityKind_entityId: { tenantId: req.user.tenantId, entityKind: kind, entityId: eid } } });
+      return { content: cur?.content || '', status: cur ? 'cached' : 'empty', editedByHuman: !!cur?.editedByHuman, updatedAt: cur?.updatedAt };
+    }
     return getCuratedSummary(req.user.tenantId, kind, eid);
   });
 

@@ -18,6 +18,7 @@ import { MdDocPanel } from './components/MdDocPanel';
 import { IntelCapture } from './components/IntelCapture';
 import { NewOpportunityDialog } from './components/NewOpportunityDialog';
 import { layoutSkeleton, type SkeletonRole } from './data/skeletons';
+import { parsePath, buildPath, resolveRoute, type RouteTarget } from './lib/router';
 import { computeGaps } from './lib/gaps';
 import { computeToday, needsYouByAccount } from './lib/today';
 import { GapCards } from './components/GapCards';
@@ -41,6 +42,8 @@ export default function App() {
   const [booting, setBooting] = useState(true);
   const [syncErr, setSyncErr] = useState('');
   const [undoHint, setUndoHint] = useState('');
+  // viewer 角色 = 只读投影（契约 v1.0 §二-1）：编辑/录入控件一律不渲染（非置灰）；视图交互全保留
+  const readonly = auth?.user.role === 'viewer';
 
   const [accId, setAccId] = useState<string | null>(null);
   const [oppId, setOppId] = useState<string | null>(null);
@@ -100,6 +103,24 @@ export default function App() {
     return () => document.removeEventListener('fullscreenchange', onFs);
   }, []);
 
+  // ── Deep link 页面级直链（契约 v1.0 §三-③）：/account/{id}[/opp/{id}]，id 兼容江湖 id / 销售包 externalRef ──
+  // 打开时记下目标段；等登录 + 整树 HYDRATE 后再解析落位——未登录先登录、登录后不丢目标（§三-③ 验收）。
+  const pendingRoute = useRef<RouteTarget | null>(parsePath(window.location.pathname));
+  const applyRoute = useCallback((accounts: { id: string; externalRef?: string; opportunities: { id: string; externalRef?: string }[] }[]) => {
+    const t = pendingRoute.current;
+    if (!t) return;
+    pendingRoute.current = null;
+    const r = resolveRoute(accounts as any, t);
+    if (r) {
+      window.history.replaceState(null, '', buildPath(r.accId, r.oppId)); // 规范化为江湖 id 形式
+      setAccId(r.accId); setOppId(r.oppId); setSelectedId(null); setVisibleLayers(new Set(['L1']));
+    } else {
+      // 数据隔离（§四）：viewer 名下不含该客户时与"不存在"同响应——链接互发打不开
+      setSyncErr('🔗 链接指向的客户不存在，或你没有查看权限');
+      window.history.replaceState(null, '', '/');
+    }
+  }, []);
+
   // 启动：有 token 则恢复会话 + 拉取云端数据
   useEffect(() => {
     (async () => {
@@ -109,7 +130,8 @@ export default function App() {
         const st = await api.getState();
         dispatch({ type: 'HYDRATE', accounts: st.accounts });
         setAuth({ token: api.getToken()!, user: me.user, tenant: me.tenant });
-        api.inboxList().then(setInbox).catch(() => { /* 收件箱角标，失败忽略 */ });
+        applyRoute(st.accounts);
+        if (me.user.role !== 'viewer') api.inboxList().then(setInbox).catch(() => { /* 收件箱角标，失败忽略 */ });
       } catch { api.setToken(null); } finally { setBooting(false); }
     })();
   }, []);
@@ -118,13 +140,41 @@ export default function App() {
     const st = await api.getState();
     dispatch({ type: 'HYDRATE', accounts: st.accounts });
     setAuth(res);
-    api.inboxList().then(setInbox).catch(() => { /* 收件箱角标 */ });
+    applyRoute(st.accounts);
+    if (res.user.role !== 'viewer') api.inboxList().then(setInbox).catch(() => { /* 收件箱角标 */ });
   };
-  const logout = () => { api.setToken(null); setAuth(null); setAccId(null); setSelectedId(null); dispatch({ type: 'HYDRATE', accounts: [] }); };
+  const logout = () => {
+    api.setToken(null); setAuth(null); setAccId(null); setSelectedId(null);
+    dispatch({ type: 'HYDRATE', accounts: [] });
+    window.history.replaceState(null, '', '/'); // 登出清 URL，避免登录页残留目标路径造成误解（重新登录会重新解析）
+  };
 
   // 最新 state 镜像：供 computeInverse 取旧值 + 乐观锁注入 baseVersion
   const stateRef = useRef(state);
   stateRef.current = state;
+
+  // 选中客户/商机 ↔ URL 双向同步：导航 pushState 入历史；popstate（前进/后退）解析回状态并规范化 URL
+  useEffect(() => {
+    if (!auth || pendingRoute.current) return; // 未登录不动 URL（保住 deep link 目标）；待解析目标不被覆盖
+    const path = buildPath(accId, oppId);
+    if (window.location.pathname !== path) window.history.pushState(null, '', path);
+  }, [accId, oppId, auth]);
+  useEffect(() => {
+    const onPop = () => {
+      const t = parsePath(window.location.pathname);
+      if (!t) { setAccId(null); setOppId(null); setSelectedId(null); return; }
+      const r = resolveRoute(stateRef.current.accounts, t);
+      if (r) {
+        window.history.replaceState(null, '', buildPath(r.accId, r.oppId)); // 先规范化，同步 effect 将 no-op
+        setAccId(r.accId); setOppId(r.oppId); setSelectedId(null);
+      } else {
+        window.history.replaceState(null, '', '/');
+        setAccId(null); setOppId(null); setSelectedId(null);
+      }
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
   // 底层落地：乐观本地 + 云端持久化（乐观锁注入 baseVersion；409 冲突重拉整树覆盖本地；普通操作与 undo/redo 共用）
   const applyRaw = useCallback(async (action: Action) => {
     const a = injectBaseVersion(stateRef.current, action);
@@ -266,7 +316,7 @@ export default function App() {
   };
 
   // ── 画布交互：选中 / 打开右侧栏 / 飞书式建点连线 ──
-  const selectPerson = (id: string | null) => { setSelectedId(id); setSelectedEdgeId(null); if (id) setFocusTab('advisor'); }; // 单击=选中→焦点面板「参谋」
+  const selectPerson = (id: string | null) => { setSelectedId(id); setSelectedEdgeId(null); if (id) setFocusTab(readonly ? 'profile' : 'advisor'); }; // 单击=选中→焦点面板「参谋」（viewer 无参谋→档案）
   const openPerson = (id: string) => { setSelectedId(id); setSelectedEdgeId(null); setDrawerEdgeId(null); setFocusTab('profile'); }; // 双击=选中→焦点面板「档案」
   const selectEdge = (id: string | null) => { setSelectedEdgeId(id); setSelectedId(null); if (id && drawerEdgeId) setDrawerEdgeId(id); };
   const openEdge = (id: string) => { setSelectedId(null); setDrawerEdgeId(id); };
@@ -384,6 +434,7 @@ export default function App() {
         {phonePortrait && !forceDesktop ? (
           <MomentFlow
             accounts={state.accounts} inbox={inbox} userName={auth.user.name}
+            readonly={readonly}
             theme={theme} onToggleTheme={toggleTheme}
             onOpenIntel={() => setIntelOpen(true)}
             onEnterAccount={(aId, oId) => { const a = state.accounts.find((x) => x.id === aId); setAccId(aId); setOppId(oId ?? a?.opportunities[0]?.id ?? null); setSelectedId(null); }}
@@ -397,6 +448,7 @@ export default function App() {
         ) : (
         <CustomerHub
           accounts={state.accounts} onOpen={openAccount} onCreate={createAccount} onLoadDemo={loadDemo}
+          readonly={readonly}
           today={hubToday} needsYou={hubNeedsYou}
           onDeleteAccount={(id) => act({ type: 'DELETE_ACCOUNT', accId: id })}
           tenantName={auth.tenant.name} userName={auth.user.name} plan={auth.tenant.plan}
@@ -410,8 +462,8 @@ export default function App() {
         )}
         {phonePortrait && forceDesktop && <button className="mf-exit-desktop" onClick={() => setForceDesktop(false)}>📱 回手机版</button>}
         {syncErr && <div className="sync-toast">{syncErr}</div>}
-        {inboxOpen && <InboxPanel rels={inbox.rels} persons={inbox.persons} proposals={inbox.proposals} accounts={state.accounts} onAccept={inboxAcceptRel} onReject={inboxRejectRel} onAcceptPerson={inboxAcceptPerson} onRejectPerson={inboxRejectPerson} onAcceptProposal={inboxAcceptProposal} onRejectProposal={inboxRejectProposal} reminders={inbox.reminders} onDismissReminder={inboxDismissReminder} evidences={inbox.evidences} onReviewEvidence={inboxReviewEvidence} onClose={() => setInboxOpen(false)} />}
-        {intelOpen && (
+        {inboxOpen && !readonly && <InboxPanel rels={inbox.rels} persons={inbox.persons} proposals={inbox.proposals} accounts={state.accounts} onAccept={inboxAcceptRel} onReject={inboxRejectRel} onAcceptPerson={inboxAcceptPerson} onRejectPerson={inboxRejectPerson} onAcceptProposal={inboxAcceptProposal} onRejectProposal={inboxRejectProposal} reminders={inbox.reminders} onDismissReminder={inboxDismissReminder} evidences={inbox.evidences} onReviewEvidence={inboxReviewEvidence} onClose={() => setInboxOpen(false)} />}
+        {intelOpen && !readonly && (
           <IntelCapture
             onClose={() => setIntelOpen(false)}
             onDone={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); } catch { /* 静默：保存已成功，仅刷新失败 */ } }}
@@ -446,14 +498,15 @@ export default function App() {
   const sidebarEl = (
     <Sidebar
       account={account} opp={opp} breakdown={breakdown}
+      readonly={readonly}
       weighted={pdeFull?.score?.weighted ?? null}
       pde={pdeFull ? { action: pdeFull.recommendation?.action ?? '', pwin: pdeFull.pwin ?? 0, flag: pdeFull.confidenceFlag ?? '' } : null}
-      onOpenEngine={() => setEngineSignal((n) => n + 1)}
+      onOpenEngine={readonly ? undefined : () => setEngineSignal((n) => n + 1)}
       onSelectOpp={(id) => { setOppId(id); selectPerson(null); setMobileNavOpen(false); }}
       onAddOpp={addOpp}
       onBack={() => { setAccId(null); selectPerson(null); }}
       onCollapse={() => (isMobile ? setMobileNavOpen(false) : setSidebarCollapsed(true))}
-      gapCount={gaps.length} onOpenGaps={() => setGapsOpen(true)}
+      gapCount={gaps.length} onOpenGaps={readonly ? undefined : () => setGapsOpen(true)}
     />
   );
 
@@ -487,10 +540,11 @@ export default function App() {
               <div className="module-top wall-top">
                 {!isMobile && <LayerTabs visible={visibleLayers} onToggle={toggleLayer} />}
                 {!isMobile && (<>
-                  <button className="btn cta xs" onClick={() => setAddIntelOpen(true)} title="接入录音：飞书妙记 / 上传音频 / 得到大脑——转写后一键抽取成图（打字/粘口述走坞底「和地图对话」）">🎧 接入录音</button>
+                  {/* viewer（只读投影）：录入/自算/审核入口不渲染；档案（可导出喂 WorkBuddy）与视图操作保留 */}
+                  {!readonly && <button className="btn cta xs" onClick={() => setAddIntelOpen(true)} title="接入录音：飞书妙记 / 上传音频 / 得到大脑——转写后一键抽取成图（打字/粘口述走坞底「和地图对话」）">🎧 接入录音</button>}
                   <button className="btn ghost xs" onClick={() => setMdDocOpen(true)} title="客户档案 / 商机档案 / 拜访记录（.md 文档）">📋 作战档案</button>
-                  <button className="btn ghost xs" onClick={selfCompute} disabled={selfComputeBusy} title="再跑一遍自算：后台用企查查/AI 发现干系人 + 推断商机内关系 + 补企业背景研究，候选进收件箱人审。建客户已自动跑过一次，这里是「再来一遍」。">{selfComputeBusy ? '⏳ 已启动…' : '↻ 重新补全'}</button>
-                  <button className="btn ghost xs" onClick={() => setInboxOpen(true)}>📥 收件箱{inbox.total > 0 ? ` (${inbox.total})` : ''}</button>
+                  {!readonly && <button className="btn ghost xs" onClick={selfCompute} disabled={selfComputeBusy} title="再跑一遍自算：后台用企查查/AI 发现干系人 + 推断商机内关系 + 补企业背景研究，候选进收件箱人审。建客户已自动跑过一次，这里是「再来一遍」。">{selfComputeBusy ? '⏳ 已启动…' : '↻ 重新补全'}</button>}
+                  {!readonly && <button className="btn ghost xs" onClick={() => setInboxOpen(true)}>📥 收件箱{inbox.total > 0 ? ` (${inbox.total})` : ''}</button>}
                   <span style={{ marginLeft: 'auto' }}>
                     <OverflowMenu align="right" label="⚙️" items={[
                       { label: '❓ 帮助', onClick: () => setHelpOpen(true) },
@@ -502,10 +556,12 @@ export default function App() {
                   <OverflowMenu align="left" label={`▾ 层级 (${visibleLayers.size})`}
                     items={(['L1', 'L2', 'L3', 'L4'] as Layer[]).map((l) => ({ label: LAYER_LABEL[l], active: visibleLayers.has(l), onClick: () => toggleLayer(l) }))} />
                   <OverflowMenu align="left" label="⋯ 操作" items={[
-                    { label: '🎧 接入录音', primary: true, onClick: () => setAddIntelOpen(true) },
+                    ...(!readonly ? [{ label: '🎧 接入录音', primary: true, onClick: () => setAddIntelOpen(true) }] : []),
                     { label: '📋 作战档案', onClick: () => setMdDocOpen(true) },
-                    { label: selfComputeBusy ? '⏳ 自算中…' : '↻ 重新补全', onClick: selfCompute },
-                    { label: '📥 收件箱', badge: inbox.total > 0 ? String(inbox.total) : undefined, onClick: () => setInboxOpen(true) },
+                    ...(!readonly ? [
+                      { label: selfComputeBusy ? '⏳ 自算中…' : '↻ 重新补全', onClick: selfCompute },
+                      { label: '📥 收件箱', badge: inbox.total > 0 ? String(inbox.total) : undefined, onClick: () => setInboxOpen(true) },
+                    ] : []),
                     { label: '❓ 帮助', onClick: () => setHelpOpen(true) },
                     { label: theme === 'dark' ? '☀️ 白天模式' : '🌙 黑夜模式', onClick: toggleTheme },
                   ]} />
@@ -514,9 +570,10 @@ export default function App() {
             )}
             <>
             <Canvas account={account} opp={opp} visibleLayers={visibleLayers}
+              readonly={readonly}
               selectedId={selectedId} selectedEdgeId={selectedEdgeId}
               onSelectPerson={selectPerson} onSelectEdge={selectEdge}
-              onOpenPerson={openPerson} onOpenEdge={openEdge} onOpenAction={setOpenActionId} onActionFeedback={actionFeedback}
+              onOpenPerson={openPerson} onOpenEdge={openEdge} onOpenAction={readonly ? undefined : setOpenActionId} onActionFeedback={readonly ? undefined : actionFeedback}
               onMovePerson={(id, x, y) => act({ type: 'MOVE_PERSON', accId: account.id, personId: id, x, y })}
               onAddPersonAt={addPersonAt} onAddConnectedNode={addConnectedNode} onConnect={connectNodes}
               onUpdateEdge={updateEdge} onDeleteEdge={deleteEdgeById}
@@ -530,9 +587,10 @@ export default function App() {
             <div className="no-opp-emoji">🎯</div>
             <div className="no-opp-t">这个客户还没有商机</div>
             <div style={{ display: 'flex', gap: 10 }}>
-              <button className="btn primary" onClick={addOpp}>＋ 新建商机</button>
+              {!readonly && <button className="btn primary" onClick={addOpp}>＋ 新建商机</button>}
               <button className="btn ghost" onClick={() => setMdDocOpen(true)}>📋 作战档案</button>
             </div>
+            {readonly && <div className="empty-hint" style={{ marginTop: 10 }}>商机由数字员工（销售包）每晚收口同步</div>}
           </div>
         )}
       </main>
@@ -540,6 +598,7 @@ export default function App() {
       {/* 第9刀：右栏面板归位 .app-upper——absolute 于上半区，底边天然止于坞顶，不再遮挡坞内卡片 */}
       {selectedPerson && opp && breakdown && (
         <FocusPanel accId={account.id} oppId={opp.id} account={account} opp={opp} breakdown={breakdown}
+          readonly={readonly}
           person={selectedPerson} oppRole={selectedRole} bis={selectedBis} ucvs={selectedUcvs}
           visitNotes={account.visitNotes ?? []} tab={focusTab} onTabChange={setFocusTab} dispatch={act}
           onRefresh={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); } catch { /* 静默：改图已成功，仅刷新失败 */ } }}
@@ -547,6 +606,7 @@ export default function App() {
       )}
       {drawerEdge && (
         <EdgeDrawer edge={drawerEdge} persons={account.persons}
+          readonly={readonly}
           onUpdate={(patch) => updateEdge(drawerEdge.id, patch)}
           onDelete={() => { deleteEdgeById(drawerEdge.id); setDrawerEdgeId(null); setSelectedEdgeId(null); }}
           onClose={() => setDrawerEdgeId(null)} />
@@ -554,7 +614,8 @@ export default function App() {
       </div>
 
       {/* 第8刀：坞全宽横贯底部（提出 .main），列①与左栏纵向对齐——局势信息上下融合 */}
-      {opp && !immersive && breakdown && (
+      {/* viewer：推演坞（策划写作台）整体不渲染——拷问第二屏聚焦权力地图本身 */}
+      {opp && !immersive && breakdown && !readonly && (
         <DeliberationDock account={account} opp={opp} breakdown={breakdown} dispatch={act}
           patrol={inbox.patrol} pdeFull={pdeFull} openEngineSignal={engineSignal}
           selectedPersonId={selectedId} onSelectPerson={selectPerson}
@@ -562,28 +623,28 @@ export default function App() {
           onChatDone={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); await loadInbox(); } catch { /* 静默：保存已成功，仅刷新失败 */ } }} />
       )}
 
-      {oppFormOpen && opp && (
+      {oppFormOpen && opp && !readonly && (
         <OpportunityForm opp={opp} onClose={() => setOppFormOpen(false)}
           onSave={(patch) => act({ type: 'UPDATE_OPP', accId: account.id, oppId: opp.id, patch })} />
       )}
-      {newOppOpen && (
+      {newOppOpen && !readonly && (
         <NewOpportunityDialog account={account} onClose={() => setNewOppOpen(false)} onCreate={createOpportunity} />
       )}
-      {mdDocOpen && <MdDocPanel account={account} dispatch={act} onClose={() => setMdDocOpen(false)} />}
-      {addIntelOpen && (
+      {mdDocOpen && <MdDocPanel account={account} dispatch={act} readonly={readonly} onClose={() => setMdDocOpen(false)} />}
+      {addIntelOpen && !readonly && (
         <RecordingPanel accountId={account.id} role={auth.user.role}
           onClose={() => setAddIntelOpen(false)}
           onExtracted={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); await loadInbox(); } catch { /* 静默：保存已成功，仅刷新失败 */ } }} />
       )}
-      {personFormOpen && <PersonForm onCreate={addPerson} onClose={() => setPersonFormOpen(false)} />}
+      {personFormOpen && !readonly && <PersonForm onCreate={addPerson} onClose={() => setPersonFormOpen(false)} />}
       {teamOpen && <TeamBilling role={auth.user.role} onClose={() => setTeamOpen(false)} />}
-      {aiSettingsOpen && <AiSettings role={auth.user.role} onClose={() => setAiSettingsOpen(false)} />}
+      {aiSettingsOpen && !readonly && <AiSettings role={auth.user.role} onClose={() => setAiSettingsOpen(false)} />}
       {helpOpen && <HelpManual onClose={() => setHelpOpen(false)} />}
-      {mcpAccessOpen && <McpAccess onClose={() => setMcpAccessOpen(false)} />}
-      {gapsOpen && account && opp && breakdown && (
+      {mcpAccessOpen && !readonly && <McpAccess onClose={() => setMcpAccessOpen(false)} />}
+      {gapsOpen && account && opp && breakdown && !readonly && (
         <GapCards account={account} opp={opp} dispatch={act} onClose={() => setGapsOpen(false)} />
       )}
-      {inboxOpen && <InboxPanel rels={inbox.rels} persons={inbox.persons} proposals={inbox.proposals} accounts={state.accounts} onAccept={inboxAcceptRel} onReject={inboxRejectRel} onAcceptPerson={inboxAcceptPerson} onRejectPerson={inboxRejectPerson} onAcceptProposal={inboxAcceptProposal} onRejectProposal={inboxRejectProposal} reminders={inbox.reminders} onDismissReminder={inboxDismissReminder} evidences={inbox.evidences} onReviewEvidence={inboxReviewEvidence} onClose={() => setInboxOpen(false)} />}
+      {inboxOpen && !readonly && <InboxPanel rels={inbox.rels} persons={inbox.persons} proposals={inbox.proposals} accounts={state.accounts} onAccept={inboxAcceptRel} onReject={inboxRejectRel} onAcceptPerson={inboxAcceptPerson} onRejectPerson={inboxRejectPerson} onAcceptProposal={inboxAcceptProposal} onRejectProposal={inboxRejectProposal} reminders={inbox.reminders} onDismissReminder={inboxDismissReminder} evidences={inbox.evidences} onReviewEvidence={inboxReviewEvidence} onClose={() => setInboxOpen(false)} />}
       {syncErr && <div className="sync-toast">{syncErr}</div>}
       {undoHint && <div className="undo-toast">{undoHint}</div>}
     </div>

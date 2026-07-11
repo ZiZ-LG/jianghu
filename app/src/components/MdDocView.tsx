@@ -10,32 +10,33 @@ import type { Action } from '../store';
 import { CuratedSummary } from './CuratedSummary';
 
 /** 失焦提交的内联字段：本地编辑、值变了才 dispatch（避免每键写库）。 */
-function Field({ value, onSave, ph, area }: { value: string; onSave: (v: string) => void; ph?: string; area?: boolean }) {
+function Field({ value, onSave, ph, area, ro }: { value: string; onSave: (v: string) => void; ph?: string; area?: boolean; ro?: boolean }) {
   const [v, setV] = useState(value);
   useEffect(() => setV(value), [value]); // 外部数据变化时同步（如别人改了 / 撤销）
   const commit = () => { if (v !== value) onSave(v); };
+  if (ro) return <span className={`mdv-field-ro${area ? ' mdv-area-ro' : ''}`}>{value || '—'}</span>; // viewer：纯文本呈现
   return area
     ? <textarea className="mdv-field mdv-area" value={v} placeholder={ph ?? '—'} onChange={(e) => setV(e.target.value)} onBlur={commit} rows={2} />
     : <input className="mdv-field" value={v} placeholder={ph ?? '—'} onChange={(e) => setV(e.target.value)} onBlur={commit} />;
 }
 
 /** 自由文本层 · 笔记区（显示挂某实体的 note + 记一条 + 删；零 schema，复用 ADD/DELETE_NOTE） */
-export function NotesSection({ notes, onAdd, onDelete }: { notes: Note[]; onAdd: (content: string) => void; onDelete: (id: string) => void }) {
+export function NotesSection({ notes, onAdd, onDelete, ro }: { notes: Note[]; onAdd: (content: string) => void; onDelete: (id: string) => void; ro?: boolean }) {
   const [draft, setDraft] = useState('');
   const add = () => { const c = draft.trim(); if (c) { onAdd(c); setDraft(''); } };
   return (
     <div className="mdv-notes">
-      <div className="mdv-note-add">
+      {!ro && <div className="mdv-note-add">
         <input className="mdv-field" value={draft} placeholder="记一条零散信息，回车保存…"
           onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') add(); }} />
         <button className="mdv-note-btn" onClick={add} disabled={!draft.trim()}>记一条</button>
-      </div>
+      </div>}
       {notes.length === 0 && <p className="mdv-empty">暂无笔记</p>}
       {notes.map((n) => (
         <blockquote key={n.id} className="mdv-note">
           <span className="mdv-note-text">{n.content}</span>
           {n.source && n.source !== 'manual' && <span className="mdv-note-src">· {n.source}</span>}
-          <button className="mdv-note-del" onClick={() => onDelete(n.id)} aria-label="删除笔记">✕</button>
+          {!ro && <button className="mdv-note-del" onClick={() => onDelete(n.id)} aria-label="删除笔记">✕</button>}
         </blockquote>
       ))}
     </div>
@@ -47,16 +48,16 @@ const newId = (prefix: string) => `${prefix}_${Date.now().toString(36)}${Math.ra
 
 type DocSel = { kind: 'customer' } | { kind: 'opp'; id: string } | { kind: 'visit'; id: string };
 
-export function MdDocView({ account, sel, dispatch }: { account: Account; sel: DocSel; dispatch: (a: Action) => void }) {
+export function MdDocView({ account, sel, dispatch, readonly = false }: { account: Account; sel: DocSel; dispatch: (a: Action) => void; readonly?: boolean }) {
   if (sel.kind === 'opp') {
     const o = account.opportunities.find((x) => x.id === sel.id);
-    return o ? <OppDoc account={account} opp={o} dispatch={dispatch} /> : <p className="mdv-empty">商机不存在</p>;
+    return o ? <OppDoc account={account} opp={o} dispatch={dispatch} readonly={readonly} /> : <p className="mdv-empty">商机不存在</p>;
   }
   if (sel.kind === 'visit') {
     const vn = (account.visitNotes ?? []).find((x) => x.id === sel.id);
-    return vn ? <VisitDoc account={account} visit={vn} dispatch={dispatch} /> : <p className="mdv-empty">拜访记录不存在</p>;
+    return vn ? <VisitDoc account={account} visit={vn} dispatch={dispatch} readonly={readonly} /> : <p className="mdv-empty">拜访记录不存在</p>;
   }
-  return <CustomerDoc account={account} dispatch={dispatch} />;
+  return <CustomerDoc account={account} dispatch={dispatch} readonly={readonly} />;
 }
 
 function primaryRole(account: Account, pid: string) {
@@ -64,7 +65,7 @@ function primaryRole(account: Account, pid: string) {
   return undefined;
 }
 
-function CustomerDoc({ account, dispatch }: { account: Account; dispatch: (a: Action) => void }) {
+function CustomerDoc({ account, dispatch, readonly = false }: { account: Account; dispatch: (a: Action) => void; readonly?: boolean }) {
   const set = (patch: Partial<Account>) => dispatch({ type: 'UPDATE_ACCOUNT', accId: account.id, patch });
   const pf = account.profile ?? {};
   const setPf = (k: keyof AccountProfile, v: string) => set({ profile: { ...pf, [k]: v } });
@@ -74,18 +75,18 @@ function CustomerDoc({ account, dispatch }: { account: Account; dispatch: (a: Ac
   return (
     <div className="mdv">
       <h1>{account.name} · 客户档案</h1>
-      <CuratedSummary entityKind="account" entityId={account.id} />
+      <CuratedSummary entityKind="account" entityId={account.id} readonly={readonly} />
       <blockquote>
         <div><b>客户类型</b>：{CUSTOMER_TYPE_LABEL[account.customerType]} <span className="mdv-ro">只读</span></div>
-        <div><b>大区</b>：<Field value={account.region ?? ''} ph="如 华北" onSave={(v) => set({ region: v })} /></div>
-        <div><b>集团 / 母公司</b>：<Field value={account.group ?? ''} onSave={(v) => set({ group: v })} /></div>
-        <div><b>主负责人</b>：<Field value={account.primaryOwner ?? ''} onSave={(v) => set({ primaryOwner: v })} /></div>
+        <div><b>大区</b>：<Field ro={readonly} value={account.region ?? ''} ph="如 华北" onSave={(v) => set({ region: v })} /></div>
+        <div><b>集团 / 母公司</b>：<Field ro={readonly} value={account.group ?? ''} onSave={(v) => set({ group: v })} /></div>
+        <div><b>主负责人</b>：<Field ro={readonly} value={account.primaryOwner ?? ''} onSave={(v) => set({ primaryOwner: v })} /></div>
       </blockquote>
 
       <h2>一、客户画像</h2>
       <table className="mdv-table"><tbody>
-        {([['工商基础', 'business'], ['集团关系', 'group'], ['招投标', 'bidding'], ['风险信号', 'risk'], ['我方现有合作', 'ourCooperation'], ['销售背景', 'salesNote']] as [string, keyof AccountProfile][]).map(([label, k]) => (
-          <tr key={k}><th>{label}</th><td><Field value={pf[k] ?? ''} area onSave={(v) => setPf(k, v)} /></td></tr>
+        {([['工商基础', 'business'], ['集团关系', 'group'], ['招投标', 'bidding'], ['风险信号', 'risk'], ['我方现有合作', 'ourCooperation'], ['销售背景', 'salesNote']] as [string, Exclude<keyof AccountProfile, '_mcpOrigin'>][]).map(([label, k]) => (
+          <tr key={k}><th>{label}</th><td><Field ro={readonly} value={pf[k] ?? ''} area onSave={(v) => setPf(k, v)} /></td></tr>
         ))}
       </tbody></table>
 
@@ -106,11 +107,11 @@ function CustomerDoc({ account, dispatch }: { account: Account; dispatch: (a: Ac
             <h3>{p.name} · {ROLE_LABEL[primaryRole(account, p.id)!.role]}</h3>
             <table className="mdv-table"><tbody>
               {FAMILY_7Q.map((q) => (
-                <tr key={q}><th>{q}</th><td><Field value={p.form.family7?.[q] ?? ''} onSave={(v) => patchForm({ family7: { ...p.form.family7, [q]: v } })} /></td></tr>
+                <tr key={q}><th>{q}</th><td><Field ro={readonly} value={p.form.family7?.[q] ?? ''} onSave={(v) => patchForm({ family7: { ...p.form.family7, [q]: v } })} /></td></tr>
               ))}
-              <tr><th>职业经历</th><td><Field value={p.form.occupation} area onSave={(v) => patchForm({ occupation: v })} /></td></tr>
-              <tr><th>爱好 / 志趣</th><td><Field value={p.form.recreation} onSave={(v) => patchForm({ recreation: v })} /></td></tr>
-              <tr><th>金钱与动机</th><td><Field value={p.form.moneyMotivation} onSave={(v) => patchForm({ moneyMotivation: v })} /></td></tr>
+              <tr><th>职业经历</th><td><Field ro={readonly} value={p.form.occupation} area onSave={(v) => patchForm({ occupation: v })} /></td></tr>
+              <tr><th>爱好 / 志趣</th><td><Field ro={readonly} value={p.form.recreation} onSave={(v) => patchForm({ recreation: v })} /></td></tr>
+              <tr><th>金钱与动机</th><td><Field ro={readonly} value={p.form.moneyMotivation} onSave={(v) => patchForm({ moneyMotivation: v })} /></td></tr>
             </tbody></table>
           </div>
         );
@@ -127,7 +128,7 @@ function CustomerDoc({ account, dispatch }: { account: Account; dispatch: (a: Ac
       {(account.visitNotes ?? []).map((v) => <blockquote key={v.id}><b>{v.date || '⏳'} {v.topic}</b>：{v.summary || '—'}</blockquote>)}
 
       <h2>六、笔记 · 情报 <span className="mdv-ro">自由文本层 · 零散信息</span></h2>
-      <NotesSection
+      <NotesSection ro={readonly}
         notes={(account.notes ?? []).filter((n) => !n.personId && !n.opportunityId)}
         onAdd={(content) => dispatch({ type: 'ADD_NOTE', accId: account.id, note: { id: newId('note'), accountId: account.id, content, source: 'manual' } })}
         onDelete={(id) => dispatch({ type: 'DELETE_NOTE', accId: account.id, noteId: id })}
@@ -136,7 +137,7 @@ function CustomerDoc({ account, dispatch }: { account: Account; dispatch: (a: Ac
   );
 }
 
-function OppDoc({ account, opp, dispatch }: { account: Account; opp: Opportunity; dispatch: (a: Action) => void }) {
+function OppDoc({ account, opp, dispatch, readonly = false }: { account: Account; opp: Opportunity; dispatch: (a: Action) => void; readonly?: boolean }) {
   const set = (patch: Partial<Opportunity>) => dispatch({ type: 'UPDATE_OPP', accId: account.id, oppId: opp.id, patch });
   const b = scoreFromDomain(account, opp);
   const toggle = (which: 'c3Items' | 'c5Items', k: string) => set({ [which]: { ...opp[which], [k]: !opp[which][k] } } as Partial<Opportunity>);
@@ -145,24 +146,24 @@ function OppDoc({ account, opp, dispatch }: { account: Account; opp: Opportunity
   return (
     <div className="mdv">
       <h1>{opp.name} · 商机档案</h1>
-      <CuratedSummary entityKind="opportunity" entityId={opp.id} />
+      <CuratedSummary entityKind="opportunity" entityId={opp.id} readonly={readonly} />
       <blockquote>
         <div><b>所属客户</b>：{account.name} ｜ <b>阶段</b>：{opp.pipelineStage} / {opp.engageStage} <span className="mdv-ro">只读</span></div>
-        <div><b>单一销售目标</b>：<Field value={opp.singleSalesGoal} area onSave={(v) => set({ singleSalesGoal: v })} /></div>
-        <div><b>客户业务目标</b>：<Field value={opp.customerBusinessGoal ?? ''} onSave={(v) => set({ customerBusinessGoal: v })} /></div>
-        <div><b>购买动机</b>：<Field value={opp.buyingMotivation ?? ''} onSave={(v) => set({ buyingMotivation: v })} /></div>
-        <div><b>主要对手</b>：<Field value={opp.competitor ?? ''} onSave={(v) => set({ competitor: v })} /></div>
+        <div><b>单一销售目标</b>：<Field ro={readonly} value={opp.singleSalesGoal} area onSave={(v) => set({ singleSalesGoal: v })} /></div>
+        <div><b>客户业务目标</b>：<Field ro={readonly} value={opp.customerBusinessGoal ?? ''} onSave={(v) => set({ customerBusinessGoal: v })} /></div>
+        <div><b>购买动机</b>：<Field ro={readonly} value={opp.buyingMotivation ?? ''} onSave={(v) => set({ buyingMotivation: v })} /></div>
+        <div><b>主要对手</b>：<Field ro={readonly} value={opp.competitor ?? ''} onSave={(v) => set({ competitor: v })} /></div>
         <div><b>趋赢力</b>：{Math.round(b.percent * 100)}% · {BAND_LABEL[b.band]} <span className="mdv-ro">系统实时算 · 只读</span></div>
       </blockquote>
 
       <h2>一、立项材料（C3）</h2>
       <table className="mdv-table"><tbody>{C3_ITEMS.map((k) => (
-        <tr key={k}><th>{k}</th><td><label className="mdv-check"><input type="checkbox" checked={!!opp.c3Items[k]} onChange={() => toggle('c3Items', k)} /> {opp.c3Items[k] ? '已掌握' : '待补充'}</label></td></tr>
+        <tr key={k}><th>{k}</th><td>{readonly ? <span>{opp.c3Items[k] ? '✓ 已掌握' : '待补充'}</span> : <label className="mdv-check"><input type="checkbox" checked={!!opp.c3Items[k]} onChange={() => toggle('c3Items', k)} /> {opp.c3Items[k] ? '已掌握' : '待补充'}</label>}</td></tr>
       ))}</tbody></table>
 
       <h2>二、招采事项（C5）</h2>
       <table className="mdv-table"><tbody>{C5_ITEMS.map((k) => (
-        <tr key={k}><th>{k}</th><td><label className="mdv-check"><input type="checkbox" checked={!!opp.c5Items[k]} onChange={() => toggle('c5Items', k)} /> {opp.c5Items[k] ? '已掌握' : '待补充'}</label></td></tr>
+        <tr key={k}><th>{k}</th><td>{readonly ? <span>{opp.c5Items[k] ? '✓ 已掌握' : '待补充'}</span> : <label className="mdv-check"><input type="checkbox" checked={!!opp.c5Items[k]} onChange={() => toggle('c5Items', k)} /> {opp.c5Items[k] ? '已掌握' : '待补充'}</label>}</td></tr>
       ))}</tbody></table>
 
       <h2>三、G64111 趋赢力打分 <span className="mdv-ro">系统据角色/BI/招采实时算 · 只读</span></h2>
@@ -172,7 +173,7 @@ function OppDoc({ account, opp, dispatch }: { account: Account; opp: Opportunity
       </tbody></table>
 
       <h2>四、笔记 · 情报 <span className="mdv-ro">自由文本层 · 本商机</span></h2>
-      <NotesSection
+      <NotesSection ro={readonly}
         notes={(account.notes ?? []).filter((n) => n.opportunityId === opp.id)}
         onAdd={(content) => dispatch({ type: 'ADD_NOTE', accId: account.id, note: { id: newId('note'), accountId: account.id, opportunityId: opp.id, content, source: 'manual' } })}
         onDelete={(id) => dispatch({ type: 'DELETE_NOTE', accId: account.id, noteId: id })}
@@ -181,7 +182,7 @@ function OppDoc({ account, opp, dispatch }: { account: Account; opp: Opportunity
   );
 }
 
-function VisitDoc({ account, visit, dispatch }: { account: Account; visit: VisitNote; dispatch: (a: Action) => void }) {
+function VisitDoc({ account, visit, dispatch, readonly = false }: { account: Account; visit: VisitNote; dispatch: (a: Action) => void; readonly?: boolean }) {
   const set = (patch: Partial<VisitNote>) => dispatch({ type: 'UPDATE_VISIT', accId: account.id, visitId: visit.id, patch });
   const oppName = visit.opportunityId ? account.opportunities.find((o) => o.id === visit.opportunityId)?.name : '';
   const who = visit.participants?.map((x) => `${x.name}（${x.side === 'our' ? '我方' : '客户'}）`).join('、') || '—';
@@ -191,10 +192,10 @@ function VisitDoc({ account, visit, dispatch }: { account: Account; visit: Visit
       <blockquote>
         <div><b>客户</b>：{account.name}{oppName ? ` ｜ 关联商机：${oppName}` : ''} <span className="mdv-ro">只读</span></div>
         <div><b>日期</b>：{visit.date || '⏳'} ｜ <b>参与人</b>：{who} <span className="mdv-ro">只读</span></div>
-        <div><b>主题</b>：<Field value={visit.topic} onSave={(v) => set({ topic: v })} /></div>
+        <div><b>主题</b>：<Field ro={readonly} value={visit.topic} onSave={(v) => set({ topic: v })} /></div>
       </blockquote>
       <h2>纪要正文</h2>
-      <Field value={visit.summary} area onSave={(v) => set({ summary: v })} />
+      <Field ro={readonly} value={visit.summary} area onSave={(v) => set({ summary: v })} />
     </div>
   );
 }

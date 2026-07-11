@@ -3,6 +3,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
+import { denyViewer } from './scope.js';
 import { loadAiConfig, callLLM } from './ai.js';
 
 // G64111 分项标签/满分（后端自持小映射，不依赖前端 lib；同 docs/G64111-评分规格.md）
@@ -243,6 +244,7 @@ async function llmMilestoneActions(cfg: any, ctx: any, ms: { title: string; date
 
 export function strategyRoutes(app: FastifyInstance) {
   app.post('/api/strategy/suggest', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可操作
     const p = z.object({ opportunityId: z.string(), mode: z.enum(['forward', 'backward']), context: z.any() }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '参数无效' });
     const tenantId = req.user.tenantId;
@@ -265,6 +267,7 @@ export function strategyRoutes(app: FastifyInstance) {
 
   // 参谋出牌（P2④b）：右栏焦点人 → AI 产行动牌候选。只返回候选，前端本地暂存、人审采纳才 dispatch ADD_PLAN_ACTION（守硬规则②）。
   app.post('/api/strategy/actions', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可操作
     const p = z.object({
       opportunityId: z.string(),
       focus: z.object({ name: z.string().min(1), title: z.string().optional() }),
@@ -290,6 +293,7 @@ export function strategyRoutes(app: FastifyInstance) {
 
   // 派发预填（第3刀）：策略卡 → 行动牌四要素初稿。只返回初稿不写库，前端落草稿人微调（守硬规则②）。
   app.post('/api/strategy/prefill', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可操作
     const p = z.object({
       opportunityId: z.string(),
       card: z.object({ title: z.string().optional(), basis: z.string().optional(), gapItem: z.string().optional() }),
@@ -317,6 +321,7 @@ export function strategyRoutes(app: FastifyInstance) {
 
   // P6 里程碑「→ 排行动」：只返回行动候选不写库（前端落 draft 草稿人审，守铁律②）
   app.post('/api/strategy/milestone-actions', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可操作
     const p = z.object({
       opportunityId: z.string(),
       milestone: z.object({ title: z.string().min(1), date: z.string().optional() }),

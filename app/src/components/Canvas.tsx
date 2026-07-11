@@ -76,7 +76,7 @@ type Gesture =
   | { kind: 'actionfb'; actionId: string; outcome: string; csx: number; csy: number };
 
 export function Canvas({
-  account, opp, planActions, visibleLayers, selectedId, selectedEdgeId,
+  account, opp, planActions, visibleLayers, selectedId, selectedEdgeId, readonly = false,
   onSelectPerson, onSelectEdge, onOpenPerson, onOpenEdge, onOpenAction, onActionFeedback,
   onMovePerson, onAddPersonAt, onAddConnectedNode, onConnect,
   onUpdateEdge, onDeleteEdge, onUpdatePerson, onDeletePerson, suggestions = [],
@@ -103,6 +103,7 @@ export function Canvas({
   onDeletePerson: (id: string) => void;
   suggestions?: { source: string; target: string }[];
   planActions?: PlanAction[]; // 挂责任人节点旁的行动牌（主线：战场+行动令）
+  readonly?: boolean;         // viewer 只读投影：写手势全禁，pan/zoom/hover/选中/层过滤保留（契约 v1.0 §二-1）
   immersive?: boolean;
   onToggleImmersive?: () => void;
   secondTapOpens?: boolean;   // 选中后再次单击即进入详情（桌面+手机统一；双击仍兼容）
@@ -191,7 +192,7 @@ export function Canvas({
     const last = lastTap.current;
     const isDouble = !!last && now - last.t < DOUBLE_MS && last.kind === kind && last.id === id;
     if (kind === 'empty') {
-      if (isDouble) { const nid = onAddPersonAt(Math.round(world.x), Math.round(world.y)); beginEdit(nid); lastTap.current = null; return; }
+      if (isDouble && !readonly) { const nid = onAddPersonAt(Math.round(world.x), Math.round(world.y)); beginEdit(nid); lastTap.current = null; return; }
       if (editing) commitEdit();
       onSelectPerson(null); onSelectEdge(null);
     } else if (kind === 'node') {
@@ -243,7 +244,7 @@ export function Canvas({
       gesture.current = { kind: 'node', id, csx: e.clientX, csy: e.clientY, ox: w.x - p.x, oy: w.y - p.y, moved: false };
     } else if (edgeH) {
       gesture.current = { kind: 'edge', edgeId: edgeH.getAttribute('data-edge')!, csx: e.clientX, csy: e.clientY };
-    } else if (e.button === 0 && e.shiftKey) {
+    } else if (e.button === 0 && e.shiftKey && !readonly) {
       const w = toWorld(e.clientX, e.clientY);
       gesture.current = { kind: 'marquee', csx: e.clientX, csy: e.clientY, x0: w.x, y0: w.y, append: false }; // Shift+左键拖 = 框选
     } else {
@@ -275,6 +276,7 @@ export function Canvas({
       const w = toWorld(e.clientX, e.clientY);
       setMarquee({ x0: g.x0, y0: g.y0, x1: w.x, y1: w.y });
     } else if (g.kind === 'node') {
+      if (readonly) return; // viewer：节点不可拖动（点选仍在 endPointer 处理）
       if (moved) g.moved = true;
       const w = toWorld(e.clientX, e.clientY);
       setDragPt({ id: g.id, x: w.x - g.ox, y: w.y - g.oy });
@@ -419,10 +421,10 @@ export function Canvas({
     <div ref={wrapRef} className="canvas-wrap"
       onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={endPointer} onPointerCancel={endPointer}>
       {visible.length === 0 && (
-        <div className="canvas-empty">👤 这个商机还没有干系人<br /><span>在空白处<b>双击</b>新建人物，或点左侧「干系人 ＋」</span></div>
+        <div className="canvas-empty">👤 这个商机还没有干系人{!readonly && <><br /><span>在空白处<b>双击</b>新建人物，或点左侧「干系人 ＋」</span></>}{readonly && <><br /><span>干系人由数字员工（销售包）每晚收口同步</span></>}</div>
       )}
       {/* P16：L2/L4 空层引导——独显该层且无边时，提示这层承载什么、怎么建（红线：层数不动，L2 实权 vs L1 名义是 G64111 破局关键） */}
-      {visible.length > 0 && edges.length === 0 && visibleLayers.size === 1 && (visibleLayers.has('L2') || visibleLayers.has('L4')) && (
+      {visible.length > 0 && edges.length === 0 && visibleLayers.size === 1 && !readonly && (visibleLayers.has('L2') || visibleLayers.has('L4')) && (
         <div className="canvas-layer-hint">
           {visibleLayers.has('L2') ? (
             <>🎯 <b>L2 决策权力</b>还没画。<br /><span>它跟 L1 组织架构常不重合——比如「王处长实际听副总的招呼，不是总经理」。这条错位就是 G64111 破局的关键。<br />点亮 L1 对比后，在两个人之间拖一条 L2 线（选「决策/汇报/听命」），可看两图错位。</span></>
@@ -504,7 +506,7 @@ export function Canvas({
             const role = roleByPerson.get(p.id);
             const selected = selectedId === p.id || selectedIds.has(p.id);
             const isHover = hoverNode === p.id;
-            const anchors = selected && !editing && (['top', 'right', 'bottom', 'left'] as Dir[]).map((dir) => {
+            const anchors = selected && !editing && !readonly && (['top', 'right', 'bottom', 'left'] as Dir[]).map((dir) => {
               const v = DIR_VEC[dir];
               return (
                 <circle key={dir} data-anchor={dir} data-anchor-node={p.id}
@@ -588,12 +590,12 @@ export function Canvas({
                   {/* 行动牌：挂责任人节点右侧（主线·战场+行动令）。第4刀：坞内草稿(draft)不上画布，上桌后才挂牌 */}
                   {(planActions ?? []).filter((a) => a.personId === p.id && a.opportunityId === opp.id && !a.draft).map((a, i) => (
                     <g key={a.id} transform={`translate(${CHW + 10},${-CHH + 8 + i * 26})`}>
-                      <g data-action={a.id} style={{ cursor: 'pointer' }}>
+                      <g {...(readonly ? {} : { 'data-action': a.id })} style={{ cursor: readonly ? 'default' : 'pointer' }}>
                         <rect width={124} height={22} rx={5} fill="var(--node-fill)" stroke={a.done ? '#16a34a' : 'var(--accent)'} strokeWidth={1.2} />
                         <text x={20} y={14.5} fontSize={10} fill="var(--node-text)">{clipText(a.title || '未命名行动', 12)}</text>
                       </g>
-                      {a.done
-                        ? <circle cx={11} cy={11} r={3.5} fill="#16a34a" style={{ pointerEvents: 'none' }} />
+                      {a.done || readonly
+                        ? <circle cx={11} cy={11} r={3.5} fill={a.done ? '#16a34a' : 'var(--accent)'} style={{ pointerEvents: 'none' }} />
                         : (
                           <g data-action-fb={a.id} data-fb-outcome="trigger" style={{ cursor: 'pointer' }} aria-label="标完成并反馈">
                             <circle cx={11} cy={11} r={8} fill="transparent" />
@@ -620,7 +622,7 @@ export function Canvas({
           })}
 
           {/* 选中连线的可拖拽控制点：渲染在节点之上，避免被节点遮挡而点不到 */}
-          {selEdge && (() => {
+          {selEdge && !readonly && (() => {
             const sp = personById.get(selEdge.source), tp = personById.get(selEdge.target);
             if (!sp || !tp) return null;
             let s = posOf(sp), t = posOf(tp);
@@ -660,7 +662,7 @@ export function Canvas({
       })()}
 
       {/* 选中连线 → 附近浮出「直线/折线/曲线」+ 删除（不含关系语义样式） */}
-      {selEdge && (() => {
+      {selEdge && !readonly && (() => {
         const sp = personById.get(selEdge.source), tp = personById.get(selEdge.target);
         if (!sp || !tp) return null;
         const g = edgeGeom(posOf(sp), posOf(tp), resolveShape(selEdge), resolveBend(selEdge));
@@ -680,7 +682,7 @@ export function Canvas({
       })()}
 
       {/* 选中节点 → 浮出「改色 + 删除」工具框（友商=预设样式，仅给删除，不提供改色） */}
-      {selectedId && !editing && (() => {
+      {selectedId && !editing && !readonly && (() => {
         const p = personById.get(selectedId); if (!p) return null;
         const sc = toScreen(posOf(p).x, posOf(p).y);
         return (

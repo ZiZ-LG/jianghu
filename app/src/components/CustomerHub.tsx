@@ -7,10 +7,11 @@ import { EnginePulse } from './EnginePulse';
 import { IntelCapture } from './IntelCapture';
 import type { PatrolInfo } from '../api';
 import type { TodayItem } from '../lib/today';
+import { Freshness } from '../lib/freshness';
 
 export function CustomerHub({
   accounts, onOpen, onCreate, onLoadDemo, onDeleteAccount,
-  tenantName, userName, plan, onOpenTeam, onLogout, onOpenAiSettings, onOpenWecom, theme, onToggleTheme, onOpenHelp, onOpenMcpAccess, onOpenIntel: _unusedOnOpenIntel, onOpenInbox, inboxCount = 0, patrol, today = [], needsYou, onIntelDone,
+  tenantName, userName, plan, onOpenTeam, onLogout, onOpenAiSettings, onOpenWecom, theme, onToggleTheme, onOpenHelp, onOpenMcpAccess, onOpenIntel: _unusedOnOpenIntel, onOpenInbox, inboxCount = 0, patrol, today = [], needsYou, onIntelDone, readonly = false,
 }: {
   accounts: Account[];
   onOpen: (accId: string) => void;
@@ -35,6 +36,7 @@ export function CustomerHub({
   today?: TodayItem[];         // P5 今日三件事（三源聚合，App 算好下发）
   needsYou?: Map<string, number>; // P5 客户卡「需要你」计数（待审+逾期行动），并驱动排序
   onIntelDone?: () => void | Promise<void>; // P16：Hub 内嵌 IntelCapture 建客户后回调（父 App 做 hydrate）
+  readonly?: boolean; // viewer 只读投影：新建/删除/收件箱/配置类入口不渲染（契约 v1.0 §二-1）
 }) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
@@ -51,12 +53,14 @@ export function CustomerHub({
 
   // 配置类聚合到「⚙️ 设置」——低频，不与日常动作抢位（桌面/移动共用）。落地 待办-入口重构.md 的 B2 集约。
   const settingsItems = [
-    { label: '🔌 接入 AI', onClick: onOpenMcpAccess },
-    { label: '🧠 AI 模型', onClick: onOpenAiSettings },
-    { label: '📆 企微日历', onClick: onOpenWecom },
+    ...(!readonly ? [
+      { label: '🔌 接入 AI', onClick: onOpenMcpAccess },
+      { label: '🧠 AI 模型', onClick: onOpenAiSettings },
+      { label: '📆 企微日历', onClick: onOpenWecom },
+    ] : []),
     { label: '👥 团队 · ❤️ 支持', onClick: onOpenTeam },
     { label: theme === 'dark' ? '☀️ 白天模式' : '🌙 黑夜模式', onClick: onToggleTheme },
-    { label: '📋 载入示例', onClick: onLoadDemo },
+    ...(!readonly ? [{ label: '📋 载入示例', onClick: onLoadDemo }] : []),
     { label: '❓ 帮助', onClick: onOpenHelp },
     { label: '🚪 退出登录', onClick: onLogout },
   ];
@@ -73,16 +77,16 @@ export function CustomerHub({
         {/* 桌面：整排操作 */}
         <div className="hub-actions-desktop">
           <span className="who">{userName}</span>
-          <button className="team-chip inbox-chip" onClick={onOpenInbox} title="审核机器写入的候选（关系 / 人物），采纳后才落库">📥 收件箱{inboxCount > 0 ? ` · ${inboxCount}` : ''}</button>
+          {!readonly && <button className="team-chip inbox-chip" onClick={onOpenInbox} title="审核机器写入的候选（关系 / 人物），采纳后才落库">📥 收件箱{inboxCount > 0 ? ` · ${inboxCount}` : ''}</button>}
           {/* P16：入口合并——「录入情报」按钮退役，新客户单入口默认走口述路径，Modal 内切换「只建空档案」保底 */}
-          <button className="btn primary" onClick={openCreate}>＋ 新客户</button>
+          {!readonly && <button className="btn primary" onClick={openCreate}>＋ 新客户</button>}
           <OverflowMenu align="right" label="⚙️ 设置" items={settingsItems} />
         </div>
         {/* 移动：主题 + 新建 + ⋯ 菜单 */}
         <div className="hub-actions-mobile">
-          <button className="btn primary xs" onClick={openCreate}>＋ 新客户</button>
+          {!readonly && <button className="btn primary xs" onClick={openCreate}>＋ 新客户</button>}
           <OverflowMenu align="right" label="⚙️" items={[
-            { label: '📥 收件箱', badge: inboxCount > 0 ? String(inboxCount) : undefined, onClick: onOpenInbox },
+            ...(!readonly ? [{ label: '📥 收件箱', badge: inboxCount > 0 ? String(inboxCount) : undefined, onClick: onOpenInbox }] : []),
             ...settingsItems,
           ]} />
         </div>
@@ -107,11 +111,11 @@ export function CustomerHub({
         <div className="hub-empty">
           <div className="hub-empty-emoji">🗺️</div>
           <div className="hub-empty-t">还没有客户</div>
-          <div className="hub-empty-s">从「新建客户」开始你的第一张作战地图，或先「载入示例数据」体验完整功能。</div>
-          <div style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap', justifyContent: 'center' }}>
+          <div className="hub-empty-s">{readonly ? '你名下暂无客户。客户与商机由数字员工（销售包）每晚收口同步到这里。' : '从「新建客户」开始你的第一张作战地图，或先「载入示例数据」体验完整功能。'}</div>
+          {!readonly && <div style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap', justifyContent: 'center' }}>
             <button className="btn primary" onClick={openCreate}>＋ 新客户</button>
             <button className="btn ghost" onClick={onLoadDemo}>载入示例（西部电力建设集团）</button>
-          </div>
+          </div>}
         </div>
       ) : (
         <div className="hub-grid">
@@ -128,8 +132,8 @@ export function CustomerHub({
                 {mcpNeedsReview && (
                   <span className="acc-mcp" title={`外部 MCP 工具写入·待你核实（最近一次 ${mcpMark.at?.slice(0,10) ?? ''}）。进入客户后编辑档案即可清除标记。`}>外部·MCP·待核</span>
                 )}
-                <button className="acc-del" title="删除客户"
-                  onClick={(e) => { e.stopPropagation(); if (confirm(`删除客户「${a.name}」及其全部商机/干系人？`)) onDeleteAccount(a.id); }}>🗑</button>
+                {!readonly && <button className="acc-del" title="删除客户"
+                  onClick={(e) => { e.stopPropagation(); if (confirm(`删除客户「${a.name}」及其全部商机/干系人？`)) onDeleteAccount(a.id); }}>🗑</button>}
               </div>
               <div className="acc-name">{a.name}</div>
               <div className="acc-type">{CUSTOMER_TYPE_LABEL[a.customerType]}</div>
@@ -137,13 +141,14 @@ export function CustomerHub({
                 <div className="acc-sub">{[a.region, a.group, a.primaryOwner].filter(Boolean).join(' · ')}</div>
               )}
               <div className="acc-meta">{a.opportunities.length} 个商机 · {a.persons.length} 位干系人</div>
+              <Freshness mark={mcpMark} />
             </div>
             );
           })}
         </div>
       )}
 
-      {creating && (
+      {creating && !readonly && (
         <Modal title={createMode === 'dictate' ? '＋ 新客户 · 说一句就建（推荐）' : '＋ 新客户 · 只建空档案（自己填字段）'} onClose={() => setCreating(false)}
           footer={createMode === 'form' ? (<>
             <button className="btn ghost" onClick={() => setCreating(false)}>取消</button>

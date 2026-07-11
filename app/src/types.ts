@@ -176,6 +176,14 @@ export interface EvidenceEvent {
   createdAt?: string;
 }
 
+/** 外部 MCP 写入溯源标记（存于 Account.profile / Opportunity.meta 的 `_mcpOrigin` 键）。
+ *  at = 最近一次 MCP upsert 落库时间 —— 契约 v1.0 §三-② 时点戳/新鲜度点的数据源。 */
+export interface McpOriginMark {
+  source: string;        // 'mcp'
+  at: string;            // ISO 时间戳（每次 upsert 刷新）
+  needsReview?: boolean; // 外部来源·待核（人工编辑档案后清除）
+}
+
 /**
  * 客户档案（profile，JSON 落库）：销售包（WorkBuddy）经 MCP 推送的企业背景，分维度。
  * 各字段皆可选，缺省即未采集；属业务实体（非个人身份判定），可直接 upsert（非候选）。
@@ -188,6 +196,7 @@ export interface AccountProfile {
   ourCooperation?: string; // 我方现有合作：已签/在执行/历史交付
   salesNote?: string;      // 销售自填背景
   aiSuggestion?: string;   // AI 建议（参考，不计分）
+  _mcpOrigin?: McpOriginMark; // 外部 MCP 写入溯源（时点戳/新鲜度数据源）
 }
 
 /** 拜访记录参与人 */

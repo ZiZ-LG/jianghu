@@ -8,6 +8,7 @@ import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
+import { denyViewer } from './scope.js';
 import { enc, dec } from './ai.js';
 import { ingestVoiceText, type IngestResult } from './voice.js';
 import { buildFeishuAuthUrl, exchangeFeishuCode, refreshFeishuToken, getFeishuMinute, extractFeishuMinuteToken, searchFeishuMinutes, type FeishuApp } from './feishu.js';
@@ -272,7 +273,8 @@ export function recordingRoutes(app: FastifyInstance): void {
   });
 
   // 列转写。PIPL 脱敏：列表只返元数据，绝不返回转写明文（要正文须经抽取，不旁路泄露）。
-  app.get('/api/recording/transcripts', { preHandler: [app.authenticate] }, async (req: any) => {
+  app.get('/api/recording/transcripts', { preHandler: [app.authenticate] }, async (req: any, reply: any) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可操作
     const accountId = typeof req.query?.accountId === 'string' ? req.query.accountId : undefined;
     const rows = await prisma.transcript.findMany({
       where: { tenantId: req.user.tenantId, ...(accountId ? { accountId } : {}) },
@@ -342,7 +344,8 @@ export function recordingRoutes(app: FastifyInstance): void {
   });
 
   // ── 租户级飞书应用配置（owner/admin 配 App ID/Secret，Secret 加密存、读不回明文）──
-  app.get('/api/recording/provider/feishu', { preHandler: [app.authenticate] }, async (req: any) => {
+  app.get('/api/recording/provider/feishu', { preHandler: [app.authenticate] }, async (req: any, reply: any) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可操作
     const c = await prisma.recordingProviderConfig.findUnique({ where: { tenantId_provider: { tenantId: req.user.tenantId, provider: 'feishu' } } });
     return { configured: Boolean(c?.appId && c?.appSecretEnc), appId: c?.appId || '', hasSecret: Boolean(c?.appSecretEnc), enabled: c?.enabled ?? true, redirectUri: FEISHU_REDIRECT };
   });
@@ -361,7 +364,8 @@ export function recordingRoutes(app: FastifyInstance): void {
   });
 
   // ── per-user 凭据状态：我授权/配置了哪些源 ──
-  app.get('/api/recording/credentials', { preHandler: [app.authenticate] }, async (req: any) => {
+  app.get('/api/recording/credentials', { preHandler: [app.authenticate] }, async (req: any, reply: any) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可操作
     const rows = await prisma.recordingCredential.findMany({
       where: { tenantId: req.user.tenantId, userId: req.user.userId },
       select: { source: true, status: true, expiresAt: true, updatedAt: true },
@@ -442,7 +446,8 @@ export function recordingRoutes(app: FastifyInstance): void {
   });
 
   // ── 撤销某源授权（per-user）──
-  app.delete('/api/recording/credential/:source', { preHandler: [app.authenticate] }, async (req: any) => {
+  app.delete('/api/recording/credential/:source', { preHandler: [app.authenticate] }, async (req: any, reply: any) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可操作
     const source = (req.params as any)?.source;
     await prisma.recordingCredential.deleteMany({ where: { tenantId: req.user.tenantId, userId: req.user.userId, source } });
     return { ok: true };

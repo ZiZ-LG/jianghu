@@ -6,6 +6,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { prisma } from './prisma.js';
+import { denyViewer } from './scope.js';
 import { enc, dec } from './ai.js';
 import { scoreFromState } from './g64111.js';
 import { wecomSignature, decryptWecomMsg, xmlTag } from './wecomCrypt.js';
@@ -347,6 +348,7 @@ export function wecomRoutes(app: FastifyInstance) {
   });
 
   app.put('/api/wecom/config', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可操作
     if (!canManage(req)) return reply.code(403).send({ error: '仅管理员可配置企微应用' });
     const p = z.object({
       corpId: z.string().optional(), agentId: z.string().optional(), secret: z.string().optional(),
@@ -406,6 +408,7 @@ export function wecomRoutes(app: FastifyInstance) {
 
   // 测试推送（V1 文本卡 / V2 按钮卡）：发给当前登录用户绑定的企微 userid。
   app.post('/api/wecom/test-push', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可操作
     const kind = req.body?.kind === 'card' ? 'card' : 'textcard';
     const tenantId = req.user.tenantId;
     const cfg = await prisma.weComConfig.findUnique({ where: { tenantId } });
@@ -436,6 +439,7 @@ export function wecomRoutes(app: FastifyInstance) {
   });
 
   app.put('/api/wecom/bind', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可操作
     const p = z.object({ wecomUserid: z.string().trim().max(128) }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '参数无效' });
     const wecomUserid = p.data.wecomUserid;
@@ -450,6 +454,7 @@ export function wecomRoutes(app: FastifyInstance) {
 
   // OAuth 扫码绑定：start 生成授权链接，callback 用 code 换 userid 落 WeComUserBind（替代手填）。⚠️ 回调需公网 + 应用可信域名，真机生效。
   app.get('/api/wecom/oauth/start', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可操作
     const cfg = await prisma.weComConfig.findUnique({ where: { tenantId: req.user.tenantId } });
     if (!cfg?.corpId || !cfg.agentId) return reply.code(400).send({ error: '请先配置企微应用（corpId / AgentId）' });
     const base = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.headers.host}`;

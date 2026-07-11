@@ -16,7 +16,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 const bumpVersion = (log: VersionLogEntry[]) =>
   log.length ? `v${(parseFloat(log[log.length - 1].version.replace(/^v/, '')) + 0.1).toFixed(1)}` : 'v1.0';
 
-export function MdDocPanel({ account, dispatch, onClose }: { account: Account; dispatch: (a: Action) => void; onClose: () => void }) {
+export function MdDocPanel({ account, dispatch, onClose, readonly = false }: { account: Account; dispatch: (a: Action) => void; onClose: () => void; readonly?: boolean }) {
   const [sel, setSel] = useState<DocSel>({ kind: 'customer' });
   const [logs, setLogs] = usePersistentState<Record<string, VersionLogEntry[]>>(`jianghu.mdlog.${account.id}`, {});
   const [copied, setCopied] = useState(false);
@@ -94,10 +94,10 @@ export function MdDocPanel({ account, dispatch, onClose }: { account: Account; d
     <Modal title="📋 作战档案" width={960} onClose={onClose}
       footer={<>
         <span className="hint-text" style={{ marginRight: 'auto', fontSize: 12, opacity: 0.7 }}>
-          点字段原地改、失焦即写回系统 · 打分与角色只读（在画布改）
+          {readonly ? '只读投影 · 一切修改经数字员工（销售包）收口同步' : '点字段原地改、失焦即写回系统 · 打分与角色只读（在画布改）'}
           <span style={{ display: 'block', fontSize: 11, opacity: 0.75, marginTop: 2 }}>💡 .md 用途：复制→喂给外部 AI 深聊 / 粘进 WorkBuddy；导出→归档 / 发同事 / Git 版本追踪</span>
         </span>
-        {!isVisit && <button className="btn ghost" onClick={stamp} title="在 .md 更新日志记一版（数据已实时写回）">🔖 记一版</button>}
+        {!isVisit && !readonly && <button className="btn ghost" onClick={stamp} title="在 .md 更新日志记一版（数据已实时写回）">🔖 记一版</button>}
         <button className="btn ghost" onClick={copy} title="复制到剪贴板——喂给外部 AI 深聊 / 粘进 WorkBuddy / 贴到内部知识库">{copied ? '✓ 已复制' : '📋 复制 .md'}</button>
         <button className="btn primary" onClick={exportMd} title="下载 .md 文件——归档、随邮件发同事、Git 里做长期版本追踪">⬇ 导出 .md</button>
       </>}>
@@ -113,7 +113,7 @@ export function MdDocPanel({ account, dispatch, onClose }: { account: Account; d
           {visits.map((vn) => navItem({ kind: 'visit', id: vn.id }, '🗓️ ' + (vn.date || '—'), vn.topic || '拜访'))}
         </div>
         <div className="mdv-scroll" style={{ flex: 1, overflow: 'auto', padding: '0 16px', borderRadius: 8, border: '1px solid var(--line)', background: 'var(--panel)' }}>
-          <MdDocView account={account} sel={sel} dispatch={dispatch} />
+          <MdDocView account={account} sel={sel} dispatch={dispatch} readonly={readonly} />
         </div>
       </div>
     </Modal>

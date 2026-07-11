@@ -5,9 +5,11 @@ import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
+import { denyViewer } from './scope.js';
 
 export function opportunityRoutes(app: FastifyInstance) {
   app.post('/api/opportunity/clone', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可拍板/操作
     const tenantId = req.user.tenantId;
     const p = z.object({
       accountId: z.string(),

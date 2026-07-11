@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
+import { denyViewer } from './scope.js';
 
 // ── 加密（AES-256-GCM）：用用户自己的 Key，服务端只加密代管 ──
 const SECRET = process.env.AI_KEY_SECRET || 'dev-ai-secret-change-in-production';
@@ -102,6 +103,7 @@ export function aiRoutes(app: FastifyInstance) {
   });
 
   app.put('/api/ai/config', { preHandler: [app.authenticate] }, async (req, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可操作
     if (!canManage(req)) return reply.code(403).send({ error: '仅管理员可配置模型' });
     const p = z.object({
       provider: z.enum(['openai-compatible', 'mock']),
@@ -121,6 +123,7 @@ export function aiRoutes(app: FastifyInstance) {
   });
 
   app.post('/api/ai/test', { preHandler: [app.authenticate] }, async (req, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可操作
     const c = await prisma.aiConfig.findUnique({ where: { tenantId: req.user.tenantId } });
     if (!c) return reply.code(400).send({ error: '尚未配置模型' });
     if (c.provider === 'mock') return { ok: true, message: '内置演示模式可用' };
@@ -134,6 +137,7 @@ export function aiRoutes(app: FastifyInstance) {
   });
 
   app.post('/api/ai/simulate', { preHandler: [app.authenticate] }, async (req, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可操作
     const p = z.object({ context: z.any(), hypothesis: z.string().min(1) }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '请输入假设策略' });
     const c = await prisma.aiConfig.findUnique({ where: { tenantId: req.user.tenantId } });

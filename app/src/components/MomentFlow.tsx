@@ -25,6 +25,7 @@ interface Props {
   onAcceptPerson: (id: string) => void; onRejectPerson: (id: string) => void;
   onAcceptRel: (id: string) => void; onRejectRel: (id: string) => void;
   onDismissReminder: (id: string) => void;
+  readonly?: boolean; // viewer 只读投影：口述/拍板入口不渲染，浏览与拜访卡保留
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -89,7 +90,7 @@ export function MomentFlow(p: Props) {
           <button onClick={p.onLogout}>🚪 退出登录</button>
         </div>
       )}
-      <div className="mf-heartbeat">⚙️ 引擎监测中{p.inbox.total > 0 ? ` · 待你拍板 ${p.inbox.total} 条` : ' · 一切正常'}</div>
+      {!p.readonly && <div className="mf-heartbeat">⚙️ 引擎监测中{p.inbox.total > 0 ? ` · 待你拍板 ${p.inbox.total} 条` : ' · 一切正常'}</div>}
 
       {opps.length > 0 && (
         <div className="mf-opps">
@@ -110,7 +111,7 @@ export function MomentFlow(p: Props) {
       )}
 
       <div className="mf-sec">📅 今日行动{todays.length ? ` · ${todays.length}` : ''}</div>
-      {todays.length === 0 && <div className="mf-empty">今天没有排定的行动。🎙️ 说点什么，或进作战室排一手。</div>}
+      {todays.length === 0 && <div className="mf-empty">今天没有排定的行动。{!p.readonly && '🎙️ 说点什么，或进作战室排一手。'}</div>}
       {todays.map((t) => (
         <button key={t.id} className="mf-card" onClick={() => t.personId && setPage({ kind: 'visit', accId: t.accId, oppId: t.opportunityId, personId: t.personId })}>
           <div className="mf-card-t">{t.title}{t.personName ? ` · ${t.personName}` : ''}</div>
@@ -118,6 +119,7 @@ export function MomentFlow(p: Props) {
         </button>
       ))}
 
+      {!p.readonly && (<>
       <div className="mf-sec">📥 待你拍板 · {p.inbox.total}</div>
       {p.inbox.total === 0 ? <div className="mf-empty">暂无待审。</div> : (
         <button className="mf-card mf-card-warn" onClick={() => setPage({ kind: 'review' })}>
@@ -127,9 +129,10 @@ export function MomentFlow(p: Props) {
           <div className="mf-card-s">{topProposal?.imp ? `趋赢力 ${topProposal.imp.before}% → ${topProposal.imp.after}% · ` : ''}逐条拍板 ›</div>
         </button>
       )}
+      </>)}
 
       <div className="mf-spacer" />
-      <button className="mf-cta" onClick={p.onOpenIntel}>🎙️ 说点什么</button>
+      {!p.readonly && <button className="mf-cta" onClick={p.onOpenIntel}>🎙️ 说点什么</button>}
     </div>
   );
 }
@@ -181,8 +184,8 @@ function VisitCard(p: Props & { accId: string; oppId: string; personId: string; 
         </div>
       ))}
       <div className="mf-spacer" />
-      <div className="mf-hint">拜访结束后 → 🎙️ 说两句，我来记</div>
-      <button className="mf-cta" onClick={p.onOpenIntel}>🎙️ 说点什么</button>
+      {!p.readonly && <div className="mf-hint">拜访结束后 → 🎙️ 说两句，我来记</div>}
+      {!p.readonly && <button className="mf-cta" onClick={p.onOpenIntel}>🎙️ 说点什么</button>}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
+import { denyViewer } from './scope.js';
 import { enc, dec, loadAiConfig, callLLM } from './ai.js';
 import { qccMcpFetch, qccMcpResolve, qccMcpCompanyData, qccMcpCompanyProfile, parseQccMcpConfig } from './qccMcp.js';
 
@@ -110,6 +111,7 @@ export function enrichRoutes(app: FastifyInstance) {
 
   // 配置：用户粘贴企查查 MCP 配置 JSON（agent.qcc.com/guide）
   app.put('/api/qcc/config', { preHandler: [app.authenticate] }, async (req, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可操作
     if (!canManage(req)) return reply.code(403).send({ error: '仅管理员可配置' });
     const p = z.object({ mcpJson: z.string().min(1) }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '请粘贴企查查 MCP 配置 JSON' });
@@ -122,12 +124,14 @@ export function enrichRoutes(app: FastifyInstance) {
   });
 
   app.delete('/api/qcc/config', { preHandler: [app.authenticate] }, async (req, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可操作
     if (!canManage(req)) return reply.code(403).send({ error: '仅管理员可配置' });
     await prisma.qccConfig.deleteMany({ where: { tenantId: req.user.tenantId } });
     return { ok: true };
   });
 
   app.post('/api/qcc/test', { preHandler: [app.authenticate] }, async (req, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可操作
     const c = await prisma.qccConfig.findUnique({ where: { tenantId: req.user.tenantId } });
     if (c?.appKey !== 'mcp' || !c?.secretKeyEnc) return reply.code(400).send({ error: '尚未配置企查查 MCP' });
     try {
@@ -138,6 +142,7 @@ export function enrichRoutes(app: FastifyInstance) {
 
   // 企业名锚定：输入简称/关键词 → 返回候选企业列表（用户人审选择，符合企查查"多候选不可自动锁定"规则）
   app.post('/api/qcc/resolve', { preHandler: [app.authenticate] }, async (req, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可操作
     const p = z.object({ query: z.string().min(1) }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '请输入企业名称或关键词' });
     const c = await prisma.qccConfig.findUnique({ where: { tenantId: req.user.tenantId } });
@@ -151,6 +156,7 @@ export function enrichRoutes(app: FastifyInstance) {
   // 股权/对外投资（只读，仅供参考）：需已配企查查 MCP；按 tenantId 隔离取配置 + 解密 token。
   // 红线：这些企业数据仅展示，绝不自动建节点/写库（外部数据需人审）。
   app.post('/api/qcc/company-data', { preHandler: [app.authenticate] }, async (req, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可操作
     const p = z.object({ name: z.string().min(1) }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '请输入公司完整名称' });
     const c = await prisma.qccConfig.findUnique({ where: { tenantId: req.user.tenantId } });
@@ -163,6 +169,7 @@ export function enrichRoutes(app: FastifyInstance) {
 
   // 自动建图：返回某公司的关键人（企查查 MCP → AI 回退 → 演示），供前端预览后导入
   app.post('/api/enrich/company', { preHandler: [app.authenticate] }, async (req, reply) => {
+    if (denyViewer(req, reply)) return; // viewer 只读，不可操作
     const p = z.object({ name: z.string().min(1), mode: z.enum(['auto', 'web']).default('auto') }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '请输入公司名称' });
     const name = p.data.name.trim();

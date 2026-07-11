@@ -1703,3 +1703,22 @@ html[data-theme="dark"] {
   .sb2-col { overflow-y: visible; }
   .sb2-arrow { transform: rotate(90deg); padding: 2px 0; min-height: 22px; }
 }
+
+/* ── viewer 模式（契约 v1.0）：时点戳/新鲜度 chip + 只读档案行 ── */
+.fresh-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--faint, #94a3b8); margin-top: 3px; white-space: nowrap; }
+.fresh-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.fresh-dot.green { background: #16a34a; box-shadow: 0 0 0 2.5px rgba(22, 163, 74, .18); }
+.fresh-dot.yellow { background: #f59e0b; box-shadow: 0 0 0 2.5px rgba(245, 158, 11, .2); }
+.acc-card .fresh-chip { margin-top: 6px; }
+.diag-fresh { padding: 2px 12px 0; }
+.sidebar-title .fresh-chip { display: flex; margin-top: 2px; }
+
+.ro-profile .ro-line, .edge-drawer .ro-line { display: flex; gap: 10px; padding: 5px 0; border-bottom: 1px dashed var(--line); font-size: 13px; }
+.ro-line .ro-k { flex-shrink: 0; width: 92px; color: var(--faint, #94a3b8); }
+.ro-line .ro-v { flex: 1; color: var(--ink); word-break: break-word; white-space: pre-wrap; }
+.ro-tagline { display: flex; justify-content: space-between; align-items: center; font-size: 12px; margin-bottom: 4px; }
+.ro-tagline .ro-conf { color: var(--faint, #94a3b8); }
+.ro-body { font-size: 13px; white-space: pre-wrap; }
+.ro-sub { font-size: 12px; color: var(--faint, #94a3b8); margin-top: 3px; }
+.mdv-field-ro { display: inline-block; min-width: 40px; font-size: inherit; color: var(--ink); white-space: pre-wrap; word-break: break-word; }
+.mdv-area-ro { display: block; }

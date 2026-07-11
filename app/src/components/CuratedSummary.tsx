@@ -12,7 +12,7 @@ const bodyStyle: CSSProperties = { fontSize: 14, color: 'var(--ink)', lineHeight
 const mutedStyle: CSSProperties = { fontSize: 13, color: 'var(--muted)', margin: 0 };
 const taStyle: CSSProperties = { width: '100%', boxSizing: 'border-box', border: '1px solid var(--line)', borderRadius: 6, padding: 8, background: 'var(--panel)', color: 'var(--ink)', fontSize: 14, lineHeight: 1.7 };
 
-export function CuratedSummary({ entityKind, entityId }: { entityKind: 'account' | 'opportunity'; entityId: string }) {
+export function CuratedSummary({ entityKind, entityId, readonly = false }: { entityKind: 'account' | 'opportunity'; entityId: string; readonly?: boolean }) {
   const [loading, setLoading] = useState(true);
   const [content, setContent] = useState('');
   const [status, setStatus] = useState('');
@@ -48,7 +48,8 @@ export function CuratedSummary({ entityKind, entityId }: { entityKind: 'account'
     finally { setBusy(false); }
   };
 
-  const hint = status === 'needConfig' ? '未配置 AI 模型，配置后打开即自动梳理零散记录。'
+  const hint = readonly ? '暂无综述。'
+    : status === 'needConfig' ? '未配置 AI 模型，配置后打开即自动梳理零散记录。'
     : status === 'empty' ? '暂无可梳理的原始记录（笔记 / 拜访纪要 / 录音转写）。'
     : '点「↻ 重新梳理」生成综述。';
 
@@ -57,8 +58,8 @@ export function CuratedSummary({ entityKind, entityId }: { entityKind: 'account'
       <div style={head}>
         <span style={badgeStyle}>{edited ? '✍️ 人工编辑（已锁定）' : '🤖 AI 整理 · 待核'}</span>
         <span style={{ flex: 1 }} />
-        {!editing && <button className="btn ghost sm" onClick={() => { setDraft(content); setEditing(true); }} disabled={busy || loading}>编辑</button>}
-        {!editing && <button className="btn ghost sm" onClick={regen} disabled={busy || loading} title={edited ? '会覆盖你的编辑' : ''}>{busy ? '整理中…' : '↻ 重新梳理'}</button>}
+        {!editing && !readonly && <button className="btn ghost sm" onClick={() => { setDraft(content); setEditing(true); }} disabled={busy || loading}>编辑</button>}
+        {!editing && !readonly && <button className="btn ghost sm" onClick={regen} disabled={busy || loading} title={edited ? '会覆盖你的编辑' : ''}>{busy ? '整理中…' : '↻ 重新梳理'}</button>}
       </div>
       {loading ? <p style={mutedStyle}>加载中…</p>
         : editing ? (

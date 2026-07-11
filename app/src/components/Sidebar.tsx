@@ -6,6 +6,8 @@ import type { Account, Opportunity } from '../types';
 import type { ScoreBreakdown, ItemKey } from '../lib/g64111';
 import { ITEM_MAX, ITEM_LABEL, ITEM_GROUP, BAND_LABEL } from '../lib/g64111';
 import { useCountUp, usePersistentState } from '../ui';
+import { Freshness } from '../lib/freshness';
+import type { McpOriginMark } from '../types';
 import { ACT_LABEL } from '../lib/pdeUi';
 
 const ITEMS: ItemKey[] = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'P1', 'P2', 'P3', 'P4', '1K'];
@@ -58,7 +60,7 @@ function Item({ k, score, open, onToggle }: { k: ItemKey; score: number; open: b
   );
 }
 
-export function Sidebar({ account, opp, breakdown, weighted = null, pde = null, onOpenEngine, onSelectOpp, onAddOpp, onBack, onCollapse, gapCount = 0, onOpenGaps }: {
+export function Sidebar({ account, opp, breakdown, weighted = null, pde = null, onOpenEngine, onSelectOpp, onAddOpp, onBack, onCollapse, gapCount = 0, onOpenGaps, readonly = false }: {
   account: Account;
   opp: Opportunity | null;
   breakdown: ScoreBreakdown | null;
@@ -71,6 +73,7 @@ export function Sidebar({ account, opp, breakdown, weighted = null, pde = null, 
   onCollapse: () => void;
   gapCount?: number;          // M3 缺口数（>0 时趋赢力台显示「补分」入口）
   onOpenGaps?: () => void;    // M3 打开缺口刷卡
+  readonly?: boolean;         // viewer 只读投影：新建/补分入口不渲染；评分展示保留
 }) {
   const [open, setOpen] = useState<Set<ItemKey>>(() => new Set());
   const toggle = (k: ItemKey) => setOpen((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
@@ -90,7 +93,7 @@ export function Sidebar({ account, opp, breakdown, weighted = null, pde = null, 
       <div className="sidebar-header">
         <button className="back-btn" onClick={onBack} title="返回客户列表">‹</button>
         <div className="logo">江</div>
-        <div className="sidebar-title">{account.name}<small>{account.persons.length} 干系人 · {account.opportunities.length} 商机</small></div>
+        <div className="sidebar-title">{account.name}<small>{account.persons.length} 干系人 · {account.opportunities.length} 商机</small><Freshness mark={(account.profile as { _mcpOrigin?: McpOriginMark } | undefined)?._mcpOrigin} /></div>
         <button className="collapse-btn" onClick={onCollapse} title="折叠侧边栏">«</button>
       </div>
 
@@ -100,8 +103,9 @@ export function Sidebar({ account, opp, breakdown, weighted = null, pde = null, 
             {account.opportunities.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
           </select>
         ) : <span className="diag-opp-none">未选择商机</span>}
-        <button className="add-mini" onClick={onAddOpp} title="新建商机">＋</button>
+        {!readonly && <button className="add-mini" onClick={onAddOpp} title="新建商机">＋</button>}
       </div>
+      {opp && <div className="diag-fresh"><Freshness mark={(opp.meta as { _mcpOrigin?: McpOriginMark } | undefined)?._mcpOrigin} /></div>}
 
       <div className="diag-score">
         {breakdown ? (
@@ -127,12 +131,17 @@ export function Sidebar({ account, opp, breakdown, weighted = null, pde = null, 
             </div>
             <div className="diag-band-row">
               <div className="diag-band" style={{ background: BAND_COLOR[breakdown.band] }}>{BAND_LABEL[breakdown.band]}</div>
-              {pde && ACT_LABEL[pde.action] && (
+              {pde && ACT_LABEL[pde.action] && (readonly ? (
+                <span className={`mf-act mf-act-${ACT_LABEL[pde.action]!.cls} dock-act-btn`}
+                  title={`引擎建议：赢面 ${Math.round(pde.pwin * 100)}%${pde.flag ? '（置信偏低）' : ''}`}>
+                  {ACT_LABEL[pde.action]!.icon}{ACT_LABEL[pde.action]!.text}·赢面{Math.round(pde.pwin * 100)}%{pde.flag ? '⚠︎' : ''}
+                </span>
+              ) : (
                 <button className={`mf-act mf-act-${ACT_LABEL[pde.action]!.cls} dock-act-btn`} onClick={onOpenEngine}
                   title={`引擎建议：赢面 ${Math.round(pde.pwin * 100)}%（点开看详解：理由 / 薄弱关键人 / 赢面走势 / 假设推演）${pde.flag ? ` · ${pde.flag.includes('no_pot') ? '未设合同额，金额降级' : '置信偏低，先摸底'}` : ''}`}>
                   {ACT_LABEL[pde.action]!.icon}{ACT_LABEL[pde.action]!.text}·赢面{Math.round(pde.pwin * 100)}%{pde.flag ? '⚠︎' : ''}
                 </button>
-              )}
+              ))}
             </div>
             {showAll ? (
               <>

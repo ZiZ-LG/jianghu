@@ -33,10 +33,14 @@ function strategyResourceView(x: any) {
   return { id: x.id, accountId: x.accountId, opportunityId: x.opportunityId, label: x.label, kind: x.kind || undefined, note: x.note || undefined, createdAt: x.createdAt.toISOString() };
 }
 
-/** 组装某租户的完整 Account 树，形状与前端 types.ts 一致 */
-export async function assembleState(tenantId: string) {
+/**
+ * 组装某租户的完整 Account 树，形状与前端 types.ts 一致。
+ * scope（viewer 只读投影·契约 v1.0 §四）：只下发 primaryOwner === 该销售姓名 的客户及其子树；
+ * 未归属（primaryOwner 空）的客户对 viewer 不可见。非 viewer 不传 scope，维持全租户共享。
+ */
+export async function assembleState(tenantId: string, scope?: { primaryOwner: string }) {
   const accounts = await prisma.account.findMany({
-    where: { tenantId },
+    where: { tenantId, ...(scope ? { primaryOwner: scope.primaryOwner } : {}) },
     orderBy: { createdAt: 'asc' },
     include: {
       persons: true,
@@ -44,9 +48,11 @@ export async function assembleState(tenantId: string) {
       opportunities: { include: { roles: true, edges: true, bis: true, ucvs: true, members: true } },
     },
   });
+  // viewer 范围：后续按 accountId 挂载的表统一收敛到名下客户（防止越权行随树下发）
+  const accFilter = scope ? { accountId: { in: accounts.map((a) => a.id) } } : {};
 
   // VisitNote 与 Account 无 Prisma relation（设计稿）：单独查后按 accountId 挂到对应客户
-  const visits = await prisma.visitNote.findMany({ where: { tenantId }, orderBy: { date: 'desc' } });
+  const visits = await prisma.visitNote.findMany({ where: { tenantId, ...accFilter }, orderBy: { date: 'desc' } });
   const visitsByAccount = new Map<string, ReturnType<typeof visitView>[]>();
   for (const v of visits) {
     const arr = visitsByAccount.get(v.accountId) ?? [];
@@ -55,7 +61,7 @@ export async function assembleState(tenantId: string) {
   }
 
   // Note（自由文本层）：accountId 非空 → 按客户挂载；accountId 空 → 顶层「未归类」
-  const notes = await prisma.note.findMany({ where: { tenantId }, orderBy: { createdAt: 'desc' } });
+  const notes = await prisma.note.findMany({ where: { tenantId, ...accFilter }, orderBy: { createdAt: 'desc' } });
   const notesByAccount = new Map<string, ReturnType<typeof noteView>[]>();
   const unfiledNotes: ReturnType<typeof noteView>[] = [];
   for (const n of notes) {
@@ -69,21 +75,21 @@ export async function assembleState(tenantId: string) {
   }
 
   // PlanAction / OppMilestone 同 VisitNote：无 Account relation，单独查后按 accountId 挂载
-  const plans = await prisma.planAction.findMany({ where: { tenantId } });
+  const plans = await prisma.planAction.findMany({ where: { tenantId, ...accFilter } });
   const plansByAccount = new Map<string, ReturnType<typeof planActionView>[]>();
   for (const p of plans) {
     const arr = plansByAccount.get(p.accountId) ?? [];
     arr.push(planActionView(p));
     plansByAccount.set(p.accountId, arr);
   }
-  const milestones = await prisma.oppMilestone.findMany({ where: { tenantId } });
+  const milestones = await prisma.oppMilestone.findMany({ where: { tenantId, ...accFilter } });
   const milestonesByAccount = new Map<string, ReturnType<typeof milestoneView>[]>();
   for (const m of milestones) {
     const arr = milestonesByAccount.get(m.accountId) ?? [];
     arr.push(milestoneView(m));
     milestonesByAccount.set(m.accountId, arr);
   }
-  const oppStages = await prisma.oppStage.findMany({ where: { tenantId } });
+  const oppStages = await prisma.oppStage.findMany({ where: { tenantId, ...accFilter } });
   const stagesByAccount = new Map<string, ReturnType<typeof oppStageView>[]>();
   for (const s of oppStages) {
     const arr = stagesByAccount.get(s.accountId) ?? [];
@@ -92,21 +98,21 @@ export async function assembleState(tenantId: string) {
   }
 
   // 策略沙盘 · 策略卡/风险/弹药：同 PlanAction，无 Account relation，按 accountId 挂载
-  const sCards = await prisma.strategyCard.findMany({ where: { tenantId } });
+  const sCards = await prisma.strategyCard.findMany({ where: { tenantId, ...accFilter } });
   const cardsByAccount = new Map<string, ReturnType<typeof strategyCardView>[]>();
   for (const c of sCards) {
     const arr = cardsByAccount.get(c.accountId) ?? [];
     arr.push(strategyCardView(c));
     cardsByAccount.set(c.accountId, arr);
   }
-  const sRisks = await prisma.strategyRisk.findMany({ where: { tenantId } });
+  const sRisks = await prisma.strategyRisk.findMany({ where: { tenantId, ...accFilter } });
   const risksByAccount = new Map<string, ReturnType<typeof strategyRiskView>[]>();
   for (const r of sRisks) {
     const arr = risksByAccount.get(r.accountId) ?? [];
     arr.push(strategyRiskView(r));
     risksByAccount.set(r.accountId, arr);
   }
-  const sResources = await prisma.strategyResource.findMany({ where: { tenantId } });
+  const sResources = await prisma.strategyResource.findMany({ where: { tenantId, ...accFilter } });
   const resourcesByAccount = new Map<string, ReturnType<typeof strategyResourceView>[]>();
   for (const x of sResources) {
     const arr = resourcesByAccount.get(x.accountId) ?? [];
@@ -114,7 +120,7 @@ export async function assembleState(tenantId: string) {
     resourcesByAccount.set(x.accountId, arr);
   }
   // 证据事件（E2）按 opportunityId 分组，挂到对应商机
-  const evidences = await prisma.evidenceEvent.findMany({ where: { tenantId }, orderBy: { createdAt: 'asc' } });
+  const evidences = await prisma.evidenceEvent.findMany({ where: { tenantId, ...accFilter }, orderBy: { createdAt: 'asc' } });
   const evByOpp = new Map<string, any[]>();
   for (const e of evidences) {
     const arr = evByOpp.get(e.opportunityId) ?? [];

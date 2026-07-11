@@ -9,18 +9,37 @@ const SHAPES: { v: EdgeShape; n: string }[] = [
   { v: 'straight', n: '直线' }, { v: 'orthogonal', n: '折线' }, { v: 'curved', n: '曲线' },
 ];
 
-/** 双击连线打开的右侧边栏：编辑这条关系的各种属性 */
+/** 双击连线打开的右侧边栏：编辑这条关系的各种属性（viewer=只读呈现，编辑控件不渲染） */
 export function EdgeDrawer({
-  edge, persons, onUpdate, onDelete, onClose,
+  edge, persons, onUpdate, onDelete, onClose, readonly = false,
 }: {
   edge: Edge;
   persons: Person[];
   onUpdate: (patch: Partial<Edge>) => void;
   onDelete: () => void;
   onClose: () => void;
+  readonly?: boolean;
 }) {
   const nameOf = (id: string) => persons.find((p) => p.id === id)?.name ?? '?';
   const shape: EdgeShape = edge.shape ?? (edge.layer === 'L1' ? 'orthogonal' : 'straight');
+
+  if (readonly) {
+    return (
+      <div className="drawer edge-drawer">
+        <div className="drawer-head">
+          <div className="t">关系详情</div>
+          <button className="x-btn" onClick={onClose}>✕</button>
+        </div>
+        <div className="drawer-body">
+          <div className="rel-head-txt">{nameOf(edge.source)} <b>{edge.directed ? '→' : '—'}</b> {nameOf(edge.target)}</div>
+          <div className="ro-line"><span className="ro-k">关系层</span><span className="ro-v">{LAYER_LABEL[edge.layer]}</span></div>
+          <div className="hint-text">{LAYER_HINT[edge.layer]}</div>
+          <div className="ro-line"><span className="ro-k">关系标签</span><span className="ro-v">{edge.label || '—'}</span></div>
+          <div className="ro-line"><span className="ro-k">线型</span><span className="ro-v">{edge.style === 'dashed' ? '虚线（待确认/弱）' : '实线（已确认）'}</span></div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="drawer edge-drawer">

@@ -23,13 +23,21 @@ export async function mcpAuthenticate(req: FastifyRequest, reply: FastifyReply):
     if (!tok) { reply.code(401).send({ error: 'unauthorized' }); return; }
     const user = await prisma.user.findFirst({ where: { id: tok.userId, tenantId: tok.tenantId } });
     if (!user) { reply.code(401).send({ error: 'unauthorized' }); return; }
+    // viewer（只读投影）不可接入 MCP：写工具会绕过只读门禁，读工具会绕过归属过滤。
+    // 契约 v1.0：销售包推送用编辑角色成员的令牌。
+    if (user.role === 'viewer') { reply.code(403).send({ error: 'viewer（只读）角色不可接入 MCP，请使用编辑角色成员的令牌' }); return; }
     (req as any).user = { userId: user.id, tenantId: tok.tenantId, role: user.role };
     // 异步更新 lastUsedAt（不阻塞请求）
     prisma.accessToken.update({ where: { id: tok.id }, data: { lastUsedAt: new Date() } }).catch(() => {});
     return;
   }
-  // 回退标准 JWT
-  try { await (req as any).jwtVerify(); } catch { reply.code(401).send({ error: 'unauthorized' }); }
+  // 回退标准 JWT：同样校验成员仍存在 + 角色取库中最新，viewer 拒绝（与 jh_ 令牌路径同等门禁）
+  try { await (req as any).jwtVerify(); } catch { reply.code(401).send({ error: 'unauthorized' }); return; }
+  const ju = (req as any).user as { userId: string; tenantId: string; role: string };
+  const dbUser = await prisma.user.findFirst({ where: { id: ju.userId, tenantId: ju.tenantId }, select: { role: true } });
+  if (!dbUser) { reply.code(401).send({ error: 'unauthorized' }); return; }
+  ju.role = dbUser.role;
+  if (dbUser.role === 'viewer') { reply.code(403).send({ error: 'viewer（只读）角色不可接入 MCP，请使用编辑角色成员的令牌' }); return; }
 }
 
 export function accessTokenRoutes(app: FastifyInstance) {
@@ -44,6 +52,8 @@ export function accessTokenRoutes(app: FastifyInstance) {
 
   // 生成新令牌：响应里带一次性明文（jh_...），库里只存哈希
   app.post('/api/access-tokens', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    // viewer 不可创建接入令牌（其令牌也会被 mcpAuthenticate 拒绝，双保险）
+    if (req.user.role === 'viewer') return reply.code(403).send({ error: '只读成员不可创建接入令牌' });
     const p = z.object({ name: z.string().max(40).optional() }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '参数无效' });
     const count = await prisma.accessToken.count({ where: { tenantId: req.user.tenantId, userId: req.user.userId, revokedAt: null } });
