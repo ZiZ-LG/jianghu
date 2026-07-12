@@ -71,7 +71,6 @@ export function newEvidence(accountId: string, opportunityId: string, personId: 
 // ── Store-only reducer controls ──
 export type StoreAction = Action
   | { type: 'LOAD_DEMO' }
-  | { type: 'RESET' }
   | { type: 'HYDRATE'; accounts: Account[] };
 
 // ── 不可变更新助手 ──
@@ -94,7 +93,7 @@ export function reducer(s: StoreState, action: StoreAction): StoreState {
       return mapAcc(s, action.accId, (a) => ({ ...a, ...action.patch, profile }));
     }
     case 'DELETE_ACCOUNT':
-      return { accounts: s.accounts.filter((a) => a.id !== action.accId) };
+      return s; // INT-103: legacy hard-delete action is fail-closed; archive refreshes from server state.
 
     case 'ADD_OPP': {
       const opp: Opportunity = {
@@ -107,7 +106,7 @@ export function reducer(s: StoreState, action: StoreAction): StoreState {
     case 'UPDATE_OPP':
       return mapOpp(s, action.accId, action.oppId, (o) => ({ ...o, ...action.patch, version: (o.version ?? 0) + 1 }));
     case 'DELETE_OPP':
-      return mapAcc(s, action.accId, (a) => ({ ...a, opportunities: a.opportunities.filter((o) => o.id !== action.oppId) }));
+      return s; // INT-103: legacy hard-delete action is fail-closed; archive refreshes from server state.
 
     case 'ADD_PERSON': {
       const person: Person = {
@@ -296,8 +295,6 @@ export function reducer(s: StoreState, action: StoreAction): StoreState {
       if (s.accounts.some((a) => a.id === seedAccount.id)) return s;
       return { accounts: [...s.accounts, JSON.parse(JSON.stringify(seedAccount))] };
     }
-    case 'RESET':
-      return { accounts: [] };
     case 'HYDRATE':
       return { accounts: action.accounts };
     default:

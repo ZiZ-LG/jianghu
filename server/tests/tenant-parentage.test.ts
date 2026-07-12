@@ -328,6 +328,11 @@ function expectScopedNotFound(response: Awaited<ReturnType<typeof mutate>>) {
   expect(response.json()).toEqual(SCOPED_NOT_FOUND);
 }
 
+function expectHardDeleteDisabled(response: Awaited<ReturnType<typeof mutate>>) {
+  expect(response.statusCode).toBe(400);
+  expect(response.json()).toEqual({ error: '应用变更失败' });
+}
+
 describe('INT-102 tenant parentage and reference guards', () => {
   it('rejects all ten cross-tenant create/reference attacks without changing tenant B state', async () => {
     const context = await createTestContext();
@@ -1247,18 +1252,17 @@ describe('INT-102 tenant parentage and reference guards', () => {
     }
   });
 
-  it('returns the same generic 404 for foreign Account update and delete', async () => {
+  it('returns a generic 404 for foreign Account updates and disables Account hard delete for every tenant', async () => {
     const context = await createTestContext();
     try {
       const tenantB = await registerTenant(context, 'foreign-account');
       const treeB = await seedTree(context.prisma, tenantB.tenantId, 'foreign-account-b');
-      for (const action of [
-        { type: 'UPDATE_ACCOUNT', accId: treeB.accountId, patch: { name: 'must not change' } },
-        { type: 'DELETE_ACCOUNT', accId: treeB.accountId },
-      ] satisfies Action[]) {
-        const response = await mutate(context, context.token, action);
-        expectScopedNotFound(response);
-      }
+      expectScopedNotFound(await mutate(context, context.token, {
+        type: 'UPDATE_ACCOUNT', accId: treeB.accountId, patch: { name: 'must not change' },
+      }));
+      expectHardDeleteDisabled(await mutate(context, context.token, {
+        type: 'DELETE_ACCOUNT', accId: treeB.accountId,
+      }));
       await expect(context.prisma.account.findUnique({ where: { id: treeB.accountId } })).resolves.toMatchObject({ name: 'Account foreign-account-b' });
     } finally {
       await context.cleanup();
@@ -1419,7 +1423,7 @@ describe('INT-102 tenant parentage and reference guards', () => {
           : { type: 'DELETE_OPP', accId: tree.accountId, oppId: tree.opportunityId };
         const response = await mutate(context, context.token, action);
 
-        expectScopedNotFound(response);
+        expectHardDeleteDisabled(response);
         await expect(context.prisma.account.findUnique({ where: { id: tree.accountId } }), cascadeCase.label).resolves.not.toBeNull();
         await expect(findForeignChild(), cascadeCase.label).resolves.not.toBeNull();
       }
@@ -1485,7 +1489,8 @@ describe('INT-102 tenant parentage and reference guards', () => {
       for (const action of actions) {
         const before = await stateFor(context, context.token);
         const response = await mutate(context, context.token, action);
-        expectScopedNotFound(response);
+        if (action.type === 'DELETE_OPP') expectHardDeleteDisabled(response);
+        else expectScopedNotFound(response);
         await expect(stateFor(context, context.token), action.type).resolves.toEqual(before);
       }
     } finally {

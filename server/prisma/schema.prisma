@@ -18,6 +18,7 @@ model Tenant {
   createdAt          DateTime  @default(now())
   users              User[]
   accounts           Account[]
+  auditEvents        AuditEvent[]
   aiConfig           AiConfig?
   qccConfig          QccConfig?
   wecomConfig        WeComConfig?
@@ -92,6 +93,9 @@ model Account {
   group             String        @default("")   // 集团/母公司
   primaryOwner      String        @default("")   // 主负责人
   profile           String        @default("{}") // JSON：工商基础/集团关系/招投标/风险信号/我方现有合作/销售背景/AI建议
+  archivedAt        DateTime?
+  archivedBy        String?
+  archiveReason     String        @default("")
   createdAt         DateTime      @default(now())
   persons           Person[]
   opportunities     Opportunity[]
@@ -99,6 +103,7 @@ model Account {
 
   @@unique([tenantId, id])
   @@index([tenantId])
+  @@index([tenantId, archivedAt])
 }
 
 model Person {
@@ -149,6 +154,9 @@ model Opportunity {
   c3Items              String         @default("{}") // JSON
   c5Items              String         @default("{}") // JSON
   memberScoped         Boolean        @default(false) // false=全员可见(存量兼容)；true=按 OpportunityMember 过滤
+  archivedAt           DateTime?
+  archivedBy           String?
+  archiveReason        String         @default("")
   version              Int            @default(0) // 乐观锁：内容编辑并发冲突检测（UPDATE_OPP）
   createdAt            DateTime       @default(now()) // 巡检停滞基准 / 排序（补齐：此前缺失，存量行迁移时填当时）
   roles                OppRole[]
@@ -161,6 +169,27 @@ model Opportunity {
   @@unique([tenantId, id])
   @@index([accountId])
   @@index([tenantId, accountId])
+  @@index([tenantId, archivedAt])
+}
+
+// 只记录命令元数据与变更字段名，不复制 FORM/BI/日志/会议正文等敏感业务内容。
+// changedFields 是 JSON 字符串以保持 SQLite ↔ Postgres 可移植。
+model AuditEvent {
+  id            String   @id
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  actorId       String
+  channel       String
+  action        String
+  entityKind    String
+  entityId      String
+  requestId     String?
+  sourceRef     String?
+  changedFields String   @default("[]")
+  createdAt     DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, entityKind, entityId])
 }
 
 // AI 关系推断候选（待人审）。绝不自动写库，accept 后才生成正式 Edge。

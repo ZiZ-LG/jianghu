@@ -20,14 +20,14 @@ export async function requireScopedRow<T>(row: PromiseLike<T | null>): Promise<T
 
 export async function requireAccount(db: DbClient, tenantId: string, accountId: string): Promise<void> {
   await requireScopedRow(db.account.findFirst({
-    where: { id: accountId, tenantId },
+    where: { id: accountId, tenantId, archivedAt: null },
     select: { id: true },
   }));
 }
 
 export async function requireOpportunity(db: DbClient, tenantId: string, accountId: string, opportunityId: string): Promise<void> {
   await requireScopedRow(db.opportunity.findFirst({
-    where: { id: opportunityId, tenantId, accountId },
+    where: { id: opportunityId, tenantId, accountId, archivedAt: null, account: { archivedAt: null } },
     select: { id: true },
   }));
 }

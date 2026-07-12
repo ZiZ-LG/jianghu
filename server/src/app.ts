@@ -13,6 +13,7 @@ import { authRoutes } from './auth.js';
 import { assembleState, type StateSecurityWarning } from './state.js';
 import { applyAction } from './mutate.js';
 import { ScopedNotFoundError } from './mutation/scopeGuards.js';
+import { archiveEntity, restoreEntity } from './mutation/audit.js';
 import { createDemoForTenant } from './seed-demo.js';
 import { aiRoutes } from './ai.js';
 import { suggestRoutes } from './suggest.js';
@@ -140,10 +141,80 @@ function registerRoutes(app: FastifyInstance): void {
     return { ok: true };
   });
 
-  app.post('/api/reset', { preHandler: [app.authenticate] }, async (req, reply) => {
-    if (!requireRole(req, reply, ['owner', 'admin', 'member'])) return; // viewer 只读
-    await prisma.account.deleteMany({ where: { tenantId: req.user.tenantId } });
-    return { ok: true };
+  const archiveTargetSchema = z.enum(['account', 'opportunity']);
+  const archiveBodySchema = z.object({
+    target: archiveTargetSchema,
+    id: z.string().min(1),
+    reason: z.string().trim().min(1).max(200),
+  }).strict();
+  const restoreBodySchema = z.object({ target: archiveTargetSchema, id: z.string().min(1) }).strict();
+  const archiveContext = (req: any): CommandContext => ({
+    tenantId: req.user.tenantId,
+    actorId: req.user.userId,
+    actorRole: ActorRoleSchema.parse(req.user.role),
+    channel: 'web',
+    requestId: req.id,
+    assertionMode: 'user_asserted',
+  });
+
+  app.post('/api/archive', { preHandler: [app.authenticate] }, async (req, reply) => {
+    if (!requireRole(req, reply, ['owner', 'admin', 'member'])) return;
+    const body = archiveBodySchema.safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ error: '归档参数无效' });
+    try {
+      await archiveEntity(archiveContext(req), body.data.target, body.data.id, body.data.reason);
+      return { ok: true };
+    } catch (error: any) {
+      if (error instanceof ScopedNotFoundError || error?.scopedNotFound === true) {
+        return reply.code(404).send({ error: '资源不存在' });
+      }
+      req.log.warn(error);
+      return reply.code(400).send({ error: '归档失败' });
+    }
+  });
+
+  app.post('/api/archive/restore', { preHandler: [app.authenticate] }, async (req, reply) => {
+    if (!requireRole(req, reply, ['owner', 'admin'])) return;
+    const body = restoreBodySchema.safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ error: '恢复参数无效' });
+    try {
+      await restoreEntity(archiveContext(req), body.data.target, body.data.id);
+      return { ok: true };
+    } catch (error: any) {
+      if (error instanceof ScopedNotFoundError || error?.scopedNotFound === true) {
+        return reply.code(404).send({ error: '资源不存在' });
+      }
+      req.log.warn(error);
+      return reply.code(400).send({ error: '恢复失败' });
+    }
+  });
+
+  app.get('/api/archive', { preHandler: [app.authenticate] }, async (req, reply) => {
+    if (!requireRole(req, reply, ['owner', 'admin'])) return;
+    const [accounts, opportunities] = await Promise.all([
+      prisma.account.findMany({
+        where: { tenantId: req.user.tenantId, archivedAt: { not: null } },
+        orderBy: { archivedAt: 'desc' },
+        select: { id: true, name: true, archivedAt: true, archivedBy: true, archiveReason: true },
+      }),
+      prisma.opportunity.findMany({
+        where: { tenantId: req.user.tenantId, archivedAt: { not: null } },
+        orderBy: { archivedAt: 'desc' },
+        select: {
+          id: true, name: true, accountId: true, archivedAt: true, archivedBy: true, archiveReason: true,
+          account: { select: { name: true, archivedAt: true } },
+        },
+      }),
+    ]);
+    return {
+      accounts: accounts.map((item) => ({ ...item, target: 'account' as const })),
+      opportunities: opportunities.map(({ account, ...item }) => ({
+        ...item,
+        target: 'opportunity' as const,
+        accountName: account.name,
+        canRestore: account.archivedAt === null,
+      })),
+    };
   });
 
   // ── MCP Server（streamable-HTTP）：让 AI 客户端查询 + 提议（写候选）本平台数据 ──

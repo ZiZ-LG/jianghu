@@ -59,7 +59,10 @@ function stringIds(raw: string): string[] | null {
 const accountTreeInclude = {
   persons: true,
   edges: true,
-  opportunities: { include: { roles: true, edges: true, bis: true, ucvs: true, members: true } },
+  opportunities: {
+    where: { archivedAt: null },
+    include: { roles: true, edges: true, bis: true, ucvs: true, members: true },
+  },
 } as const satisfies Prisma.AccountInclude;
 
 type AccountTreeRow = Prisma.AccountGetPayload<{ include: typeof accountTreeInclude }>;
@@ -106,8 +109,17 @@ export async function assembleState(
   options: AssembleStateOptions = {},
 ) {
   const drops = new StateDropCollector(tenantId);
+  const [archivedAccounts, archivedOpportunities] = await Promise.all([
+    prisma.account.findMany({ where: { tenantId, archivedAt: { not: null } }, select: { id: true } }),
+    prisma.opportunity.findMany({ where: { tenantId, archivedAt: { not: null } }, select: { id: true } }),
+  ]);
+  const archivedAccountIds = new Set(archivedAccounts.map((row) => row.id));
+  const archivedOpportunityIds = new Set(archivedOpportunities.map((row) => row.id));
+  const inArchivedBranch = (accountId: string | null | undefined, opportunityId?: string | null) =>
+    (!!accountId && archivedAccountIds.has(accountId))
+    || (!!opportunityId && archivedOpportunityIds.has(opportunityId));
   const rawAccounts = await prisma.account.findMany({
-    where: { tenantId, ...(scope ? { primaryOwner: scope.primaryOwner } : {}) },
+    where: { tenantId, archivedAt: null, ...(scope ? { primaryOwner: scope.primaryOwner } : {}) },
     orderBy: { createdAt: 'asc' },
     include: accountTreeInclude,
   });
@@ -137,6 +149,7 @@ export async function assembleState(
 
   for (const account of accounts) {
     account.edges = account.edges.filter((edge) => {
+      if (edge.tenantId === tenantId && edge.opportunityId && archivedOpportunityIds.has(edge.opportunityId)) return false;
       const reasons: string[] = [];
       if (edge.tenantId !== tenantId) reasons.push('tenant_mismatch');
       if (edge.accountId !== account.id) reasons.push('account_mismatch');
@@ -197,6 +210,7 @@ export async function assembleState(
   const visits = await prisma.visitNote.findMany({ where: { tenantId, ...accFilter }, orderBy: { date: 'desc' } });
   const visitsByAccount = new Map<string, ReturnType<typeof visitView>[]>();
   for (const v of visits) {
+    if (inArchivedBranch(v.accountId, v.opportunityId)) continue;
     const reasons: string[] = [];
     if (v.tenantId !== tenantId) reasons.push('tenant_mismatch');
     if (!accountIds.has(v.accountId)) reasons.push('account_mismatch');
@@ -214,6 +228,7 @@ export async function assembleState(
   const notesByAccount = new Map<string, ReturnType<typeof noteView>[]>();
   const unfiledNotes: ReturnType<typeof noteView>[] = [];
   for (const n of notes) {
+    if (n.tenantId === tenantId && inArchivedBranch(n.accountId, n.opportunityId)) continue;
     const reasons: string[] = [];
     if (n.tenantId !== tenantId) reasons.push('tenant_mismatch');
     if (n.accountId) {
@@ -241,6 +256,7 @@ export async function assembleState(
   const plansByAccount = new Map<string, ReturnType<typeof planActionView>[]>();
   const planActionLocation = new Map<string, { accountId: string; opportunityId: string }>();
   for (const p of plans) {
+    if (inArchivedBranch(p.accountId, p.opportunityId)) continue;
     const reasons: string[] = [];
     if (p.tenantId !== tenantId) reasons.push('tenant_mismatch');
     if (!accountIds.has(p.accountId)) reasons.push('account_mismatch');
@@ -255,6 +271,7 @@ export async function assembleState(
   const milestones = await prisma.oppMilestone.findMany({ where: { tenantId, ...accFilter } });
   const milestonesByAccount = new Map<string, ReturnType<typeof milestoneView>[]>();
   for (const m of milestones) {
+    if (inArchivedBranch(m.accountId, m.opportunityId)) continue;
     const reasons: string[] = [];
     if (m.tenantId !== tenantId) reasons.push('tenant_mismatch');
     if (!accountIds.has(m.accountId)) reasons.push('account_mismatch');
@@ -267,6 +284,7 @@ export async function assembleState(
   const oppStages = await prisma.oppStage.findMany({ where: { tenantId, ...accFilter } });
   const stagesByAccount = new Map<string, ReturnType<typeof oppStageView>[]>();
   for (const s of oppStages) {
+    if (inArchivedBranch(s.accountId, s.opportunityId)) continue;
     const reasons: string[] = [];
     if (s.tenantId !== tenantId) reasons.push('tenant_mismatch');
     if (!accountIds.has(s.accountId)) reasons.push('account_mismatch');
@@ -281,6 +299,7 @@ export async function assembleState(
   const sCards = await prisma.strategyCard.findMany({ where: { tenantId, ...accFilter } });
   const cardsByAccount = new Map<string, ReturnType<typeof strategyCardView>[]>();
   for (const c of sCards) {
+    if (inArchivedBranch(c.accountId, c.opportunityId)) continue;
     const reasons: string[] = [];
     if (c.tenantId !== tenantId) reasons.push('tenant_mismatch');
     if (!accountIds.has(c.accountId)) reasons.push('account_mismatch');
@@ -301,6 +320,7 @@ export async function assembleState(
   const sRisks = await prisma.strategyRisk.findMany({ where: { tenantId, ...accFilter } });
   const risksByAccount = new Map<string, ReturnType<typeof strategyRiskView>[]>();
   for (const r of sRisks) {
+    if (inArchivedBranch(r.accountId, r.opportunityId)) continue;
     const reasons: string[] = [];
     if (r.tenantId !== tenantId) reasons.push('tenant_mismatch');
     if (!accountIds.has(r.accountId)) reasons.push('account_mismatch');
@@ -313,6 +333,7 @@ export async function assembleState(
   const sResources = await prisma.strategyResource.findMany({ where: { tenantId, ...accFilter } });
   const resourcesByAccount = new Map<string, ReturnType<typeof strategyResourceView>[]>();
   for (const x of sResources) {
+    if (inArchivedBranch(x.accountId, x.opportunityId)) continue;
     const reasons: string[] = [];
     if (x.tenantId !== tenantId) reasons.push('tenant_mismatch');
     if (!accountIds.has(x.accountId)) reasons.push('account_mismatch');
@@ -326,6 +347,7 @@ export async function assembleState(
   const evidences = await prisma.evidenceEvent.findMany({ where: { tenantId, ...accFilter }, orderBy: { createdAt: 'asc' } });
   const evByOpp = new Map<string, any[]>();
   for (const e of evidences) {
+    if (inArchivedBranch(e.accountId, e.opportunityId)) continue;
     const reasons: string[] = [];
     if (e.tenantId !== tenantId) reasons.push('tenant_mismatch');
     if (!accountIds.has(e.accountId)) reasons.push('account_mismatch');

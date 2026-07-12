@@ -93,6 +93,17 @@ describe('account-level edges', () => {
   });
 });
 
+describe('INT-103 destructive action compatibility', () => {
+  it('does not remove accounts or opportunities when a legacy DELETE action reaches the reducer', () => {
+    const state = baseState();
+    const afterOpportunity = reducer(state, { type: 'DELETE_OPP', accId: 'acc1', oppId: 'opp1' });
+    const afterAccount = reducer(state, { type: 'DELETE_ACCOUNT', accId: 'acc1' });
+
+    expect(afterOpportunity).toBe(state);
+    expect(afterAccount).toBe(state);
+  });
+});
+
 describe('account profile provenance', () => {
   it('clears _mcpOrigin optimistically when a human updates the profile', () => {
     const state = baseState();

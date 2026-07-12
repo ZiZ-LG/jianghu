@@ -328,10 +328,13 @@ export default function App() {
       setOppId(opportunityId); setSelectedId(null); setVisibleLayers(new Set(['L1']));
     } catch (e: any) { setSyncErr('新建商机失败：' + e.message); }
   };
-  const deleteOpp = (id: string) => {
-    if (!account) return;
-    act({ type: 'DELETE_OPP', accId: account.id, oppId: id });
-    if (oppId === id) setOppId(account.opportunities.find((o) => o.id !== id)?.id ?? null);
+  const archiveAccount = async (id: string, reason: string) => {
+    try {
+      await api.archive('account', id, reason);
+      await refreshState();
+    } catch (e: any) {
+      setSyncErr('归档失败：' + (e?.message || e));
+    }
   };
   const addPerson = (name: string, title: string, isCompetitor: boolean) => {
     if (!account) return;
@@ -478,7 +481,9 @@ export default function App() {
           accounts={state.accounts} onOpen={openAccount} onCreate={createAccount} onLoadDemo={loadDemo}
           readonly={readonly}
           today={hubToday} needsYou={hubNeedsYou}
-          onDeleteAccount={(id) => act({ type: 'DELETE_ACCOUNT', accId: id })}
+          onArchiveAccount={archiveAccount}
+          canRestoreArchives={auth.user.role === 'owner' || auth.user.role === 'admin'}
+          onArchiveRestored={async () => { await refreshState(); }}
           tenantName={auth.tenant.name} userName={auth.user.name} plan={auth.tenant.plan}
           onOpenTeam={() => setTeamOpen(true)} onLogout={logout} onOpenAiSettings={() => setAiSettingsOpen(true)} onOpenWecom={() => setWecomSettingsOpen(true)}
           theme={theme} onToggleTheme={toggleTheme} onOpenHelp={() => setHelpOpen(true)}

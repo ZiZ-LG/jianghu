@@ -39,6 +39,18 @@ export interface Transcript {
   hasContent: boolean;
 }
 
+export interface ArchivedEntity {
+  id: string;
+  target: 'account' | 'opportunity';
+  name: string;
+  accountId?: string;
+  accountName?: string;
+  archivedAt: string;
+  archivedBy: string | null;
+  archiveReason: string;
+  canRestore?: boolean;
+}
+
 export const api = {
   getToken: () => token,
   setToken(t: string | null) {
@@ -60,7 +72,11 @@ export const api = {
   cloneOpportunity: (b: { accountId: string; name: string; fromOppId?: string; personIds: string[]; withEdges: boolean }): Promise<{ opportunityId: string; memberCount: number }> =>
     req('/api/opportunity/clone', { method: 'POST', body: JSON.stringify(b) }),
   demo: (): Promise<{ ok: true }> => req('/api/demo', { method: 'POST' }),
-  reset: (): Promise<{ ok: true }> => req('/api/reset', { method: 'POST' }),
+  archive: (target: 'account' | 'opportunity', id: string, reason: string): Promise<{ ok: true }> =>
+    req('/api/archive', { method: 'POST', body: JSON.stringify({ target, id, reason }) }),
+  archived: (): Promise<{ accounts: ArchivedEntity[]; opportunities: ArchivedEntity[] }> => req('/api/archive'),
+  restore: (target: 'account' | 'opportunity', id: string): Promise<{ ok: true }> =>
+    req('/api/archive/restore', { method: 'POST', body: JSON.stringify({ target, id }) }),
   billing: (): Promise<{ plan: string; subscriptionStatus: string; seatLimit: number; memberCount: number }> => req('/api/billing'),
   donate: (): Promise<{ url: string; qrUrl: string; note: string }> => req('/api/donate'),
   members: (): Promise<{ members: { id: string; phone: string | null; email: string | null; name: string; role: string; createdAt: string }[] }> => req('/api/members'),

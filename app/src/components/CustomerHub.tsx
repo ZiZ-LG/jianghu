@@ -5,19 +5,20 @@ import { Modal } from './Modal';
 import { OverflowMenu } from './OverflowMenu';
 import { EnginePulse } from './EnginePulse';
 import { IntelCapture } from './IntelCapture';
-import type { PatrolInfo } from '../api';
+import { api, type ArchivedEntity, type PatrolInfo } from '../api';
 import type { TodayItem } from '../lib/today';
 import { Freshness } from '../lib/freshness';
 
 export function CustomerHub({
-  accounts, onOpen, onCreate, onLoadDemo, onDeleteAccount,
+  accounts, onOpen, onCreate, onLoadDemo, onArchiveAccount,
   tenantName, userName, plan, onOpenTeam, onLogout, onOpenAiSettings, onOpenWecom, theme, onToggleTheme, onOpenHelp, onOpenMcpAccess, onOpenIntel: _unusedOnOpenIntel, onOpenInbox, inboxCount = 0, patrol, today = [], needsYou, onIntelDone, readonly = false,
+  canRestoreArchives = false, onArchiveRestored,
 }: {
   accounts: Account[];
   onOpen: (accId: string) => void;
   onCreate: (name: string, customerType: CustomerType) => void;
   onLoadDemo: () => void;
-  onDeleteAccount: (accId: string) => void;
+  onArchiveAccount: (accId: string, reason: string) => void | Promise<void>;
   tenantName: string;
   userName: string;
   plan: string;
@@ -37,13 +38,49 @@ export function CustomerHub({
   needsYou?: Map<string, number>; // P5 客户卡「需要你」计数（待审+逾期行动），并驱动排序
   onIntelDone?: () => void | Promise<void>; // P16：Hub 内嵌 IntelCapture 建客户后回调（父 App 做 hydrate）
   readonly?: boolean; // viewer 只读投影：新建/删除/收件箱/配置类入口不渲染（契约 v1.0 §二-1）
+  canRestoreArchives?: boolean;
+  onArchiveRestored?: () => void | Promise<void>;
 }) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
   const [ctype, setCtype] = useState<CustomerType>(2);
   // P16 双入口合并：默认口述路径（多数用户走这条·AI 可用时说一句自动建），底部保底切「只建空档案」表单填字段（无 AI Key 或需要精细控制）
   const [createMode, setCreateMode] = useState<'dictate' | 'form'>('dictate');
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const [archived, setArchived] = useState<ArchivedEntity[]>([]);
+  const [archiveBusy, setArchiveBusy] = useState(false);
+  const [archiveError, setArchiveError] = useState('');
   const openCreate = () => { setCreateMode('dictate'); setCreating(true); };
+
+  const loadArchived = async () => {
+    setArchiveBusy(true); setArchiveError('');
+    try {
+      const result = await api.archived();
+      setArchived([...result.accounts, ...result.opportunities]);
+    } catch (error: any) {
+      setArchiveError(error?.message || '加载归档失败');
+    } finally {
+      setArchiveBusy(false);
+    }
+  };
+
+  const openArchive = () => { setArchiveOpen(true); void loadArchived(); };
+  const restore = async (item: ArchivedEntity) => {
+    setArchiveBusy(true); setArchiveError('');
+    try {
+      await api.restore(item.target, item.id);
+      await Promise.all([loadArchived(), Promise.resolve(onArchiveRestored?.())]);
+    } catch (error: any) {
+      setArchiveError(error?.message || '恢复失败');
+      setArchiveBusy(false);
+    }
+  };
+
+  const requestArchive = (account: Account) => {
+    const reason = prompt(`归档客户「${account.name}」？\n数据不会删除，可由管理员恢复。\n\n请填写归档原因：`, '不再维护');
+    if (!reason?.trim()) return;
+    void onArchiveAccount(account.id, reason.trim());
+  };
 
   const submit = () => {
     if (!name.trim()) return;
@@ -61,6 +98,7 @@ export function CustomerHub({
     { label: '👥 团队 · ❤️ 支持', onClick: onOpenTeam },
     { label: theme === 'dark' ? '☀️ 白天模式' : '🌙 黑夜模式', onClick: onToggleTheme },
     ...(!readonly ? [{ label: '📋 载入示例', onClick: onLoadDemo }] : []),
+    ...(canRestoreArchives ? [{ label: '🗄️ 归档管理', onClick: openArchive }] : []),
     { label: '❓ 帮助', onClick: onOpenHelp },
     { label: '🚪 退出登录', onClick: onLogout },
   ];
@@ -132,8 +170,8 @@ export function CustomerHub({
                 {mcpNeedsReview && (
                   <span className="acc-mcp" title={`外部 MCP 工具写入·待你核实（最近一次 ${mcpMark.at?.slice(0,10) ?? ''}）。进入客户后编辑档案即可清除标记。`}>外部·MCP·待核</span>
                 )}
-                {!readonly && <button className="acc-del" title="删除客户"
-                  onClick={(e) => { e.stopPropagation(); if (confirm(`删除客户「${a.name}」及其全部商机/干系人？`)) onDeleteAccount(a.id); }}>🗑</button>}
+                {!readonly && <button className="acc-del" title="归档客户（数据可恢复）"
+                  onClick={(e) => { e.stopPropagation(); requestArchive(a); }}>🗄️</button>}
               </div>
               <div className="acc-name">{a.name}</div>
               <div className="acc-type">{CUSTOMER_TYPE_LABEL[a.customerType]}</div>
@@ -183,6 +221,34 @@ export function CustomerHub({
               </button>
             </div>
           </>)}
+        </Modal>
+      )}
+
+      {archiveOpen && canRestoreArchives && (
+        <Modal title="🗄️ 归档管理" onClose={() => setArchiveOpen(false)}>
+          <div style={{ color: 'var(--faint)', fontSize: 12, marginBottom: 12 }}>归档不会删除客户、商机或其子数据。恢复后原有作战树会重新显示。</div>
+          {archiveError && <div style={{ color: 'var(--accent-ink)', marginBottom: 10 }}>{archiveError}</div>}
+          {archiveBusy && archived.length === 0 ? <div>加载中…</div> : archived.length === 0 ? (
+            <div style={{ color: 'var(--faint)' }}>暂无归档记录</div>
+          ) : (
+            <div style={{ display: 'grid', gap: 8 }}>
+              {archived.map((item) => {
+                const canRestore = item.target === 'account' || item.canRestore !== false;
+                return (
+                  <div key={`${item.target}:${item.id}`} style={{ border: '1px solid var(--line)', borderRadius: 10, padding: 10, display: 'flex', gap: 10, alignItems: 'center' }}>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div>{item.target === 'account' ? '客户' : '商机'} · {item.name}</div>
+                      {item.accountName && <div style={{ color: 'var(--faint)', fontSize: 12 }}>所属客户：{item.accountName}</div>}
+                      <div style={{ color: 'var(--faint)', fontSize: 12 }}>原因：{item.archiveReason || '未填写'}</div>
+                    </div>
+                    <button className="btn ghost xs" disabled={archiveBusy || !canRestore} title={canRestore ? '恢复' : '请先恢复所属客户'} onClick={() => void restore(item)}>
+                      {canRestore ? '恢复' : '先恢复客户'}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </Modal>
       )}
     </div>

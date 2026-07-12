@@ -108,6 +108,11 @@ export async function applyAction(ctx: CommandContext, action: Action, db: DbCli
   CommandContextSchema.parse(ctx);
   ActionSchema.parse(action);
   if (ctx.actorRole === 'viewer') throw new Error('mutation forbidden');
+  // INT-103: legacy delete actions remain parseable for old clients, but are fail-closed.
+  // Destructive account/opportunity removal is no longer an online operation.
+  if (action.type === 'DELETE_ACCOUNT' || action.type === 'DELETE_OPP') {
+    throw new Error('hard delete disabled; use archive');
+  }
   if (action.type === 'ADD_EVIDENCE' && ctx.assertionMode === 'machine_proposed') {
     if (action.evidence.status !== 'pending_review' || !action.evidence.origin || action.evidence.origin === 'manual') {
       throw new Error('machine-proposed evidence must remain pending review with machine provenance');
@@ -163,8 +168,7 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
       return;
     }
     case 'DELETE_ACCOUNT':
-      await db.account.deleteMany({ where: { id: action.accId, tenantId } });
-      return;
+      throw new Error('hard delete disabled; use archive');
 
     case 'ADD_OPP': {
       const o = action.opp;
@@ -200,8 +204,7 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
         : undefined;
     }
     case 'DELETE_OPP':
-      await db.opportunity.deleteMany({ where: { id: action.oppId, tenantId, accountId: action.accId } });
-      return;
+      throw new Error('hard delete disabled; use archive');
 
     case 'ADD_PERSON': {
       const p = action.person;
