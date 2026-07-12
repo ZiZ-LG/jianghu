@@ -79,3 +79,38 @@ describe('乐观锁 · reducer 乐观自增 version', () => {
     expect(s.accounts[0].persons[0].version).toBe(1);
   });
 });
+
+describe('account-level edges', () => {
+  it('adds an edge without oppId to baseEdges', () => {
+    const state = reducer(baseState(), {
+      type: 'ADD_EDGE',
+      accId: 'acc1',
+      edge: { id: 'e-base-new', source: 'p1', target: 'p2', layer: 'L1', label: '汇报' },
+    });
+
+    expect(state.accounts[0].baseEdges.map((edge) => edge.id)).toContain('e-base-new');
+    expect(state.accounts[0].opportunities[0].edges.map((edge) => edge.id)).not.toContain('e-base-new');
+  });
+});
+
+describe('account profile provenance', () => {
+  it('clears _mcpOrigin optimistically when a human updates the profile', () => {
+    const state = baseState();
+    state.accounts[0].profile = {
+      business: 'Old business',
+      group: 'Keep group',
+      _mcpOrigin: { source: 'mcp', at: '2026-07-12T00:00:00.000Z', needsReview: true },
+    };
+
+    const updated = reducer(state, {
+      type: 'UPDATE_ACCOUNT',
+      accId: 'acc1',
+      patch: { profile: { ...state.accounts[0].profile, business: 'Human verified business' } },
+    });
+
+    expect(updated.accounts[0].profile).toEqual({
+      business: 'Human verified business',
+      group: 'Keep group',
+    });
+  });
+});

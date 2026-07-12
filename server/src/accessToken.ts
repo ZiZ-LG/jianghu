@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import crypto from 'node:crypto';
 import { z } from 'zod';
+import { ActorRoleSchema } from '@jianghu/domain-contracts';
 import { prisma } from './prisma.js';
 
 const MAX_TOKENS_PER_USER = 10;
@@ -25,19 +26,23 @@ export async function mcpAuthenticate(req: FastifyRequest, reply: FastifyReply):
     if (!user) { reply.code(401).send({ error: 'unauthorized' }); return; }
     // viewer（只读投影）不可接入 MCP：写工具会绕过只读门禁，读工具会绕过归属过滤。
     // 契约 v1.0：销售包推送用编辑角色成员的令牌。
-    if (user.role === 'viewer') { reply.code(403).send({ error: 'viewer（只读）角色不可接入 MCP，请使用编辑角色成员的令牌' }); return; }
-    (req as any).user = { userId: user.id, tenantId: tok.tenantId, role: user.role };
+    const role = ActorRoleSchema.safeParse(user.role);
+    if (!role.success) { reply.code(401).send({ error: 'unauthorized' }); return; }
+    if (role.data === 'viewer') { reply.code(403).send({ error: 'viewer（只读）角色不可接入 MCP，请使用编辑角色成员的令牌' }); return; }
+    req.user = { userId: user.id, tenantId: tok.tenantId, role: role.data };
     // 异步更新 lastUsedAt（不阻塞请求）
     prisma.accessToken.update({ where: { id: tok.id }, data: { lastUsedAt: new Date() } }).catch(() => {});
     return;
   }
   // 回退标准 JWT：同样校验成员仍存在 + 角色取库中最新，viewer 拒绝（与 jh_ 令牌路径同等门禁）
-  try { await (req as any).jwtVerify(); } catch { reply.code(401).send({ error: 'unauthorized' }); return; }
-  const ju = (req as any).user as { userId: string; tenantId: string; role: string };
+  try { await req.jwtVerify(); } catch { reply.code(401).send({ error: 'unauthorized' }); return; }
+  const ju = req.user;
   const dbUser = await prisma.user.findFirst({ where: { id: ju.userId, tenantId: ju.tenantId }, select: { role: true } });
   if (!dbUser) { reply.code(401).send({ error: 'unauthorized' }); return; }
-  ju.role = dbUser.role;
-  if (dbUser.role === 'viewer') { reply.code(403).send({ error: 'viewer（只读）角色不可接入 MCP，请使用编辑角色成员的令牌' }); return; }
+  const role = ActorRoleSchema.safeParse(dbUser.role);
+  if (!role.success) { reply.code(401).send({ error: 'unauthorized' }); return; }
+  ju.role = role.data;
+  if (role.data === 'viewer') { reply.code(403).send({ error: 'viewer（只读）角色不可接入 MCP，请使用编辑角色成员的令牌' }); return; }
 }
 
 export function accessTokenRoutes(app: FastifyInstance) {

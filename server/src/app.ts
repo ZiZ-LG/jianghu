@@ -7,6 +7,7 @@ import rateLimit from '@fastify/rate-limit';
 import multipart from '@fastify/multipart';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
+import { ActionSchema, ActorRoleSchema, type CommandContext } from '@jianghu/domain-contracts';
 import { prisma } from './prisma.js';
 import { authRoutes } from './auth.js';
 import { assembleState } from './state.js';
@@ -57,7 +58,9 @@ async function registerSecurityPlugins(app: FastifyInstance): Promise<void> {
     // 主键查询亚毫秒级，正确性优先不加缓存；/api/mcp 走 mcpAuthenticate 已有同等校验。
     const u = await prisma.user.findFirst({ where: { id: req.user.userId, tenantId: req.user.tenantId }, select: { role: true, name: true } });
     if (!u) { reply.code(401).send({ error: 'unauthorized' }); return; }
-    req.user.role = u.role;
+    const role = ActorRoleSchema.safeParse(u.role);
+    if (!role.success) { reply.code(401).send({ error: 'unauthorized' }); return; }
+    req.user.role = role.data;
     req.user.name = u.name; // viewer 归属过滤锚（Account.primaryOwner === User.name，契约 v1.0 §四）
   });
 }
@@ -97,17 +100,27 @@ function registerRoutes(app: FastifyInstance): void {
   app.post('/api/mutate', { preHandler: [app.authenticate] }, async (req, reply) => {
     // 写总入口：applyAction 全是写操作（create/update/delete），viewer 只读须一律拒绝；owner/admin/member 放行（对齐 /api/members 的 RBAC）
     if (!requireRole(req, reply, ['owner', 'admin', 'member'])) return;
-    const body = z.object({ action: z.object({ type: z.string() }).passthrough() }).safeParse(req.body);
-    if (!body.success) return reply.code(400).send({ error: '无效的 action' });
+    const envelope = z.object({ action: z.unknown() }).strict().safeParse(req.body);
+    if (!envelope.success) return reply.code(400).send({ error: '无效的 action' });
+    const parsed = ActionSchema.safeParse(envelope.data.action);
+    if (!parsed.success) return reply.code(400).send({ error: '无效的 action' });
+    const ctx: CommandContext = {
+      tenantId: req.user.tenantId,
+      actorId: req.user.userId,
+      actorRole: ActorRoleSchema.parse(req.user.role),
+      channel: 'web',
+      requestId: req.id,
+      assertionMode: 'user_asserted',
+    };
     try {
-      await applyAction(req.user.tenantId, body.data.action);
-      void syncFromAction(req.user.tenantId, (req.user as any).userId, body.data.action).catch(() => {}); // 江湖→企微日历同步：不阻塞、失败不影响落库
+      await applyAction(ctx, parsed.data);
+      void syncFromAction(req.user.tenantId, req.user.userId, parsed.data).catch(() => {}); // 江湖→企微日历同步：不阻塞、失败不影响落库
       return { ok: true };
     } catch (e: any) {
       req.log.warn(e);
       // 乐观锁冲突 → 409，前端据此提示并重拉整树（区别于 400 的参数/业务错误）
       if (e?.conflict) return reply.code(409).send({ error: e.message || '该数据已被其他成员修改，请刷新后重试' });
-      return reply.code(400).send({ error: e?.message || '应用变更失败' });
+      return reply.code(400).send({ error: '应用变更失败' });
     }
   });
 
@@ -127,7 +140,14 @@ function registerRoutes(app: FastifyInstance): void {
   // 复用现有 JWT（Authorization Bearer）：authenticate 解出 tenantId/userId，所有工具按租户隔离（铁律）。
   // 读工具只读；写工具（propose_*）只写候选层（待人审），绝不直接写正式表。协议处理见 mcpServer.ts。
   app.post('/api/mcp', { preHandler: [mcpAuthenticate] }, async (req, reply) => {
-    const out = await handleMcpBody(req.user.tenantId, req.user.userId, req.body);
+    const out = await handleMcpBody({
+      tenantId: req.user.tenantId,
+      actorId: req.user.userId,
+      actorRole: ActorRoleSchema.parse(req.user.role),
+      channel: 'mcp',
+      requestId: req.id,
+      assertionMode: 'machine_proposed',
+    }, req.body);
     if (out === null) return reply.code(204).send(); // 纯通知，无响应体
     return out;
   });

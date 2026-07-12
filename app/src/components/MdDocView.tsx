@@ -130,7 +130,7 @@ function CustomerDoc({ account, dispatch, readonly = false }: { account: Account
       <h2>六、笔记 · 情报 <span className="mdv-ro">自由文本层 · 零散信息</span></h2>
       <NotesSection ro={readonly}
         notes={(account.notes ?? []).filter((n) => !n.personId && !n.opportunityId)}
-        onAdd={(content) => dispatch({ type: 'ADD_NOTE', accId: account.id, note: { id: newId('note'), accountId: account.id, content, source: 'manual' } })}
+        onAdd={(content) => dispatch({ type: 'ADD_NOTE', accId: account.id, note: { id: newId('note'), content, source: 'manual' } })}
         onDelete={(id) => dispatch({ type: 'DELETE_NOTE', accId: account.id, noteId: id })}
       />
     </div>
@@ -175,7 +175,7 @@ function OppDoc({ account, opp, dispatch, readonly = false }: { account: Account
       <h2>四、笔记 · 情报 <span className="mdv-ro">自由文本层 · 本商机</span></h2>
       <NotesSection ro={readonly}
         notes={(account.notes ?? []).filter((n) => n.opportunityId === opp.id)}
-        onAdd={(content) => dispatch({ type: 'ADD_NOTE', accId: account.id, note: { id: newId('note'), accountId: account.id, opportunityId: opp.id, content, source: 'manual' } })}
+        onAdd={(content) => dispatch({ type: 'ADD_NOTE', accId: account.id, note: { id: newId('note'), opportunityId: opp.id, content, source: 'manual' } })}
         onDelete={(id) => dispatch({ type: 'DELETE_NOTE', accId: account.id, noteId: id })}
       />
     </div>

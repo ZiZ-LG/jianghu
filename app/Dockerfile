@@ -4,9 +4,11 @@ FROM node:22-slim AS build
 WORKDIR /app
 # 国内构建加速：npm 用 npmmirror
 ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
-COPY package.json package-lock.json ./
-RUN npm ci
-COPY . .
+# app 依赖仓库内的共享契约包；构建 context 因此是仓库根目录。
+COPY packages/domain-contracts /packages/domain-contracts
+COPY app/package.json app/package-lock.json ./
+RUN npm ci --install-links
+COPY app .
 # 同源部署：VITE_API_URL 留空 → 前端走相对路径 /api（由本镜像内 Nginx 反代到后端）。
 # 如需指向独立后端域名，在 build 时传 --build-arg VITE_API_URL=https://api.example.com
 ARG VITE_API_URL=""
@@ -27,7 +29,7 @@ RUN npm run build
 # ---- 运行阶段 ----
 FROM nginx:1.27-alpine AS runtime
 RUN rm -f /etc/nginx/conf.d/default.conf
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY app/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \

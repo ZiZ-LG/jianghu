@@ -1,4 +1,5 @@
 // 江湖 · 领域类型（对应 docs/产品设计方案.md §3 与 G64111-评分规格.md）
+import type { JsonValue } from '@jianghu/domain-contracts';
 
 /** 角色：A批准人 / D拍板人 / U使用者 / R影响者·技术把关 / C教练（竞争对手不是角色） */
 export type Role = 'A' | 'D' | 'U' | 'R' | 'C';
@@ -115,7 +116,7 @@ export interface Edge {
   style?: 'solid' | 'dashed';
   width?: number;
   directed?: boolean;
-  origin?: 'manual' | 'qcc' | 'ai';
+  origin?: 'manual' | 'qcc' | 'ai' | 'voice' | 'recording' | 'mcp' | 'workbuddy';
   shape?: EdgeShape; // 缺省按 layer 推断：L1=orthogonal，其余=straight
   bend?: number;     // 曲线弯曲度：控制点相对中点的垂直偏移(px，带符号)
   version?: number;  // 乐观锁版本（后端带出；UPDATE_EDGE 时回传作 baseVersion）
@@ -147,7 +148,7 @@ export interface Opportunity {
   winProbability?: number;                     // 赢单概率(销售在江湖自填，WB 不推/不覆盖)
   expectedSignDate?: string;                   // 预计签约 YYYY-MM-DD
   expectedAmountW?: number;                    // 预计金额(万元)
-  meta?: Record<string, unknown>;              // JSON 兜底(BANT 辅助等)
+  meta?: Record<string, JsonValue>;            // JSON 兜底(BANT 辅助等)
   c3Items: Record<string, boolean>; // C3 七项是否已掌握
   c5Items: Record<string, boolean>; // C5 五项是否已掌握
   roles: OppRole[];
@@ -167,12 +168,12 @@ export interface EvidenceEvent {
   opportunityId: string;
   personId: string;
   signalKey: string;
-  direction: number;       // +1 利好 / -1 不利
+  direction: -1 | 0 | 1;   // +1 利好 / -1 不利 / 0 方向不明
   tier: 'weak' | 'mid' | 'strong';
   rawContent?: string;
   occurredAt?: string;
   status?: 'pending_review' | 'approved' | 'rejected'; // M3 审核流：缺省=approved（人工直落）；机器抽取 pending_review 待人审
-  origin?: string;          // manual | voice | recording（溯源）
+  origin?: 'manual' | 'ai' | 'voice' | 'recording' | 'mcp' | 'worker' | 'system'; // 溯源
   createdAt?: string;
 }
 

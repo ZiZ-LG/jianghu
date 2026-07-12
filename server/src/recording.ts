@@ -7,6 +7,7 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { ActorRoleSchema, type CommandContext } from '@jianghu/domain-contracts';
 import { prisma } from './prisma.js';
 import { denyViewer } from './scope.js';
 import { enc, dec } from './ai.js';
@@ -118,14 +119,15 @@ export async function pullAndSave(
  * 从一条 Transcript 抽取：解密 → 复用 ingestVoiceText（source='recording'，双轨落库 + 候选人审）→ 标记 extracted。
  * 隔离：仅能抽取本租户的转写。降解/删除后的转写不可再抽。
  */
-export async function extractTranscript(tenantId: string, userId: string, transcriptId: string): Promise<IngestResult> {
+export async function extractTranscript(ctx: CommandContext, transcriptId: string): Promise<IngestResult> {
+  const { tenantId } = ctx;
   const tr = await prisma.transcript.findFirst({ where: { id: transcriptId, tenantId } });
   if (!tr) return { ok: false, status: 404, body: { error: '转写不存在或无权访问' } };
   if (tr.status === 'redacted' || !tr.contentEnc) return { ok: false, status: 400, body: { error: '该转写原文已降解/删除，无法再抽取' } };
   const text = dec(tr.contentEnc);
   if (!text) return { ok: false, status: 400, body: { error: '转写解密失败（密钥可能已变更）' } };
 
-  const r = await ingestVoiceText(tenantId, userId, {
+  const r = await ingestVoiceText({ ...ctx, assertionMode: 'machine_proposed' }, {
     text,
     accountId: tr.accountId ?? undefined,
     opportunityId: tr.opportunityId ?? undefined,
@@ -267,7 +269,14 @@ export function recordingRoutes(app: FastifyInstance): void {
     if (req.user.role === 'viewer') return reply.code(403).send({ error: '只读成员不可抽取转写' });
     const p = z.object({ transcriptId: z.string().min(1) }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '缺少 transcriptId' });
-    const r = await extractTranscript(req.user.tenantId, req.user.userId || '', p.data.transcriptId);
+    const r = await extractTranscript({
+      tenantId: req.user.tenantId,
+      actorId: req.user.userId,
+      actorRole: ActorRoleSchema.parse(req.user.role),
+      channel: 'web',
+      requestId: req.id,
+      assertionMode: 'machine_proposed',
+    }, p.data.transcriptId);
     if (!r.ok) return reply.code(r.status).send(r.body);
     return r.receipt;
   });

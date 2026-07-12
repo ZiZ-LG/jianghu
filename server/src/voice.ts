@@ -8,6 +8,7 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { ActionSchema, ActorRoleSchema, type CommandContext } from '@jianghu/domain-contracts';
 import { prisma } from './prisma.js';
 import { denyViewer } from './scope.js';
 import { loadAiConfig, callLLM } from './ai.js';
@@ -15,6 +16,9 @@ import { enqueueEnrichJob, enqueueSuggestJob, enqueueProfileJob } from './jobs.j
 import { applyAction } from './mutate.js';
 import { createFieldProposal } from './proposals.js';
 import { nextFreeSlot } from './layout.js';
+
+const applyIngestAction = (ctx: CommandContext, input: unknown): Promise<void> =>
+  applyAction(ctx, ActionSchema.parse(input));
 
 const PIPELINE = ['线索', '需求引导', '方案认可', '客户立项', '招投标', '合同谈判', '合同双签'];
 const VALID_ROLE = ['A', 'D', 'U', 'R', 'C'];
@@ -26,6 +30,21 @@ const N = (v: unknown): number | undefined => (typeof v === 'number' && isFinite
 const clampLevel = (v: unknown) => Math.min(4, Math.max(1, Math.round(N(v) ?? 3)));
 // explicit 判定：未标 inferred 且置信度≥0.6 才直落正式库，否则进候选
 const isExplicit = (item: any) => item?.kind !== 'inferred' && (N(item?.confidence) ?? 1) >= 0.6;
+
+type IngestContextSelection =
+  | { kind: 'structured'; source: 'voice' | 'recording'; item: unknown }
+  | { kind: 'raw' }
+  | { kind: 'machine' };
+
+/** 入口来源和当前抽取项共同决定信任级别；不继承调用方传入的 assertionMode。 */
+export function deriveIngestCommandContext(baseCtx: CommandContext, selection: IngestContextSelection): CommandContext {
+  const assertionMode = selection.kind === 'raw'
+    ? 'raw_append'
+    : selection.kind === 'machine' || selection.source === 'recording' || !isExplicit(selection.item)
+      ? 'machine_proposed'
+      : 'user_asserted';
+  return { ...baseCtx, assertionMode };
+}
 // 实体去重提示（跨库可移植，纯 JS）：精确同名已各自处理，这里找"相似但不全等"（含包含关系，如「李处」≈「李处长」）
 const stripCompany = (s: string) => s.trim().replace(/(集团)?(股份)?(有限)?(责任)?公司$/, '').replace(/集团$/, '').trim() || s.trim();
 const isSimilarName = (a: string, b: string): boolean => {
@@ -131,8 +150,14 @@ export type IngestResult = { ok: true; receipt: any } | { ok: false; status: num
  * 不碰 reply：返回 {ok:true,receipt}=正常；{ok:false,status,body}=路由应返回的错误码——供 recording.ts 复用。
  * source 切换溯源：voice=🎙️口述 / recording=🎧录音转写（origin 字段、日志前缀、拜访纪要 topic 一处统一）。
  */
-export async function ingestVoiceText(tenantId: string, userId: string, input: IngestInput): Promise<IngestResult> {
-  const src = SRC[input.source ?? 'voice'];
+export async function ingestVoiceText(baseCtx: CommandContext, input: IngestInput): Promise<IngestResult> {
+  const { tenantId, actorId: userId } = baseCtx;
+  const source = input.source ?? 'voice';
+  const src = SRC[source];
+  const structuredCtxFor = (item: unknown): CommandContext =>
+    deriveIngestCommandContext(baseCtx, { kind: 'structured', source, item });
+  const rawCtx = deriveIngestCommandContext(baseCtx, { kind: 'raw' });
+  const machineCtx = deriveIngestCommandContext(baseCtx, { kind: 'machine' });
   const text = input.text.slice(0, 8000);
   const priorText = (input.priorText ?? '').slice(0, 8000); // 多轮增量：上一轮口述，供 LLM 指代消解
   // 从「已存在的拜访纪要」抽取(M1 焊接缝)：源本身就是一条纪要，跳过末尾的纪要存档，避免重复落库
@@ -153,7 +178,7 @@ export async function ingestVoiceText(tenantId: string, userId: string, input: I
     if (acc) {
       const oppId = input.opportunityId && acc.opportunities.some((o) => o.id === input.opportunityId) ? input.opportunityId : null;
       const vid = 'visit_' + randomUUID().slice(0, 12);
-      await applyAction(tenantId, { type: 'ADD_VISIT', accId: acc.id, visit: { id: vid, accountId: acc.id, opportunityId: oppId, date: today, topic: src.topic, summary: text, origin: src.origin, createdBy: userId } });
+      await applyIngestAction(rawCtx, { type: 'ADD_VISIT', accId: acc.id, visit: { id: vid, opportunityId: oppId ?? undefined, date: today, topic: src.topic, summary: text, origin: src.origin } });
       return { ok: true, receipt: { needConfig: true, account: { id: acc.id, name: acc.name, status: 'matched' }, visitNote: true, note: `未配置 AI 模型，已先把${src.word}存为拜访纪要。配置模型后即可自动抽取客户/商机/干系人/关系。` } };
     }
     return { ok: false, status: 400, body: { error: '请先在「AI 模型」配置模型，才能自动抽取情报', needConfig: true } };
@@ -170,7 +195,7 @@ export async function ingestVoiceText(tenantId: string, userId: string, input: I
     const name = S(ex.account.name, 100);
     if (!acc) acc = await prisma.account.findFirst({ where: { tenantId, name }, include: { persons: true, opportunities: true } });
     if (acc) {
-      if (isExplicit(ex.account) && S(ex.account.region)) await applyAction(tenantId, { type: 'UPDATE_ACCOUNT', accId: acc.id, patch: { region: S(ex.account.region, 40) } });
+      if (isExplicit(ex.account) && S(ex.account.region)) await applyIngestAction(structuredCtxFor(ex.account), { type: 'UPDATE_ACCOUNT', accId: acc.id, patch: { region: S(ex.account.region, 40) } });
       receipt.account = { id: acc.id, name: acc.name, status: 'matched' };
     } else {
       // 即将新建客户 → 先查 tenant 内相似名（命中则回执提示疑似重复，不打断、仍新建）
@@ -178,7 +203,7 @@ export async function ingestVoiceText(tenantId: string, userId: string, input: I
       const sim = others.find((o) => isSimilarName(stripCompany(o.name), stripCompany(name)));
       const id = 'acc_' + randomUUID().slice(0, 12);
       const ct = [1, 2, 3].includes(N(ex.account.customerType) as number) ? (N(ex.account.customerType) as number) : 2;
-      await applyAction(tenantId, { type: 'ADD_ACCOUNT', account: { id, name, customerType: ct, region: S(ex.account.region, 40) } });
+      await applyIngestAction(structuredCtxFor(ex.account), { type: 'ADD_ACCOUNT', account: { id, name, customerType: ct, region: S(ex.account.region, 40) } });
       acc = await prisma.account.findFirst({ where: { id, tenantId }, include: { persons: true, opportunities: true } });
       receipt.account = { id, name, status: 'created' };
       if (sim) receipt.dupWarnings.push({ kind: 'account', name, similarTo: sim.name });
@@ -200,7 +225,7 @@ export async function ingestVoiceText(tenantId: string, userId: string, input: I
       const simOpp = acc.opportunities.find((o) => isSimilarName(o.name, oname)); // 同客户内相似商机名
       const id = 'opp_' + randomUUID().slice(0, 12);
       const stage = PIPELINE.includes(S(ex.opportunity.pipelineStage)) ? S(ex.opportunity.pipelineStage) : '线索';
-      await applyAction(tenantId, { type: 'ADD_OPP', accId: acc.id, opp: { id, name: oname, customerType: acc.customerType, pipelineStage: stage, engageStage: '需求调研立项', competitor: S(ex.opportunity.competitor, 200) } });
+      await applyIngestAction(structuredCtxFor(ex.opportunity), { type: 'ADD_OPP', accId: acc.id, opp: { id, name: oname, customerType: acc.customerType, pipelineStage: stage, engageStage: '需求调研立项', competitor: S(ex.opportunity.competitor, 200) } });
       opp = { id, name: oname } as any;
       receipt.opportunity = { id, name: oname, status: 'created' };
       if (simOpp) receipt.dupWarnings.push({ kind: 'opportunity', name: oname, similarTo: simOpp.name });
@@ -228,7 +253,7 @@ export async function ingestVoiceText(tenantId: string, userId: string, input: I
         return;
       }
     }
-    await applyAction(tenantId, { type: 'SET_ROLE', accId: acc!.id, oppId: opp.id, personId, patch: { role: S(per.suggestedRole), sentiment: newSent, confidence: '推理' } });
+    await applyIngestAction(structuredCtxFor(per), { type: 'SET_ROLE', accId: acc!.id, oppId: opp.id, personId, patch: { role: S(per.suggestedRole), sentiment: newSent, confidence: '推理' } });
     receipt.rolesSet.push({ name, role: S(per.suggestedRole) });
   };
 
@@ -244,7 +269,7 @@ export async function ingestVoiceText(tenantId: string, userId: string, input: I
         if (nf) {
           const exist = acc.persons.find((pp) => pp.id === existingId);
           let curForm: any = {}; try { curForm = JSON.parse((exist as any)?.form || '{}'); } catch { /* 容错 */ }
-          await applyAction(tenantId, { type: 'UPDATE_PERSON', accId: acc.id, personId: existingId, patch: { form: mergeForm(curForm, nf) } });
+          await applyIngestAction(structuredCtxFor(per), { type: 'UPDATE_PERSON', accId: acc.id, personId: existingId, patch: { form: mergeForm(curForm, nf) } });
           receipt.formsFilled = (receipt.formsFilled ?? 0) + 1;
         }
       }
@@ -257,10 +282,10 @@ export async function ingestVoiceText(tenantId: string, userId: string, input: I
       const { x, y } = nextFreeSlot(occupied); occupied.push({ x, y });
       const logs = [{ date: today, content: `${src.emoji} ${src.word}：${S(per.evidence, 80) || name}`, visibility: 'team' }];
       const form = buildForm(per.form); // 家庭七问/职业/爱好/动机随抽随落
-      await applyAction(tenantId, { type: 'ADD_PERSON', accId: acc.id, person: { id: pid, name, title: S(per.title, 60), orgLevel: clampLevel(per.orgLevel), x, y, logs, ...(form ? { form } : {}) } });
+      await applyIngestAction(structuredCtxFor(per), { type: 'ADD_PERSON', accId: acc.id, person: { id: pid, name, title: S(per.title, 60), orgLevel: clampLevel(per.orgLevel), x, y, logs, ...(form ? { form } : {}) } });
       if (form) receipt.formsFilled = (receipt.formsFilled ?? 0) + 1;
       formalId.set(name, pid);
-      if (opp?.memberScoped) await applyAction(tenantId, { type: 'ADD_OPP_MEMBER', accId: acc.id, oppId: opp.id, personId: pid }); // memberScoped 商机 → 新人加入成员
+      if (opp?.memberScoped) await applyIngestAction(structuredCtxFor(per), { type: 'ADD_OPP_MEMBER', accId: acc.id, oppId: opp.id, personId: pid }); // memberScoped 商机 → 新人加入成员
       receipt.personsCreated.push({ id: pid, name, title: S(per.title, 60) });
       if (simName) receipt.dupWarnings.push({ kind: 'person', name, similarTo: simName });
       await setRoleIf(pid, per, name);
@@ -286,7 +311,7 @@ export async function ingestVoiceText(tenantId: string, userId: string, input: I
       if (knownName) {
         const otherName = knownName === sName ? tName : sName;
         const clue = label.includes(otherName) ? label : `与「${otherName}」${label}`;
-        await applyAction(tenantId, { type: 'ADD_LOG', accId: acc.id, personId: formalId.get(knownName)!, log: { date: today, content: `${src.emoji} ${src.word}线索·待核实：${clue}`, visibility: 'team' } });
+        await applyIngestAction(structuredCtxFor(rel), { type: 'ADD_LOG', accId: acc.id, personId: formalId.get(knownName)!, log: { date: today, content: `${src.emoji} ${src.word}线索·待核实：${clue}`, visibility: 'team' } });
         receipt.notes.push({ person: knownName, content: clue });
       } else {
         receipt.skipped.push({ rel: `${sName}→${tName}`, reason: '端点未识别' });
@@ -296,7 +321,7 @@ export async function ingestVoiceText(tenantId: string, userId: string, input: I
     const bothFormal = sEnd.kind === 'person' && tEnd.kind === 'person';
     if (bothFormal && isExplicit(rel)) { // 明说 + 两端正式 → 直落正式 Edge
       const eid = 'e_' + randomUUID().slice(0, 12);
-      await applyAction(tenantId, { type: 'ADD_EDGE', accId: acc.id, oppId: opp?.id, edge: { id: eid, source: sEnd.id, target: tEnd.id, layer, label, origin: src.origin, style: 'solid', directed: false } });
+      await applyIngestAction(structuredCtxFor(rel), { type: 'ADD_EDGE', accId: acc.id, oppId: opp?.id, edge: { id: eid, source: sEnd.id, target: tEnd.id, layer, label, origin: src.origin, style: 'solid', directed: false } });
       receipt.edgesCreated.push({ source: sName, target: tName, label });
     } else { // 含候选端点 / inferred 关系 → 候选（须有商机，RelSuggestion 挂 opportunityId）
       if (!opp) { receipt.skipped.push({ rel: `${sName}→${tName}`, reason: '无商机上下文，候选关系跳过' }); continue; }
@@ -314,7 +339,7 @@ export async function ingestVoiceText(tenantId: string, userId: string, input: I
     if (pid && opp && isExplicit(bi) && S(bi.description)) {
       const bid = 'bi_' + randomUUID().slice(0, 12);
       const category = S(bi.category, 40) || '其他';
-      await applyAction(tenantId, { type: 'ADD_BI', accId: acc.id, oppId: opp.id, bi: { id: bid, personId: pid, description: S(bi.description, 500), category, isPrivate: true, confidence: '推理' } });
+      await applyIngestAction(structuredCtxFor(bi), { type: 'ADD_BI', accId: acc.id, oppId: opp.id, bi: { id: bid, personId: pid, description: S(bi.description, 500), category, isPrivate: true, confidence: '推理' } });
       const arr = bisByPerson.get(personName) ?? []; arr.push({ biId: bid, category }); bisByPerson.set(personName, arr);
       receipt.burningIssues.push({ person: personName, category });
     }
@@ -333,7 +358,7 @@ export async function ingestVoiceText(tenantId: string, userId: string, input: I
     if (!targetBiId) { receipt.skipped.push({ ucv: desc.slice(0, 24), reason: 'UCV 未匹配到对应 BI（需先明说该人的燃眉之急）' }); continue; }
     const status = VALID_UCV_STATUS.includes(S(u.status)) ? S(u.status) : '建议';
     const uid = 'ucv_' + randomUUID().slice(0, 12);
-    await applyAction(tenantId, { type: 'ADD_UCV', accId: acc.id, oppId: opp.id, ucv: { id: uid, targetBiId, description: desc, competitorCannot: S(u.competitorCannot, 500), status } });
+    await applyIngestAction(structuredCtxFor(u), { type: 'ADD_UCV', accId: acc.id, oppId: opp.id, ucv: { id: uid, targetBiId, description: desc, competitorCannot: S(u.competitorCannot, 500), status } });
     receipt.ucvs.push({ person: personName, status });
   }
 
@@ -346,8 +371,8 @@ export async function ingestVoiceText(tenantId: string, userId: string, input: I
       if (!pid || !sig) continue; // 信号键不在库/人不是正式干系人 → 弃（宁缺勿滥，不造野信号）
       const dir = evd.direction === -1 || evd.direction === 1 || evd.direction === 0 ? evd.direction : sig.direction;
       const eid = 'ev_' + randomUUID().slice(0, 12);
-      await applyAction(tenantId, { type: 'ADD_EVIDENCE', accId: acc.id, oppId: opp.id, evidence: {
-        id: eid, accountId: acc.id, opportunityId: opp.id, personId: pid,
+      await applyIngestAction(machineCtx, { type: 'ADD_EVIDENCE', accId: acc.id, oppId: opp.id, evidence: {
+        id: eid, personId: pid,
         signalKey: sig.signalKey, direction: dir, tier: sig.tier, // tier 以信号库固有档位为准，不信 LLM
         rawContent: S(evd.evidence, 500), occurredAt: today,
         status: 'pending_review', origin: src.origin,
@@ -360,7 +385,7 @@ export async function ingestVoiceText(tenantId: string, userId: string, input: I
   const rawNote = S(ex.rawNote, 5000) || text;
   if (rawNote && !skipVisitNote) {
     const vid = 'visit_' + randomUUID().slice(0, 12);
-    await applyAction(tenantId, { type: 'ADD_VISIT', accId: acc.id, visit: { id: vid, accountId: acc.id, opportunityId: opp?.id ?? null, date: today, topic: src.topic, summary: rawNote, origin: src.origin, createdBy: userId } });
+    await applyIngestAction(rawCtx, { type: 'ADD_VISIT', accId: acc.id, visit: { id: vid, opportunityId: opp?.id, date: today, topic: src.topic, summary: rawNote, origin: src.origin } });
     receipt.visitNote = true;
   }
 
@@ -373,7 +398,14 @@ export function voiceRoutes(app: FastifyInstance) {
     if (denyViewer(req, reply)) return; // viewer 只读，不可拍板/操作
     const p = z.object({ text: z.string().min(1), accountId: z.string().optional(), opportunityId: z.string().optional(), priorText: z.string().optional(), sourceVisitId: z.string().optional() }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '请输入要录入的文字' });
-    const r = await ingestVoiceText(req.user.tenantId, req.user.userId || '', p.data);
+    const r = await ingestVoiceText({
+      tenantId: req.user.tenantId,
+      actorId: req.user.userId,
+      actorRole: ActorRoleSchema.parse(req.user.role),
+      channel: 'web',
+      requestId: req.id,
+      assertionMode: 'user_asserted',
+    }, p.data);
     if (!r.ok) return reply.code(r.status).send(r.body);
     return r.receipt;
   });

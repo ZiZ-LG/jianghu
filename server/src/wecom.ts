@@ -5,6 +5,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
+import { ActorRoleSchema, type Action } from '@jianghu/domain-contracts';
 import { prisma } from './prisma.js';
 import { denyViewer } from './scope.js';
 import { enc, dec } from './ai.js';
@@ -116,22 +117,29 @@ function toUnix(dateStr: string, hour: number): number {
  * 行动/里程碑落库后同步到操作者的企微日历。未配企微 / 操作者未绑 userid → 静默跳过。
  * 失败记 ScheduleSync.status=failed（绝不抛——不影响江湖侧落库，调用方 fire-and-forget）。
  */
-export async function syncFromAction(tenantId: string, userId: string, action: any): Promise<void> {
-  const type: string = action?.type || '';
-  const isPlan = type.includes('PLAN_ACTION');
-  const isMile = type.includes('MILESTONE');
-  if (!isPlan && !isMile) return;
-  const kind = isPlan ? 'plan_action' : 'milestone';
+export async function syncFromAction(tenantId: string, userId: string, action: Action): Promise<void> {
+  let kind: 'plan_action' | 'milestone';
+  let refId: string;
+  switch (action.type) {
+    case 'ADD_PLAN_ACTION': kind = 'plan_action'; refId = action.planAction.id; break;
+    case 'UPDATE_PLAN_ACTION':
+    case 'DELETE_PLAN_ACTION':
+    case 'TOGGLE_PLAN_ACTION': kind = 'plan_action'; refId = action.actionId; break;
+    case 'ADD_MILESTONE': kind = 'milestone'; refId = action.milestone.id; break;
+    case 'UPDATE_MILESTONE':
+    case 'DELETE_MILESTONE': kind = 'milestone'; refId = action.milestoneId; break;
+    default: return;
+  }
+  const isPlan = kind === 'plan_action';
+  const isMile = kind === 'milestone';
 
   const cfg = await prisma.weComConfig.findUnique({ where: { tenantId } });
   if (!cfg || !cfg.corpId || !cfg.secretEnc) return; // 未接企微
 
-  const refId: string = action.planAction?.id || action.milestone?.id || action.actionId || action.milestoneId || '';
-  if (!refId) return;
   const whereMap = { tenantId_kind_refId: { tenantId, kind, refId } };
 
   // 删除：查映射 → 删企微日程
-  if (type.startsWith('DELETE_')) {
+  if (action.type.startsWith('DELETE_')) {
     const map = await prisma.scheduleSync.findUnique({ where: whereMap });
     if (!map?.wecomScheduleId) return;
     try {
@@ -315,10 +323,20 @@ export async function handleWecomEvent(tenantId: string, xml: string): Promise<v
   // 鉴权：点按钮的企微成员必须已绑定江湖账号（绑定 = 本工作区成员，人审授权有效）
   const bind = await prisma.weComUserBind.findFirst({ where: { tenantId, wecomUserid: fromUser } });
   if (!bind) { await finish('⚠️ 未绑定江湖'); return; }
+  const actor = await prisma.user.findFirst({ where: { id: bind.userId, tenantId }, select: { id: true, role: true } });
+  const actorRole = ActorRoleSchema.safeParse(actor?.role);
+  if (!actor || !actorRole.success || actorRole.data === 'viewer') { await finish('⚠️ 绑定账号无权操作'); return; }
   const { acceptProposal, rejectProposal } = await import('./proposals.js'); // 动态 import 破循环
   try {
     if (m[1] === 'accept') {
-      const r = await acceptProposal(tenantId, m[2]);
+      const r = await acceptProposal({
+        tenantId,
+        actorId: actor.id,
+        actorRole: actorRole.data,
+        channel: 'system',
+        requestId: `wecom:${randomUUID()}`,
+        assertionMode: 'user_asserted',
+      }, m[2]);
       await finish(r === 'ok' ? '✓ 已采纳' : r === 'already' ? '已处理过' : '提案不存在');
     } else {
       const r = await rejectProposal(tenantId, m[2]);

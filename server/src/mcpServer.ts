@@ -11,6 +11,8 @@
 //     绝不直接写正式 Person/Edge。候选须经用户在前端人审采纳才上图（PIPL 红线）。
 
 import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
+import { ACCOUNT_PROFILE_FIELDS, ActionSchema, type CommandContext } from '@jianghu/domain-contracts';
 import { prisma } from './prisma.js';
 import { applyAction } from './mutate.js';
 import { scoreFromState, ITEM_LABEL, ITEM_MAX, type ItemKey } from './g64111.js';
@@ -21,17 +23,30 @@ import { enqueueEnrichJob, enqueueSuggestJob, enqueueProfileJob } from './jobs.j
 const MAX_PENDING_PERSON_SUGG = 200;
 const MAX_PENDING_REL_SUGG = 200;
 
+const applyMcpAction = (ctx: CommandContext, input: unknown): Promise<void> =>
+  applyAction(ctx, ActionSchema.parse(input));
+
 const PROTOCOL_VERSION = '2024-11-05';
 const SERVER_INFO = { name: 'jianghu', version: '0.1.0' };
+const ACCOUNT_PROFILE_TOOL_PROPERTIES = Object.fromEntries(
+  ACCOUNT_PROFILE_FIELDS.map((field) => [field, { type: 'string' as const }]),
+);
 
 // ───────────────────────── JSON-RPC 类型 ─────────────────────────
 
-interface JsonRpcRequest {
-  jsonrpc?: string;
-  id?: string | number | null;
-  method?: string;
-  params?: any;
-}
+const JsonRpcIdSchema = z.union([z.string(), z.number().finite(), z.null()]);
+const JsonRpcRequestSchema = z.object({
+  jsonrpc: z.literal('2.0'),
+  id: JsonRpcIdSchema.optional(),
+  method: z.string().min(1),
+  params: z.unknown().optional(),
+}).strict();
+const ToolCallParamsSchema = z.object({
+  name: z.string().min(1),
+  arguments: z.record(z.string(), z.unknown()).optional(),
+  _meta: z.record(z.string(), z.unknown()).optional(),
+}).strict();
+type JsonRpcRequest = z.infer<typeof JsonRpcRequestSchema>;
 interface JsonRpcResult {
   jsonrpc: '2.0';
   id: string | number | null;
@@ -159,7 +174,7 @@ const TOOL_DEFS = [
         region: { type: 'string', description: '大区' },
         group: { type: 'string', description: '集团/母公司' },
         primaryOwner: { type: 'string', description: '主负责人' },
-        profile: { type: 'object', description: '企业背景档案 JSON：business(工商)/group(集团关系)/bidding(招投标)/risk(风险)/ourCooperation(我方合作)/salesNote(销售背景)/aiSuggestion(AI建议)', additionalProperties: true },
+        profile: { type: 'object', description: '企业背景档案 JSON：business(工商)/group(集团关系)/bidding(招投标)/risk(风险)/ourCooperation(我方合作)/salesNote(销售背景)/aiSuggestion(AI建议)', properties: ACCOUNT_PROFILE_TOOL_PROPERTIES, additionalProperties: false },
       },
       additionalProperties: false,
     },
@@ -188,8 +203,8 @@ const TOOL_DEFS = [
         buyingMotivation: { type: 'string', description: '采购动机' },
         expectedSignDate: { type: 'string', description: '预计签约日 YYYY-MM-DD' },
         expectedAmountW: { type: 'number', description: '预计金额(万元)' },
-        c3Items: { type: 'object', description: 'C3 立项材料 7 项掌握情况(boolean map，键=中文项名)', additionalProperties: true },
-        c5Items: { type: 'object', description: 'C5 招采事项 5 项掌握情况(boolean map)', additionalProperties: true },
+        c3Items: { type: 'object', description: 'C3 立项材料 7 项掌握情况(boolean map，键=中文项名)', additionalProperties: { type: 'boolean' } },
+        c5Items: { type: 'object', description: 'C5 招采事项 5 项掌握情况(boolean map)', additionalProperties: { type: 'boolean' } },
         meta: { type: 'object', description: 'JSON 兜底(BANT 辅助分等)', additionalProperties: true },
       },
       additionalProperties: false,
@@ -591,7 +606,18 @@ async function listPending(tenantId: string, accountId: string) {
 // 不另写 prisma 写逻辑；幂等去重在应用层（不靠 DB unique，保持 SQLite↔Postgres 可移植）。
 
 /** upsert_account：按 externalRef(主锚)→unifiedCreditCode(副锚) 幂等 upsert 客户档案。 */
-async function upsertAccount(tenantId: string, _userId: string, args: Record<string, unknown>) {
+function projectAccountProfile(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const source = value as Record<string, unknown>;
+  const projected: Record<string, string> = {};
+  for (const field of ACCOUNT_PROFILE_FIELDS) {
+    if (typeof source[field] === 'string') projected[field] = source[field];
+  }
+  return projected;
+}
+
+async function upsertAccount(ctx: CommandContext, args: Record<string, unknown>) {
+  const { tenantId } = ctx;
   const externalRef = str(args.externalRef, 80).trim() || null;
   const unifiedCreditCode = str(args.unifiedCreditCode, 40).trim() || null;
   if (!externalRef && !unifiedCreditCode) throw new Error('缺少幂等锚：externalRef 或 unifiedCreditCode 至少提供一个');
@@ -599,17 +625,13 @@ async function upsertAccount(tenantId: string, _userId: string, args: Record<str
   const name = str(args.name, 100).trim();
   const ct = num(args.customerType);
   const customerType = ct && [1, 2, 3].includes(ct) ? ct : undefined;
-  const profile = args.profile != null && typeof args.profile === 'object' ? (args.profile as Record<string, unknown>) : undefined;
+  const profile = args.profile != null && typeof args.profile === 'object' ? projectAccountProfile(args.profile) : undefined;
 
   // 幂等查找（全程 where { tenantId }）：先主锚 externalRef，再副锚 unifiedCreditCode
   let existing = externalRef ? await prisma.account.findFirst({ where: { tenantId, externalRef } }) : null;
   if (!existing && unifiedCreditCode) {
     existing = await prisma.account.findFirst({ where: { tenantId, unifiedCreditCode } });
   }
-
-  // P12：外部来源·待核标记（铁律②：内外一致——MCP 直写路径也要可辨识、可审）。
-  // 落在 profile._mcpOrigin：每次外部 upsert 都刷新 at 与 needsReview，人在江湖里改任何字段（走 UPDATE_ACCOUNT 覆盖 profile 时清空）视为已核。
-  const mcpMark = { source: 'mcp', at: new Date().toISOString(), needsReview: true };
 
   if (existing) {
     // 命中 → UPDATE：仅 patch 入参提供的字段（避免把未传字段清空）
@@ -621,27 +643,28 @@ async function upsertAccount(tenantId: string, _userId: string, args: Record<str
     if (args.region !== undefined) patch.region = str(args.region, 40);
     if (args.group !== undefined) patch.group = str(args.group, 100);
     if (args.primaryOwner !== undefined) patch.primaryOwner = str(args.primaryOwner, 40);
-    // 合并 profile：保留原字段（人已填的不丢）+ 覆盖入参传的 + 追加/刷新 _mcpOrigin 标记
-    let curProfile: Record<string, unknown> = {};
+    // 只把共享契约允许的字段送入 Action；mutator 在数据库侧保留 legacy extras，并生成 server-owned _mcpOrigin。
+    let curProfile: unknown = {};
     try { curProfile = JSON.parse(existing.profile || '{}'); } catch { /* 存量坏值，覆盖为空对象 */ }
-    patch.profile = { ...curProfile, ...(profile ?? {}), _mcpOrigin: mcpMark };
-    await applyAction(tenantId, { type: 'UPDATE_ACCOUNT', accId: existing.id, patch });
+    patch.profile = { ...projectAccountProfile(curProfile), ...(profile ?? {}) };
+    await applyMcpAction(ctx, { type: 'UPDATE_ACCOUNT', accId: existing.id, patch });
     return { id: existing.id, updated: true, origin: 'mcp', note: `已按幂等锚命中现有客户「${existing.name}」并更新（外部来源·待核，见客户卡）。` };
   }
 
   // 未命中 → CREATE（新建必须有 name）
   if (!name) throw new Error('未命中现有客户，新建需提供 name');
   const id = 'acc_' + randomUUID().slice(0, 12);
-  await applyAction(tenantId, {
+  await applyMcpAction(ctx, {
     type: 'ADD_ACCOUNT',
     account: {
       id, name,
       customerType: customerType ?? 1,
-      unifiedCreditCode, externalRef,
+      unifiedCreditCode: unifiedCreditCode ?? undefined,
+      externalRef: externalRef ?? undefined,
       region: str(args.region, 40),
       group: str(args.group, 100),
       primaryOwner: str(args.primaryOwner, 40),
-      profile: { ...(profile ?? {}), _mcpOrigin: mcpMark },
+      profile: profile ?? {},
     },
   });
   // 江湖自算：新建客户后后台入队 enrich 任务（企查查/AI 发现干系人 → 候选进收件箱人审，铁律②）。
@@ -654,7 +677,8 @@ async function upsertAccount(tenantId: string, _userId: string, args: Record<str
 }
 
 /** upsert_opportunity：定位父客户 → 按商机 externalRef 幂等 upsert。守"winProbability 不由 WB 推/覆盖"。 */
-async function upsertOpportunity(tenantId: string, _userId: string, args: Record<string, unknown>) {
+async function upsertOpportunity(ctx: CommandContext, args: Record<string, unknown>) {
+  const { tenantId } = ctx;
   // 1) 定位父客户（accountId / accountExternalRef / unifiedCreditCode 三选一，全程 where{tenantId}）
   const accId = str(args.accountId, 40).trim();
   const accExtRef = str(args.accountExternalRef, 80).trim();
@@ -710,16 +734,16 @@ async function upsertOpportunity(tenantId: string, _userId: string, args: Record
     const patch: Record<string, unknown> = { ...fields, meta: { ...curMeta, ...(fields.meta as Record<string, unknown> ?? {}), _mcpOrigin: mcpMark } };
     if (name) patch.name = name;
     if (externalRef && !existing.externalRef) patch.externalRef = externalRef;
-    await applyAction(tenantId, { type: 'UPDATE_OPP', accId: account.id, oppId: existing.id, patch });
+    await applyMcpAction(ctx, { type: 'UPDATE_OPP', accId: account.id, oppId: existing.id, patch });
     return { id: existing.id, accountId: account.id, updated: true, origin: 'mcp', note: `已命中商机「${existing.name}」并更新（外部来源·待核；winProbability 留给销售自填，未改）。` };
   }
 
   if (!name) throw new Error('未命中现有商机，新建需提供 name');
   const id = 'opp_' + randomUUID().slice(0, 12);
-  await applyAction(tenantId, {
+  await applyMcpAction(ctx, {
     type: 'ADD_OPP', accId: account.id,
     opp: {
-      id, name, externalRef,
+      id, name, externalRef: externalRef ?? undefined,
       customerType: account.customerType,
       pipelineStage: pipelineStage ?? '线索',
       engageStage: engageStage ?? '需求调研立项',
@@ -735,7 +759,8 @@ async function upsertOpportunity(tenantId: string, _userId: string, args: Record
 }
 
 /** append_visit_note：定位父客户(+可选商机) → 按 externalRef 幂等 upsert 拜访记录。 */
-async function appendVisitNote(tenantId: string, userId: string, args: Record<string, unknown>) {
+async function appendVisitNote(ctx: CommandContext, args: Record<string, unknown>) {
+  const { tenantId } = ctx;
   // 1) 定位父客户（三选一，全程 where{tenantId}）
   const accId = str(args.accountId, 40).trim();
   const accExtRef = str(args.accountExternalRef, 80).trim();
@@ -777,15 +802,15 @@ async function appendVisitNote(tenantId: string, userId: string, args: Record<st
     if (topic) patch.topic = topic;
     if (opportunityId) patch.opportunityId = opportunityId;
     if (participants !== undefined) patch.participants = participants;
-    await applyAction(tenantId, { type: 'UPDATE_VISIT', accId: account.id, visitId: existing.id, patch });
+    await applyMcpAction(ctx, { type: 'UPDATE_VISIT', accId: account.id, visitId: existing.id, patch });
     return { id: existing.id, accountId: account.id, opportunityId: opportunityId ?? existing.opportunityId ?? undefined, updated: true, origin: 'mcp', note: `已按 externalRef 命中拜访记录并更新（${date}·外部来源·待核）。` };
   }
 
   const id = 'visit_' + randomUUID().slice(0, 12);
   // P12：origin 从硬编码 'workbuddy' 改为 'mcp'——精确辨识外部 MCP 直写路径（前端 VisitTimeline/FocusPanel 已扩相应显示）
-  await applyAction(tenantId, {
+  await applyMcpAction(ctx, {
     type: 'ADD_VISIT', accId: account.id,
-    visit: { id, accountId: account.id, opportunityId, externalRef, date, topic, summary, participants: participants ?? [], origin: 'mcp', createdBy: userId },
+    visit: { id, opportunityId: opportunityId ?? undefined, externalRef: externalRef ?? undefined, date, topic, summary, participants: participants ?? [], origin: 'mcp' },
   });
   return { id, accountId: account.id, opportunityId: opportunityId ?? undefined, created: true, origin: 'mcp', note: `已记录拜访（${date}·外部来源·待核）。` };
 }
@@ -828,7 +853,8 @@ const VALID_SENT = ['star', 'plus', 'neutral', 'unknown', 'minus', 'x'];
 const VALID_CONF = ['共识', '明确', '推理', '不清'];
 
 /** set_opportunity_roles：批量设 ADUR 角色（只对正式 Person，候选跳过并回报）。 */
-async function setOpportunityRoles(tenantId: string, _userId: string, args: Record<string, unknown>) {
+async function setOpportunityRoles(ctx: CommandContext, args: Record<string, unknown>) {
+  const { tenantId } = ctx;
   const opp = await resolveOppFromArgs(tenantId, args);
   const rolesIn = Array.isArray(args.roles) ? (args.roles as any[]) : [];
   if (!rolesIn.length) throw new Error('缺少 roles 数组');
@@ -866,7 +892,7 @@ async function setOpportunityRoles(tenantId: string, _userId: string, args: Reco
         patch.sentiment = newSent; // 首次设置该商机该人角色，无既有支持度可覆盖 → 直写
       }
     }
-    await applyAction(tenantId, { type: 'SET_ROLE', accId: opp.accountId, oppId: opp.id, personId: person.id, patch });
+    await applyMcpAction(ctx, { type: 'SET_ROLE', accId: opp.accountId, oppId: opp.id, personId: person.id, patch });
     if (!sentimentProposed) applied.push({ personId: person.id, name: person.name, role, sentiment: (patch.sentiment as string) ?? cur?.sentiment ?? 'unknown' });
   }
   const parts = [`已设 ${applied.length} 个角色`];
@@ -876,7 +902,8 @@ async function setOpportunityRoles(tenantId: string, _userId: string, args: Reco
 }
 
 /** set_burning_issue：记某干系人的 BI（按 商机+人+category 幂等）。 */
-async function setBurningIssue(tenantId: string, _userId: string, args: Record<string, unknown>) {
+async function setBurningIssue(ctx: CommandContext, args: Record<string, unknown>) {
+  const { tenantId } = ctx;
   const opp = await resolveOppFromArgs(tenantId, args);
   const person = await findPersonInAccount(tenantId, opp.accountId, str(args.personId, 40).trim(), str(args.personName, 40).trim());
   if (!person) throw new Error('未找到正式干系人（候选须先 propose_person 采纳，再设 BI）');
@@ -887,16 +914,17 @@ async function setBurningIssue(tenantId: string, _userId: string, args: Record<s
   const isPrivate = typeof args.isPrivate === 'boolean' ? args.isPrivate : true;
   const existing = await prisma.burningIssue.findFirst({ where: { tenantId, opportunityId: opp.id, personId: person.id, category } });
   if (existing) {
-    await applyAction(tenantId, { type: 'UPDATE_BI', accId: opp.accountId, oppId: opp.id, biId: existing.id, patch: { description, confidence, isPrivate } });
+    await applyMcpAction(ctx, { type: 'UPDATE_BI', accId: opp.accountId, oppId: opp.id, biId: existing.id, patch: { description, confidence, isPrivate } });
     return { id: existing.id, opportunityId: opp.id, personId: person.id, updated: true, origin: 'workbuddy', note: `已更新「${person.name}」的 BI（${category}）。` };
   }
   const id = 'bi_' + randomUUID().slice(0, 12);
-  await applyAction(tenantId, { type: 'ADD_BI', accId: opp.accountId, oppId: opp.id, bi: { id, personId: person.id, description, category, isPrivate, confidence } });
+  await applyMcpAction(ctx, { type: 'ADD_BI', accId: opp.accountId, oppId: opp.id, bi: { id, personId: person.id, description, category, isPrivate, confidence } });
   return { id, opportunityId: opp.id, personId: person.id, created: true, origin: 'workbuddy', note: `已记「${person.name}」的 BI（${category}）。` };
 }
 
 /** set_ucv：记针对某 BI 的 UCV（按 商机+targetBi 幂等）。 */
-async function setUcv(tenantId: string, _userId: string, args: Record<string, unknown>) {
+async function setUcv(ctx: CommandContext, args: Record<string, unknown>) {
+  const { tenantId } = ctx;
   const opp = await resolveOppFromArgs(tenantId, args);
   let targetBiId = str(args.targetBiId, 40).trim();
   if (targetBiId) {
@@ -916,17 +944,18 @@ async function setUcv(tenantId: string, _userId: string, args: Record<string, un
   const status = ['建议', '获认可', '已解决'].includes(str(args.status)) ? str(args.status) : '建议';
   const existing = await prisma.uCV.findFirst({ where: { tenantId, opportunityId: opp.id, targetBiId } });
   if (existing) {
-    await applyAction(tenantId, { type: 'UPDATE_UCV', accId: opp.accountId, oppId: opp.id, ucvId: existing.id, patch: { description, competitorCannot, status } });
+    await applyMcpAction(ctx, { type: 'UPDATE_UCV', accId: opp.accountId, oppId: opp.id, ucvId: existing.id, patch: { description, competitorCannot, status } });
     return { id: existing.id, opportunityId: opp.id, targetBiId, updated: true, origin: 'workbuddy', note: '已更新 UCV。' };
   }
   const id = 'ucv_' + randomUUID().slice(0, 12);
-  await applyAction(tenantId, { type: 'ADD_UCV', accId: opp.accountId, oppId: opp.id, ucv: { id, targetBiId, description, competitorCannot, status } });
+  await applyMcpAction(ctx, { type: 'ADD_UCV', accId: opp.accountId, oppId: opp.id, ucv: { id, targetBiId, description, competitorCannot, status } });
   return { id, opportunityId: opp.id, targetBiId, created: true, origin: 'workbuddy', note: '已记 UCV。' };
 }
 
 // ───────────────────────── 工具分发 ─────────────────────────
 
-async function callTool(tenantId: string, userId: string, name: string, args: Record<string, unknown>) {
+async function callTool(ctx: CommandContext, name: string, args: Record<string, unknown>) {
+  const { tenantId, actorId: userId } = ctx;
   switch (name) {
     case 'list_accounts':
       return listAccounts(tenantId);
@@ -947,17 +976,17 @@ async function callTool(tenantId: string, userId: string, name: string, args: Re
     case 'list_pending':
       return listPending(tenantId, typeof args.accountId === 'string' ? args.accountId : '');
     case 'upsert_account':
-      return upsertAccount(tenantId, userId, args);
+      return upsertAccount(ctx, args);
     case 'upsert_opportunity':
-      return upsertOpportunity(tenantId, userId, args);
+      return upsertOpportunity(ctx, args);
     case 'append_visit_note':
-      return appendVisitNote(tenantId, userId, args);
+      return appendVisitNote(ctx, args);
     case 'set_opportunity_roles':
-      return setOpportunityRoles(tenantId, userId, args);
+      return setOpportunityRoles(ctx, args);
     case 'set_burning_issue':
-      return setBurningIssue(tenantId, userId, args);
+      return setBurningIssue(ctx, args);
     case 'set_ucv':
-      return setUcv(tenantId, userId, args);
+      return setUcv(ctx, args);
     default:
       throw new Error(`未知工具：${name}`);
   }
@@ -971,9 +1000,9 @@ async function callTool(tenantId: string, userId: string, name: string, args: Re
  * - 其余返回 JsonRpcResponse。
  * 所有数据读写通过 tenantId 隔离（铁律）；写工具用 userId 记 proposedBy。
  */
-export async function handleMcpMessage(tenantId: string, userId: string, msg: JsonRpcRequest): Promise<JsonRpcResponse | null> {
+export async function handleMcpMessage(ctx: CommandContext, msg: JsonRpcRequest): Promise<JsonRpcResponse | null> {
   const id = msg.id ?? null;
-  const method = msg.method ?? '';
+  const method = msg.method;
 
   // 通知：method 以 notifications/ 开头或无 id。无需响应。
   if (method.startsWith('notifications/') || (id === null && method !== '')) {
@@ -997,42 +1026,52 @@ export async function handleMcpMessage(tenantId: string, userId: string, msg: Js
         return ok(id, { tools: TOOL_DEFS });
 
       case 'tools/call': {
-        const name: string = msg.params?.name ?? '';
-        const args: Record<string, unknown> = msg.params?.arguments ?? {};
-        if (!name) return err(id, -32602, '缺少 tool name');
+        const params = ToolCallParamsSchema.safeParse(msg.params);
+        if (!params.success) return err(id, -32602, '无效的 tool params');
+        const { name, arguments: args = {} } = params.data;
         try {
-          const result = await callTool(tenantId, userId, name, args);
+          const result = await callTool(ctx, name, args);
           return ok(id, toolText(result));
-        } catch (e: any) {
+        } catch (e: unknown) {
           // 工具级错误用 isError content 返回（MCP 约定：工具失败不是协议错误）
-          return ok(id, toolError(e?.message || '工具执行失败'));
+          return ok(id, toolError(e instanceof Error ? e.message : '工具执行失败'));
         }
       }
 
       default:
         return err(id, -32601, `不支持的方法：${method}`);
     }
-  } catch (e: any) {
-    return err(id, -32603, e?.message || '内部错误');
+  } catch (e: unknown) {
+    return err(id, -32603, e instanceof Error ? e.message : '内部错误');
   }
+}
+
+function requestIdOf(input: unknown): string | number | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const rawId = Object.entries(input).find(([key]) => key === 'id')?.[1];
+  const parsed = JsonRpcIdSchema.safeParse(rawId);
+  return parsed.success ? parsed.data : null;
+}
+
+async function handleUnknownMcpMessage(ctx: CommandContext, input: unknown): Promise<JsonRpcResponse | null> {
+  const parsed = JsonRpcRequestSchema.safeParse(input);
+  if (!parsed.success) return err(requestIdOf(input), -32600, '无效的 JSON-RPC 请求');
+  return handleMcpMessage(ctx, parsed.data);
 }
 
 /**
  * 处理一个请求体（可能是单条消息，也可能是 JSON-RPC 批量数组）。
  * 返回值：要发回客户端的 JSON（单对象 / 数组 / null）。null 表示纯通知、无响应体（HTTP 204）。
  */
-export async function handleMcpBody(tenantId: string, userId: string, body: unknown): Promise<JsonRpcResponse | JsonRpcResponse[] | null> {
+export async function handleMcpBody(ctx: CommandContext, body: unknown): Promise<JsonRpcResponse | JsonRpcResponse[] | null> {
   if (Array.isArray(body)) {
+    if (body.length === 0) return err(null, -32600, '无效的 JSON-RPC 请求');
     const responses: JsonRpcResponse[] = [];
     for (const m of body) {
-      const r = await handleMcpMessage(tenantId, userId, m as JsonRpcRequest);
+      const r = await handleUnknownMcpMessage(ctx, m);
       if (r) responses.push(r);
     }
     return responses.length ? responses : null;
   }
-  if (body && typeof body === 'object') {
-    return handleMcpMessage(tenantId, userId, body as JsonRpcRequest);
-  }
-  // 非法请求体
-  return err(null, -32600, '无效的 JSON-RPC 请求');
+  return handleUnknownMcpMessage(ctx, body);
 }

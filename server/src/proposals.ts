@@ -2,6 +2,8 @@
 // 人在收件箱审；采纳走既有 applyAction 落库（origin/溯源/乐观锁自动）。全程 tenantId 隔离。
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'crypto';
+import { z } from 'zod';
+import { ActorRoleSchema, type CommandContext } from '@jianghu/domain-contracts';
 import { prisma } from './prisma.js';
 import { denyViewer } from './scope.js';
 import { applyAction } from './mutate.js';
@@ -24,26 +26,29 @@ export async function createFieldProposal(tenantId: string, p: {
 }
 
 // P13 提案值域校验：非法值直接抛错（改后采纳的兜底），SET_ROLE.patch 精确对齐已有字段类型
-const SENT_VALUES = new Set(['star', 'plus', 'neutral', 'unknown', 'minus', 'x']);
-const CONFIDENCE_VALUES = new Set(['共识', '明确', '推理', '不清']);
-const BOOL_VALUES = new Set(['true', 'false']);
+const SentimentSchema = z.enum(['star', 'plus', 'neutral', 'unknown', 'minus', 'x']);
+const ConfidenceSchema = z.enum(['共识', '明确', '推理', '不清']);
+const BooleanTextSchema = z.enum(['true', 'false']);
 
 /** 采纳：据 entityKind/field 走既有 applyAction 落库。P13 扩：sentiment/confidence/isKeyInfluencer 三种 oppRole 字段。 */
-async function applyProposal(tenantId: string, cp: { accountId: string; opportunityId: string | null; entityKind: string; entityId: string; field: string }, value: string): Promise<void> {
+async function applyProposal(ctx: CommandContext, cp: { accountId: string; opportunityId: string | null; entityKind: string; entityId: string; field: string }, value: string): Promise<void> {
   if (cp.entityKind === 'oppRole' && cp.opportunityId) {
     if (cp.field === 'sentiment') {
-      if (!SENT_VALUES.has(value)) throw new Error(`sentiment 值非法：${value}`);
-      await applyAction(tenantId, { type: 'SET_ROLE', accId: cp.accountId, oppId: cp.opportunityId, personId: cp.entityId, patch: { sentiment: value } } as any);
+      const parsed = SentimentSchema.safeParse(value);
+      if (!parsed.success) throw new Error(`sentiment 值非法：${value}`);
+      await applyAction(ctx, { type: 'SET_ROLE', accId: cp.accountId, oppId: cp.opportunityId, personId: cp.entityId, patch: { sentiment: parsed.data } });
       return;
     }
     if (cp.field === 'confidence') {
-      if (!CONFIDENCE_VALUES.has(value)) throw new Error(`confidence 值非法：${value}`);
-      await applyAction(tenantId, { type: 'SET_ROLE', accId: cp.accountId, oppId: cp.opportunityId, personId: cp.entityId, patch: { confidence: value } } as any);
+      const parsed = ConfidenceSchema.safeParse(value);
+      if (!parsed.success) throw new Error(`confidence 值非法：${value}`);
+      await applyAction(ctx, { type: 'SET_ROLE', accId: cp.accountId, oppId: cp.opportunityId, personId: cp.entityId, patch: { confidence: parsed.data } });
       return;
     }
     if (cp.field === 'isKeyInfluencer') {
-      if (!BOOL_VALUES.has(value)) throw new Error(`isKeyInfluencer 值非法：${value}`);
-      await applyAction(tenantId, { type: 'SET_ROLE', accId: cp.accountId, oppId: cp.opportunityId, personId: cp.entityId, patch: { isKeyInfluencer: value === 'true' } } as any);
+      const parsed = BooleanTextSchema.safeParse(value);
+      if (!parsed.success) throw new Error(`isKeyInfluencer 值非法：${value}`);
+      await applyAction(ctx, { type: 'SET_ROLE', accId: cp.accountId, oppId: cp.opportunityId, personId: cp.entityId, patch: { isKeyInfluencer: parsed.data === 'true' } });
       return;
     }
   }
@@ -51,12 +56,13 @@ async function applyProposal(tenantId: string, cp: { accountId: string; opportun
 }
 
 /** 采纳一条提案（HTTP 路由与企微一键采纳共用）。'missing'=不存在(本租户)，'already'=已处理过。 */
-export async function acceptProposal(tenantId: string, id: string, overrideValue?: string): Promise<'ok' | 'already' | 'missing'> {
+export async function acceptProposal(ctx: CommandContext, id: string, overrideValue?: string): Promise<'ok' | 'already' | 'missing'> {
+  const { tenantId } = ctx;
   const cp = await prisma.changeProposal.findFirst({ where: { id, tenantId } });
   if (!cp) return 'missing';
   if (cp.status !== 'pending') return 'already';
   const value = overrideValue || cp.newValue;
-  await applyProposal(tenantId, cp, value);
+  await applyProposal(ctx, cp, value);
   await prisma.changeProposal.update({ where: { id: cp.id }, data: { status: 'accepted', newValue: value } });
   return 'ok';
 }
@@ -73,7 +79,14 @@ export function proposalRoutes(app: FastifyInstance) {
     if (denyViewer(req, reply)) return; // viewer 只读，不可拍板/操作
     const override = typeof req.body?.overrideValue === 'string' && req.body.overrideValue ? req.body.overrideValue : undefined;
     try {
-      const r = await acceptProposal(req.user.tenantId, req.params.id, override);
+      const r = await acceptProposal({
+        tenantId: req.user.tenantId,
+        actorId: req.user.userId,
+        actorRole: ActorRoleSchema.parse(req.user.role),
+        channel: 'web',
+        requestId: req.id,
+        assertionMode: 'user_asserted',
+      }, req.params.id, override);
       if (r === 'missing') return reply.code(404).send({ error: '提案不存在' });
       if (r === 'already') return reply.code(400).send({ error: '该提案已处理' });
       return { ok: true };

@@ -1,5 +1,6 @@
 import type { Action } from './store';
 import type { Account } from './types';
+import { toWireAction } from './wireAction';
 
 // 生产构建把 VITE_API_URL 设为空串 "" → 走同源相对路径 /api（由 Nginx 反代到后端）。
 // 开发未设(undefined) → 回退本地后端。用 ?? 而非 ||，确保空串不被误回退。
@@ -51,7 +52,7 @@ export const api = {
     req('/api/auth/login', { method: 'POST', body: JSON.stringify(b) }),
   me: (): Promise<{ user: AuthResult['user']; tenant: AuthResult['tenant'] }> => req('/api/me'),
   getState: (): Promise<{ accounts: Account[] }> => req('/api/state'),
-  mutate: (action: Action): Promise<{ ok: true }> => req('/api/mutate', { method: 'POST', body: JSON.stringify({ action }) }),
+  mutate: (action: Action): Promise<{ ok: true }> => req('/api/mutate', { method: 'POST', body: JSON.stringify({ action: toWireAction(action) }) }),
   // 录入情报：口述文字 → 后端 LLM 抽取 + 双轨落库 → 回执
   voiceExtract: (b: { text: string; accountId?: string; opportunityId?: string; priorText?: string; sourceVisitId?: string }): Promise<any> =>
     req('/api/voice/extract', { method: 'POST', body: JSON.stringify(b) }),

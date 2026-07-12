@@ -15,7 +15,7 @@ COPY packages /packages
 
 # 2) 依赖层（含 devDeps：运行期需要 tsx 跑 TS、prisma CLI 做 db push）
 COPY server/package.json server/package-lock.json ./
-RUN npm ci
+RUN npm ci --install-links
 
 # 3) 源码 + Prisma schema
 COPY server .

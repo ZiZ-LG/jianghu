@@ -2,9 +2,12 @@
 // 抽象在此层，未来切换到后端 API 只需替换 load/save 与 dispatch 的落地方式。
 import type {
   Account, Opportunity, Person, OppRole, Edge, BurningIssue, UCV, InteractionLog, CustomerType, VisitNote, Note, PlanAction, OppMilestone, OppStage, Half,
-  StrategyCard, StrategyRisk, StrategyResource, EvidenceEvent,
+  StrategyCard, StrategyRisk, StrategyResource, EvidenceEvent, AccountProfile,
 } from './types';
+import type { Action } from '@jianghu/domain-contracts';
 import { seedAccount } from './data/seed';
+
+export type { Action } from '@jianghu/domain-contracts';
 
 export interface StoreState { accounts: Account[]; }
 
@@ -61,63 +64,12 @@ export function newStrategyRisk(accountId: string, opportunityId: string, kind: 
 export function newStrategyResource(accountId: string, opportunityId: string): StrategyResource {
   return { id: uid('sx'), accountId, opportunityId, label: '', kind: '', note: '' };
 }
-export function newEvidence(accountId: string, opportunityId: string, personId: string, signalKey: string, direction: number, tier: 'weak' | 'mid' | 'strong'): EvidenceEvent {
+export function newEvidence(accountId: string, opportunityId: string, personId: string, signalKey: string, direction: -1 | 0 | 1, tier: 'weak' | 'mid' | 'strong'): EvidenceEvent {
   return { id: uid('ev'), accountId, opportunityId, personId, signalKey, direction, tier, rawContent: '', occurredAt: '' };
 }
 
-// ── Actions ──
-export type Action =
-  | { type: 'ADD_ACCOUNT'; account: Account }
-  | { type: 'UPDATE_ACCOUNT'; accId: string; patch: Partial<Account> }
-  | { type: 'DELETE_ACCOUNT'; accId: string }
-  | { type: 'ADD_OPP'; accId: string; opp: Opportunity }
-  | { type: 'UPDATE_OPP'; accId: string; oppId: string; patch: Partial<Opportunity>; baseVersion?: number }
-  | { type: 'DELETE_OPP'; accId: string; oppId: string }
-  | { type: 'ADD_PERSON'; accId: string; person: Person }
-  | { type: 'UPDATE_PERSON'; accId: string; personId: string; patch: Partial<Person>; baseVersion?: number }
-  | { type: 'MOVE_PERSON'; accId: string; personId: string; x: number; y: number }
-  | { type: 'DELETE_PERSON'; accId: string; personId: string }
-  | { type: 'ADD_LOG'; accId: string; personId: string; log: InteractionLog }
-  | { type: 'SET_ROLE'; accId: string; oppId: string; personId: string; patch: Partial<OppRole> }
-  | { type: 'REMOVE_ROLE'; accId: string; oppId: string; personId: string }
-  | { type: 'ADD_OPP_MEMBER'; accId: string; oppId: string; personId: string }
-  | { type: 'REMOVE_OPP_MEMBER'; accId: string; oppId: string; personId: string }
-  | { type: 'ADD_EDGE'; accId: string; oppId: string; edge: Edge }
-  | { type: 'UPDATE_EDGE'; accId: string; oppId: string; edgeId: string; patch: Partial<Edge>; baseVersion?: number }
-  | { type: 'DELETE_EDGE'; accId: string; oppId: string; edgeId: string }
-  | { type: 'ADD_BI'; accId: string; oppId: string; bi: BurningIssue }
-  | { type: 'UPDATE_BI'; accId: string; oppId: string; biId: string; patch: Partial<BurningIssue> }
-  | { type: 'DELETE_BI'; accId: string; oppId: string; biId: string }
-  | { type: 'ADD_UCV'; accId: string; oppId: string; ucv: UCV }
-  | { type: 'UPDATE_UCV'; accId: string; oppId: string; ucvId: string; patch: Partial<UCV> }
-  | { type: 'DELETE_UCV'; accId: string; oppId: string; ucvId: string }
-  | { type: 'ADD_VISIT'; accId: string; visit: VisitNote }
-  | { type: 'UPDATE_VISIT'; accId: string; visitId: string; patch: Partial<VisitNote> }
-  | { type: 'DELETE_VISIT'; accId: string; visitId: string }
-  | { type: 'ADD_NOTE'; accId: string; note: Note }
-  | { type: 'UPDATE_NOTE'; accId: string; noteId: string; patch: Partial<Note> }
-  | { type: 'DELETE_NOTE'; accId: string; noteId: string }
-  | { type: 'ADD_PLAN_ACTION'; accId: string; oppId: string; planAction: PlanAction }
-  | { type: 'UPDATE_PLAN_ACTION'; accId: string; actionId: string; patch: Partial<PlanAction> }
-  | { type: 'DELETE_PLAN_ACTION'; accId: string; actionId: string }
-  | { type: 'TOGGLE_PLAN_ACTION'; accId: string; actionId: string; done: boolean; doneAt?: string }
-  | { type: 'ADD_MILESTONE'; accId: string; oppId: string; milestone: OppMilestone }
-  | { type: 'UPDATE_MILESTONE'; accId: string; milestoneId: string; patch: Partial<OppMilestone> }
-  | { type: 'DELETE_MILESTONE'; accId: string; milestoneId: string }
-  | { type: 'ADD_OPP_STAGE'; accId: string; oppId: string; stage: OppStage }
-  | { type: 'UPDATE_OPP_STAGE'; accId: string; stageId: string; patch: Partial<OppStage> }
-  | { type: 'DELETE_OPP_STAGE'; accId: string; stageId: string }
-  | { type: 'ADD_STRATEGY_CARD'; accId: string; oppId: string; card: StrategyCard }
-  | { type: 'UPDATE_STRATEGY_CARD'; accId: string; cardId: string; patch: Partial<StrategyCard> }
-  | { type: 'DELETE_STRATEGY_CARD'; accId: string; cardId: string }
-  | { type: 'ADD_STRATEGY_RISK'; accId: string; oppId: string; risk: StrategyRisk }
-  | { type: 'UPDATE_STRATEGY_RISK'; accId: string; riskId: string; patch: Partial<StrategyRisk> }
-  | { type: 'DELETE_STRATEGY_RISK'; accId: string; riskId: string }
-  | { type: 'ADD_STRATEGY_RESOURCE'; accId: string; oppId: string; resource: StrategyResource }
-  | { type: 'UPDATE_STRATEGY_RESOURCE'; accId: string; resourceId: string; patch: Partial<StrategyResource> }
-  | { type: 'DELETE_STRATEGY_RESOURCE'; accId: string; resourceId: string }
-  | { type: 'ADD_EVIDENCE'; accId: string; oppId: string; evidence: EvidenceEvent }
-  | { type: 'DELETE_EVIDENCE'; accId: string; oppId: string; evidenceId: string }
+// ── Store-only reducer controls ──
+export type StoreAction = Action
   | { type: 'LOAD_DEMO' }
   | { type: 'RESET' }
   | { type: 'HYDRATE'; accounts: Account[] };
@@ -129,24 +81,43 @@ const mapAcc = (s: StoreState, accId: string, fn: (a: Account) => Account): Stor
 const mapOpp = (s: StoreState, accId: string, oppId: string, fn: (o: Opportunity) => Opportunity): StoreState =>
   mapAcc(s, accId, (a) => ({ ...a, opportunities: a.opportunities.map((o) => (o.id === oppId ? fn(o) : o)) }));
 
-export function reducer(s: StoreState, action: Action): StoreState {
+export function reducer(s: StoreState, action: StoreAction): StoreState {
   switch (action.type) {
-    case 'ADD_ACCOUNT':
-      return { accounts: [...s.accounts, action.account] };
-    case 'UPDATE_ACCOUNT':
-      return mapAcc(s, action.accId, (a) => ({ ...a, ...action.patch }));
+    case 'ADD_ACCOUNT': {
+      const account: Account = { persons: [], baseEdges: [], opportunities: [], ...action.account };
+      return { accounts: [...s.accounts, account] };
+    }
+    case 'UPDATE_ACCOUNT': {
+      if (action.patch.profile === undefined) return mapAcc(s, action.accId, (a) => ({ ...a, ...action.patch }));
+      const profileWithServerMark: AccountProfile = action.patch.profile;
+      const { _mcpOrigin: _serverMark, ...profile } = profileWithServerMark;
+      return mapAcc(s, action.accId, (a) => ({ ...a, ...action.patch, profile }));
+    }
     case 'DELETE_ACCOUNT':
       return { accounts: s.accounts.filter((a) => a.id !== action.accId) };
 
-    case 'ADD_OPP':
-      return mapAcc(s, action.accId, (a) => ({ ...a, opportunities: [...a.opportunities, action.opp] }));
+    case 'ADD_OPP': {
+      const opp: Opportunity = {
+        accountId: action.accId,
+        singleSalesGoal: '', c3Items: {}, c5Items: {}, roles: [], bis: [], ucvs: [], edges: [], memberIds: [],
+        ...action.opp,
+      };
+      return mapAcc(s, action.accId, (a) => ({ ...a, opportunities: [...a.opportunities, opp] }));
+    }
     case 'UPDATE_OPP':
       return mapOpp(s, action.accId, action.oppId, (o) => ({ ...o, ...action.patch, version: (o.version ?? 0) + 1 }));
     case 'DELETE_OPP':
       return mapAcc(s, action.accId, (a) => ({ ...a, opportunities: a.opportunities.filter((o) => o.id !== action.oppId) }));
 
-    case 'ADD_PERSON':
-      return mapAcc(s, action.accId, (a) => ({ ...a, persons: [...a.persons, action.person] }));
+    case 'ADD_PERSON': {
+      const person: Person = {
+        orgLevel: 3,
+        form: { family: '', occupation: '', recreation: '', moneyMotivation: '', family7: {} },
+        logs: [], x: 300, y: 240,
+        ...action.person,
+      };
+      return mapAcc(s, action.accId, (a) => ({ ...a, persons: [...a.persons, person] }));
+    }
     case 'UPDATE_PERSON':
       return mapAcc(s, action.accId, (a) => ({
         ...a, persons: a.persons.map((p) => (p.id === action.personId ? { ...p, ...action.patch, version: (p.version ?? 0) + 1 } : p)),
@@ -182,7 +153,7 @@ export function reducer(s: StoreState, action: Action): StoreState {
         const exists = o.roles.some((r) => r.personId === action.personId);
         const roles = exists
           ? o.roles.map((r) => (r.personId === action.personId ? { ...r, ...action.patch } : r))
-          : [...o.roles, { personId: action.personId, role: 'U', sentiment: 'unknown', confidence: '推理', ...action.patch } as OppRole];
+          : [...o.roles, { personId: action.personId, role: 'U', sentiment: 'unknown', confidence: '推理', ...action.patch } satisfies OppRole];
         return { ...o, roles };
       });
     case 'REMOVE_ROLE':
@@ -194,7 +165,9 @@ export function reducer(s: StoreState, action: Action): StoreState {
       return mapOpp(s, action.accId, action.oppId, (o) => ({ ...o, memberIds: (o.memberIds ?? []).filter((id) => id !== action.personId) }));
 
     case 'ADD_EDGE':
-      return mapOpp(s, action.accId, action.oppId, (o) => ({ ...o, edges: [...o.edges, action.edge] }));
+      return action.oppId
+        ? mapOpp(s, action.accId, action.oppId, (o) => ({ ...o, edges: [...o.edges, action.edge] }))
+        : mapAcc(s, action.accId, (a) => ({ ...a, baseEdges: [...a.baseEdges, action.edge] }));
     case 'UPDATE_EDGE':
       // 连线可能在 baseEdges(L1) 或某商机 edges 里——两处都尝试 patch（按 id 命中才改）
       return mapAcc(s, action.accId, (a) => ({
@@ -227,64 +200,82 @@ export function reducer(s: StoreState, action: Action): StoreState {
     case 'DELETE_UCV':
       return mapOpp(s, action.accId, action.oppId, (o) => ({ ...o, ucvs: o.ucvs.filter((u) => u.id !== action.ucvId) }));
 
-    case 'ADD_VISIT':
-      return mapAcc(s, action.accId, (a) => ({ ...a, visitNotes: [action.visit, ...(a.visitNotes ?? [])] }));
+    case 'ADD_VISIT': {
+      const visit: VisitNote = { accountId: action.accId, participants: [], ...action.visit };
+      return mapAcc(s, action.accId, (a) => ({ ...a, visitNotes: [visit, ...(a.visitNotes ?? [])] }));
+    }
     case 'UPDATE_VISIT':
       return mapAcc(s, action.accId, (a) => ({ ...a, visitNotes: (a.visitNotes ?? []).map((v) => (v.id === action.visitId ? { ...v, ...action.patch } : v)) }));
     case 'DELETE_VISIT':
       return mapAcc(s, action.accId, (a) => ({ ...a, visitNotes: (a.visitNotes ?? []).filter((v) => v.id !== action.visitId) }));
 
-    case 'ADD_NOTE':
-      return mapAcc(s, action.accId, (a) => ({ ...a, notes: [action.note, ...(a.notes ?? [])] }));
+    case 'ADD_NOTE': {
+      const note: Note = { accountId: action.accId, ...action.note };
+      return mapAcc(s, action.accId, (a) => ({ ...a, notes: [note, ...(a.notes ?? [])] }));
+    }
     case 'UPDATE_NOTE':
       return mapAcc(s, action.accId, (a) => ({ ...a, notes: (a.notes ?? []).map((n) => (n.id === action.noteId ? { ...n, ...action.patch } : n)) }));
     case 'DELETE_NOTE':
       return mapAcc(s, action.accId, (a) => ({ ...a, notes: (a.notes ?? []).filter((n) => n.id !== action.noteId) }));
 
     // ── 商机策划 · 行动计划 / 里程碑（挂 account 级，同 visitNotes）──
-    case 'ADD_PLAN_ACTION':
-      return mapAcc(s, action.accId, (a) => ({ ...a, planActions: [...(a.planActions ?? []), action.planAction] }));
+    case 'ADD_PLAN_ACTION': {
+      const planAction: PlanAction = { accountId: action.accId, opportunityId: action.oppId, ...action.planAction };
+      return mapAcc(s, action.accId, (a) => ({ ...a, planActions: [...(a.planActions ?? []), planAction] }));
+    }
     case 'UPDATE_PLAN_ACTION':
       return mapAcc(s, action.accId, (a) => ({ ...a, planActions: (a.planActions ?? []).map((p) => (p.id === action.actionId ? { ...p, ...action.patch } : p)) }));
     case 'DELETE_PLAN_ACTION':
       return mapAcc(s, action.accId, (a) => ({ ...a, planActions: (a.planActions ?? []).filter((p) => p.id !== action.actionId) }));
     case 'TOGGLE_PLAN_ACTION':
       return mapAcc(s, action.accId, (a) => ({ ...a, planActions: (a.planActions ?? []).map((p) => (p.id === action.actionId ? { ...p, done: action.done, doneAt: action.done ? (action.doneAt ?? new Date().toISOString().slice(0, 10)) : undefined } : p)) }));
-    case 'ADD_MILESTONE':
-      return mapAcc(s, action.accId, (a) => ({ ...a, milestones: [...(a.milestones ?? []), action.milestone] }));
+    case 'ADD_MILESTONE': {
+      const milestone: OppMilestone = { accountId: action.accId, opportunityId: action.oppId, ...action.milestone };
+      return mapAcc(s, action.accId, (a) => ({ ...a, milestones: [...(a.milestones ?? []), milestone] }));
+    }
     case 'UPDATE_MILESTONE':
       return mapAcc(s, action.accId, (a) => ({ ...a, milestones: (a.milestones ?? []).map((m) => (m.id === action.milestoneId ? { ...m, ...action.patch } : m)) }));
     case 'DELETE_MILESTONE':
       return mapAcc(s, action.accId, (a) => ({ ...a, milestones: (a.milestones ?? []).filter((m) => m.id !== action.milestoneId) }));
 
-    case 'ADD_OPP_STAGE':
-      return mapAcc(s, action.accId, (a) => ({ ...a, oppStages: [...(a.oppStages ?? []), action.stage] }));
+    case 'ADD_OPP_STAGE': {
+      const stage: OppStage = { accountId: action.accId, opportunityId: action.oppId, ...action.stage };
+      return mapAcc(s, action.accId, (a) => ({ ...a, oppStages: [...(a.oppStages ?? []), stage] }));
+    }
     case 'UPDATE_OPP_STAGE':
       return mapAcc(s, action.accId, (a) => ({ ...a, oppStages: (a.oppStages ?? []).map((st) => (st.id === action.stageId ? { ...st, ...action.patch } : st)) }));
     case 'DELETE_OPP_STAGE':
       return mapAcc(s, action.accId, (a) => ({ ...a, oppStages: (a.oppStages ?? []).filter((st) => st.id !== action.stageId) }));
 
     // ── 策略沙盘 · 策略卡 / 风险 / 弹药（挂 account 级，同 planActions）──
-    case 'ADD_STRATEGY_CARD':
-      return mapAcc(s, action.accId, (a) => ({ ...a, strategyCards: [...(a.strategyCards ?? []), action.card] }));
+    case 'ADD_STRATEGY_CARD': {
+      const card: StrategyCard = { accountId: action.accId, opportunityId: action.oppId, ...action.card };
+      return mapAcc(s, action.accId, (a) => ({ ...a, strategyCards: [...(a.strategyCards ?? []), card] }));
+    }
     case 'UPDATE_STRATEGY_CARD':
       return mapAcc(s, action.accId, (a) => ({ ...a, strategyCards: (a.strategyCards ?? []).map((c) => (c.id === action.cardId ? { ...c, ...action.patch } : c)) }));
     case 'DELETE_STRATEGY_CARD':
       return mapAcc(s, action.accId, (a) => ({ ...a, strategyCards: (a.strategyCards ?? []).filter((c) => c.id !== action.cardId) }));
-    case 'ADD_STRATEGY_RISK':
-      return mapAcc(s, action.accId, (a) => ({ ...a, strategyRisks: [...(a.strategyRisks ?? []), action.risk] }));
+    case 'ADD_STRATEGY_RISK': {
+      const risk: StrategyRisk = { accountId: action.accId, opportunityId: action.oppId, ...action.risk };
+      return mapAcc(s, action.accId, (a) => ({ ...a, strategyRisks: [...(a.strategyRisks ?? []), risk] }));
+    }
     case 'UPDATE_STRATEGY_RISK':
       return mapAcc(s, action.accId, (a) => ({ ...a, strategyRisks: (a.strategyRisks ?? []).map((r) => (r.id === action.riskId ? { ...r, ...action.patch } : r)) }));
     case 'DELETE_STRATEGY_RISK':
       return mapAcc(s, action.accId, (a) => ({ ...a, strategyRisks: (a.strategyRisks ?? []).filter((r) => r.id !== action.riskId) }));
-    case 'ADD_STRATEGY_RESOURCE':
-      return mapAcc(s, action.accId, (a) => ({ ...a, strategyResources: [...(a.strategyResources ?? []), action.resource] }));
+    case 'ADD_STRATEGY_RESOURCE': {
+      const resource: StrategyResource = { accountId: action.accId, opportunityId: action.oppId, ...action.resource };
+      return mapAcc(s, action.accId, (a) => ({ ...a, strategyResources: [...(a.strategyResources ?? []), resource] }));
+    }
     case 'UPDATE_STRATEGY_RESOURCE':
       return mapAcc(s, action.accId, (a) => ({ ...a, strategyResources: (a.strategyResources ?? []).map((x) => (x.id === action.resourceId ? { ...x, ...action.patch } : x)) }));
     case 'DELETE_STRATEGY_RESOURCE':
       return mapAcc(s, action.accId, (a) => ({ ...a, strategyResources: (a.strategyResources ?? []).filter((x) => x.id !== action.resourceId) }));
-    case 'ADD_EVIDENCE':
-      return mapOpp(s, action.accId, action.oppId, (o) => ({ ...o, evidenceEvents: [...(o.evidenceEvents ?? []), action.evidence] }));
+    case 'ADD_EVIDENCE': {
+      const evidence: EvidenceEvent = { accountId: action.accId, opportunityId: action.oppId, ...action.evidence };
+      return mapOpp(s, action.accId, action.oppId, (o) => ({ ...o, evidenceEvents: [...(o.evidenceEvents ?? []), evidence] }));
+    }
     case 'DELETE_EVIDENCE':
       return mapOpp(s, action.accId, action.oppId, (o) => ({ ...o, evidenceEvents: (o.evidenceEvents ?? []).filter((e) => e.id !== action.evidenceId) }));
 
@@ -311,7 +302,7 @@ export function computeInverse(a: Action, s: StoreState): Action[] | null {
     case 'MOVE_PERSON': { const p = acc(a.accId)?.persons.find((x) => x.id === a.personId); return p ? [{ type: 'MOVE_PERSON', accId: a.accId, personId: a.personId, x: p.x, y: p.y }] : null; }
     case 'ADD_PERSON': return [{ type: 'DELETE_PERSON', accId: a.accId, personId: a.person.id }];
     case 'UPDATE_PERSON': { const p = acc(a.accId)?.persons.find((x) => x.id === a.personId); return p ? [{ type: 'UPDATE_PERSON', accId: a.accId, personId: a.personId, patch: pick(p, Object.keys(a.patch)) }] : null; }
-    case 'ADD_EDGE': return [{ type: 'DELETE_EDGE', accId: a.accId, oppId: a.oppId, edgeId: a.edge.id }];
+    case 'ADD_EDGE': return a.oppId ? [{ type: 'DELETE_EDGE', accId: a.accId, oppId: a.oppId, edgeId: a.edge.id }] : null;
     case 'DELETE_EDGE': { const e = allEdges(a.accId).find((x) => x.id === a.edgeId); return e ? [{ type: 'ADD_EDGE', accId: a.accId, oppId: a.oppId, edge: e }] : null; }
     case 'UPDATE_EDGE': { const e = allEdges(a.accId).find((x) => x.id === a.edgeId); return e ? [{ type: 'UPDATE_EDGE', accId: a.accId, oppId: a.oppId, edgeId: a.edgeId, patch: pick(e, Object.keys(a.patch)) }] : null; }
     case 'SET_ROLE': { const o = acc(a.accId)?.opportunities.find((x) => x.id === a.oppId); const old = o?.roles.find((r) => r.personId === a.personId); return old ? [{ type: 'SET_ROLE', accId: a.accId, oppId: a.oppId, personId: a.personId, patch: old }] : [{ type: 'REMOVE_ROLE', accId: a.accId, oppId: a.oppId, personId: a.personId }]; }

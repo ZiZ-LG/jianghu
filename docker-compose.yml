@@ -42,7 +42,9 @@ services:
 
   web:
     build:
-      context: ./app
+      # context=仓库根：app 依赖 packages/domain-contracts（file: 协议）
+      context: .
+      dockerfile: app/Dockerfile
       args:
         VITE_API_URL: ${VITE_API_URL:-}
         # 备案审核期=1 只展示中性介绍页；备案过后置空重建恢复完整应用
