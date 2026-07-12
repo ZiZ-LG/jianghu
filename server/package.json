@@ -7,6 +7,11 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test:db:prepare": "tsx scripts/prepareTestDb.ts",
+    "test:db:push": "npm run test:db:prepare && DATABASE_URL=file:./test.db prisma db push --skip-generate",
+    "pretest": "npm run test:db:push",
+    "test": "DATABASE_URL=file:./test.db vitest run",
     "db:push": "prisma db push",
     "db:studio": "prisma studio",
     "generate": "prisma generate"
@@ -30,6 +35,7 @@
     "@types/node": "^22.9.0",
     "prisma": "^5.22.0",
     "tsx": "^4.19.2",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "vitest": "^1.6.0"
   }
 }
