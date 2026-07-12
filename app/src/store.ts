@@ -226,7 +226,20 @@ export function reducer(s: StoreState, action: StoreAction): StoreState {
     case 'UPDATE_PLAN_ACTION':
       return mapAcc(s, action.accId, (a) => ({ ...a, planActions: (a.planActions ?? []).map((p) => (p.id === action.actionId ? { ...p, ...action.patch } : p)) }));
     case 'DELETE_PLAN_ACTION':
-      return mapAcc(s, action.accId, (a) => ({ ...a, planActions: (a.planActions ?? []).filter((p) => p.id !== action.actionId) }));
+      return mapAcc(s, action.accId, (a) => {
+        const planAction = (a.planActions ?? []).find((p) => p.id === action.actionId);
+        return {
+          ...a,
+          planActions: (a.planActions ?? []).filter((p) => p.id !== action.actionId),
+          strategyCards: planAction
+            ? (a.strategyCards ?? []).map((card) => (
+              card.opportunityId === planAction.opportunityId && (card.dispatchedActionIds ?? []).includes(action.actionId)
+                ? { ...card, dispatchedActionIds: (card.dispatchedActionIds ?? []).filter((id) => id !== action.actionId) }
+                : card
+            ))
+            : a.strategyCards,
+        };
+      });
     case 'TOGGLE_PLAN_ACTION':
       return mapAcc(s, action.accId, (a) => ({ ...a, planActions: (a.planActions ?? []).map((p) => (p.id === action.actionId ? { ...p, done: action.done, doneAt: action.done ? (action.doneAt ?? new Date().toISOString().slice(0, 10)) : undefined } : p)) }));
     case 'ADD_MILESTONE': {
@@ -316,7 +329,23 @@ export function computeInverse(a: Action, s: StoreState): Action[] | null {
     case 'DELETE_UCV': { const u = acc(a.accId)?.opportunities.find((x) => x.id === a.oppId)?.ucvs.find((x) => x.id === a.ucvId); return u ? [{ type: 'ADD_UCV', accId: a.accId, oppId: a.oppId, ucv: u }] : null; }
     case 'UPDATE_UCV': { const u = acc(a.accId)?.opportunities.find((x) => x.id === a.oppId)?.ucvs.find((x) => x.id === a.ucvId); return u ? [{ type: 'UPDATE_UCV', accId: a.accId, oppId: a.oppId, ucvId: a.ucvId, patch: pick(u, Object.keys(a.patch)) }] : null; }
     case 'ADD_PLAN_ACTION': return [{ type: 'DELETE_PLAN_ACTION', accId: a.accId, actionId: a.planAction.id }];
-    case 'DELETE_PLAN_ACTION': { const pa = acc(a.accId)?.planActions?.find((x) => x.id === a.actionId); return pa ? [{ type: 'ADD_PLAN_ACTION', accId: a.accId, oppId: pa.opportunityId, planAction: pa }] : null; }
+    case 'DELETE_PLAN_ACTION': {
+      const account = acc(a.accId);
+      const pa = account?.planActions?.find((x) => x.id === a.actionId);
+      if (!pa) return null;
+      const restoreCardReferences: Action[] = (account?.strategyCards ?? [])
+        .filter((card) => card.opportunityId === pa.opportunityId && (card.dispatchedActionIds ?? []).includes(a.actionId))
+        .map((card) => ({
+          type: 'UPDATE_STRATEGY_CARD',
+          accId: a.accId,
+          cardId: card.id,
+          patch: { dispatchedActionIds: [...(card.dispatchedActionIds ?? [])] },
+        }));
+      return [
+        { type: 'ADD_PLAN_ACTION', accId: a.accId, oppId: pa.opportunityId, planAction: pa },
+        ...restoreCardReferences,
+      ];
+    }
     case 'UPDATE_PLAN_ACTION': { const pa = acc(a.accId)?.planActions?.find((x) => x.id === a.actionId); return pa ? [{ type: 'UPDATE_PLAN_ACTION', accId: a.accId, actionId: a.actionId, patch: pick(pa, Object.keys(a.patch)) }] : null; }
     case 'TOGGLE_PLAN_ACTION': { const pa = acc(a.accId)?.planActions?.find((x) => x.id === a.actionId); return pa ? [{ type: 'TOGGLE_PLAN_ACTION', accId: a.accId, actionId: a.actionId, done: pa.done, doneAt: pa.doneAt }] : null; }
     case 'ADD_MILESTONE': return [{ type: 'DELETE_MILESTONE', accId: a.accId, milestoneId: a.milestone.id }];
@@ -337,6 +366,92 @@ export function computeInverse(a: Action, s: StoreState): Action[] | null {
     case 'DELETE_EVIDENCE': { const o = acc(a.accId)?.opportunities.find((x) => x.id === a.oppId); const e = o?.evidenceEvents?.find((x) => x.id === a.evidenceId); return e ? [{ type: 'ADD_EVIDENCE', accId: a.accId, oppId: a.oppId, evidence: e }] : null; }
     case 'UPDATE_STRATEGY_RESOURCE': { const x = acc(a.accId)?.strategyResources?.find((y) => y.id === a.resourceId); return x ? [{ type: 'UPDATE_STRATEGY_RESOURCE', accId: a.accId, resourceId: a.resourceId, patch: pick(x, Object.keys(a.patch)) }] : null; }
     default: return null;
+  }
+}
+
+/**
+ * 依赖型 action 批次必须等待前一项落库后再执行（例如撤销删除行动：先重建行动，再恢复策略卡引用）。
+ */
+export async function applyActionsSequentially(
+  actions: readonly Action[],
+  apply: (action: Action) => Promise<void>,
+): Promise<void> {
+  for (const action of actions) await apply(action);
+}
+
+/**
+ * 所有持久化批次共用一条队列；批次内部严格串行，后来的普通操作不能插入 undo/redo 的依赖链。
+ */
+export function createActionPersistenceQueue(
+  apply: (action: Action) => Promise<void>,
+  onBatchFailure?: () => Promise<void>,
+): (actions: readonly Action[]) => Promise<void> {
+  let tail = Promise.resolve();
+  return (actions) => {
+    const run = tail.then(async () => {
+      try {
+        await applyActionsSequentially(actions, apply);
+      } catch (error) {
+        try { await onBatchFailure?.(); } catch { /* 刷新失败不掩盖原始持久化错误 */ }
+        throw error;
+      }
+    });
+    // 队列自身吞掉上一批的 rejection 以便继续服务；调用方仍收到原始 run 的失败。
+    tail = run.then(() => undefined, () => undefined);
+    return run;
+  };
+}
+
+export interface HistoryItem {
+  redo: Action[];
+  undo: Action[];
+}
+
+export interface HistoryTransitionLock { busy: boolean }
+
+export interface HistoryTransitionOptions {
+  limit?: number;
+  lock?: HistoryTransitionLock;
+  canMoveToDestination?: () => boolean;
+  canRestoreToSource?: () => boolean;
+}
+
+export type HistoryTransitionResult = 'empty' | 'busy' | 'applied' | 'failed';
+
+/** 只有整批落库成功才移动历史栈；失败保留源项并刷新服务端真实状态。 */
+export async function transitionHistory(
+  source: HistoryItem[],
+  destination: HistoryItem[],
+  direction: 'undo' | 'redo',
+  applyBatch: (actions: readonly Action[]) => Promise<void>,
+  refresh?: () => Promise<void>,
+  options: HistoryTransitionOptions = {},
+): Promise<HistoryTransitionResult> {
+  const { lock, canMoveToDestination, canRestoreToSource } = options;
+  if (lock?.busy) return 'busy';
+  if (lock) lock.busy = true;
+  try {
+    const sourceIndex = source.length - 1;
+    if (sourceIndex < 0) return 'empty';
+    const [item] = source.splice(sourceIndex, 1);
+    const destinationIndex = destination.length;
+    try {
+      await applyBatch(item[direction]);
+    } catch {
+      if (!canRestoreToSource || canRestoreToSource()) {
+        source.splice(Math.min(sourceIndex, source.length), 0, item);
+      }
+      try { await refresh?.(); } catch { /* 网络仍不可用时保留失败提示与源栈项 */ }
+      return 'failed';
+    }
+    if (!canMoveToDestination || canMoveToDestination()) {
+      destination.splice(Math.min(destinationIndex, destination.length), 0, item);
+      const limit = options.limit ?? 10;
+      if (destination.length > limit) destination.splice(0, destination.length - limit);
+    }
+    return 'applied';
+  } finally {
+    if (lock) lock.busy = false;
   }
 }
 

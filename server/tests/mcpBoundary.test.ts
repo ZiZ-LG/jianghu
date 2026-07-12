@@ -12,6 +12,31 @@ const ctx: CommandContext = {
   assertionMode: 'machine_proposed',
 };
 
+function liveMcpContext(context: Awaited<ReturnType<typeof createTestContext>>): CommandContext {
+  return {
+    tenantId: context.tenant.id,
+    actorId: context.owner.id,
+    actorRole: 'owner',
+    channel: 'mcp',
+    requestId: 'request-mcp-parentage',
+    assertionMode: 'machine_proposed',
+  };
+}
+
+async function callMcpTool(
+  context: Awaited<ReturnType<typeof createTestContext>>,
+  id: number,
+  name: string,
+  args: Record<string, unknown>,
+) {
+  return handleMcpBody(liveMcpContext(context), {
+    jsonrpc: '2.0',
+    id,
+    method: 'tools/call',
+    params: { name, arguments: args },
+  });
+}
+
 describe('MCP public JSON-RPC boundary', () => {
   it('rejects non-object tool arguments before dispatch', async () => {
     const response = await handleMcpBody(ctx, {
@@ -125,6 +150,159 @@ describe('MCP public JSON-RPC boundary', () => {
       expect(profile).toHaveProperty('legacyCustom', 'must be preserved');
       expect(profile).not.toHaveProperty('injectedLegacy');
       expect(profile._mcpOrigin).not.toMatchObject({ at: 'forged-again' });
+    } finally {
+      await context.cleanup();
+    }
+  });
+
+  it('rejects propose_person when opportunityId is outside the candidate Account without creating or updating a row', async () => {
+    const context = await createTestContext();
+    try {
+      await context.prisma.account.createMany({
+        data: [
+          { id: 'mcp-person-acc-left', tenantId: context.tenant.id, name: 'Left', customerType: 1 },
+          { id: 'mcp-person-acc-right', tenantId: context.tenant.id, name: 'Right', customerType: 1 },
+        ],
+      });
+      await context.prisma.opportunity.createMany({
+        data: [
+          { id: 'mcp-person-opp-left', tenantId: context.tenant.id, accountId: 'mcp-person-acc-left', name: 'Left opp', customerType: 1, pipelineStage: '线索', engageStage: '需求调研立项' },
+          { id: 'mcp-person-opp-right', tenantId: context.tenant.id, accountId: 'mcp-person-acc-right', name: 'Right opp', customerType: 1, pipelineStage: '线索', engageStage: '需求调研立项' },
+        ],
+      });
+      await context.prisma.personSuggestion.create({
+        data: {
+          id: 'mcp-person-existing-candidate',
+          tenantId: context.tenant.id,
+          accountId: 'mcp-person-acc-left',
+          opportunityId: 'mcp-person-opp-left',
+          name: 'Existing candidate',
+          evidence: 'original evidence',
+          status: 'pending',
+        },
+      });
+
+      const response = await callMcpTool(context, 5, 'propose_person', {
+        accountId: 'mcp-person-acc-left',
+        opportunityId: 'mcp-person-opp-right',
+        name: 'Existing candidate',
+        title: 'must not update',
+        evidence: 'must not replace evidence',
+      });
+
+      expect(response).toMatchObject({ result: { isError: true } });
+      await expect(context.prisma.personSuggestion.findMany({
+        where: { tenantId: context.tenant.id, name: 'Existing candidate' },
+      })).resolves.toEqual([
+        expect.objectContaining({
+          id: 'mcp-person-existing-candidate',
+          opportunityId: 'mcp-person-opp-left',
+          title: '',
+          evidence: 'original evidence',
+          status: 'pending',
+        }),
+      ]);
+    } finally {
+      await context.cleanup();
+    }
+  });
+
+  it('rejects propose_relationship formal and suggestion endpoints outside the Opportunity Account without creating rows', async () => {
+    const context = await createTestContext();
+    try {
+      await context.prisma.account.createMany({
+        data: [
+          { id: 'mcp-rel-acc-left', tenantId: context.tenant.id, name: 'Left', customerType: 1 },
+          { id: 'mcp-rel-acc-right', tenantId: context.tenant.id, name: 'Right', customerType: 1 },
+        ],
+      });
+      await context.prisma.opportunity.create({
+        data: { id: 'mcp-rel-opp-left', tenantId: context.tenant.id, accountId: 'mcp-rel-acc-left', name: 'Left opp', customerType: 1, pipelineStage: '线索', engageStage: '需求调研立项' },
+      });
+      await context.prisma.person.createMany({
+        data: [
+          { id: 'mcp-rel-person-left', tenantId: context.tenant.id, accountId: 'mcp-rel-acc-left', name: 'Left person', title: '' },
+          { id: 'mcp-rel-person-right', tenantId: context.tenant.id, accountId: 'mcp-rel-acc-right', name: 'Right person', title: '' },
+        ],
+      });
+      await context.prisma.personSuggestion.create({
+        data: { id: 'mcp-rel-suggestion-right', tenantId: context.tenant.id, accountId: 'mcp-rel-acc-right', name: 'Right candidate', status: 'pending' },
+      });
+
+      const formal = await callMcpTool(context, 6, 'propose_relationship', {
+        opportunityId: 'mcp-rel-opp-left',
+        source: { kind: 'person', id: 'mcp-rel-person-right' },
+        target: { kind: 'person', id: 'mcp-rel-person-left' },
+        layer: 'L2',
+        label: 'wrong formal endpoint',
+      });
+      const suggestion = await callMcpTool(context, 7, 'propose_relationship', {
+        opportunityId: 'mcp-rel-opp-left',
+        source: { kind: 'suggestion', id: 'mcp-rel-suggestion-right' },
+        target: { kind: 'person', id: 'mcp-rel-person-left' },
+        layer: 'L3',
+        label: 'wrong suggestion endpoint',
+      });
+
+      expect(formal).toMatchObject({ result: { isError: true } });
+      expect(suggestion).toMatchObject({ result: { isError: true } });
+      await expect(context.prisma.relSuggestion.count({ where: { tenantId: context.tenant.id } })).resolves.toBe(0);
+    } finally {
+      await context.cleanup();
+    }
+  });
+
+  it('drops historical wrong-Account relationship endpoints from MCP list_pending', async () => {
+    const context = await createTestContext();
+    try {
+      await context.prisma.account.createMany({
+        data: [
+          { id: 'mcp-read-acc-left', tenantId: context.tenant.id, name: 'Left', customerType: 1 },
+          { id: 'mcp-read-acc-right', tenantId: context.tenant.id, name: 'Right', customerType: 1 },
+        ],
+      });
+      await context.prisma.opportunity.create({
+        data: { id: 'mcp-read-opp-left', tenantId: context.tenant.id, accountId: 'mcp-read-acc-left', name: 'Left opp', customerType: 1, pipelineStage: '线索', engageStage: '需求调研立项' },
+      });
+      await context.prisma.person.createMany({
+        data: [
+          { id: 'mcp-read-person-left-a', tenantId: context.tenant.id, accountId: 'mcp-read-acc-left', name: 'Left A', title: '' },
+          { id: 'mcp-read-person-left-b', tenantId: context.tenant.id, accountId: 'mcp-read-acc-left', name: 'Left B', title: '' },
+          { id: 'mcp-read-person-right', tenantId: context.tenant.id, accountId: 'mcp-read-acc-right', name: 'Right', title: '' },
+        ],
+      });
+      await context.prisma.personSuggestion.create({
+        data: { id: 'mcp-read-suggestion-right', tenantId: context.tenant.id, accountId: 'mcp-read-acc-right', name: 'Right candidate', status: 'pending' },
+      });
+      await context.prisma.relSuggestion.createMany({
+        data: [
+          {
+            id: 'mcp-read-valid', tenantId: context.tenant.id, opportunityId: 'mcp-read-opp-left',
+            sourceKind: 'person', sourcePersonId: 'mcp-read-person-left-a', targetKind: 'person', targetPersonId: 'mcp-read-person-left-b',
+            layer: 'L2', label: 'valid', status: 'pending',
+          },
+          {
+            id: 'mcp-read-invalid-formal', tenantId: context.tenant.id, opportunityId: 'mcp-read-opp-left',
+            sourceKind: 'person', sourcePersonId: 'mcp-read-person-right', targetKind: 'person', targetPersonId: 'mcp-read-person-left-b',
+            layer: 'L2', label: 'invalid formal', evidence: 'secret formal evidence', status: 'pending',
+          },
+          {
+            id: 'mcp-read-invalid-suggestion', tenantId: context.tenant.id, opportunityId: 'mcp-read-opp-left',
+            sourceKind: 'suggestion', sourcePersonId: 'mcp-read-suggestion-right', targetKind: 'person', targetPersonId: 'mcp-read-person-left-b',
+            layer: 'L3', label: 'invalid suggestion', evidence: 'secret suggestion evidence', status: 'pending',
+          },
+        ],
+      });
+
+      const response = await callMcpTool(context, 8, 'list_pending', { accountId: 'mcp-read-acc-left' });
+      const text = (response as { result: { content: Array<{ text: string }> } }).result.content[0].text;
+      const body = JSON.parse(text) as { pendingRelationships: Array<{ id: string }> };
+
+      expect(body.pendingRelationships.map((row) => row.id)).toEqual(['mcp-read-valid']);
+      expect(text).not.toContain('mcp-read-invalid-formal');
+      expect(text).not.toContain('mcp-read-invalid-suggestion');
+      expect(text).not.toContain('secret formal evidence');
+      expect(text).not.toContain('secret suggestion evidence');
     } finally {
       await context.cleanup();
     }

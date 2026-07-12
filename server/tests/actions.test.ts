@@ -74,7 +74,8 @@ describe('/api/mutate Action contract', () => {
       await expect(
         context.prisma.oppRole.findUnique({
           where: {
-            opportunityId_personId: {
+            tenantId_opportunityId_personId: {
+              tenantId: context.tenant.id,
               opportunityId: 'opp-action-contract',
               personId: 'person-action-contract',
             },

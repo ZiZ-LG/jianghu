@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { Layer, Role, CustomerType, Edge, Person } from './types';
 import { LAYER_LABEL } from './types';
-import { reducer, computeInverse, injectBaseVersion, newAccount, newPerson, newEvidence, uid, type Action } from './store';
+import {
+  createActionPersistenceQueue, reducer, computeInverse, injectBaseVersion, transitionHistory,
+  newAccount, newPerson, newEvidence, uid, type Action, type HistoryItem, type HistoryTransitionLock,
+} from './store';
 import { api, type AuthResult, type Suggestion, type InboxRel, type InboxPerson, type InboxProposal, type InboxReminder, type InboxEvidence, type PatrolInfo } from './api';
 import { scoreFromDomain } from './lib/g64111';
 import { usePersistentState, useTheme, useViewport } from './ui';
@@ -175,48 +178,73 @@ export default function App() {
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   }, []);
-  // 底层落地：乐观本地 + 云端持久化（乐观锁注入 baseVersion；409 冲突重拉整树覆盖本地；普通操作与 undo/redo 共用）
-  const applyRaw = useCallback(async (action: Action) => {
-    const a = injectBaseVersion(stateRef.current, action);
-    dispatch(a);
-    try { await api.mutate(a); setSyncErr(''); }
+  const refreshState = useCallback(async () => {
+    const st = await api.getState();
+    stateRef.current = st;
+    dispatch({ type: 'HYDRATE', accounts: st.accounts });
+  }, []);
+  // 持久化单项：UI 处理错误后仍 rethrow，让 undo/redo 批次能停止并保持历史栈不误迁移。
+  const persistAction = useCallback(async (action: Action) => {
+    try { await api.mutate(action); setSyncErr(''); }
     catch (e: any) {
       if (e?.status === 409) {
         setSyncErr('⚠️ 该数据刚被其他成员修改，已为你刷新到最新——你这步未保存，请在最新内容上重做。');
-        try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); } catch { /* 重拉失败：下次操作再同步 */ }
       } else {
         setSyncErr('云端保存失败：' + e.message);
       }
+      throw e;
     }
   }, []);
-  const undoStack = useRef<{ redo: Action[]; undo: Action[] }[]>([]);
-  const redoStack = useRef<{ redo: Action[]; undo: Action[] }[]>([]);
+  // inject + 乐观 dispatch 也在批次抵达队头时发生：前批失败刷新完成后，后批才会更新 UI/落库。
+  const applyQueuedAction = useCallback(async (action: Action) => {
+    const injected = injectBaseVersion(stateRef.current, action);
+    stateRef.current = reducer(stateRef.current, injected);
+    dispatch(injected);
+    await persistAction(injected);
+  }, [persistAction]);
+  const enqueuePersistenceBatch = useMemo(
+    () => createActionPersistenceQueue(applyQueuedAction, refreshState),
+    [applyQueuedAction, refreshState],
+  );
+  // 网络写入以“整批”为队列原子，normal/undo/redo 共用同一 happens-before 链。
+  const applyBatch = enqueuePersistenceBatch;
+  const undoStack = useRef<HistoryItem[]>([]);
+  const redoStack = useRef<HistoryItem[]>([]);
+  const historyLock = useRef<HistoryTransitionLock>({ busy: false });
+  const historyRevision = useRef(0);
   // 用户操作：先算逆 action 入撤销栈（前后各 10 次），再落地
   const act = useCallback((action: Action) => {
     const inv = computeInverse(action, stateRef.current);
     if (inv && inv.length) {
       undoStack.current.push({ redo: [action], undo: inv });
       if (undoStack.current.length > 10) undoStack.current.shift();
-      redoStack.current = [];
     }
-    applyRaw(action);
-  }, [applyRaw]);
-  const undo = useCallback(() => {
-    const item = undoStack.current.pop();
-    if (!item) { setUndoHint('⊘ 没有可撤销的操作'); return; }
-    item.undo.forEach((x) => applyRaw(x));
-    redoStack.current.push(item);
-    if (redoStack.current.length > 10) redoStack.current.shift();
+    redoStack.current.length = 0;
+    historyRevision.current += 1;
+    void applyBatch([action]).catch(() => { /* persistAction 已展示错误；队列已挂 rejection handler */ });
+  }, [applyBatch]);
+  const undo = useCallback(async () => {
+    const revision = historyRevision.current;
+    const result = await transitionHistory(undoStack.current, redoStack.current, 'undo', applyBatch, undefined, {
+      lock: historyLock.current,
+      canMoveToDestination: () => historyRevision.current === revision,
+    });
+    if (result === 'empty') { setUndoHint('⊘ 没有可撤销的操作'); return; }
+    if (result === 'busy') { setUndoHint('⏳ 撤销/重做正在同步，请稍候'); return; }
+    if (result === 'failed') { setUndoHint('⚠️ 撤销未完成，已尝试刷新云端真实状态'); return; }
     setUndoHint(`↶ 已撤销 · 还可撤销 ${undoStack.current.length} 步`);
-  }, [applyRaw]);
-  const redo = useCallback(() => {
-    const item = redoStack.current.pop();
-    if (!item) { setUndoHint('⊘ 没有可重做的操作'); return; }
-    item.redo.forEach((x) => applyRaw(x));
-    undoStack.current.push(item);
-    if (undoStack.current.length > 10) undoStack.current.shift();
+  }, [applyBatch]);
+  const redo = useCallback(async () => {
+    const revision = historyRevision.current;
+    const result = await transitionHistory(redoStack.current, undoStack.current, 'redo', applyBatch, undefined, {
+      lock: historyLock.current,
+      canRestoreToSource: () => historyRevision.current === revision,
+    });
+    if (result === 'empty') { setUndoHint('⊘ 没有可重做的操作'); return; }
+    if (result === 'busy') { setUndoHint('⏳ 撤销/重做正在同步，请稍候'); return; }
+    if (result === 'failed') { setUndoHint('⚠️ 重做未完成，已尝试刷新云端真实状态'); return; }
     setUndoHint(`↷ 已重做 · 还可重做 ${redoStack.current.length} 步`);
-  }, [applyRaw]);
+  }, [applyBatch]);
   // 全局快捷键：Ctrl/Cmd+Z 撤销 · Ctrl/Cmd+Shift+Z 或 Ctrl+Y 重做（输入框内不拦截）
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

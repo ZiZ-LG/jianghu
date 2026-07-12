@@ -2,7 +2,7 @@
 // ① injectBaseVersion 在 dispatch 前正确取出实体当前 version 作 baseVersion；
 // ② reducer 对 UPDATE_PERSON/OPP/EDGE 乐观自增 version，保持本地与服务端步调一致。
 import { describe, it, expect } from 'vitest';
-import { reducer, injectBaseVersion, type Action, type StoreState } from './store';
+import { applyActionsSequentially, computeInverse, reducer, injectBaseVersion, type Action, type StoreState } from './store';
 import type { Account } from './types';
 
 function baseState(): StoreState {
@@ -112,5 +112,299 @@ describe('account profile provenance', () => {
       business: 'Human verified business',
       group: 'Keep group',
     });
+  });
+});
+
+function planActionReferenceState(): StoreState {
+  const state = baseState();
+  state.accounts[0].planActions = [
+    {
+      id: 'plan-delete', accountId: 'acc1', opportunityId: 'opp1', title: 'Delete me',
+      startDate: '2026-07-12', endDate: '2026-07-12', half: 'am', done: false,
+    },
+    {
+      id: 'plan-keep-before', accountId: 'acc1', opportunityId: 'opp1', title: 'Keep before',
+      startDate: '2026-07-13', endDate: '2026-07-13', half: 'am', done: false,
+    },
+    {
+      id: 'plan-keep-after', accountId: 'acc1', opportunityId: 'opp1', title: 'Keep after',
+      startDate: '2026-07-14', endDate: '2026-07-14', half: 'pm', done: false,
+    },
+  ];
+  state.accounts[0].strategyCards = [
+    {
+      id: 'card-one', accountId: 'acc1', opportunityId: 'opp1', title: 'Card one',
+      dispatchedActionIds: ['plan-keep-before', 'plan-delete', 'plan-keep-after', 'plan-delete'],
+    },
+    {
+      id: 'card-two', accountId: 'acc1', opportunityId: 'opp1', title: 'Card two',
+      dispatchedActionIds: ['plan-delete'],
+    },
+    {
+      id: 'card-other-opp', accountId: 'acc1', opportunityId: 'opp-other', title: 'Other opp',
+      dispatchedActionIds: ['plan-delete'],
+    },
+  ];
+  return state;
+}
+
+describe('DELETE_PLAN_ACTION reverse references and undo', () => {
+  const action: Action = { type: 'DELETE_PLAN_ACTION', accId: 'acc1', actionId: 'plan-delete' };
+
+  it('optimistically removes the deleted id only from StrategyCards in the PlanAction Opportunity', () => {
+    const deleted = reducer(planActionReferenceState(), action);
+
+    expect(deleted.accounts[0].planActions?.map((item) => item.id)).toEqual(['plan-keep-before', 'plan-keep-after']);
+    expect(deleted.accounts[0].strategyCards?.map((card) => [card.id, card.dispatchedActionIds])).toEqual([
+      ['card-one', ['plan-keep-before', 'plan-keep-after']],
+      ['card-two', []],
+      ['card-other-opp', ['plan-delete']],
+    ]);
+  });
+
+  it('recreates the PlanAction first and then restores every exact prior card reference array', () => {
+    const before = planActionReferenceState();
+    const inverse = computeInverse(action, before);
+
+    expect(inverse).toEqual([
+      { type: 'ADD_PLAN_ACTION', accId: 'acc1', oppId: 'opp1', planAction: before.accounts[0].planActions?.[0] },
+      { type: 'UPDATE_STRATEGY_CARD', accId: 'acc1', cardId: 'card-one', patch: { dispatchedActionIds: ['plan-keep-before', 'plan-delete', 'plan-keep-after', 'plan-delete'] } },
+      { type: 'UPDATE_STRATEGY_CARD', accId: 'acc1', cardId: 'card-two', patch: { dispatchedActionIds: ['plan-delete'] } },
+    ]);
+
+    const deleted = reducer(before, action);
+    const restored = inverse!.reduce((state, inverseAction) => reducer(state, inverseAction), deleted);
+    expect(restored.accounts[0].planActions).toHaveLength(before.accounts[0].planActions!.length);
+    expect(restored.accounts[0].planActions?.find((item) => item.id === 'plan-delete')).toEqual(before.accounts[0].planActions?.[0]);
+    expect(restored.accounts[0].strategyCards).toEqual(before.accounts[0].strategyCards);
+  });
+
+  it('executes a dependent inverse batch sequentially', async () => {
+    const events: string[] = [];
+    await applyActionsSequentially([
+      { type: 'DELETE_PERSON', accId: 'acc1', personId: 'first' },
+      { type: 'DELETE_PERSON', accId: 'acc1', personId: 'second' },
+    ], async (item) => {
+      if (item.type !== 'DELETE_PERSON') throw new Error('unexpected action type');
+      events.push(`start:${item.personId}`);
+      await Promise.resolve();
+      events.push(`end:${item.personId}`);
+    });
+
+    expect(events).toEqual(['start:first', 'end:first', 'start:second', 'end:second']);
+  });
+
+  it('persists an immediate undo strictly after the delayed delete and keeps the inverse batch contiguous', async () => {
+    const storeModule = await import('./store');
+    const createQueue = (storeModule as unknown as {
+      createActionPersistenceQueue?: (apply: (action: Action) => Promise<void>) => (actions: readonly Action[]) => Promise<void>;
+    }).createActionPersistenceQueue;
+    expect(createQueue).toBeTypeOf('function');
+    if (!createQueue) return;
+
+    let releaseDelete!: () => void;
+    const deleteBlocked = new Promise<void>((resolve) => { releaseDelete = resolve; });
+    const calls: string[] = [];
+    const queue = createQueue(async (item) => {
+      calls.push(`start:${item.type}`);
+      if (item.type === 'DELETE_PLAN_ACTION') await deleteBlocked;
+      calls.push(`end:${item.type}`);
+    });
+    const deletePromise = queue([action]);
+    const undoPromise = queue([
+      { type: 'ADD_PLAN_ACTION', accId: 'acc1', oppId: 'opp1', planAction: planActionReferenceState().accounts[0].planActions![0] },
+      { type: 'UPDATE_STRATEGY_CARD', accId: 'acc1', cardId: 'card-one', patch: { dispatchedActionIds: ['plan-delete'] } },
+    ]);
+    const laterMutation = queue([{ type: 'DELETE_PERSON', accId: 'acc1', personId: 'later' }]);
+
+    await Promise.resolve();
+    expect(calls).toEqual(['start:DELETE_PLAN_ACTION']);
+    releaseDelete();
+    await Promise.all([deletePromise, undoPromise, laterMutation]);
+    expect(calls).toEqual([
+      'start:DELETE_PLAN_ACTION', 'end:DELETE_PLAN_ACTION',
+      'start:ADD_PLAN_ACTION', 'end:ADD_PLAN_ACTION',
+      'start:UPDATE_STRATEGY_CARD', 'end:UPDATE_STRATEGY_CARD',
+      'start:DELETE_PERSON', 'end:DELETE_PERSON',
+    ]);
+  });
+
+  for (const failureType of ['ADD_PLAN_ACTION', 'UPDATE_STRATEGY_CARD'] as const) {
+    it(`keeps the undo stack item, refreshes state, and stops after a rejected ${failureType}`, async () => {
+      const storeModule = await import('./store');
+      const transition = (storeModule as unknown as {
+        transitionHistory?: (
+          source: Array<{ redo: Action[]; undo: Action[] }>,
+          destination: Array<{ redo: Action[]; undo: Action[] }>,
+          direction: 'undo' | 'redo',
+          applyBatch: (actions: readonly Action[]) => Promise<void>,
+          refresh: () => Promise<void>,
+        ) => Promise<string>;
+      }).transitionHistory;
+      expect(transition).toBeTypeOf('function');
+      if (!transition) return;
+
+      const item = {
+        redo: [action],
+        undo: [
+          { type: 'ADD_PLAN_ACTION', accId: 'acc1', oppId: 'opp1', planAction: planActionReferenceState().accounts[0].planActions![0] },
+          { type: 'UPDATE_STRATEGY_CARD', accId: 'acc1', cardId: 'card-one', patch: { dispatchedActionIds: ['plan-delete'] } },
+          { type: 'UPDATE_STRATEGY_CARD', accId: 'acc1', cardId: 'card-two', patch: { dispatchedActionIds: ['plan-delete'] } },
+        ] satisfies Action[],
+      };
+      const undoStack = [item];
+      const redoStack: typeof undoStack = [];
+      const calls: string[] = [];
+      let refreshes = 0;
+
+      const result = await transition(
+        undoStack,
+        redoStack,
+        'undo',
+        (actions) => applyActionsSequentially(actions, async (candidate) => {
+          calls.push(candidate.type);
+          if (candidate.type === failureType) throw new Error('synthetic persistence failure');
+        }),
+        async () => { refreshes += 1; },
+      );
+
+      expect(result).toBe('failed');
+      expect(undoStack).toEqual([item]);
+      expect(redoStack).toEqual([]);
+      expect(refreshes).toBe(1);
+      expect(calls).toEqual(failureType === 'ADD_PLAN_ACTION'
+        ? ['ADD_PLAN_ACTION']
+        : ['ADD_PLAN_ACTION', 'UPDATE_STRATEGY_CARD']);
+    });
+  }
+
+  it('claims the exact history item before awaiting and does not pop a later normal action', async () => {
+    const storeModule = await import('./store');
+    const transition = (storeModule as unknown as {
+      transitionHistory: (
+        source: Array<{ redo: Action[]; undo: Action[] }>,
+        destination: Array<{ redo: Action[]; undo: Action[] }>,
+        direction: 'undo' | 'redo',
+        applyBatch: (actions: readonly Action[]) => Promise<void>,
+        refresh: () => Promise<void>,
+      ) => Promise<string>;
+    }).transitionHistory;
+    const original = { redo: [action], undo: [{ type: 'DELETE_PERSON', accId: 'acc1', personId: 'original' }] satisfies Action[] };
+    const later = { redo: [{ type: 'DELETE_PERSON', accId: 'acc1', personId: 'later' }] satisfies Action[], undo: [action] };
+    const undoStack: Array<{ redo: Action[]; undo: Action[] }> = [original];
+    const redoStack: typeof undoStack = [];
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+
+    const pending = transition(undoStack, redoStack, 'undo', async () => blocked, async () => {});
+    await Promise.resolve();
+    expect(undoStack).toEqual([]);
+    undoStack.push(later);
+    release();
+    await expect(pending).resolves.toBe('applied');
+    expect(undoStack).toEqual([later]);
+    expect(redoStack).toEqual([original]);
+  });
+
+  it('rejects a second concurrent history transition with the same mutex', async () => {
+    const storeModule = await import('./store');
+    const transition = (storeModule as unknown as {
+      transitionHistory: (
+        source: Array<{ redo: Action[]; undo: Action[] }>,
+        destination: Array<{ redo: Action[]; undo: Action[] }>,
+        direction: 'undo' | 'redo',
+        applyBatch: (actions: readonly Action[]) => Promise<void>,
+        refresh: () => Promise<void>,
+        options?: { lock?: { busy: boolean } },
+      ) => Promise<string>;
+    }).transitionHistory;
+    const item = { redo: [action], undo: [{ type: 'DELETE_PERSON', accId: 'acc1', personId: 'only' }] satisfies Action[] };
+    const source = [item];
+    const destination: typeof source = [];
+    const lock = { busy: false };
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+
+    const first = transition(source, destination, 'undo', async () => blocked, async () => {}, { lock });
+    await Promise.resolve();
+    await expect(transition(source, destination, 'undo', async () => {}, async () => {}, { lock })).resolves.toBe('busy');
+    release();
+    await expect(first).resolves.toBe('applied');
+    expect(source).toEqual([]);
+    expect(destination).toEqual([item]);
+  });
+
+  it('keeps a failed batch refresh inside the queue barrier before starting the next batch', async () => {
+    const storeModule = await import('./store');
+    const createQueue = (storeModule as unknown as {
+      createActionPersistenceQueue: (
+        apply: (action: Action) => Promise<void>,
+        onBatchFailure?: () => Promise<void>,
+      ) => (actions: readonly Action[]) => Promise<void>;
+    }).createActionPersistenceQueue;
+    const events: string[] = [];
+    let releaseRefresh!: () => void;
+    let markRefreshStarted!: () => void;
+    const refreshBlocked = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+    const refreshStarted = new Promise<void>((resolve) => { markRefreshStarted = resolve; });
+    const queue = createQueue(async (candidate) => {
+      events.push(`apply:${candidate.type}`);
+      if (candidate.type === 'ADD_PLAN_ACTION') throw new Error('synthetic batch failure');
+    }, async () => {
+      events.push('refresh:start');
+      markRefreshStarted();
+      await refreshBlocked;
+      events.push('refresh:end');
+    });
+
+    const failed = queue([{ type: 'ADD_PLAN_ACTION', accId: 'acc1', oppId: 'opp1', planAction: planActionReferenceState().accounts[0].planActions![0] }]);
+    const later = queue([{ type: 'DELETE_PERSON', accId: 'acc1', personId: 'later' }]);
+    await refreshStarted;
+    expect(events).toEqual(['apply:ADD_PLAN_ACTION', 'refresh:start']);
+    releaseRefresh();
+    await expect(failed).rejects.toThrow('synthetic batch failure');
+    await expect(later).resolves.toBeUndefined();
+    expect(events).toEqual([
+      'apply:ADD_PLAN_ACTION', 'refresh:start', 'refresh:end', 'apply:DELETE_PERSON',
+    ]);
+  });
+
+  it('does not resurrect a claimed redo item after a later normal action invalidates redo', async () => {
+    const storeModule = await import('./store');
+    const transition = (storeModule as unknown as {
+      transitionHistory: (
+        source: Array<{ redo: Action[]; undo: Action[] }>,
+        destination: Array<{ redo: Action[]; undo: Action[] }>,
+        direction: 'undo' | 'redo',
+        applyBatch: (actions: readonly Action[]) => Promise<void>,
+        refresh: (() => Promise<void>) | undefined,
+        options?: { canRestoreToSource?: () => boolean },
+      ) => Promise<string>;
+    }).transitionHistory;
+    const claimed = { redo: [action], undo: [{ type: 'DELETE_PERSON', accId: 'acc1', personId: 'claimed' }] satisfies Action[] };
+    const redoStack: Array<{ redo: Action[]; undo: Action[] }> = [claimed];
+    const undoStack: typeof redoStack = [];
+    let revision = 0;
+    const claimedRevision = revision;
+    let rejectRedo!: (error: Error) => void;
+    const blockedFailure = new Promise<void>((_resolve, reject) => { rejectRedo = reject; });
+
+    const pending = transition(
+      redoStack,
+      undoStack,
+      'redo',
+      async () => blockedFailure,
+      async () => {},
+      { canRestoreToSource: () => revision === claimedRevision },
+    );
+    await Promise.resolve();
+    expect(redoStack).toEqual([]);
+    revision += 1; // later normal act：清空 redo 并使旧 redo 永久失效
+    redoStack.length = 0;
+    rejectRedo(new Error('synthetic redo failure'));
+
+    await expect(pending).resolves.toBe('failed');
+    expect(redoStack).toEqual([]);
+    expect(undoStack).toEqual([]);
   });
 });

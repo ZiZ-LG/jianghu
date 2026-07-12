@@ -18,6 +18,7 @@ import { applyAction } from './mutate.js';
 import { scoreFromState, ITEM_LABEL, ITEM_MAX, type ItemKey } from './g64111.js';
 import { createFieldProposal } from './proposals.js';
 import { enqueueEnrichJob, enqueueSuggestJob, enqueueProfileJob } from './jobs.js';
+import { resolveScopedRelSuggestions } from './suggestionScope.js';
 
 // 每租户 pending 候选容量上限（防外部 agent 刷爆）
 const MAX_PENDING_PERSON_SUGG = 200;
@@ -490,6 +491,10 @@ async function proposePerson(tenantId: string, userId: string, args: Record<stri
   const title = str(args.title, 60);
   const orgLevel = Math.min(4, Math.max(1, Math.round(num(args.orgLevel) ?? 3)));
   const opportunityId = str(args.opportunityId) || null;
+  if (opportunityId) {
+    const opportunity = await prisma.opportunity.findFirst({ where: { id: opportunityId, tenantId, accountId } });
+    if (!opportunity) throw new Error('商机不存在或不属于该客户');
+  }
   const evidence = str(args.evidence, 500);
   const sourceUrl = str(args.sourceUrl, 500) || null;
   const confidence = Math.max(0, Math.min(1, num(args.confidence) ?? 0.5));
@@ -503,6 +508,10 @@ async function proposePerson(tenantId: string, userId: string, args: Record<stri
   // 应用层去重：同租户+同客户+同名+pending → 更新（取高 confidence、补 evidence），不新增
   const dup = await prisma.personSuggestion.findFirst({ where: { tenantId, accountId, name, status: 'pending' } });
   if (dup) {
+    if (dup.opportunityId) {
+      const duplicateOpportunity = await prisma.opportunity.findFirst({ where: { id: dup.opportunityId, tenantId, accountId } });
+      if (!duplicateOpportunity) throw new Error('现有同名候选的商机关联不属于该客户，已拒绝自动更新');
+    }
     await prisma.personSuggestion.update({
       where: { id: dup.id },
       data: { title: title || dup.title, evidence: evidence || dup.evidence, sourceUrl: sourceUrl ?? dup.sourceUrl, confidence: Math.max(dup.confidence, confidence), suggestedRole: suggestedRole ?? dup.suggestedRole, suggestedSentiment: suggestedSentiment ?? dup.suggestedSentiment },
@@ -547,15 +556,21 @@ async function proposeRelationship(tenantId: string, _userId: string, args: Reco
   // tenantId 隔离：商机必须属于本租户
   const opp = await prisma.opportunity.findFirst({ where: { id: opportunityId, tenantId } });
   if (!opp) throw new Error('商机不存在或不属于当前工作区');
+  const account = await prisma.account.findFirst({ where: { id: opp.accountId, tenantId } });
+  if (!account) throw new Error('商机所属客户不存在或不属于当前工作区');
 
-  // 校验两端点存在且属于本租户（person → Person 表；suggestion → PersonSuggestion 表）
+  // 校验两端点存在且属于该商机的 Account（person → Person 表；suggestion → PersonSuggestion 表）
   const checkEndpoint = async (e: { kind: string; id: string }, role: string) => {
     if (e.kind === 'person') {
-      const p = await prisma.person.findFirst({ where: { id: e.id, tenantId } });
-      if (!p) throw new Error(`${role}端点（正式干系人 ${e.id}）不存在或不属于当前工作区`);
+      const p = await prisma.person.findFirst({ where: { id: e.id, tenantId, accountId: opp.accountId } });
+      if (!p) throw new Error(`${role}端点（正式干系人 ${e.id}）不存在或不属于该商机客户`);
     } else {
-      const s = await prisma.personSuggestion.findFirst({ where: { id: e.id, tenantId } });
-      if (!s) throw new Error(`${role}端点（候选干系人 ${e.id}）不存在或不属于当前工作区`);
+      const s = await prisma.personSuggestion.findFirst({ where: { id: e.id, tenantId, accountId: opp.accountId } });
+      if (!s) throw new Error(`${role}端点（候选干系人 ${e.id}）不存在或不属于该商机客户`);
+      if (s.opportunityId) {
+        const candidateOpportunity = await prisma.opportunity.findFirst({ where: { id: s.opportunityId, tenantId, accountId: opp.accountId } });
+        if (!candidateOpportunity) throw new Error(`${role}端点（候选干系人 ${e.id}）的商机关联不属于该商机客户`);
+      }
     }
   };
   await checkEndpoint(source, 'source');
@@ -593,10 +608,11 @@ async function listPending(tenantId: string, accountId: string) {
     relWhere.opportunityId = { in: opps.map((o) => o.id) };
   }
   const rels = await prisma.relSuggestion.findMany({ where: relWhere, orderBy: { createdAt: 'desc' }, take: 100 });
+  const scopedRels = await resolveScopedRelSuggestions(prisma, tenantId, rels);
 
   return {
     pendingPersons: persons.map((p) => ({ id: p.id, accountId: p.accountId, name: p.name, title: p.title, orgLevel: p.orgLevel, evidence: p.evidence, sourceUrl: p.sourceUrl ?? undefined, confidence: p.confidence })),
-    pendingRelationships: rels.map((r) => ({ id: r.id, opportunityId: r.opportunityId, source: { kind: r.sourceKind, id: r.sourcePersonId }, target: { kind: r.targetKind, id: r.targetPersonId }, layer: r.layer, label: r.label, evidence: r.evidence, confidence: r.confidence })),
+    pendingRelationships: scopedRels.map(({ row: r }) => ({ id: r.id, opportunityId: r.opportunityId, source: { kind: r.sourceKind, id: r.sourcePersonId }, target: { kind: r.targetKind, id: r.targetPersonId }, layer: r.layer, label: r.label, evidence: r.evidence, confidence: r.confidence })),
   };
 }
 
@@ -881,7 +897,7 @@ async function setOpportunityRoles(ctx: CommandContext, args: Record<string, unk
     // human-wins（对齐 voice.ts）：sentiment 是趋赢力最大权重输入——已有干系人的支持度变更 → 进收件箱待人审，
     // 不静默改分；首次设置 → 直写；unknown/无效 → 不动既有 sentiment（防机器用"未知"覆盖人审过的支持度）。
     const newSent = VALID_SENT.includes(str(r?.sentiment)) ? str(r?.sentiment) : undefined;
-    const cur = await prisma.oppRole.findUnique({ where: { opportunityId_personId: { opportunityId: opp.id, personId: person.id } } });
+    const cur = await prisma.oppRole.findUnique({ where: { tenantId_opportunityId_personId: { tenantId, opportunityId: opp.id, personId: person.id } } });
     let sentimentProposed = false;
     if (newSent && newSent !== 'unknown') {
       if (cur && cur.sentiment !== newSent) {

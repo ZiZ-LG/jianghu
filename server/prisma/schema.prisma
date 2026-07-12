@@ -97,6 +97,7 @@ model Account {
   opportunities     Opportunity[]
   edges             Edge[]
 
+  @@unique([tenantId, id])
   @@index([tenantId])
 }
 
@@ -118,7 +119,9 @@ model Person {
   logs         String  @default("[]") // JSON
   version      Int     @default(0) // 乐观锁：内容编辑并发冲突检测（UPDATE_PERSON）
 
+  @@unique([tenantId, id])
   @@index([accountId])
+  @@index([tenantId, accountId])
 }
 
 model Opportunity {
@@ -155,7 +158,9 @@ model Opportunity {
   suggestions          RelSuggestion[]
   members              OpportunityMember[]
 
+  @@unique([tenantId, id])
   @@index([accountId])
+  @@index([tenantId, accountId])
 }
 
 // AI 关系推断候选（待人审）。绝不自动写库，accept 后才生成正式 Edge。
@@ -223,7 +228,9 @@ model OppRole {
   assessedAt        DateTime?   // 立场评估时点（时间衰减基准；null=未记录→不衰减，SET_ROLE 改 sentiment/confidence 时自动刷新）
   sourceQuality     Float       @default(1.0) // 信源质量（教练五级映射预留，v1 恒 1.0）
 
-  @@unique([opportunityId, personId])
+  @@unique([tenantId, opportunityId, personId])
+  @@index([tenantId, opportunityId])
+  @@index([tenantId, personId])
 }
 
 // 商机成员：哪些干系人在该商机可见（仅当 Opportunity.memberScoped=true 生效）。关联表，跨库可移植。
@@ -234,8 +241,10 @@ model OpportunityMember {
   opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
   personId      String
 
-  @@unique([opportunityId, personId])
+  @@unique([tenantId, opportunityId, personId])
   @@index([opportunityId])
+  @@index([tenantId, opportunityId])
+  @@index([tenantId, personId])
 }
 
 model Edge {
@@ -259,6 +268,10 @@ model Edge {
   version       Int          @default(0) // 乐观锁：连线编辑并发冲突检测（UPDATE_EDGE）
 
   @@index([accountId])
+  @@index([tenantId, accountId])
+  @@index([tenantId, opportunityId])
+  @@index([tenantId, source])
+  @@index([tenantId, target])
 }
 
 model BurningIssue {
@@ -271,6 +284,9 @@ model BurningIssue {
   category      String
   isPrivate     Boolean     @default(true)
   confidence    String
+
+  @@index([tenantId, opportunityId, personId])
+  @@index([tenantId, personId])
 }
 
 model UCV {
@@ -282,6 +298,9 @@ model UCV {
   description      String
   competitorCannot String
   status           String
+
+  @@index([tenantId, opportunityId, targetBiId])
+  @@index([tenantId, targetBiId])
 }
 
 // 拜访记录（销售包核心产出，做一等模型）。与 Account 不建 Prisma relation——
@@ -302,6 +321,8 @@ model VisitNote {
 
   @@index([accountId])
   @@index([opportunityId])
+  @@index([tenantId, accountId])
+  @@index([tenantId, opportunityId])
 }
 
 // 通用「自由文本层」载体（P0 · 架构纲领 §4.2）：零散/长尾信息的家。
@@ -321,6 +342,9 @@ model Note {
   @@index([accountId])
   @@index([opportunityId])
   @@index([personId])
+  @@index([tenantId, accountId])
+  @@index([tenantId, opportunityId])
+  @@index([tenantId, personId])
 }
 
 // 商机策划 · 行动计划（🎯）。与 Account 不建 relation，state.ts 按 accountId 挂载（同 VisitNote）。
@@ -353,6 +377,9 @@ model PlanAction {
 
   @@index([accountId])
   @@index([opportunityId])
+  @@index([tenantId, accountId])
+  @@index([tenantId, opportunityId])
+  @@index([tenantId, personId])
 }
 
 // 商机策划 · 商机里程碑（🚩）。轻量，可多个/自由增删。同样按 accountId 挂载。
@@ -369,6 +396,8 @@ model OppMilestone {
 
   @@index([accountId])
   @@index([opportunityId])
+  @@index([tenantId, accountId])
+  @@index([tenantId, opportunityId])
 }
 
 // 商机策划 · 阶段段（年视图，模型 B）。商机阶段 = 时间轴上一串阶段段，允许同名重复/降级回退。
@@ -384,6 +413,8 @@ model OppStage {
 
   @@index([accountId])
   @@index([opportunityId])
+  @@index([tenantId, accountId])
+  @@index([tenantId, opportunityId])
 }
 
 // ───────── 策略沙盘（推演段：关系地图 → 沙盘 → 行动策划 的中间「桥」）─────────
@@ -409,6 +440,9 @@ model StrategyCard {
 
   @@index([accountId])
   @@index([opportunityId])
+  @@index([tenantId, accountId])
+  @@index([tenantId, opportunityId])
+  @@index([tenantId, personId])
 }
 
 // 风险/假设。kind 区分二者（语义正交，不塞并列文本字段）。
@@ -427,6 +461,8 @@ model StrategyRisk {
 
   @@index([accountId])
   @@index([opportunityId])
+  @@index([tenantId, accountId])
+  @@index([tenantId, opportunityId])
 }
 
 // 轻量弹药清单（沙盘内自由列举，不建全局资源库/配额调度）。
@@ -442,6 +478,8 @@ model StrategyResource {
 
   @@index([accountId])
   @@index([opportunityId])
+  @@index([tenantId, accountId])
+  @@index([tenantId, opportunityId])
 }
 
 // 策略引擎 · 证据事件（E2）。每条证据 → 三态伪计数增量，喂局势分布。
@@ -467,6 +505,9 @@ model EvidenceEvent {
 
   @@index([accountId])
   @@index([opportunityId])
+  @@index([tenantId, accountId])
+  @@index([tenantId, opportunityId])
+  @@index([tenantId, personId])
 }
 
 // 统一变更提案（机器写初稿·人审 v2.0）：机器对【已有实体字段】的更新先进此表（非静默覆盖），

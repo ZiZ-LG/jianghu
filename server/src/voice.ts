@@ -246,7 +246,7 @@ export async function ingestVoiceText(baseCtx: CommandContext, input: IngestInpu
     // v2.0 提案层：机器改【已有干系人的已有支持度】→ 进 ChangeProposal 待人审（不静默改分，守差距分析红线）；
     // 新建/首次设角色 → 直写（无"覆盖人改"问题）。role 不在 v2.0 提案范围，已有角色保持不动。
     if (isExisting && newSent !== 'unknown') {
-      const cur = await prisma.oppRole.findUnique({ where: { opportunityId_personId: { opportunityId: opp.id, personId } } });
+      const cur = await prisma.oppRole.findUnique({ where: { tenantId_opportunityId_personId: { tenantId, opportunityId: opp.id, personId } } });
       if (cur && cur.sentiment !== newSent) {
         await createFieldProposal(tenantId, { accountId: acc!.id, opportunityId: opp.id, entityKind: 'oppRole', entityId: personId, field: 'sentiment', oldValue: cur.sentiment, newValue: newSent, origin: src.origin, evidence: `${src.word}推断：${name} 的支持度疑似变化`, confidence: 0.6, proposedBy: userId });
         receipt.proposals = (receipt.proposals ?? 0) + 1;

@@ -10,8 +10,9 @@ import { z } from 'zod';
 import { ActionSchema, ActorRoleSchema, type CommandContext } from '@jianghu/domain-contracts';
 import { prisma } from './prisma.js';
 import { authRoutes } from './auth.js';
-import { assembleState } from './state.js';
+import { assembleState, type StateSecurityWarning } from './state.js';
 import { applyAction } from './mutate.js';
+import { ScopedNotFoundError } from './mutation/scopeGuards.js';
 import { createDemoForTenant } from './seed-demo.js';
 import { aiRoutes } from './ai.js';
 import { suggestRoutes } from './suggest.js';
@@ -92,10 +93,16 @@ function registerRoutes(app: FastifyInstance): void {
   // ── 数据：拉取整树 / 应用变更 ──
   // viewer（只读投影）：只下发名下客户（primaryOwner === 姓名）；User.name 有 min(1) 校验，
   // 空名兜底传不可能匹配的哨兵，绝不让空串匹配到"未归属"客户。
-  app.get('/api/state', { preHandler: [app.authenticate] }, async (req) =>
-    req.user.role === 'viewer'
-      ? assembleState(req.user.tenantId, { primaryOwner: req.user.name || '\u0000' })
-      : assembleState(req.user.tenantId));
+  app.get('/api/state', { preHandler: [app.authenticate] }, async (req) => {
+    const stateOptions = {
+      onSecurityWarning: (warning: StateSecurityWarning) => {
+        req.log.warn(warning, 'state scope rows dropped');
+      },
+    };
+    return req.user.role === 'viewer'
+      ? assembleState(req.user.tenantId, { primaryOwner: req.user.name || '\u0000' }, stateOptions)
+      : assembleState(req.user.tenantId, undefined, stateOptions);
+  });
 
   app.post('/api/mutate', { preHandler: [app.authenticate] }, async (req, reply) => {
     // 写总入口：applyAction 全是写操作（create/update/delete），viewer 只读须一律拒绝；owner/admin/member 放行（对齐 /api/members 的 RBAC）
@@ -118,6 +125,9 @@ function registerRoutes(app: FastifyInstance): void {
       return { ok: true };
     } catch (e: any) {
       req.log.warn(e);
+      if (e instanceof ScopedNotFoundError || e?.scopedNotFound === true) {
+        return reply.code(404).send({ error: '资源不存在' });
+      }
       // 乐观锁冲突 → 409，前端据此提示并重拉整树（区别于 400 的参数/业务错误）
       if (e?.conflict) return reply.code(409).send({ error: e.message || '该数据已被其他成员修改，请刷新后重试' });
       return reply.code(400).send({ error: '应用变更失败' });
