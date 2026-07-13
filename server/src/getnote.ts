@@ -2,6 +2,8 @@
 // 只拉录音/会议笔记的转写正文(audio.original)，不碰音频、不自建 ASR。出站调用，无需公网回调。
 // 文档：https://www.biji.com/openapi ；base https://openapi.biji.com 。
 
+import { deploymentOutboundPolicy, fetchOutbound } from './security/outboundUrl.js';
+
 const GETNOTE_BASE = 'https://openapi.biji.com';
 
 export interface GetnoteCred { apiKey: string; clientId: string; baseUrl?: string }
@@ -9,9 +11,9 @@ export interface GetnoteNote { id: string; title: string; type: string }
 
 async function gnFetch(cred: GetnoteCred, path: string): Promise<any> {
   const base = (cred.baseUrl || GETNOTE_BASE).replace(/\/+$/, '');
-  const res = await fetch(base + path, {
+  const res = await fetchOutbound(base + path, {
     headers: { Authorization: cred.apiKey, 'X-Client-ID': cred.clientId },
-  });
+  }, deploymentOutboundPolicy(), { timeoutMs: 20_000, maxResponseBytes: 2_097_152 });
   const d: any = await res.json().catch(() => ({}));
   if (!res.ok || (typeof d.code === 'number' && d.code !== 0)) {
     throw new Error(`得到大脑 API 失败：${d.message || d.msg || d.error || `HTTP ${res.status}`}`);

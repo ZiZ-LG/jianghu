@@ -3,14 +3,17 @@ import crypto from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
 import { denyViewer } from './scope.js';
+import { deploymentOutboundPolicy, fetchOutbound } from './security/outboundUrl.js';
 
 // ── 加密（AES-256-GCM）：用用户自己的 Key，服务端只加密代管 ──
-const SECRET = process.env.AI_KEY_SECRET || 'dev-ai-secret-change-in-production';
-const KEY = crypto.createHash('sha256').update(SECRET).digest();
+function encryptionKey(): Buffer {
+  const secret = process.env.AI_KEY_SECRET || 'dev-ai-secret-change-in-production';
+  return crypto.createHash('sha256').update(secret).digest();
+}
 export function enc(text: string): string {
   if (!text) return '';
   const iv = crypto.randomBytes(12);
-  const c = crypto.createCipheriv('aes-256-gcm', KEY, iv);
+  const c = crypto.createCipheriv('aes-256-gcm', encryptionKey(), iv);
   const ct = Buffer.concat([c.update(text, 'utf8'), c.final()]);
   return Buffer.concat([iv, c.getAuthTag(), ct]).toString('base64');
 }
@@ -19,7 +22,7 @@ export function dec(b64: string): string {
   try {
     const buf = Buffer.from(b64, 'base64');
     const iv = buf.subarray(0, 12), tag = buf.subarray(12, 28), ct = buf.subarray(28);
-    const d = crypto.createDecipheriv('aes-256-gcm', KEY, iv);
+    const d = crypto.createDecipheriv('aes-256-gcm', encryptionKey(), iv);
     d.setAuthTag(tag);
     return Buffer.concat([d.update(ct), d.final()]).toString('utf8');
   } catch { return ''; }
@@ -83,11 +86,11 @@ export async function loadAiConfig(tenantId: string): Promise<{ provider: string
 
 export async function callLLM(cfg: { baseUrl: string; model: string; apiKey: string }, system: string, user: string, maxTokens = 900): Promise<string> {
   const url = cfg.baseUrl.replace(/\/+$/, '') + '/chat/completions';
-  const res = await fetch(url, {
+  const res = await fetchOutbound(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}) },
     body: JSON.stringify({ model: cfg.model, messages: [{ role: 'system', content: system }, { role: 'user', content: user }], temperature: 0.4, max_tokens: maxTokens, stream: false }),
-  });
+  }, deploymentOutboundPolicy(), { timeoutMs: 20_000, maxResponseBytes: 1_048_576 });
   const data: any = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.error?.message || data?.message || `模型返回 HTTP ${res.status}`);
   return data?.choices?.[0]?.message?.content || '(模型无返回内容)';

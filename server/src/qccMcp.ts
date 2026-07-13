@@ -4,6 +4,8 @@
 //                                     "headers": { "Authorization": "Bearer <KEY>" } }, ... } }
 // 我们从中取「企业基座 company」服务器的 url + Bearer token，调用其关键人员工具做自动建图。
 
+import { deploymentOutboundPolicy, fetchOutbound } from './security/outboundUrl.js';
+
 interface DiscoveredPerson { name: string; title: string; }
 
 export interface QccMcpConfig {
@@ -37,7 +39,7 @@ export function parseQccMcpConfig(raw: string): QccMcpConfig {
 
 // ── MCP streamable-HTTP 调用：发一个 JSON-RPC 请求，解析 SSE / JSON 响应 ──
 async function rpc(cfg: QccMcpConfig, body: any, sessionId?: string): Promise<{ json: any; sessionId?: string }> {
-  const res = await fetch(cfg.url, {
+  const res = await fetchOutbound(cfg.url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -46,7 +48,7 @@ async function rpc(cfg: QccMcpConfig, body: any, sessionId?: string): Promise<{ 
       ...(sessionId ? { 'Mcp-Session-Id': sessionId } : {}),
     },
     body: JSON.stringify(body),
-  });
+  }, deploymentOutboundPolicy(), { timeoutMs: 20_000, maxResponseBytes: 2_097_152 });
   const sid = res.headers.get('mcp-session-id') || sessionId;
   const text = await res.text();
   if (!res.ok) throw new Error(`MCP HTTP ${res.status}：${text.slice(0, 120)}`);
@@ -78,14 +80,14 @@ async function mcpSession(cfg: QccMcpConfig): Promise<string | undefined> {
   const sessionId = init.sessionId;
   if (init.json?.error) throw new Error(init.json.error?.message || 'MCP 初始化失败（Token 可能无效）');
   try {
-    await fetch(cfg.url, {
+    await fetchOutbound(cfg.url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream',
         'Authorization': `Bearer ${cfg.token}`, ...(sessionId ? { 'Mcp-Session-Id': sessionId } : {}),
       },
       body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
-    });
+    }, deploymentOutboundPolicy(), { timeoutMs: 20_000, maxResponseBytes: 262_144 });
   } catch { /* 通知失败不影响后续调用 */ }
   return sessionId;
 }

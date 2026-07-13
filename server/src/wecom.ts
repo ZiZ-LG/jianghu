@@ -11,6 +11,7 @@ import { denyViewer } from './scope.js';
 import { enc, dec } from './ai.js';
 import { scoreFromState } from './g64111.js';
 import { wecomSignature, decryptWecomMsg, xmlTag } from './wecomCrypt.js';
+import { deploymentOutboundPolicy, fetchOutbound } from './security/outboundUrl.js';
 
 const QYAPI = 'https://qyapi.weixin.qq.com';
 
@@ -23,7 +24,7 @@ const tokenCache = new Map<string, { token: string; exp: number }>();
 export async function getAccessToken(corpId: string, secret: string): Promise<string> {
   const cached = tokenCache.get(corpId);
   if (cached && cached.exp > Date.now() + 60_000) return cached.token;
-  const res = await fetch(`${QYAPI}/cgi-bin/gettoken?corpid=${encodeURIComponent(corpId)}&corpsecret=${encodeURIComponent(secret)}`);
+  const res = await fetchOutbound(`${QYAPI}/cgi-bin/gettoken?corpid=${encodeURIComponent(corpId)}&corpsecret=${encodeURIComponent(secret)}`, {}, deploymentOutboundPolicy(), { timeoutMs: 15_000, maxResponseBytes: 1_048_576 });
   const d: any = await res.json().catch(() => ({}));
   if (d.errcode !== 0 || !d.access_token) throw new Error(`企微 access_token 获取失败：${d.errmsg || d.errcode || `HTTP ${res.status}`}`);
   tokenCache.set(corpId, { token: d.access_token, exp: Date.now() + Number(d.expires_in || 7200) * 1000 });
@@ -42,7 +43,7 @@ export function buildWecomAuthUrl(corpId: string, agentId: string, redirectUri: 
 /** 用授权 code 换企微 userid（auth/getuserinfo）。 */
 export async function exchangeCodeToUserid(corpId: string, secret: string, code: string): Promise<string> {
   const token = await getAccessToken(corpId, secret);
-  const res = await fetch(`${QYAPI}/cgi-bin/auth/getuserinfo?access_token=${encodeURIComponent(token)}&code=${encodeURIComponent(code)}`);
+  const res = await fetchOutbound(`${QYAPI}/cgi-bin/auth/getuserinfo?access_token=${encodeURIComponent(token)}&code=${encodeURIComponent(code)}`, {}, deploymentOutboundPolicy(), { timeoutMs: 15_000, maxResponseBytes: 1_048_576 });
   const d: any = await res.json().catch(() => ({}));
   if (d.errcode !== 0 || !d.userid) throw new Error(`企微 getuserinfo 失败：${d.errmsg || d.errcode}（确认应用可信域名 + 成员在可见范围）`);
   return String(d.userid);
@@ -60,9 +61,9 @@ export interface WeComSchedule {
 }
 
 async function callApi(token: string, path: string, body: any): Promise<any> {
-  const res = await fetch(`${QYAPI}${path}?access_token=${encodeURIComponent(token)}`, {
+  const res = await fetchOutbound(`${QYAPI}${path}?access_token=${encodeURIComponent(token)}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-  });
+  }, deploymentOutboundPolicy(), { timeoutMs: 15_000, maxResponseBytes: 1_048_576 });
   const d: any = await res.json().catch(() => ({}));
   if (d.errcode !== 0) throw new Error(`企微接口失败：${d.errmsg || d.errcode}（${path}）`);
   return d;

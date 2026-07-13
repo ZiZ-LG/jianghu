@@ -17,17 +17,18 @@
     "generate": "prisma generate"
   },
   "dependencies": {
-    "@fastify/cors": "^9.0.1",
-    "@fastify/helmet": "^11.1.1",
-    "@fastify/jwt": "^8.0.1",
-    "@fastify/multipart": "^8.3.1",
-    "@fastify/rate-limit": "^9.1.0",
+    "@fastify/cors": "^11.3.0",
+    "@fastify/helmet": "^13.1.0",
+    "@fastify/jwt": "^10.2.0",
+    "@fastify/multipart": "^10.1.0",
+    "@fastify/rate-limit": "^11.1.0",
     "@jianghu/domain-contracts": "file:../packages/domain-contracts",
     "@prisma/client": "^5.22.0",
     "bcryptjs": "^2.4.3",
-    "fastify": "^4.28.1",
+    "fastify": "^5.10.0",
     "mammoth": "^1.12.0",
     "pde-kernel": "file:../packages/pde-kernel",
+    "undici": "^7.28.0",
     "unpdf": "^1.6.2",
     "zod": "^3.23.8"
   },
@@ -37,6 +38,11 @@
     "prisma": "^5.22.0",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",
-    "vitest": "^1.6.0"
+    "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "esbuild": "^0.28.1",
+    "vite": "^8.1.4",
+    "vitest": "^4.1.10"
   }
 }

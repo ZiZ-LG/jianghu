@@ -6,8 +6,6 @@ export default defineConfig({
     fileParallelism: false,
     setupFiles: ['./tests/helpers/testDb.ts'],
     pool: 'forks',
-    poolOptions: {
-      forks: { singleFork: true },
-    },
+    maxWorkers: 1,
   },
 });

@@ -1,14 +1,14 @@
 import { buildApp } from './app.js';
 import { startJobWorker, startPatrol } from './jobs.js';
+import { validateProductionConfig } from './security/productionConfig.js';
 
 // 加载本地 .env（生产环境用真实环境变量，文件不存在则忽略）
 try { process.loadEnvFile(); } catch { /* no .env in prod */ }
 
-const isProd = process.env.NODE_ENV === 'production';
-const jwtSecret = process.env.JWT_SECRET || 'dev-secret-change-in-production';
-// 生产环境拒绝以默认开发密钥启动（默认密钥 = 任何人可伪造登录态）
-if (isProd && jwtSecret === 'dev-secret-change-in-production') {
-  console.error('[安全] 生产环境必须设置强随机 JWT_SECRET（openssl rand -hex 32），已拒绝启动');
+try {
+  validateProductionConfig(process.env);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : '[安全] 生产配置无效');
   process.exit(1);
 }
 

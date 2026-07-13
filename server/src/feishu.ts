@@ -3,6 +3,8 @@
 // 江湖只拉转写文字(transcript:export)，不碰音视频、不自建 ASR。
 // ⚠️ OAuth token 端点用飞书 v2 标准；妙记 list/transcript 端点据开放平台文档推断，标 TODO 待公网真机校准。
 
+import { deploymentOutboundPolicy, fetchOutbound } from './security/outboundUrl.js';
+
 const FEISHU_OPEN = 'https://open.feishu.cn';
 const FEISHU_ACCOUNTS = 'https://accounts.feishu.cn';
 
@@ -32,11 +34,11 @@ export function buildFeishuAuthUrl(appId: string, redirectUri: string, state: st
 
 // 飞书 OAuth v2 token 端点：授权码 / 刷新 共用，按 grant_type 区分。
 async function tokenRequest(body: Record<string, string>): Promise<FeishuToken> {
-  const res = await fetch(`${FEISHU_OPEN}/open-apis/authen/v2/oauth/token`, {
+  const res = await fetchOutbound(`${FEISHU_OPEN}/open-apis/authen/v2/oauth/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json; charset=utf-8' },
     body: JSON.stringify(body),
-  });
+  }, deploymentOutboundPolicy(), { timeoutMs: 20_000, maxResponseBytes: 1_048_576 });
   const d: any = await res.json().catch(() => ({}));
   // 飞书成功返回 code=0；HTTP 非 2xx 或 code≠0 视为失败
   if (!res.ok || (typeof d.code === 'number' && d.code !== 0)) {
@@ -98,7 +100,7 @@ export interface FeishuMinuteData { title: string; durationSec: number; transcri
 export async function getFeishuMinute(accessToken: string, minuteToken: string): Promise<FeishuMinuteData> {
   const auth = { Authorization: `Bearer ${accessToken}` };
   // 1) 元信息：确认 token 有效 + 拿标题/时长（GET /minutes/v1/minutes/:token 已确认可用）
-  const metaRes = await fetch(`${FEISHU_OPEN}/open-apis/minutes/v1/minutes/${encodeURIComponent(minuteToken)}`, { headers: auth });
+  const metaRes = await fetchOutbound(`${FEISHU_OPEN}/open-apis/minutes/v1/minutes/${encodeURIComponent(minuteToken)}`, { headers: auth }, deploymentOutboundPolicy(), { timeoutMs: 20_000, maxResponseBytes: 1_048_576 });
   const meta: any = await metaRes.json().catch(() => ({}));
   if (!metaRes.ok || (typeof meta.code === 'number' && meta.code !== 0)) {
     throw new Error(`获取妙记信息失败：${meta.msg || meta.error_description || `HTTP ${metaRes.status}`}（请确认链接正确、且该妙记属于授权账号）`);
@@ -109,7 +111,7 @@ export async function getFeishuMinute(accessToken: string, minuteToken: string):
   const durationSec = durRaw > 100000 ? Math.round(durRaw / 1000) : durRaw; // duration 可能是毫秒
 
   // 2) 转写正文（transcript:export）。⚠️端点待真机校准——失败回显飞书原始响应。
-  const tRes = await fetch(`${FEISHU_OPEN}/open-apis/minutes/v1/minutes/${encodeURIComponent(minuteToken)}/transcript?need_speaker=true&need_timestamp=false&file_format=txt`, { headers: auth });
+  const tRes = await fetchOutbound(`${FEISHU_OPEN}/open-apis/minutes/v1/minutes/${encodeURIComponent(minuteToken)}/transcript?need_speaker=true&need_timestamp=false&file_format=txt`, { headers: auth }, deploymentOutboundPolicy(), { timeoutMs: 30_000, maxResponseBytes: 5_242_880 });
   const ct = tRes.headers.get('content-type') || '';
   if (!tRes.ok) {
     const body = (await tRes.text().catch(() => '')).slice(0, 300);
@@ -137,11 +139,11 @@ export interface FeishuMinuteBrief { token: string; title: string; createTime: n
  * query 传「【拜访】」让飞书侧先粗筛标题，江湖再精确 startsWith 过滤。
  */
 export async function searchFeishuMinutes(accessToken: string, query = ''): Promise<{ briefs: FeishuMinuteBrief[]; debug: string }> {
-  const res = await fetch(`${FEISHU_OPEN}/open-apis/minutes/v1/minutes/search`, {
+  const res = await fetchOutbound(`${FEISHU_OPEN}/open-apis/minutes/v1/minutes/search`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json; charset=utf-8' },
     body: JSON.stringify({ query, page_size: 50 }),
-  });
+  }, deploymentOutboundPolicy(), { timeoutMs: 20_000, maxResponseBytes: 2_097_152 });
   const rawText = await res.text().catch(() => '');
   if (!res.ok) throw new Error(`飞书妙记搜索失败 HTTP ${res.status}（端点待真机校准）｜飞书返回：${rawText.slice(0, 300)}`);
   let d: any = {}; try { d = JSON.parse(rawText); } catch { /* 非 JSON */ }
