@@ -55,11 +55,12 @@ RAISE_MIN_M = 0.40       # RAISE 需要阶段窗口未关闭
 def decay(age_days: float, half_life: float) -> float:
     return 0.5 ** (age_days / half_life)
 
-def blend(mark, cred="unclear", q=1.0, age_days=0.0, half_life=HALFLIFE["stance"]):
-    """(标记, 可信度, 信源质量, 信息年龄) → (混合后立场分布 p, 有效样本量 n_eff)"""
+def blend(mark, cred="unclear", q=1.0, age_days=0.0, half_life=HALFLIFE["stance"], evidence_alpha=None):
+    """(标记, 可信度, 信源质量, 信息年龄, 已审证据伪计数) → (混合后立场分布 p, 有效样本量 n_eff)"""
     n = (CRED["unclear"]["n"] if mark == "unk" else CRED[cred]["n"]) * q * decay(age_days, half_life)
     t = MARK_TARGET[mark]
-    a = [n * t[i] + N0 / 3.0 for i in range(3)]
+    evidence_alpha = evidence_alpha or (0.0, 0.0, 0.0)
+    a = [n * t[i] + N0 / 3.0 + evidence_alpha[i] for i in range(3)]
     s = sum(a)
     return tuple(x / s for x in a), n
 
@@ -79,7 +80,8 @@ def evaluate(deal):
     detail = []
     for st in deal["stakeholders"]:
         w = member_w if st["slots"] == ["MEMBER"] else stakeholder_weight(st)
-        p, n_eff = blend(st["mark"], st.get("cred", "unclear"), st.get("q", 1.0), st.get("age_days", 0.0))
+        p, n_eff = blend(st["mark"], st.get("cred", "unclear"), st.get("q", 1.0), st.get("age_days", 0.0),
+                         evidence_alpha=st.get("evidence_alpha"))
         net = p[0] - LAMBDA * p[2]
         num += w * net
         den += w
@@ -250,7 +252,9 @@ def run_case(deal, actions, prev_ev=None):
 
 def main():
     A, B, G, F, ACT = fixtures()
-    golden = {"params_echo": {
+    golden = {"schemaVersion": "1.1",
+        "schemaChange": "add optional Stakeholder.evidence_alpha; no-evidence outputs remain unchanged",
+        "params_echo": {
         "MARK_TARGET": MARK_TARGET, "CRED": CRED, "N0": N0, "LAMBDA": LAMBDA,
         "K": K, "S_MID": S_MID, "GATE_PO": GATE_PO, "GATE_CAP": GATE_CAP,
         "M_STAGE": M_STAGE, "HALFLIFE": HALFLIFE, "SLOT_W": SLOT_W,
@@ -264,6 +268,18 @@ def main():
     golden["cases"]["deal_B_voi_ccomp"] = voi_ccomp(B)
     golden["cases"]["deal_Gate"] = run_case(G, ACT["G"])
     golden["cases"]["deal_Fold"] = run_case(F, ACT["F"], prev_ev=-5.0)
+
+    evidence_base = copy.deepcopy(A)
+    evidence_base["id"] = "golden-deal-Evidence"
+    evidence_positive = copy.deepcopy(evidence_base)
+    evidence_positive["stakeholders"][0]["evidence_alpha"] = [2.0, 0.0, 0.0]
+    evidence_negative = copy.deepcopy(evidence_base)
+    evidence_negative["stakeholders"][0]["evidence_alpha"] = [0.0, 0.0, 2.0]
+    golden["evidence_cases"] = {
+        "no_evidence": {"input": evidence_base, "eval": evaluate(evidence_base)},
+        "approved_positive": {"input": evidence_positive, "eval": evaluate(evidence_positive)},
+        "approved_negative": {"input": evidence_negative, "eval": evaluate(evidence_negative)},
+    }
 
     def rnd(o):
         if isinstance(o, float): return round(o, 6)

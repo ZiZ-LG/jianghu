@@ -28,7 +28,9 @@ prisma/                    模型迁移 + seeds 加载器（行业包）
 
 公式细节以 `reference_impl.py` 为准，此处给实现要点与设计意图：
 
-**K1 立场混合**：`(mark, cred, q, age_days) → (p, n_eff)`。目标分布 × 有效样本量 + 均匀先验 N0=2 混合。低可信度自动向中性收缩（贝叶斯收缩），旧信息按半衰期衰减 `n_eff = n(cred) × q × 0.5^(age/halflife)`。mark=unk 时忽略 cred，n 取 1。
+**K1 立场混合**：`(mark, cred, q, age_days, evidence_alpha?) → (p, n_eff)`。目标分布 × 有效样本量 + 均匀先验 N0=2，再加可选的已审证据三态伪计数 `evidence_alpha=[αS,αN,αO]` 后统一归一化。低可信度自动向中性收缩（贝叶斯收缩），旧信息按半衰期衰减 `n_eff = n(cred) × q × 0.5^(age/halflife)`；证据伪计数只改变分布，不重定义该立场评估的 `n_eff`。mark=unk 时忽略 cred，n 取 1。缺省 `evidence_alpha` 等价于 `[0,0,0]`，全部旧 golden 数值必须保持不变。
+
+`Stakeholder` 的可选输入字段固定为 `evidence_alpha?: [number, number, number]`。服务端只聚合相同 tenant/opportunity/person 的 `approved` Evidence；`pending_review` 与 `rejected` 不进入内核输入。方向约定与前端 `evidenceAlpha` 一致：正向加 αS、负向加 αO、0 不增量，强度保持 weak < mid < strong；具体数值由版本化行业包 `seeds/signal-catalog.json → deltaAlphaMap` 管理（digital-energy v1.1 为 0.5/1/2），该 PDE 行业包在与旧前端子集的逐信号幅度冲突时优先。
 
 **K2 胜率**：`S = Σw(pS − 1.3·pO)/Σw`；`pWin = σ(4(S−0.15)) × c_comp`；否决门：任一 A-slot 干系人 `pO ≥ 0.60` → pWin 封顶 0.15。MEMBER 权重池：≤5 人各 1，>5 人各 5/N。同一自然人多 slot 权重相加。
 
@@ -45,11 +47,11 @@ prisma/                    模型迁移 + seeds 加载器（行业包）
 
 **K6 741 子策略**：八策略不再由总分阶跃触发，作为 RAISE/CALL 的推荐菜单由构成规则驱动（见 `seeds/scoring-schema.json → strategy741.compositionRules`）。名义分区间仅用于展示"传统态势"标签，保持与纸面工具的沟通连续性。
 
-**K7 快照触发**：`evidence_approved / stage_gate / manual / scheduled(每周)`。阶段门（进入 tender_design、tender_execution 前）强制生成快照并要求 deal owner 确认建议后才能推进阶段。
+**K7 快照触发**：`evidence_review / stage_gate / manual / scheduled(每周)`。Evidence 审核通过必须等待 `evidence_review` 快照持久化成功后才可报告成功；快照 `inputsJson` 必须保存参与计算的 Evidence ID 与每位干系人的聚合 `evidence_alpha`，足以重放 `evaluate`。阶段门（进入 tender_design、tender_execution 前）强制生成快照并要求 deal owner 确认建议后才能推进阶段。
 
 ## 3. 黄金测试解读（实现完成的判定标准）
 
-四案例 + 两个 VoI 断言，全部数值见 `golden-tests.json`（容差 1e-6）：
+四个既有案例 + 两个 VoI 断言 + 同一 Deal 的 no-evidence / approved-positive / approved-negative 三个证据案例，全部数值见 `golden-tests.json`（容差 1e-6）。证据扩展升级 golden schemaVersion，但不允许改变任一既有案例数值：
 
 | 案例 | 关键期望 | 验证点 |
 |---|---|---|

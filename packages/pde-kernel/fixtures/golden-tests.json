@@ -1,4 +1,6 @@
 {
+  "schemaVersion": "1.1",
+  "schemaChange": "add optional Stakeholder.evidence_alpha; no-evidence outputs remain unchanged",
   "params_echo": {
     "MARK_TARGET": {
       "star": [
@@ -1064,6 +1066,711 @@
       "recommendation": {
         "action": "FOLD",
         "reason": "EV 连续两期为负且无正 ΔEV 动作"
+      }
+    }
+  },
+  "evidence_cases": {
+    "no_evidence": {
+      "input": {
+        "id": "golden-deal-Evidence",
+        "pot": 100.0,
+        "planned_cost": 8.0,
+        "stage": "budget_approval",
+        "c_comp": 0.85,
+        "stakeholders": [
+          {
+            "id": "A",
+            "slots": [
+              "A"
+            ],
+            "mark": "plus",
+            "cred": "consensus"
+          },
+          {
+            "id": "D",
+            "slots": [
+              "D"
+            ],
+            "mark": "plus",
+            "cred": "explicit"
+          },
+          {
+            "id": "PM",
+            "slots": [
+              "PROC_MGMT"
+            ],
+            "mark": "eq",
+            "cred": "explicit"
+          },
+          {
+            "id": "AG",
+            "slots": [
+              "PROC_AGENT"
+            ],
+            "mark": "unk"
+          },
+          {
+            "id": "OR",
+            "slots": [
+              "OWNER_REP"
+            ],
+            "mark": "plus",
+            "cred": "inference"
+          },
+          {
+            "id": "KI",
+            "slots": [
+              "KEY_INFLUENCER"
+            ],
+            "mark": "plus",
+            "cred": "explicit"
+          },
+          {
+            "id": "M1",
+            "slots": [
+              "MEMBER"
+            ],
+            "mark": "eq",
+            "cred": "inference"
+          },
+          {
+            "id": "M2",
+            "slots": [
+              "MEMBER"
+            ],
+            "mark": "eq",
+            "cred": "inference"
+          }
+        ],
+        "items": [
+          {
+            "key": "C1",
+            "raw": 8,
+            "cred": "explicit"
+          },
+          {
+            "key": "C2",
+            "raw": 5,
+            "cred": "explicit"
+          },
+          {
+            "key": "C3",
+            "raw": 4,
+            "cred": "explicit"
+          },
+          {
+            "key": "C4",
+            "raw": 3,
+            "cred": "consensus",
+            "volatility": "structural"
+          },
+          {
+            "key": "C5",
+            "raw": 5,
+            "cred": "explicit",
+            "volatility": "procurement"
+          },
+          {
+            "key": "C6",
+            "raw": 3,
+            "cred": "explicit"
+          },
+          {
+            "key": "P1",
+            "raw": 2,
+            "cred": "explicit"
+          },
+          {
+            "key": "P2",
+            "raw": 5,
+            "cred": "explicit"
+          },
+          {
+            "key": "P3",
+            "raw": 10,
+            "cred": "explicit"
+          },
+          {
+            "key": "P4",
+            "raw": 5,
+            "cred": "explicit"
+          },
+          {
+            "key": "1K",
+            "raw": 10,
+            "cred": "consensus"
+          }
+        ]
+      },
+      "eval": {
+        "S": 0.299068,
+        "pwin_raw": 0.644803,
+        "pwin": 0.548083,
+        "gate": false,
+        "m_stage": 0.65,
+        "ev_continue": 46.808257,
+        "stakeholders": [
+          {
+            "id": "A",
+            "w": 20.0,
+            "pS": 0.586667,
+            "pN": 0.266667,
+            "pO": 0.146667,
+            "net": 0.396,
+            "n_eff": 8.0,
+            "entropy": 0.861885,
+            "w_norm": 0.322581
+          },
+          {
+            "id": "D",
+            "w": 20.0,
+            "pS": 0.559524,
+            "pN": 0.27381,
+            "pO": 0.166667,
+            "net": 0.342857,
+            "n_eff": 5.0,
+            "entropy": 0.890393,
+            "w_norm": 0.322581
+          },
+          {
+            "id": "PM",
+            "w": 4.0,
+            "pS": 0.238095,
+            "pN": 0.52381,
+            "pO": 0.238095,
+            "net": -0.071429,
+            "n_eff": 5.0,
+            "entropy": 0.93034,
+            "w_norm": 0.064516
+          },
+          {
+            "id": "AG",
+            "w": 2.0,
+            "pS": 0.333333,
+            "pN": 0.333333,
+            "pO": 0.333333,
+            "net": -0.1,
+            "n_eff": 1.0,
+            "entropy": 1.0,
+            "w_norm": 0.032258
+          },
+          {
+            "id": "OR",
+            "w": 4.0,
+            "pS": 0.509259,
+            "pN": 0.287037,
+            "pO": 0.203704,
+            "net": 0.244444,
+            "n_eff": 2.5,
+            "entropy": 0.933925,
+            "w_norm": 0.064516
+          },
+          {
+            "id": "KI",
+            "w": 10.0,
+            "pS": 0.559524,
+            "pN": 0.27381,
+            "pO": 0.166667,
+            "net": 0.342857,
+            "n_eff": 5.0,
+            "entropy": 0.890393,
+            "w_norm": 0.16129
+          },
+          {
+            "id": "M1",
+            "w": 1.0,
+            "pS": 0.259259,
+            "pN": 0.481481,
+            "pO": 0.259259,
+            "net": -0.077778,
+            "n_eff": 2.5,
+            "entropy": 0.957454,
+            "w_norm": 0.016129
+          },
+          {
+            "id": "M2",
+            "w": 1.0,
+            "pS": 0.259259,
+            "pN": 0.481481,
+            "pO": 0.259259,
+            "net": -0.077778,
+            "n_eff": 2.5,
+            "entropy": 0.957454,
+            "w_norm": 0.016129
+          }
+        ]
+      }
+    },
+    "approved_positive": {
+      "input": {
+        "id": "golden-deal-Evidence",
+        "pot": 100.0,
+        "planned_cost": 8.0,
+        "stage": "budget_approval",
+        "c_comp": 0.85,
+        "stakeholders": [
+          {
+            "id": "A",
+            "slots": [
+              "A"
+            ],
+            "mark": "plus",
+            "cred": "consensus",
+            "evidence_alpha": [
+              2.0,
+              0.0,
+              0.0
+            ]
+          },
+          {
+            "id": "D",
+            "slots": [
+              "D"
+            ],
+            "mark": "plus",
+            "cred": "explicit"
+          },
+          {
+            "id": "PM",
+            "slots": [
+              "PROC_MGMT"
+            ],
+            "mark": "eq",
+            "cred": "explicit"
+          },
+          {
+            "id": "AG",
+            "slots": [
+              "PROC_AGENT"
+            ],
+            "mark": "unk"
+          },
+          {
+            "id": "OR",
+            "slots": [
+              "OWNER_REP"
+            ],
+            "mark": "plus",
+            "cred": "inference"
+          },
+          {
+            "id": "KI",
+            "slots": [
+              "KEY_INFLUENCER"
+            ],
+            "mark": "plus",
+            "cred": "explicit"
+          },
+          {
+            "id": "M1",
+            "slots": [
+              "MEMBER"
+            ],
+            "mark": "eq",
+            "cred": "inference"
+          },
+          {
+            "id": "M2",
+            "slots": [
+              "MEMBER"
+            ],
+            "mark": "eq",
+            "cred": "inference"
+          }
+        ],
+        "items": [
+          {
+            "key": "C1",
+            "raw": 8,
+            "cred": "explicit"
+          },
+          {
+            "key": "C2",
+            "raw": 5,
+            "cred": "explicit"
+          },
+          {
+            "key": "C3",
+            "raw": 4,
+            "cred": "explicit"
+          },
+          {
+            "key": "C4",
+            "raw": 3,
+            "cred": "consensus",
+            "volatility": "structural"
+          },
+          {
+            "key": "C5",
+            "raw": 5,
+            "cred": "explicit",
+            "volatility": "procurement"
+          },
+          {
+            "key": "C6",
+            "raw": 3,
+            "cred": "explicit"
+          },
+          {
+            "key": "P1",
+            "raw": 2,
+            "cred": "explicit"
+          },
+          {
+            "key": "P2",
+            "raw": 5,
+            "cred": "explicit"
+          },
+          {
+            "key": "P3",
+            "raw": 10,
+            "cred": "explicit"
+          },
+          {
+            "key": "P4",
+            "raw": 5,
+            "cred": "explicit"
+          },
+          {
+            "key": "1K",
+            "raw": 10,
+            "cred": "consensus"
+          }
+        ]
+      },
+      "eval": {
+        "S": 0.331541,
+        "pwin_raw": 0.673963,
+        "pwin": 0.572869,
+        "gate": false,
+        "m_stage": 0.65,
+        "ev_continue": 49.286865,
+        "stakeholders": [
+          {
+            "id": "A",
+            "w": 20.0,
+            "pS": 0.655556,
+            "pN": 0.222222,
+            "pO": 0.122222,
+            "net": 0.496667,
+            "n_eff": 8.0,
+            "entropy": 0.790054,
+            "w_norm": 0.322581
+          },
+          {
+            "id": "D",
+            "w": 20.0,
+            "pS": 0.559524,
+            "pN": 0.27381,
+            "pO": 0.166667,
+            "net": 0.342857,
+            "n_eff": 5.0,
+            "entropy": 0.890393,
+            "w_norm": 0.322581
+          },
+          {
+            "id": "PM",
+            "w": 4.0,
+            "pS": 0.238095,
+            "pN": 0.52381,
+            "pO": 0.238095,
+            "net": -0.071429,
+            "n_eff": 5.0,
+            "entropy": 0.93034,
+            "w_norm": 0.064516
+          },
+          {
+            "id": "AG",
+            "w": 2.0,
+            "pS": 0.333333,
+            "pN": 0.333333,
+            "pO": 0.333333,
+            "net": -0.1,
+            "n_eff": 1.0,
+            "entropy": 1.0,
+            "w_norm": 0.032258
+          },
+          {
+            "id": "OR",
+            "w": 4.0,
+            "pS": 0.509259,
+            "pN": 0.287037,
+            "pO": 0.203704,
+            "net": 0.244444,
+            "n_eff": 2.5,
+            "entropy": 0.933925,
+            "w_norm": 0.064516
+          },
+          {
+            "id": "KI",
+            "w": 10.0,
+            "pS": 0.559524,
+            "pN": 0.27381,
+            "pO": 0.166667,
+            "net": 0.342857,
+            "n_eff": 5.0,
+            "entropy": 0.890393,
+            "w_norm": 0.16129
+          },
+          {
+            "id": "M1",
+            "w": 1.0,
+            "pS": 0.259259,
+            "pN": 0.481481,
+            "pO": 0.259259,
+            "net": -0.077778,
+            "n_eff": 2.5,
+            "entropy": 0.957454,
+            "w_norm": 0.016129
+          },
+          {
+            "id": "M2",
+            "w": 1.0,
+            "pS": 0.259259,
+            "pN": 0.481481,
+            "pO": 0.259259,
+            "net": -0.077778,
+            "n_eff": 2.5,
+            "entropy": 0.957454,
+            "w_norm": 0.016129
+          }
+        ]
+      }
+    },
+    "approved_negative": {
+      "input": {
+        "id": "golden-deal-Evidence",
+        "pot": 100.0,
+        "planned_cost": 8.0,
+        "stage": "budget_approval",
+        "c_comp": 0.85,
+        "stakeholders": [
+          {
+            "id": "A",
+            "slots": [
+              "A"
+            ],
+            "mark": "plus",
+            "cred": "consensus",
+            "evidence_alpha": [
+              0.0,
+              0.0,
+              2.0
+            ]
+          },
+          {
+            "id": "D",
+            "slots": [
+              "D"
+            ],
+            "mark": "plus",
+            "cred": "explicit"
+          },
+          {
+            "id": "PM",
+            "slots": [
+              "PROC_MGMT"
+            ],
+            "mark": "eq",
+            "cred": "explicit"
+          },
+          {
+            "id": "AG",
+            "slots": [
+              "PROC_AGENT"
+            ],
+            "mark": "unk"
+          },
+          {
+            "id": "OR",
+            "slots": [
+              "OWNER_REP"
+            ],
+            "mark": "plus",
+            "cred": "inference"
+          },
+          {
+            "id": "KI",
+            "slots": [
+              "KEY_INFLUENCER"
+            ],
+            "mark": "plus",
+            "cred": "explicit"
+          },
+          {
+            "id": "M1",
+            "slots": [
+              "MEMBER"
+            ],
+            "mark": "eq",
+            "cred": "inference"
+          },
+          {
+            "id": "M2",
+            "slots": [
+              "MEMBER"
+            ],
+            "mark": "eq",
+            "cred": "inference"
+          }
+        ],
+        "items": [
+          {
+            "key": "C1",
+            "raw": 8,
+            "cred": "explicit"
+          },
+          {
+            "key": "C2",
+            "raw": 5,
+            "cred": "explicit"
+          },
+          {
+            "key": "C3",
+            "raw": 4,
+            "cred": "explicit"
+          },
+          {
+            "key": "C4",
+            "raw": 3,
+            "cred": "consensus",
+            "volatility": "structural"
+          },
+          {
+            "key": "C5",
+            "raw": 5,
+            "cred": "explicit",
+            "volatility": "procurement"
+          },
+          {
+            "key": "C6",
+            "raw": 3,
+            "cred": "explicit"
+          },
+          {
+            "key": "P1",
+            "raw": 2,
+            "cred": "explicit"
+          },
+          {
+            "key": "P2",
+            "raw": 5,
+            "cred": "explicit"
+          },
+          {
+            "key": "P3",
+            "raw": 10,
+            "cred": "explicit"
+          },
+          {
+            "key": "P4",
+            "raw": 5,
+            "cred": "explicit"
+          },
+          {
+            "key": "1K",
+            "raw": 10,
+            "cred": "consensus"
+          }
+        ]
+      },
+      "eval": {
+        "S": 0.207885,
+        "pwin_raw": 0.557628,
+        "pwin": 0.473984,
+        "gate": false,
+        "m_stage": 0.65,
+        "ev_continue": 39.398386,
+        "stakeholders": [
+          {
+            "id": "A",
+            "w": 20.0,
+            "pS": 0.488889,
+            "pN": 0.222222,
+            "pO": 0.288889,
+            "net": 0.113333,
+            "n_eff": 8.0,
+            "entropy": 0.949211,
+            "w_norm": 0.322581
+          },
+          {
+            "id": "D",
+            "w": 20.0,
+            "pS": 0.559524,
+            "pN": 0.27381,
+            "pO": 0.166667,
+            "net": 0.342857,
+            "n_eff": 5.0,
+            "entropy": 0.890393,
+            "w_norm": 0.322581
+          },
+          {
+            "id": "PM",
+            "w": 4.0,
+            "pS": 0.238095,
+            "pN": 0.52381,
+            "pO": 0.238095,
+            "net": -0.071429,
+            "n_eff": 5.0,
+            "entropy": 0.93034,
+            "w_norm": 0.064516
+          },
+          {
+            "id": "AG",
+            "w": 2.0,
+            "pS": 0.333333,
+            "pN": 0.333333,
+            "pO": 0.333333,
+            "net": -0.1,
+            "n_eff": 1.0,
+            "entropy": 1.0,
+            "w_norm": 0.032258
+          },
+          {
+            "id": "OR",
+            "w": 4.0,
+            "pS": 0.509259,
+            "pN": 0.287037,
+            "pO": 0.203704,
+            "net": 0.244444,
+            "n_eff": 2.5,
+            "entropy": 0.933925,
+            "w_norm": 0.064516
+          },
+          {
+            "id": "KI",
+            "w": 10.0,
+            "pS": 0.559524,
+            "pN": 0.27381,
+            "pO": 0.166667,
+            "net": 0.342857,
+            "n_eff": 5.0,
+            "entropy": 0.890393,
+            "w_norm": 0.16129
+          },
+          {
+            "id": "M1",
+            "w": 1.0,
+            "pS": 0.259259,
+            "pN": 0.481481,
+            "pO": 0.259259,
+            "net": -0.077778,
+            "n_eff": 2.5,
+            "entropy": 0.957454,
+            "w_norm": 0.016129
+          },
+          {
+            "id": "M2",
+            "w": 1.0,
+            "pS": 0.259259,
+            "pN": 0.481481,
+            "pO": 0.259259,
+            "net": -0.077778,
+            "n_eff": 2.5,
+            "entropy": 0.957454,
+            "w_norm": 0.016129
+          }
+        ]
       }
     }
   }
