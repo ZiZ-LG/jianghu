@@ -3,6 +3,7 @@
 import type { Cred, Deal, Mark, ScoreItem, Slot, Stage, Stakeholder, Volatility } from 'pde-kernel';
 import { prisma } from '../prisma.js';
 import { scoreFromState, type ItemKey } from '../g64111.js';
+import { aggregateApprovedEvidence, type ApprovedEvidenceAggregate } from './evidence.js';
 
 // ── 值域映射（江湖 ↔ 内核）──
 export const SENT2MARK: Record<string, Mark> = { star: 'star', plus: 'plus', neutral: 'eq', unknown: 'unk', minus: 'minus', x: 'x' };
@@ -24,6 +25,7 @@ export interface AssembledPde {
   personName: Map<string, string>;   // personId → 姓名（响应装饰用）
   itemVolatility: Record<string, Volatility>;
   itemConfidence: Record<string, Cred>; // itemKey → 映射后可信度（默认 explicit·实现决策：温和上线不轰炸 CHECK）
+  evidence: ApprovedEvidenceAggregate; // 快照重放所需：参与计算的 Evidence IDs + 每人聚合 alpha
   opp: { id: string; name: string; engageStage: string };
 }
 
@@ -58,6 +60,16 @@ export async function assembleDeal(tenantId: string, oppId: string, seeds: any):
       // assessedAt 为空（存量未记录）→ 0 不衰减：温和上线，衰减随 SET_ROLE 逐步生效（实现决策）
       age_days: r.assessedAt ? Math.max(0, (now - r.assessedAt.getTime()) / 86400e3) : 0,
     });
+  }
+  const evidence = await aggregateApprovedEvidence(
+    tenantId,
+    oppId,
+    stakeholders.map((stakeholder) => stakeholder.id),
+    seeds.signalCatalog.deltaAlphaMap,
+  );
+  for (const stakeholder of stakeholders) {
+    const alpha = evidence.alphaByStakeholder[stakeholder.id];
+    if (alpha) stakeholder.evidence_alpha = alpha;
   }
 
   // 2) 名义分（g64111，照 mcpServer.getWinTendency 组装）+ 可信度元层 → items
@@ -99,5 +111,5 @@ export async function assembleDeal(tenantId: string, oppId: string, seeds: any):
     id: opp.id, pot, planned_cost: cfg?.plannedCost ?? 0, stage,
     c_comp: cfg?.cComp ?? 1.0, stakeholders, items,
   };
-  return { deal, potSource, stage, personName, itemVolatility, itemConfidence, opp: { id: opp.id, name: opp.name, engageStage: opp.engageStage } };
+  return { deal, potSource, stage, personName, itemVolatility, itemConfidence, evidence, opp: { id: opp.id, name: opp.name, engageStage: opp.engageStage } };
 }

@@ -14,12 +14,23 @@ export function decay(ageDays: number, halfLife: number): number {
   return 0.5 ** (ageDays / halfLife);
 }
 
-/** (标记, 可信度, 信源质量, 信息年龄) → 混合后立场分布 p=(pS,pN,pO) + 有效样本量 n_eff。
- *  目标分布 × 等效样本量 + 均匀先验 N0 贝叶斯收缩；mark=unk 时忽略 cred（按 unclear 的 n）。 */
-export function blend(mark: Mark, cred: Cred = 'unclear', q = 1.0, ageDays = 0.0, halfLife: number = HALFLIFE.stance): BlendResult {
+/** (标记, 可信度, 信源质量, 信息年龄, 已审证据伪计数) → 混合后立场分布 p=(pS,pN,pO) + 有效样本量 n_eff。
+ *  目标分布 × 等效样本量 + 均匀先验 N0 + evidenceAlpha 后归一化；mark=unk 时忽略 cred（按 unclear 的 n）。 */
+export function blend(
+  mark: Mark,
+  cred: Cred = 'unclear',
+  q = 1.0,
+  ageDays = 0.0,
+  halfLife: number = HALFLIFE.stance,
+  evidenceAlpha: readonly [number, number, number] = [0, 0, 0],
+): BlendResult {
   const n = (mark === 'unk' ? CRED.unclear.n : CRED[cred].n) * q * decay(ageDays, halfLife);
   const t = MARK_TARGET[mark];
-  const a = [n * t[0] + N0 / 3.0, n * t[1] + N0 / 3.0, n * t[2] + N0 / 3.0];
+  const a = [
+    n * t[0] + N0 / 3.0 + evidenceAlpha[0],
+    n * t[1] + N0 / 3.0 + evidenceAlpha[1],
+    n * t[2] + N0 / 3.0 + evidenceAlpha[2],
+  ];
   const s = a[0]! + a[1]! + a[2]!;
   return { p: [a[0]! / s, a[1]! / s, a[2]! / s], n_eff: n };
 }
@@ -48,7 +59,7 @@ export function evaluate(deal: Deal): EvalResult {
   const detail: StakeholderDetail[] = [];
   for (const st of deal.stakeholders) {
     const w = isMemberOnly(st) ? memberW : stakeholderWeight(st);
-    const { p, n_eff } = blend(st.mark, st.cred ?? 'unclear', st.q ?? 1.0, st.age_days ?? 0.0);
+    const { p, n_eff } = blend(st.mark, st.cred ?? 'unclear', st.q ?? 1.0, st.age_days ?? 0.0, HALFLIFE.stance, st.evidence_alpha);
     const net = p[0] - LAMBDA * p[2];
     num += w * net;
     den += w;

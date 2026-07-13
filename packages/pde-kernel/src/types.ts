@@ -14,6 +14,7 @@ export interface Stakeholder {
   cred?: Cred;            // 缺省 unclear；mark=unk 时忽略（按 unclear 的 n）
   q?: number;             // 信源质量，默认 1.0
   age_days?: number;      // 信息年龄（天），默认 0
+  evidence_alpha?: [number, number, number]; // 已审证据三态伪计数 [αS, αN, αO]
 }
 
 export interface ScoreItem {
