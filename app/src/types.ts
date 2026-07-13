@@ -341,6 +341,7 @@ export interface Account {
   region?: string;          // 大区
   group?: string;           // 集团/母公司
   primaryOwner?: string;    // 主负责人
+  primaryOwnerUserId?: string | null; // 授权唯一使用的稳定 User.id
   profile?: AccountProfile; // 企业背景档案（销售包推送）
   persons: Person[];
   baseEdges: Edge[]; // 存量边 L1 + 基础 L3

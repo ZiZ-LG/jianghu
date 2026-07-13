@@ -3,7 +3,7 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'crypto';
 import { z } from 'zod';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { ActionSchema, ActorRoleSchema, type CommandContext } from '@jianghu/domain-contracts';
 import { prisma } from './prisma.js';
 import { denyViewer } from './scope.js';
@@ -57,6 +57,7 @@ async function proposalCurrentValue(
     const row = await db.person.findFirst({ where: { id: cp.entityId, tenantId, accountId: cp.accountId } });
     return row ? (row as unknown as Record<string, unknown>)[cp.field] : undefined;
   }
+  if (cp.entityKind === 'personLog' && cp.field === 'append') return '';
   if (cp.entityKind === 'opportunity' && cp.opportunityId) {
     const row = await db.opportunity.findFirst({ where: { id: cp.entityId, tenantId, accountId: cp.accountId } });
     return row ? (row as unknown as Record<string, unknown>)[cp.field] : undefined;
@@ -79,7 +80,23 @@ function proposalValueMatches(current: unknown, expected: string): boolean {
 }
 
 /** 采纳：据 entityKind/field 走既有 applyAction 落库。P13 扩：sentiment/confidence/isKeyInfluencer 三种 oppRole 字段。 */
-async function applyProposal(ctx: CommandContext, cp: { accountId: string; opportunityId: string | null; entityKind: string; entityId: string; field: string }, value: string, db: DbClient): Promise<PostCommitEffect> {
+async function applyProposal(ctx: CommandContext, cp: { accountId: string; opportunityId: string | null; entityKind: string; entityId: string; field: string; oldValue: string }, value: string, db: DbClient): Promise<PostCommitEffect> {
+  if (cp.entityKind === 'personLog' && cp.field === 'append') {
+    const log = (() => { try { return JSON.parse(value); } catch { return null; } })();
+    const parsed = ActionSchema.safeParse({ type: 'ADD_LOG', accId: cp.accountId, personId: cp.entityId, log });
+    if (!parsed.success) throw new Error('person log proposal is invalid');
+    return applyAction(ctx, parsed.data, db);
+  }
+  // 兼容 INT-107 之前已入库的 person.logs 提案：只允许严格的单条头部 append，禁止整体替换/伪造 createdBy。
+  if (cp.entityKind === 'person' && cp.field === 'logs') {
+    let before: unknown; let after: unknown;
+    try { before = JSON.parse(cp.oldValue); after = JSON.parse(value); } catch { throw new Error('legacy log proposal is invalid'); }
+    if (!Array.isArray(before) || !Array.isArray(after) || after.length !== before.length + 1
+      || JSON.stringify(after.slice(1)) !== JSON.stringify(before)) throw new Error('legacy log proposal is not a single append');
+    const parsed = ActionSchema.safeParse({ type: 'ADD_LOG', accId: cp.accountId, personId: cp.entityId, log: after[0] });
+    if (!parsed.success) throw new Error('legacy log proposal is invalid');
+    return applyAction(ctx, parsed.data, db);
+  }
   if (cp.entityKind === 'oppRole' && cp.opportunityId) {
     if (cp.field === 'sentiment') {
       const parsed = SentimentSchema.safeParse(value);
@@ -162,6 +179,42 @@ export async function acceptProposal(ctx: CommandContext, id: string, overrideVa
 export async function rejectProposal(tenantId: string, id: string): Promise<'ok' | 'already'> {
   const r = await prisma.changeProposal.updateMany({ where: { id, tenantId, status: 'pending' }, data: { status: 'rejected', dedupeKey: null } });
   return r.count ? 'ok' : 'already';
+}
+
+/** WeCom 专用审批边界：身份复核与 proposal CAS/正式写入在同一 Serializable transaction 内。 */
+export async function reviewProposalFromWecom(
+  tenantId: string,
+  wecomUserid: string,
+  proposalId: string,
+  decision: 'accept' | 'reject',
+): Promise<'ok' | 'already' | 'missing' | 'unauthorized'> {
+  const outcome = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const binds = await tx.weComUserBind.findMany({ where: { tenantId, wecomUserid }, take: 2 });
+    if (binds.length !== 1) return { result: 'unauthorized' as const, effect: undefined };
+    const actor = await tx.user.findFirst({ where: { id: binds[0].userId, tenantId }, select: { id: true, role: true } });
+    const actorRole = ActorRoleSchema.safeParse(actor?.role);
+    if (!actor || !actorRole.success || actorRole.data === 'viewer') return { result: 'unauthorized' as const, effect: undefined };
+    const cp = await tx.changeProposal.findFirst({ where: { id: proposalId, tenantId } });
+    if (!cp) return { result: 'missing' as const, effect: undefined };
+    if (cp.status !== 'pending') return { result: 'already' as const, effect: undefined };
+    if (decision === 'reject') {
+      const rejected = await tx.changeProposal.updateMany({ where: { id: cp.id, tenantId, status: 'pending' }, data: { status: 'rejected', dedupeKey: null } });
+      return { result: rejected.count === 1 ? 'ok' as const : 'already' as const, effect: undefined };
+    }
+    const claim = await tx.changeProposal.updateMany({ where: { id: cp.id, tenantId, status: 'pending' }, data: { status: 'applying' } });
+    if (claim.count !== 1) return { result: 'already' as const, effect: undefined };
+    const currentValue = await proposalCurrentValue(tx, tenantId, cp);
+    if (!proposalValueMatches(currentValue, cp.oldValue)) throw new Error('正式字段已被人工更新');
+    const effect = await applyProposal({
+      tenantId, actorId: actor.id, actorRole: actorRole.data, channel: 'web',
+      requestId: `wecom:${randomUUID()}`, assertionMode: 'user_asserted',
+    }, cp, cp.newValue, tx);
+    const finalized = await tx.changeProposal.updateMany({ where: { id: cp.id, tenantId, status: 'applying' }, data: { status: 'accepted', dedupeKey: null } });
+    if (finalized.count !== 1) throw new Error('proposal acceptance lost claim');
+    return { result: 'ok' as const, effect };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  if (outcome.result === 'ok') await runPostCommitEffect(outcome.effect);
+  return outcome.result;
 }
 
 export function proposalRoutes(app: FastifyInstance) {

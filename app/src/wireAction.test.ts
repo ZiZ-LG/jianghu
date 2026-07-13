@@ -9,6 +9,8 @@ describe('toWireAction', () => {
       id: 'a',
       name: 'Account',
       customerType: 2,
+      primaryOwner: 'Owner',
+      primaryOwnerUserId: 'user-owner',
       persons: [],
       baseEdges: [],
       opportunities: [],
@@ -24,7 +26,7 @@ describe('toWireAction', () => {
 
     const wire = toWireAction({ type: 'ADD_ACCOUNT', account });
 
-    expect(wire).toEqual({ type: 'ADD_ACCOUNT', account: { id: 'a', name: 'Account', customerType: 2 } });
+    expect(wire).toEqual({ type: 'ADD_ACCOUNT', account: { id: 'a', name: 'Account', customerType: 2, primaryOwner: 'Owner', primaryOwnerUserId: 'user-owner' } });
     expect(ActionSchema.safeParse(wire).success).toBe(true);
   });
 

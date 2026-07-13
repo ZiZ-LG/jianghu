@@ -361,10 +361,9 @@ export async function ingestVoiceText(baseCtx: CommandContext, input: IngestInpu
           await applyIngestAction(structuredCtxFor(rel), { type: 'ADD_LOG', accId: acc.id, personId, log });
         } else {
           const exist = acc.persons.find((pp) => pp.id === personId);
-          let logs: unknown[] = []; try { logs = JSON.parse((exist as any)?.logs || '[]'); } catch { /* 容错 */ }
           await createFieldProposal(tenantId, {
-            accountId: acc.id, opportunityId: opp?.id, entityKind: 'person', entityId: personId, field: 'logs',
-            oldValue: JSON.stringify(logs), newValue: JSON.stringify([log, ...logs]), origin: src.origin,
+            accountId: acc.id, opportunityId: opp?.id, entityKind: 'personLog', entityId: personId, field: 'append',
+            oldValue: '', newValue: JSON.stringify(log), origin: src.origin,
             evidence: `${src.word}抽取到 ${knownName} 的关系线索`, confidence: N(rel.confidence) ?? 0.5, proposedBy: userId,
           });
           receipt.proposals = (receipt.proposals ?? 0) + 1;

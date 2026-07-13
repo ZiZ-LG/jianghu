@@ -19,6 +19,8 @@ export function WeComSettings({ role, onClose }: { role: string; onClose: () => 
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const [oauthRequestId, setOauthRequestId] = useState('');
+  const [oauthPendingUserid, setOauthPendingUserid] = useState('');
 
   useEffect(() => {
     api.wecomConfig().then((c) => {
@@ -27,6 +29,34 @@ export function WeComSettings({ role, onClose }: { role: string; onClose: () => 
     }).catch(() => {});
     api.wecomBind().then((b) => setWecomUserid(b.wecomUserid)).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!oauthRequestId || oauthPendingUserid) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const result = await api.wecomOauthStatus(oauthRequestId);
+        if (stopped) return;
+        if (result.status === 'pending' && result.wecomUserid) {
+          setOauthPendingUserid(result.wecomUserid);
+          setMsg(`企微返回 userid：${result.wecomUserid}。请核对后点击确认绑定。`);
+          return;
+        }
+        if (result.status === 'expired' || result.status === 'consumed') {
+          setOauthRequestId('');
+          setMsg(result.status === 'expired' ? '扫码绑定请求已过期，请重新发起。' : '本次扫码绑定请求已处理。');
+          return;
+        }
+      } catch (e: any) {
+        if (!stopped) setErr(e.message);
+        return;
+      }
+      timer = setTimeout(poll, 1500);
+    };
+    void poll();
+    return () => { stopped = true; if (timer) clearTimeout(timer); };
+  }, [oauthRequestId, oauthPendingUserid]);
 
   const run = async (fn: () => Promise<void>) => {
     setErr(''); setMsg(''); setBusy(true);
@@ -49,9 +79,17 @@ export function WeComSettings({ role, onClose }: { role: string; onClose: () => 
     setMsg(wecomUserid.trim() ? '企微 userid 绑定已保存' : '已解除绑定');
   });
   const connectWecom = () => run(async () => {
-    const { url } = await api.wecomOauthStart();
+    const { url, requestId } = await api.wecomOauthStart();
+    setOauthRequestId(requestId);
+    setOauthPendingUserid('');
     window.open(url, '_blank');
-    setMsg('已打开企微授权页，扫码/确认后回此处会自动绑定（可重新打开本设置查看）');
+    setMsg('已打开企微授权页。扫码后请回到这里核对 userid 并确认绑定。');
+  });
+  const confirmWecom = () => run(async () => {
+    const result = await api.wecomOauthConfirm(oauthRequestId);
+    setWecomUserid(result.wecomUserid);
+    setOauthRequestId(''); setOauthPendingUserid('');
+    setMsg(`已确认绑定企微 userid：${result.wecomUserid}`);
   });
   const testPush = (kind: 'textcard' | 'card') => run(async () => {
     await api.wecomTestPush(kind);
@@ -83,6 +121,10 @@ export function WeComSettings({ role, onClose }: { role: string; onClose: () => 
         <button className="btn primary sm" onClick={saveBind} disabled={busy}>保存绑定</button>
         <button className="btn ghost sm" onClick={connectWecom} disabled={busy} title="扫码自动获取企微 userid（需公网部署 + 应用可信域名）">📱 扫码自动绑定</button>
       </div>
+      {oauthPendingUserid && <div className="hint-text" style={{ marginTop: 8 }}>
+        待确认企微 userid：<strong>{oauthPendingUserid}</strong>。仅在确认这是你本人账号后继续。
+        <button className="btn primary sm" onClick={confirmWecom} disabled={busy} style={{ marginLeft: 8 }}>确认绑定</button>
+      </div>}
 
       <div style={{ fontWeight: 600, margin: '18px 0 6px' }}>③ 消息推送与一键采纳（管理员 · 场景 B）{hasCallback && <span style={{ color: '#16a34a', fontWeight: 400 }}>（回调已配置）</span>}</div>
       <div className="hint-text" style={{ marginTop: 0 }}>

@@ -152,7 +152,7 @@ describe('outbound URL policy', () => {
   it('routes the fixed WeCom provider through the deployment egress policy', async () => {
     const fetchMock = vi.fn().mockResolvedValue(Response.json({ errcode: 0, access_token: 'unsafe' }));
     vi.stubGlobal('fetch', fetchMock);
-    await expect(getAccessToken(`corp-${Date.now()}`, 'secret')).rejects.toThrow(/allowlist|允许/i);
+    await expect(getAccessToken('test-tenant', `corp-${Date.now()}`, 'secret')).rejects.toThrow(/allowlist|允许/i);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

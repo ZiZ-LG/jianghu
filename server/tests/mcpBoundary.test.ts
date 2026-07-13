@@ -38,6 +38,24 @@ async function callMcpTool(
 }
 
 describe('MCP public JSON-RPC boundary', () => {
+  it('uses only an explicit tenant-local stable owner ID for MCP/WorkBuddy upserts', async () => {
+    const context = await createTestContext();
+    try {
+      const owner = await context.prisma.user.create({ data: { tenantId: context.tenant.id, email: 'stable-owner@test.invalid', passwordHash: 'x', name: '同名', role: 'viewer' } });
+      await callMcpTool(context, 90, 'upsert_account', { externalRef: 'owner-ref', name: 'Owned', primaryOwner: '同名', primaryOwnerUserId: owner.id });
+      const account = await context.prisma.account.findFirstOrThrow({ where: { tenantId: context.tenant.id, externalRef: 'owner-ref' } });
+      expect(account.primaryOwnerUserId).toBe(owner.id);
+      await callMcpTool(context, 92, 'upsert_account', { externalRef: 'legacy-name-only', name: 'Unowned', primaryOwner: '同名' });
+      expect((await context.prisma.account.findFirstOrThrow({ where: { tenantId: context.tenant.id, externalRef: 'legacy-name-only' } })).primaryOwnerUserId).toBeNull();
+
+      const foreignTenant = await context.prisma.tenant.create({ data: { id: 'foreign-owner-tenant', name: 'Foreign' } });
+      const foreign = await context.prisma.user.create({ data: { tenantId: foreignTenant.id, email: 'foreign-owner@test.invalid', passwordHash: 'x', name: '同名', role: 'viewer' } });
+      const response = await callMcpTool(context, 91, 'upsert_account', { externalRef: 'owner-ref', primaryOwner: '同名', primaryOwnerUserId: foreign.id });
+      expect(JSON.stringify(response)).toContain('primary owner not found in tenant');
+      expect((await context.prisma.account.findUniqueOrThrow({ where: { id: account.id } })).primaryOwnerUserId).toBe(owner.id);
+    } finally { await context.cleanup(); }
+  });
+
   it('rejects non-object tool arguments before dispatch', async () => {
     const response = await handleMcpBody(ctx, {
       jsonrpc: '2.0',

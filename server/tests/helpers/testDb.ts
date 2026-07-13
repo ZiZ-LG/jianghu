@@ -51,6 +51,7 @@ export async function clearTestTenant(client: PrismaClient, tenantId: string): P
     client.scoringItemState.deleteMany({ where: { tenantId } }),
     client.scheduleSync.deleteMany({ where: { tenantId } }),
     client.weComUserBind.deleteMany({ where: { tenantId } }),
+    client.weComOAuthState.deleteMany({ where: { tenantId } }),
     client.advisorMsg.deleteMany({ where: { tenantId } }),
     client.reminder.deleteMany({ where: { tenantId } }),
     client.curatedSummary.deleteMany({ where: { tenantId } }),

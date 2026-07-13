@@ -188,7 +188,7 @@ describe('INT-103 recoverable archive', () => {
         .resolves.toMatchObject({ name: 'Account account' });
 
       const warnings: StateSecurityWarning[] = [];
-      await assembleState(context.tenant.id, undefined, { onSecurityWarning: (warning) => warnings.push(warning) });
+      await assembleState(context.tenant.id, { tenantId: context.tenant.id, userId: context.owner.id, role: 'owner' }, { onSecurityWarning: (warning) => warnings.push(warning) });
       expect(warnings).toEqual([]);
     } finally {
       await context.cleanup();

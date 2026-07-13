@@ -50,7 +50,7 @@ async function registerTenant(context: TestContext, label: string): Promise<Regi
   return { tenantId: body.tenant.id, userId: body.user.id, token: body.token };
 }
 
-async function createViewerToken(context: TestContext, name: string): Promise<string> {
+async function createViewerToken(context: TestContext, name: string): Promise<{ token: string; userId: string }> {
   const user = await context.prisma.user.create({
     data: {
       tenantId: context.tenant.id,
@@ -60,7 +60,7 @@ async function createViewerToken(context: TestContext, name: string): Promise<st
       role: 'viewer',
     },
   });
-  return context.app.jwt.sign({ userId: user.id, tenantId: context.tenant.id, role: 'viewer' });
+  return { userId: user.id, token: context.app.jwt.sign({ userId: user.id, tenantId: context.tenant.id, role: 'viewer' }) };
 }
 
 async function seedTree(db: PrismaClient, tenantId: string, prefix: string): Promise<SeededTree> {
@@ -968,8 +968,8 @@ describe('INT-102 tenant parentage and reference guards', () => {
       const left = await seedTree(context.prisma, context.tenant.id, 'suggest-read-left');
       const right = await seedTree(context.prisma, context.tenant.id, 'suggest-read-right');
       const viewerName = 'Right Account Viewer';
-      await context.prisma.account.update({ where: { id: right.accountId }, data: { primaryOwner: viewerName } });
-      const viewerToken = await createViewerToken(context, viewerName);
+      const viewer = await createViewerToken(context, viewerName);
+      await context.prisma.account.update({ where: { id: right.accountId }, data: { primaryOwner: viewerName, primaryOwnerUserId: viewer.userId } });
 
       await context.prisma.personSuggestion.createMany({
         data: [
@@ -1036,7 +1036,7 @@ describe('INT-102 tenant parentage and reference guards', () => {
       const viewerResponse = await context.app.inject({
         method: 'GET',
         url: `/api/suggest?opportunityId=${right.opportunityId}`,
-        headers: { authorization: `Bearer ${viewerToken}` },
+        headers: { authorization: `Bearer ${viewer.token}` },
       });
       expect(viewerResponse.statusCode).toBe(200);
       const viewerSuggestions = viewerResponse.json<{ suggestions: Array<Record<string, unknown>> }>().suggestions;
@@ -1611,7 +1611,7 @@ describe('INT-102 tenant parentage and reference guards', () => {
       });
 
       const warnings: StateSecurityWarning[] = [];
-      const state = await assembleState(tenantB.tenantId, undefined, {
+      const state = await assembleState(tenantB.tenantId, { tenantId: tenantB.tenantId, userId: tenantB.userId, role: 'owner' }, {
         onSecurityWarning: (warning) => warnings.push(warning),
       });
       const serialized = JSON.stringify(state);

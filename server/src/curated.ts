@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { prisma } from './prisma.js';
 import { viewerCanReadAccount, viewerCanReadOpp } from './scope.js';
 import { loadAiConfig, callLLM } from './ai.js';
+import { visiblePersonLogs } from './visibility.js';
 
 type EntityKind = 'account' | 'opportunity';
 
@@ -40,7 +41,10 @@ async function collectRaw(tenantId: string, kind: EntityKind, entityId: string):
     name = acc.name;
     const logLines: string[] = [];
     for (const p of acc.persons) {
-      try { const logs: any[] = JSON.parse(p.logs || '[]'); for (const l of logs.slice(-5)) if (l?.content) logLines.push(`${p.name}：${l.content}`); } catch { /* logs 非法 JSON 忽略 */ }
+      // CuratedSummary 是实体级共享缓存，因此 AI 上下文只能使用 org 动态；
+      // self/team 动态若进入共享摘要，会绕过读取 ACL。
+      const logs = visiblePersonLogs(p.logs, { tenantId, userId: '', role: 'viewer' });
+      for (const l of logs.slice(-5)) if (typeof l.content === 'string' && l.content) logLines.push(`${p.name}：${l.content}`);
     }
     if (logLines.length) parts.push('【关键人动态】\n' + logLines.map((l) => `- ${l}`).join('\n'));
   } else {
@@ -56,31 +60,33 @@ export interface CuratedResult { content: string; status: string; editedByHuman:
 /** 懒生成综述：human 锁定/缓存命中直接返回；过期或强制则调 LLM 重梳理并缓存。 */
 export async function getCuratedSummary(tenantId: string, kind: EntityKind, entityId: string, force = false): Promise<CuratedResult> {
   const cur = await prisma.curatedSummary.findUnique({ where: { tenantId_entityKind_entityId: { tenantId, entityKind: kind, entityId } } });
+  // 旧 AI 缓存无法证明是否混入 self/team 动态；人工编辑内容仍是明确的团队共享产物。
+  const safeCur = cur && (cur.editedByHuman || cur.aclVersion >= 1) ? cur : null;
   // human-wins：人改过且非强制 → 返回锁定缓存，不重生成覆盖
-  if (cur && cur.editedByHuman && !force) return { content: cur.content, status: 'human', editedByHuman: true, updatedAt: cur.updatedAt };
+  if (safeCur?.editedByHuman && !force) return { content: safeCur.content, status: 'human', editedByHuman: true, updatedAt: safeCur.updatedAt };
 
   const raw = await collectRaw(tenantId, kind, entityId);
-  if (!raw.text.trim()) return { content: cur?.content || '', status: 'empty', editedByHuman: false };
+  if (!raw.text.trim()) return { content: safeCur?.content || '', status: 'empty', editedByHuman: false };
 
   // 缓存新鲜(basedOnAt 覆盖最新原始) 或 无时间戳信号(只有 logs)时，非强制则用缓存(零 LLM)
-  const fresh = !!(cur?.basedOnAt && raw.latestAt && cur.basedOnAt >= raw.latestAt);
-  const noSignal = !!cur && !raw.latestAt;
-  if (cur && !force && (fresh || noSignal)) return { content: cur.content, status: 'cached', editedByHuman: false, updatedAt: cur.updatedAt };
+  const fresh = !!(safeCur?.basedOnAt && raw.latestAt && safeCur.basedOnAt >= raw.latestAt);
+  const noSignal = !!safeCur && !raw.latestAt;
+  if (safeCur && !force && (fresh || noSignal)) return { content: safeCur.content, status: 'cached', editedByHuman: false, updatedAt: safeCur.updatedAt };
 
   const ai = await loadAiConfig(tenantId);
-  if (!ai || ai.provider === 'mock' || !ai.baseUrl || !ai.model) return { content: cur?.content || '', status: 'needConfig', editedByHuman: false };
+  if (!ai || ai.provider === 'mock' || !ai.baseUrl || !ai.model) return { content: safeCur?.content || '', status: 'needConfig', editedByHuman: false };
 
   let content = '';
   try {
     const raw0 = await callLLM({ baseUrl: ai.baseUrl, model: ai.model, apiKey: ai.apiKey }, CURATE_SYSTEM, `【${raw.name}】的原始记录：\n\n${raw.text}\n\n请整理成现状综述。`, 2000);
     content = raw0.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/```\w*|```/g, '').trim();
-  } catch (e: any) { return { content: cur?.content || '', status: 'error', editedByHuman: false, error: e?.message || '模型返回异常' }; }
-  if (!content) return { content: cur?.content || '', status: 'error', editedByHuman: false, error: '模型无返回' };
+  } catch (e: any) { return { content: safeCur?.content || '', status: 'error', editedByHuman: false, error: e?.message || '模型返回异常' }; }
+  if (!content) return { content: safeCur?.content || '', status: 'error', editedByHuman: false, error: '模型无返回' };
 
   await prisma.curatedSummary.upsert({
     where: { tenantId_entityKind_entityId: { tenantId, entityKind: kind, entityId } },
-    update: { content, model: ai.model, basedOnAt: raw.latestAt, editedByHuman: false },
-    create: { id: 'cs_' + randomUUID().slice(0, 12), tenantId, entityKind: kind, entityId, content, model: ai.model, basedOnAt: raw.latestAt },
+    update: { content, model: ai.model, basedOnAt: raw.latestAt, editedByHuman: false, aclVersion: 1 },
+    create: { id: 'cs_' + randomUUID().slice(0, 12), tenantId, entityKind: kind, entityId, content, model: ai.model, basedOnAt: raw.latestAt, aclVersion: 1 },
   });
   return { content, status: 'generated', editedByHuman: false };
 }
@@ -104,8 +110,8 @@ export function curatedRoutes(app: FastifyInstance): void {
         ? await viewerCanReadAccount(req, reply, eid)
         : await viewerCanReadOpp(req, reply, eid);
       if (!okScope) return;
-      const cur = await prisma.curatedSummary.findUnique({ where: { tenantId_entityKind_entityId: { tenantId: req.user.tenantId, entityKind: kind, entityId: eid } } });
-      return { content: cur?.content || '', status: cur ? 'cached' : 'empty', editedByHuman: !!cur?.editedByHuman, updatedAt: cur?.updatedAt };
+      // 历史共享摘要可能由旧版本把 team/self 动态纳入；无法证明字段级来源时 fail closed。
+      return { content: '', status: 'restricted', editedByHuman: false };
     }
     return getCuratedSummary(req.user.tenantId, kind, eid);
   });

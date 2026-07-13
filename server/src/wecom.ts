@@ -15,19 +15,21 @@ import { deploymentOutboundPolicy, fetchOutbound } from './security/outboundUrl.
 
 const QYAPI = 'https://qyapi.weixin.qq.com';
 
-export interface WeComCred { corpId: string; agentId: string; secret: string }
+export interface WeComCred { tenantId: string; corpId: string; agentId: string; secret: string }
 
-// access_token 缓存(corpId → {token, exp})：企微 token ~2h 且有拉取限频，必须缓存复用。
+// access_token 缓存(tenantId + corpId → {token, exp})，禁止跨租户复用。
 const tokenCache = new Map<string, { token: string; exp: number }>();
+export const tokenCacheKey = (tenantId: string, corpId: string) => `${tenantId}\u0000${corpId}`;
 
 /** 用 corpId + 应用 secret 换 access_token（缓存，留 60s 余量）。 */
-export async function getAccessToken(corpId: string, secret: string): Promise<string> {
-  const cached = tokenCache.get(corpId);
+export async function getAccessToken(tenantId: string, corpId: string, secret: string): Promise<string> {
+  const cacheKey = tokenCacheKey(tenantId, corpId);
+  const cached = tokenCache.get(cacheKey);
   if (cached && cached.exp > Date.now() + 60_000) return cached.token;
   const res = await fetchOutbound(`${QYAPI}/cgi-bin/gettoken?corpid=${encodeURIComponent(corpId)}&corpsecret=${encodeURIComponent(secret)}`, {}, deploymentOutboundPolicy(), { timeoutMs: 15_000, maxResponseBytes: 1_048_576 });
   const d: any = await res.json().catch(() => ({}));
   if (d.errcode !== 0 || !d.access_token) throw new Error(`企微 access_token 获取失败：${d.errmsg || d.errcode || `HTTP ${res.status}`}`);
-  tokenCache.set(corpId, { token: d.access_token, exp: Date.now() + Number(d.expires_in || 7200) * 1000 });
+  tokenCache.set(cacheKey, { token: d.access_token, exp: Date.now() + Number(d.expires_in || 7200) * 1000 });
   return d.access_token;
 }
 
@@ -41,8 +43,8 @@ export function buildWecomAuthUrl(corpId: string, agentId: string, redirectUri: 
 }
 
 /** 用授权 code 换企微 userid（auth/getuserinfo）。 */
-export async function exchangeCodeToUserid(corpId: string, secret: string, code: string): Promise<string> {
-  const token = await getAccessToken(corpId, secret);
+export async function exchangeCodeToUserid(tenantId: string, corpId: string, secret: string, code: string): Promise<string> {
+  const token = await getAccessToken(tenantId, corpId, secret);
   const res = await fetchOutbound(`${QYAPI}/cgi-bin/auth/getuserinfo?access_token=${encodeURIComponent(token)}&code=${encodeURIComponent(code)}`, {}, deploymentOutboundPolicy(), { timeoutMs: 15_000, maxResponseBytes: 1_048_576 });
   const d: any = await res.json().catch(() => ({}));
   if (d.errcode !== 0 || !d.userid) throw new Error(`企微 getuserinfo 失败：${d.errmsg || d.errcode}（确认应用可信域名 + 成员在可见范围）`);
@@ -101,8 +103,8 @@ export async function delSchedule(token: string, scheduleId: string): Promise<vo
 }
 
 /** 从 WeComConfig 行解密拿可用凭据（secretEnc → secret）。 */
-export function decryptWeComCred(row: { corpId: string; agentId: string; secretEnc: string }): WeComCred {
-  return { corpId: row.corpId, agentId: row.agentId, secret: row.secretEnc ? dec(row.secretEnc) : '' };
+export function decryptWeComCred(row: { tenantId: string; corpId: string; agentId: string; secretEnc: string }): WeComCred {
+  return { tenantId: row.tenantId, corpId: row.corpId, agentId: row.agentId, secret: row.secretEnc ? dec(row.secretEnc) : '' };
 }
 
 // ── 江湖 → 企微 单向同步（PlanAction / OppMilestone 落库后由 /api/mutate fire-and-forget 触发）──
@@ -145,7 +147,7 @@ export async function syncFromAction(tenantId: string, userId: string, action: A
     if (!map?.wecomScheduleId) return;
     try {
       const cred = decryptWeComCred(cfg);
-      await delSchedule(await getAccessToken(cred.corpId, cred.secret), map.wecomScheduleId);
+      await delSchedule(await getAccessToken(cred.tenantId, cred.corpId, cred.secret), map.wecomScheduleId);
       await prisma.scheduleSync.update({ where: { id: map.id }, data: { status: 'deleted', lastError: '' } });
     } catch (e: any) {
       await prisma.scheduleSync.update({ where: { id: map.id }, data: { status: 'failed', lastError: String(e?.message || e).slice(0, 300) } }).catch(() => {});
@@ -179,7 +181,7 @@ export async function syncFromAction(tenantId: string, userId: string, action: A
   const map = await prisma.scheduleSync.findUnique({ where: whereMap });
   try {
     const cred = decryptWeComCred(cfg);
-    const token = await getAccessToken(cred.corpId, cred.secret);
+    const token = await getAccessToken(cred.tenantId, cred.corpId, cred.secret);
     if (map?.wecomScheduleId) {
       await updateSchedule(token, map.wecomScheduleId, schedule);
       await prisma.scheduleSync.update({ where: { id: map.id }, data: { status: 'synced', lastError: '' } });
@@ -197,7 +199,7 @@ export async function syncFromAction(tenantId: string, userId: string, action: A
 
 /** 发文本卡片（V1 验收：不依赖回调配置）。 */
 export async function sendTextCard(cred: WeComCred, touser: string, card: { title: string; description: string; url: string; btntxt?: string }): Promise<void> {
-  const token = await getAccessToken(cred.corpId, cred.secret);
+  const token = await getAccessToken(cred.tenantId, cred.corpId, cred.secret);
   await callApi(token, '/cgi-bin/message/send', {
     touser, msgtype: 'textcard', agentid: Number(cred.agentId),
     textcard: { title: card.title, description: card.description, url: card.url, btntxt: card.btntxt || '详情' },
@@ -208,7 +210,7 @@ export interface CardButton { text: string; key: string; style?: number }
 
 /** 发按钮交互模板卡（V2/V3：按钮点击经「接收消息」回调回江湖——发送前提=应用已配回调 URL）。 */
 export async function sendButtonCard(cred: WeComCred, touser: string, c: { taskId: string; title: string; desc?: string; fields?: Array<{ k: string; v: string }>; buttons: CardButton[] }): Promise<void> {
-  const token = await getAccessToken(cred.corpId, cred.secret);
+  const token = await getAccessToken(cred.tenantId, cred.corpId, cred.secret);
   await callApi(token, '/cgi-bin/message/send', {
     touser, msgtype: 'template_card', agentid: Number(cred.agentId),
     template_card: {
@@ -223,7 +225,7 @@ export async function sendButtonCard(cred: WeComCred, touser: string, c: { taskI
 
 /** 按钮点击后刷新卡片（把按钮替换成结果文案，如「✓ 已采纳」）。 */
 export async function updateCardButton(cred: WeComCred, responseCode: string, replaceName: string, userids: string[]): Promise<void> {
-  const token = await getAccessToken(cred.corpId, cred.secret);
+  const token = await getAccessToken(cred.tenantId, cred.corpId, cred.secret);
   await callApi(token, '/cgi-bin/message/update_template_card', {
     userids, agentid: Number(cred.agentId), response_code: responseCode,
     button: { replace_name: replaceName },
@@ -268,7 +270,17 @@ export async function pushProposalCard(tenantId: string, proposalId: string): Pr
     if (!cfg?.corpId || !cfg.secretEnc || !cfg.callbackToken) return; // 未配企微或未配回调（按钮卡需要回调）→ 不推
     const cp = await prisma.changeProposal.findFirst({ where: { id: proposalId, tenantId } });
     if (!cp || cp.status !== 'pending') return;
-    const binds = await prisma.weComUserBind.findMany({ where: { tenantId } });
+    const rawBinds = await prisma.weComUserBind.findMany({ where: { tenantId } });
+    if (!rawBinds.length) return;
+    const users = await prisma.user.findMany({ where: { tenantId, id: { in: rawBinds.map((b) => b.userId) } }, select: { id: true, role: true } });
+    const roleByUser = new Map(users.map((u) => [u.id, ActorRoleSchema.safeParse(u.role)]));
+    const counts = new Map<string, number>();
+    for (const bind of rawBinds) counts.set(bind.wecomUserid, (counts.get(bind.wecomUserid) ?? 0) + 1);
+    // 提案属于 account 敏感内容；只向当前有效且可审批的非 viewer 成员发送。重复 bind fail closed。
+    const binds = rawBinds.filter((b) => {
+      const role = roleByUser.get(b.userId);
+      return counts.get(b.wecomUserid) === 1 && role?.success && role.data !== 'viewer';
+    });
     if (!binds.length) return;
 
     const person = cp.entityKind === 'oppRole' ? await prisma.person.findFirst({ where: { id: cp.entityId, tenantId }, select: { name: true } }) : null;
@@ -322,27 +334,10 @@ export async function handleWecomEvent(tenantId: string, xml: string): Promise<v
   const m = key.match(/^cp:(accept|reject):(.+)$/);
   if (!m) return;
   // 鉴权：点按钮的企微成员必须已绑定江湖账号（绑定 = 本工作区成员，人审授权有效）
-  const bind = await prisma.weComUserBind.findFirst({ where: { tenantId, wecomUserid: fromUser } });
-  if (!bind) { await finish('⚠️ 未绑定江湖'); return; }
-  const actor = await prisma.user.findFirst({ where: { id: bind.userId, tenantId }, select: { id: true, role: true } });
-  const actorRole = ActorRoleSchema.safeParse(actor?.role);
-  if (!actor || !actorRole.success || actorRole.data === 'viewer') { await finish('⚠️ 绑定账号无权操作'); return; }
-  const { acceptProposal, rejectProposal } = await import('./proposals.js'); // 动态 import 破循环
+  const { reviewProposalFromWecom } = await import('./proposals.js'); // 动态 import 破循环
   try {
-    if (m[1] === 'accept') {
-      const r = await acceptProposal({
-        tenantId,
-        actorId: actor.id,
-        actorRole: actorRole.data,
-        channel: 'system',
-        requestId: `wecom:${randomUUID()}`,
-        assertionMode: 'user_asserted',
-      }, m[2]);
-      await finish(r === 'ok' ? '✓ 已采纳' : r === 'already' ? '已处理过' : '提案不存在');
-    } else {
-      const r = await rejectProposal(tenantId, m[2]);
-      await finish(r === 'ok' ? '已驳回' : '已处理过');
-    }
+    const r = await reviewProposalFromWecom(tenantId, fromUser, m[2], m[1] as 'accept' | 'reject');
+    await finish(r === 'ok' ? (m[1] === 'accept' ? '✓ 已采纳' : '已驳回') : r === 'already' ? '已处理过' : r === 'unauthorized' ? '⚠️ 绑定账号无权操作' : '提案不存在');
   } catch { await finish('处理失败'); }
 }
 
@@ -463,22 +458,34 @@ export function wecomRoutes(app: FastifyInstance) {
     if (!p.success) return reply.code(400).send({ error: '参数无效' });
     const wecomUserid = p.data.wecomUserid;
     if (!wecomUserid) { await prisma.weComUserBind.deleteMany({ where: { tenantId: req.user.tenantId, userId: req.user.userId } }); return { ok: true, wecomUserid: '' }; }
-    await prisma.weComUserBind.upsert({
-      where: { tenantId_userId: { tenantId: req.user.tenantId, userId: req.user.userId } },
-      create: { id: 'wb_' + randomUUID().slice(0, 12), tenantId: req.user.tenantId, userId: req.user.userId, wecomUserid },
-      update: { wecomUserid },
-    });
+    const occupied = await prisma.weComUserBind.findUnique({ where: { tenantId_wecomUserid: { tenantId: req.user.tenantId, wecomUserid } } });
+    if (occupied && occupied.userId !== req.user.userId) return reply.code(409).send({ error: '该企微 userid 已绑定其他账号' });
+    try {
+      await prisma.weComUserBind.upsert({
+        where: { tenantId_userId: { tenantId: req.user.tenantId, userId: req.user.userId } },
+        create: { id: 'wb_' + randomUUID().slice(0, 12), tenantId: req.user.tenantId, userId: req.user.userId, wecomUserid },
+        update: { wecomUserid },
+      });
+    } catch (error: any) {
+      if (error?.code === 'P2002') return reply.code(409).send({ error: '该企微 userid 已绑定其他账号' });
+      throw error;
+    }
     return { ok: true, wecomUserid };
   });
 
-  // OAuth 扫码绑定：start 生成授权链接，callback 用 code 换 userid 落 WeComUserBind（替代手填）。⚠️ 回调需公网 + 应用可信域名，真机生效。
+  // OAuth 扫码绑定：callback 只交换企微 userid 并落短时 pending；原发起江湖会话须显式 confirm 才真正绑定。
   app.get('/api/wecom/oauth/start', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (denyViewer(req, reply)) return; // viewer 只读，不可操作
     const cfg = await prisma.weComConfig.findUnique({ where: { tenantId: req.user.tenantId } });
     if (!cfg?.corpId || !cfg.agentId) return reply.code(400).send({ error: '请先配置企微应用（corpId / AgentId）' });
     const base = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.headers.host}`;
-    const state = enc(JSON.stringify({ t: req.user.tenantId, u: req.user.userId, ts: Date.now() }));
-    return { url: buildWecomAuthUrl(cfg.corpId, cfg.agentId, `${base}/api/wecom/oauth/callback`, state) };
+    const state = randomUUID(); // 只给 provider，允许被转发但不具备江湖侧确认能力
+    const requestId = randomUUID(); // 只返回给当前已认证 app，绝不放进 OAuth URL
+    await prisma.weComOAuthState.create({ data: {
+      id: state, requestId, tenantId: req.user.tenantId, userId: req.user.userId,
+      expiresAt: new Date(Date.now() + 10 * 60_000),
+    } });
+    return { url: buildWecomAuthUrl(cfg.corpId, cfg.agentId, `${base}/api/wecom/oauth/callback`, state), requestId };
   });
 
   app.get('/api/wecom/oauth/callback', async (req: any, reply) => {
@@ -486,20 +493,81 @@ export function wecomRoutes(app: FastifyInstance) {
     const html = (msg: string, ok: boolean) => `<!doctype html><meta charset="utf-8"><body style="font-family:system-ui;text-align:center;padding:48px"><h2>${ok ? '✅' : '❌'} ${msg}</h2><p>可关闭本页返回江湖。</p></body>`;
     reply.type('text/html; charset=utf-8');
     try {
-      const st = JSON.parse(dec(String(state || '')));
-      if (!st?.t || !st?.u) return reply.send(html('绑定失败：state 无效', false));
-      const cfg = await prisma.weComConfig.findUnique({ where: { tenantId: st.t } });
+      const nonce = String(state || '');
+      const st = await prisma.weComOAuthState.findFirst({ where: {
+        id: nonce, requestId: { not: null }, consumedAt: null, pendingAt: null, expiresAt: { gt: new Date() },
+      } });
+      if (!st) return reply.send(html('绑定失败：state 已过期、已使用或无效', false));
+      const cfg = await prisma.weComConfig.findUnique({ where: { tenantId: st.tenantId } });
       if (!cfg?.corpId || !cfg.secretEnc) return reply.send(html('绑定失败：企微应用未配置', false));
       const cred = decryptWeComCred(cfg);
-      const userid = await exchangeCodeToUserid(cred.corpId, cred.secret, String(code || ''));
-      await prisma.weComUserBind.upsert({
-        where: { tenantId_userId: { tenantId: st.t, userId: st.u } },
-        create: { id: 'wb_' + randomUUID().slice(0, 12), tenantId: st.t, userId: st.u, wecomUserid: userid },
-        update: { wecomUserid: userid },
+      const userid = await exchangeCodeToUserid(cred.tenantId, cred.corpId, cred.secret, String(code || ''));
+      const stored = await prisma.weComOAuthState.updateMany({
+        where: { id: nonce, requestId: st.requestId, consumedAt: null, pendingAt: null, expiresAt: { gt: new Date() } },
+        data: { pendingWecomUserid: userid, pendingAt: new Date() },
       });
-      return reply.send(html(`已绑定企微 userid：${userid}`, true));
+      if (stored.count !== 1) return reply.send(html('绑定失败：state 已过期、已使用或无效', false));
+      return reply.send(html('企微身份已读取，等待原江湖会话确认', true));
     } catch (e: any) {
       return reply.send(html('绑定失败：' + (e?.message || e), false));
+    }
+  });
+
+  app.get('/api/wecom/oauth/status', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    const parsed = z.object({ requestId: z.string().min(1).max(128) }).safeParse(req.query || {});
+    if (!parsed.success) return reply.code(400).send({ error: '参数无效' });
+    const row = await prisma.weComOAuthState.findFirst({ where: {
+      requestId: parsed.data.requestId, tenantId: req.user.tenantId, userId: req.user.userId,
+    } });
+    if (!row) return reply.code(404).send({ error: '绑定请求不存在' });
+    if (row.consumedAt) return { status: 'consumed' };
+    if (row.expiresAt <= new Date()) return { status: 'expired' };
+    if (row.pendingAt && row.pendingWecomUserid) return { status: 'pending', wecomUserid: row.pendingWecomUserid };
+    return { status: 'waiting' };
+  });
+
+  app.post('/api/wecom/oauth/confirm', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (denyViewer(req, reply)) return;
+    const parsed = z.object({ requestId: z.string().min(1).max(128) }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: '参数无效' });
+    try {
+      const result = await prisma.$transaction(async (tx) => {
+        const row = await tx.weComOAuthState.findFirst({ where: {
+          requestId: parsed.data.requestId, tenantId: req.user.tenantId, userId: req.user.userId,
+        } });
+        if (!row) return { status: 'not_found' as const };
+        if (row.consumedAt) return { status: 'consumed' as const };
+        if (row.expiresAt <= new Date()) return { status: 'expired' as const };
+        if (!row.pendingAt || !row.pendingWecomUserid) return { status: 'waiting' as const };
+        const fresh = await tx.user.findFirst({ where: { id: row.userId, tenantId: row.tenantId }, select: { id: true, role: true } });
+        const role = ActorRoleSchema.safeParse(fresh?.role);
+        if (!fresh || !role.success || role.data === 'viewer') return { status: 'unauthorized' as const };
+        const occupied = await tx.weComUserBind.findUnique({ where: {
+          tenantId_wecomUserid: { tenantId: row.tenantId, wecomUserid: row.pendingWecomUserid },
+        } });
+        if (occupied && occupied.userId !== row.userId) return { status: 'occupied' as const };
+        const claimed = await tx.weComOAuthState.updateMany({
+          where: { id: row.id, consumedAt: null, expiresAt: { gt: new Date() }, pendingWecomUserid: row.pendingWecomUserid },
+          data: { consumedAt: new Date() },
+        });
+        if (claimed.count !== 1) return { status: 'consumed' as const };
+        await tx.weComUserBind.upsert({
+          where: { tenantId_userId: { tenantId: row.tenantId, userId: row.userId } },
+          create: { id: 'wb_' + randomUUID().slice(0, 12), tenantId: row.tenantId, userId: row.userId, wecomUserid: row.pendingWecomUserid },
+          update: { wecomUserid: row.pendingWecomUserid },
+        });
+        return { status: 'ok' as const, wecomUserid: row.pendingWecomUserid };
+      }, { isolationLevel: 'Serializable' });
+      if (result.status === 'not_found') return reply.code(404).send({ error: '绑定请求不存在' });
+      if (result.status === 'expired') return reply.code(410).send({ error: '绑定请求已过期' });
+      if (result.status === 'consumed') return reply.code(409).send({ error: '绑定请求已使用' });
+      if (result.status === 'waiting') return reply.code(409).send({ error: '尚未收到企微身份' });
+      if (result.status === 'unauthorized') return reply.code(403).send({ error: '账号已失效或无权限' });
+      if (result.status === 'occupied') return reply.code(409).send({ error: '该企微 userid 已绑定其他账号' });
+      return { ok: true, wecomUserid: result.wecomUserid };
+    } catch (error: any) {
+      if (error?.code === 'P2002') return reply.code(409).send({ error: '该企微 userid 已绑定其他账号' });
+      throw error;
     }
   });
 }

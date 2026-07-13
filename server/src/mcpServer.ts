@@ -176,6 +176,7 @@ const TOOL_DEFS = [
         region: { type: 'string', description: '大区' },
         group: { type: 'string', description: '集团/母公司' },
         primaryOwner: { type: 'string', description: '主负责人' },
+        primaryOwnerUserId: { type: ['string', 'null'], description: '主负责人稳定 User.id；不得用姓名推断' },
         profile: { type: 'object', description: '企业背景档案 JSON：business(工商)/group(集团关系)/bidding(招投标)/risk(风险)/ourCooperation(我方合作)/salesNote(销售背景)/aiSuggestion(AI建议)', properties: ACCOUNT_PROFILE_TOOL_PROPERTIES, additionalProperties: false },
       },
       additionalProperties: false,
@@ -693,6 +694,7 @@ async function upsertAccount(ctx: CommandContext, args: Record<string, unknown>)
     if (args.region !== undefined) patch.region = str(args.region, 40);
     if (args.group !== undefined) patch.group = str(args.group, 100);
     if (args.primaryOwner !== undefined) patch.primaryOwner = str(args.primaryOwner, 40);
+    if (args.primaryOwnerUserId !== undefined) patch.primaryOwnerUserId = args.primaryOwnerUserId === null ? null : str(args.primaryOwnerUserId, 100);
     // 只把共享契约允许的字段送入 Action；mutator 在数据库侧保留 legacy extras，并生成 server-owned _mcpOrigin。
     let curProfile: unknown = {};
     try { curProfile = JSON.parse(existing.profile || '{}'); } catch { /* 存量坏值，覆盖为空对象 */ }
@@ -714,6 +716,7 @@ async function upsertAccount(ctx: CommandContext, args: Record<string, unknown>)
       region: str(args.region, 40),
       group: str(args.group, 100),
       primaryOwner: str(args.primaryOwner, 40),
+      primaryOwnerUserId: typeof args.primaryOwnerUserId === 'string' ? str(args.primaryOwnerUserId, 100) : undefined,
       profile: profile ?? {},
     },
   });

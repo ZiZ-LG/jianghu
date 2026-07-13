@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from './prisma.js';
+import { canReadPrivateBusinessData, visiblePersonLogs, type ReadPrincipal } from './visibility.js';
 
 const J = (s: string | null | undefined, d: unknown) => { try { return s ? JSON.parse(s) : d; } catch { return d; } };
 
@@ -100,12 +101,12 @@ function strategyResourceView(x: any) {
 
 /**
  * 组装某租户的完整 Account 树，形状与前端 types.ts 一致。
- * scope（viewer 只读投影·契约 v1.0 §四）：只下发 primaryOwner === 该销售姓名 的客户及其子树；
- * 未归属（primaryOwner 空）的客户对 viewer 不可见。非 viewer 不传 scope，维持全租户共享。
+ * principal 是服务端读权限上下文。viewer 只下发 primaryOwnerUserId === userId 的客户；
+ * 未归属客户不可见。敏感行继续按 role/userId 做字段级过滤。
  */
 export async function assembleState(
   tenantId: string,
-  scope?: { primaryOwner: string },
+  principal: ReadPrincipal,
   options: AssembleStateOptions = {},
 ) {
   const drops = new StateDropCollector(tenantId);
@@ -119,7 +120,11 @@ export async function assembleState(
     (!!accountId && archivedAccountIds.has(accountId))
     || (!!opportunityId && archivedOpportunityIds.has(opportunityId));
   const rawAccounts = await prisma.account.findMany({
-    where: { tenantId, archivedAt: null, ...(scope ? { primaryOwner: scope.primaryOwner } : {}) },
+    where: {
+      tenantId,
+      archivedAt: null,
+      ...(principal.role === 'viewer' ? { primaryOwnerUserId: principal.userId } : {}),
+    },
     orderBy: { createdAt: 'asc' },
     include: accountTreeInclude,
   });
@@ -183,7 +188,8 @@ export async function assembleState(
         if (bi.tenantId !== tenantId) reasons.push('tenant_mismatch');
         if (bi.opportunityId !== opportunity.id) reasons.push('opportunity_mismatch');
         if (personAccount.get(bi.personId) !== account.id) reasons.push('person_mismatch');
-        return drops.keep('BurningIssue', bi.id, reasons);
+        return drops.keep('BurningIssue', bi.id, reasons)
+          && (!bi.isPrivate || canReadPrivateBusinessData(principal));
       });
       const biIds = new Set(opportunity.bis.map((bi) => bi.id));
       opportunity.ucvs = opportunity.ucvs.filter((ucv) => {
@@ -204,7 +210,7 @@ export async function assembleState(
   }
 
   // viewer 范围：后续按 accountId 挂载的表统一收敛到名下客户（防止越权行随树下发）
-  const accFilter = scope ? { accountId: { in: accounts.map((a) => a.id) } } : {};
+  const accFilter = principal.role === 'viewer' ? { accountId: { in: accounts.map((a) => a.id) } } : {};
 
   // VisitNote 与 Account 无 Prisma relation（设计稿）：单独查后按 accountId 挂到对应客户
   const visits = await prisma.visitNote.findMany({ where: { tenantId, ...accFilter }, orderBy: { date: 'desc' } });
@@ -371,6 +377,7 @@ export async function assembleState(
       region: a.region,
       group: a.group,
       primaryOwner: a.primaryOwner,
+      primaryOwnerUserId: a.primaryOwnerUserId,
       profile: J(a.profile, {}),
       persons: a.persons.map((p) => ({
         id: p.id, name: p.name, title: p.title, orgLevel: p.orgLevel, isCompetitor: p.isCompetitor,
@@ -378,7 +385,7 @@ export async function assembleState(
         // 默认结构兜底再 spread 解析结果：采纳候选/导入/语音建的 Person form='{}'，
         // 直接 JSON.parse 会得空对象、缺 family7，前端访问 form.family7.xxx 即崩。
         form: { family: '', occupation: '', recreation: '', moneyMotivation: '', family7: {}, ...(J(p.form, {}) as Record<string, unknown>) },
-        logs: J(p.logs, []),
+        logs: visiblePersonLogs(p.logs, principal).map(({ createdBy: _serverOwner, ...log }) => log),
       })),
       baseEdges: a.edges.filter((e) => !e.opportunityId).map(edgeView),
       visitNotes: visitsByAccount.get(a.id) ?? [],

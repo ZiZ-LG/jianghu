@@ -170,6 +170,13 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
     return d;
   };
   await requireActionScope(db, tenantId, action);
+  const requireOwner = async (userId: string | null | undefined): Promise<string | null | undefined> => {
+    if (userId === undefined) return undefined;
+    if (userId === null) return null;
+    const user = await db.user.findFirst({ where: { id: userId, tenantId }, select: { id: true } });
+    if (!user) throw new Error('primary owner not found in tenant');
+    return user.id;
+  };
 
   switch (t) {
     case 'ADD_ACCOUNT': {
@@ -179,6 +186,7 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
       await db.account.create({ data: {
         id: a.id, tenantId, name: a.name, customerType: a.customerType, unifiedCreditCode: a.unifiedCreditCode ?? null,
         externalRef: a.externalRef ?? null, region: a.region ?? '', group: a.group ?? '', primaryOwner: a.primaryOwner ?? '',
+        primaryOwnerUserId: (await requireOwner(a.primaryOwnerUserId)) ?? null,
         profile: S(profile),
       } });
       // 顶层事务成功提交后才入队，避免 job 观察到尚未提交/最终回滚的 Account。
@@ -186,6 +194,7 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
     }
     case 'UPDATE_ACCOUNT': {
       const d = pick(action.patch, ['name', 'customerType', 'unifiedCreditCode', 'externalRef', 'region', 'group', 'primaryOwner']);
+      if (action.patch?.primaryOwnerUserId !== undefined) d.primaryOwnerUserId = await requireOwner(action.patch.primaryOwnerUserId);
       if (action.patch?.profile !== undefined) {
         const current = await db.account.findFirst({ where: { id: action.accId, tenantId }, select: { profile: true } });
         const profile: Record<string, unknown> = {
@@ -239,17 +248,17 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
 
     case 'ADD_PERSON': {
       const p = action.person;
+      const initialLogs = (p.logs ?? []).map((log) => ({ ...log, createdBy: ctx.actorId }));
       await db.person.create({ data: {
         id: p.id, tenantId, accountId: action.accId, name: p.name, title: p.title, orgLevel: p.orgLevel ?? 3,
         isCompetitor: !!p.isCompetitor, avatarUrl: p.avatarUrl ?? null, coachLevel: p.coachLevel ?? null,
-        x: p.x ?? 300, y: p.y ?? 240, form: S(p.form ?? {}), logs: S(p.logs ?? []),
+        x: p.x ?? 300, y: p.y ?? 240, form: S(p.form ?? {}), logs: S(initialLogs),
       } });
       return;
     }
     case 'UPDATE_PERSON': {
       const d = pick(action.patch, ['name', 'title', 'orgLevel', 'avatarUrl', 'coachLevel', 'color']);
       if (action.patch?.form !== undefined) d.form = S(action.patch.form);
-      if (action.patch?.logs !== undefined) d.logs = S(action.patch.logs);
       await lockedUpdate({
         baseVersion: action.baseVersion,
         update: (vw) => db.person.updateMany({ where: { id: action.personId, tenantId, accountId: action.accId, ...vw }, data: { ...d, version: { increment: 1 } } }),
@@ -283,7 +292,11 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
     case 'ADD_LOG': {
       const person = await requireScopedRow(db.person.findFirst({ where: { id: action.personId, tenantId, accountId: action.accId } }));
       const logs = (() => { try { return JSON.parse(person.logs); } catch { return []; } })();
-      await db.person.updateMany({ where: { id: action.personId, tenantId, accountId: action.accId }, data: { logs: S([action.log, ...logs]) } });
+      // createdBy 由服务端从已验证 CommandContext 注入，self ACL 不信任客户端。
+      await db.person.updateMany({
+        where: { id: action.personId, tenantId, accountId: action.accId },
+        data: { logs: S([{ ...action.log, createdBy: ctx.actorId }, ...logs]) },
+      });
       return;
     }
 

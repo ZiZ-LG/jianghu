@@ -91,7 +91,8 @@ model Account {
   externalRef       String?       // 销售包 customer_id，跨系统幂等主锚（WorkBuddy 集成）
   region            String        @default("")   // 大区
   group             String        @default("")   // 集团/母公司
-  primaryOwner      String        @default("")   // 主负责人
+  primaryOwner      String        @default("")   // 主负责人（仅展示/兼容，不参与授权）
+  primaryOwnerUserId String?                   // 稳定归属锨；空=未归属，viewer 不可见
   profile           String        @default("{}") // JSON：工商基础/集团关系/招投标/风险信号/我方现有合作/销售背景/AI建议
   archivedAt        DateTime?
   archivedBy        String?
@@ -103,6 +104,7 @@ model Account {
 
   @@unique([tenantId, id])
   @@index([tenantId])
+  @@index([tenantId, primaryOwnerUserId])
   @@index([tenantId, archivedAt])
 }
 
@@ -661,6 +663,7 @@ model CuratedSummary {
   basedOnAt     DateTime?              // 所基于的原始层最新时间戳(懒生成判过期)
   editedByHuman Boolean   @default(false) // 人改过→锁定，AI 不覆盖(human-wins)
   editedBy      String    @default("")
+  aclVersion    Int       @default(0) // 1+=已按服务端 visibility ACL 重建 AI 上下文
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -726,6 +729,21 @@ model WeComUserBind {
   createdAt   DateTime @default(now())
 
   @@unique([tenantId, userId])
+  @@unique([tenantId, wecomUserid])
+}
+
+model WeComOAuthState {
+  id                   String    @id // provider state: only present in the redirect URL
+  requestId            String?   @unique // confirmation handle returned only to the authenticated initiating app
+  tenantId             String
+  userId               String
+  pendingWecomUserid   String    @default("")
+  pendingAt            DateTime?
+  expiresAt            DateTime
+  consumedAt           DateTime?
+  createdAt            DateTime  @default(now())
+
+  @@index([tenantId, userId, expiresAt])
 }
 
 // 日程映射：江湖 PlanAction / OppMilestone ↔ 企微 scheduleId（幂等防重复建 + 双向同步锚）。
@@ -837,6 +855,7 @@ model EVSnapshot {
   schemaId       String   @default("")
   schemaVersion  String   @default("")
   confidenceFlag String   @default("")   // low_confidence / no_pot 等
+  aclVersion     Int      @default(0)    // 1+=快照输入已按当前敏感 ACL 版本生成
   createdBy      String   @default("")
   createdAt      DateTime @default(now())
 

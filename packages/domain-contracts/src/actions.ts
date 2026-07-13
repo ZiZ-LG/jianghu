@@ -44,6 +44,7 @@ const accountInput = z.object({
   region: z.string().optional(),
   group: z.string().optional(),
   primaryOwner: z.string().optional(),
+  primaryOwnerUserId: id.nullable().optional(),
   profile: accountProfile.optional(),
 }).strict();
 
@@ -55,6 +56,7 @@ const accountPatch = z.object({
   region: z.string().optional(),
   group: z.string().optional(),
   primaryOwner: z.string().optional(),
+  primaryOwnerUserId: id.nullable().optional(),
   profile: accountProfile.optional(),
 }).strict();
 
@@ -150,7 +152,6 @@ const personPatch = z.object({
   coachLevel: z.number().int().optional(),
   color: z.string().optional(),
   form: form.optional(),
-  logs: z.array(interactionLog).optional(),
 }).strict();
 
 const rolePatch = z.object({

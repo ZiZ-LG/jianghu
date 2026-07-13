@@ -14,6 +14,7 @@ import { assembleDeal, CONF2CRED, CRED2CONF, MARK2SENT, SENT2MARK, type Assemble
 import { ensureIndustryPack, PACK_KEY } from './pack.js';
 import { z } from 'zod';
 import type { DbClient } from '../mutation/scopeGuards.js';
+import type { ReadPrincipal } from '../visibility.js';
 
 const STAGE_ORDER: Stage[] = ['initiation', 'feasibility', 'budget_approval', 'tender_design', 'tender_execution'];
 
@@ -102,16 +103,16 @@ interface PdeComputation {
 }
 
 /** 核心计算（三路由与快照共用）。opp 不存在返回 null。 */
-export async function computePde(tenantId: string, oppId: string, db: DbClient = prisma): Promise<PdeComputation | null> {
+export async function computePde(tenantId: string, oppId: string, db: DbClient = prisma, principal?: ReadPrincipal): Promise<PdeComputation | null> {
   const { seeds, packId, packSchemaVersion, signalCatalogSchemaVersion } = await ensureIndustryPack(tenantId, db);
-  const asm = await assembleDeal(tenantId, oppId, seeds, packId, db);
+  const asm = await assembleDeal(tenantId, oppId, seeds, packId, db, principal);
   if (!asm) return null;
   const catalog = await db.actionCatalog.findMany({ where: { tenantId, packId } });
   const ev = evaluate(asm.deal);
   const score = weightedScore(asm.deal.items);
   const actions = rankActions(asm.deal, catalog, asm.personName);
   // prevEv：上一张快照的 ev_continue（FOLD 的「连续两期」判据；无快照=null 不触发 FOLD）
-  const prevSnap = await db.eVSnapshot.findFirst({ where: { tenantId, opportunityId: oppId }, orderBy: { createdAt: 'desc' } });
+  const prevSnap = principal?.role === 'viewer' ? null : await db.eVSnapshot.findFirst({ where: { tenantId, opportunityId: oppId }, orderBy: { createdAt: 'desc' } });
   let prevEv: number | null = null;
   try { prevEv = prevSnap ? (JSON.parse(prevSnap.resultJson)?.eval?.ev_continue ?? null) : null; } catch { prevEv = null; }
   const recommendation = recommend(ev, actions, ev.stakeholders, score, ev.m_stage, prevEv);
@@ -154,6 +155,7 @@ export async function createPdeSnapshot(
         resultJson: JSON.stringify({ eval: c.ev, score: c.score, recommendation: c.recommendation, confidenceFlag: c.confidenceFlag }),
         schemaId: String(c.seeds.scoringSchema.schemaId ?? ''), schemaVersion: String(c.seeds.scoringSchema.schemaVersion ?? ''),
         confidenceFlag: c.confidenceFlag, createdBy,
+        aclVersion: 1,
       },
     });
     return snap.id;
@@ -165,10 +167,11 @@ export async function takePdeSnapshot(tenantId: string, oppId: string, trigger: 
 }
 
 export function pdeRoutes(app: FastifyInstance) {
+  const principalOf = (req: any): ReadPrincipal => ({ tenantId: req.user.tenantId, userId: req.user.userId, role: req.user.role });
   // 牌局评估：赢面（带置信）+ 双轨分 + 四动作建议
   app.get('/api/pde/:oppId/ev', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (!(await viewerCanReadOpp(req, reply, req.params.oppId))) return; // viewer 归属校验（契约 v1.0 §四）
-    const c = await computePde(req.user.tenantId, req.params.oppId);
+    const c = await computePde(req.user.tenantId, req.params.oppId, prisma, principalOf(req));
     if (!c) return reply.code(404).send({ error: '商机不存在' });
     return {
       opportunity: c.asm.opp,
@@ -186,7 +189,7 @@ export function pdeRoutes(app: FastifyInstance) {
   // 情报作战清单（VoI 排序·拜访卡引擎）：立场未知/低可信干系人 + 竞争系数未实测，各挂 info 动作
   app.get('/api/pde/:oppId/intel-priorities', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (!(await viewerCanReadOpp(req, reply, req.params.oppId))) return; // viewer 归属校验（契约 v1.0 §四）
-    const c = await computePde(req.user.tenantId, req.params.oppId);
+    const c = await computePde(req.user.tenantId, req.params.oppId, prisma, principalOf(req));
     if (!c) return reply.code(404).send({ error: '商机不存在' });
     const catalog = await prisma.actionCatalog.findMany({ where: { tenantId: req.user.tenantId, packId: c.packId } });
     const hangable = catalog.map((row) => {
@@ -227,7 +230,7 @@ export function pdeRoutes(app: FastifyInstance) {
   // 行动排序（ΔEV·坞行动列/今日一屏引擎）：relationship 动作实例化，含 741 子策略标签
   app.get('/api/pde/:oppId/action-ranking', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (!(await viewerCanReadOpp(req, reply, req.params.oppId))) return; // viewer 归属校验（契约 v1.0 §四）
-    const c = await computePde(req.user.tenantId, req.params.oppId);
+    const c = await computePde(req.user.tenantId, req.params.oppId, prisma, principalOf(req));
     if (!c) return reply.code(404).send({ error: '商机不存在' });
     return {
       actions: c.actions.map((a) => ({
@@ -266,7 +269,7 @@ export function pdeRoutes(app: FastifyInstance) {
       })).max(30),
     }).safeParse(req.body ?? {});
     if (!p.success) return reply.code(400).send({ error: '参数无效' });
-    const c = await computePde(req.user.tenantId, req.params.oppId);
+    const c = await computePde(req.user.tenantId, req.params.oppId, prisma, principalOf(req));
     if (!c) return reply.code(404).send({ error: '商机不存在' });
 
     const ovById = new Map(p.data.overrides.map((o) => [o.personId, o]));
@@ -303,6 +306,7 @@ export function pdeRoutes(app: FastifyInstance) {
   // 快照列表（复盘走势；不回 inputsJson 大字段）
   app.get('/api/pde/:oppId/snapshots', { preHandler: [app.authenticate] }, async (req: any, reply: any) => {
     if (!(await viewerCanReadOpp(req, reply, req.params.oppId))) return; // viewer 归属校验（契约 v1.0 §四）
+    if (req.user.role === 'viewer') return reply.code(404).send({ error: '快照不存在或无权限' });
     const rows = await prisma.eVSnapshot.findMany({
       where: { tenantId: req.user.tenantId, opportunityId: req.params.oppId },
       orderBy: { createdAt: 'desc' }, take: 60,

@@ -5,6 +5,7 @@ import { prisma } from '../prisma.js';
 import { scoreFromState, type ItemKey } from '../g64111.js';
 import { aggregateApprovedEvidence, type ApprovedEvidenceAggregate } from './evidence.js';
 import type { DbClient } from '../mutation/scopeGuards.js';
+import type { ReadPrincipal } from '../visibility.js';
 
 // ── 值域映射（江湖 ↔ 内核）──
 export const SENT2MARK: Record<string, Mark> = { star: 'star', plus: 'plus', neutral: 'eq', unknown: 'unk', minus: 'minus', x: 'x' };
@@ -37,6 +38,7 @@ export async function assembleDeal(
   seeds: any,
   packId: string,
   db: DbClient = prisma,
+  principal?: ReadPrincipal,
 ): Promise<AssembledPde | null> {
   const opp = await db.opportunity.findFirst({
     where: { id: oppId, tenantId },
@@ -83,6 +85,9 @@ export async function assembleDeal(
 
   // 2) 名义分（g64111，照 mcpServer.getWinTendency 组装）+ 可信度元层 → items
   const account = { persons: opp.account.persons.map((p) => ({ id: p.id, form: J(p.form, {}) })) };
+  const visibleBis = principal?.role === 'viewer' ? opp.bis.filter((b) => !b.isPrivate) : opp.bis;
+  const visibleBiIds = new Set(visibleBis.map((b) => b.id));
+  const visibleUcvs = opp.ucvs.filter((u) => visibleBiIds.has(u.targetBiId));
   const opportunity = {
     engageStage: opp.engageStage,
     c3Items: J(opp.c3Items, {}), c5Items: J(opp.c5Items, {}),
@@ -90,8 +95,8 @@ export async function assembleDeal(
       personId: r.personId, role: r.role as any, sentiment: r.sentiment as any, confidence: r.confidence as any,
       isKeyInfluencer: r.isKeyInfluencer, procurementType: (r.procurementType ?? undefined) as any, procurementStatus: (r.procurementStatus ?? undefined) as any,
     })),
-    bis: opp.bis.map((b) => ({ id: b.id, personId: b.personId, confidence: b.confidence as any })),
-    ucvs: opp.ucvs.map((u) => ({ targetBiId: u.targetBiId, status: u.status as any })),
+    bis: visibleBis.map((b) => ({ id: b.id, personId: b.personId, confidence: b.confidence as any })),
+    ucvs: visibleUcvs.map((u) => ({ targetBiId: u.targetBiId, status: u.status as any })),
   };
   const nominal = scoreFromState(account as any, opportunity as any);
 

@@ -8,6 +8,7 @@ import {
 import { scoreFromDomain, BAND_LABEL, ITEM_MAX, type ItemKey } from '../lib/g64111';
 import type { Action } from '../store';
 import { CuratedSummary } from './CuratedSummary';
+import { api } from '../api';
 
 /** 失焦提交的内联字段：本地编辑、值变了才 dispatch（避免每键写库）。 */
 function Field({ value, onSave, ph, area, ro }: { value: string; onSave: (v: string) => void; ph?: string; area?: boolean; ro?: boolean }) {
@@ -66,6 +67,11 @@ function primaryRole(account: Account, pid: string) {
 }
 
 function CustomerDoc({ account, dispatch, readonly = false }: { account: Account; dispatch: (a: Action) => void; readonly?: boolean }) {
+  const [members, setMembers] = useState<Array<{ id: string; name: string; role: string }>>([]);
+  useEffect(() => {
+    if (readonly) return;
+    void api.members().then((r) => setMembers(r.members)).catch(() => setMembers([]));
+  }, [readonly]);
   const set = (patch: Partial<Account>) => dispatch({ type: 'UPDATE_ACCOUNT', accId: account.id, patch });
   const pf = account.profile ?? {};
   const setPf = (k: keyof AccountProfile, v: string) => set({ profile: { ...pf, [k]: v } });
@@ -80,7 +86,16 @@ function CustomerDoc({ account, dispatch, readonly = false }: { account: Account
         <div><b>客户类型</b>：{CUSTOMER_TYPE_LABEL[account.customerType]} <span className="mdv-ro">只读</span></div>
         <div><b>大区</b>：<Field ro={readonly} value={account.region ?? ''} ph="如 华北" onSave={(v) => set({ region: v })} /></div>
         <div><b>集团 / 母公司</b>：<Field ro={readonly} value={account.group ?? ''} onSave={(v) => set({ group: v })} /></div>
-        <div><b>主负责人</b>：<Field ro={readonly} value={account.primaryOwner ?? ''} onSave={(v) => set({ primaryOwner: v })} /></div>
+        <div><b>主负责人</b>：{readonly
+          ? <span className="mdv-field-ro">{account.primaryOwner || '—'}</span>
+          : <select className="mdv-field" value={account.primaryOwnerUserId ?? ''} onChange={(e) => {
+              const member = members.find((m) => m.id === e.target.value);
+              set({ primaryOwnerUserId: member?.id ?? null, primaryOwner: member?.name ?? '' });
+            }}>
+              <option value="">未归属（需人工指定）</option>
+              {members.map((m) => <option key={m.id} value={m.id}>{m.name} · {m.role}</option>)}
+            </select>}
+        </div>
       </blockquote>
 
       <h2>一、客户画像</h2>

@@ -91,7 +91,11 @@ export const api = {
   wecomSaveConfig: (b: { corpId?: string; agentId?: string; secret?: string; callbackToken?: string; callbackAesKey?: string }) => req('/api/wecom/config', { method: 'PUT', body: JSON.stringify(b) }),
   wecomBind: (): Promise<{ wecomUserid: string }> => req('/api/wecom/bind'),
   wecomSaveBind: (wecomUserid: string) => req('/api/wecom/bind', { method: 'PUT', body: JSON.stringify({ wecomUserid }) }),
-  wecomOauthStart: (): Promise<{ url: string }> => req('/api/wecom/oauth/start'), // 扫码自动绑 userid（回调需公网）
+  wecomOauthStart: (): Promise<{ url: string; requestId: string }> => req('/api/wecom/oauth/start'),
+  wecomOauthStatus: (requestId: string): Promise<{ status: 'waiting' | 'pending' | 'expired' | 'consumed'; wecomUserid?: string }> =>
+    req(`/api/wecom/oauth/status?requestId=${encodeURIComponent(requestId)}`),
+  wecomOauthConfirm: (requestId: string): Promise<{ ok: true; wecomUserid: string }> =>
+    req('/api/wecom/oauth/confirm', { method: 'POST', body: JSON.stringify({ requestId }) }),
   wecomTestPush: (kind: 'textcard' | 'card') => req('/api/wecom/test-push', { method: 'POST', body: JSON.stringify({ kind }) }), // V1 文本卡 / V2 按钮卡
   // PDE 决策引擎（评估主链；赢面永不脱离 confidenceFlag）
   pdeEv: (oppId: string): Promise<any> => req(`/api/pde/${oppId}/ev`),

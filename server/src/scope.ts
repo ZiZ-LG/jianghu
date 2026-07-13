@@ -1,13 +1,12 @@
-// viewer（只读投影）门禁与归属过滤 —— 江湖-销售包集成契约 v1.0 §三/§四。
-// 归属承载：销售包按 primaryOwner 推送 → 江湖以 Account.primaryOwner === User.name 对齐"销售名下客户"。
+// viewer（只读投影）门禁与归属过滤。授权只使用稳定 User.id，姓名仅展示。
 // 语义边界：仅 viewer 收紧到"名下可见"；owner/admin/member 维持租户内全员共享（协作产品语义不变）。
 import { prisma } from './prisma.js';
 
-/** viewer 名下客户 id 集合（Account.primaryOwner 与该用户姓名一致）。 */
+/** viewer 名下客户 id 集合（未归属记录 fail closed）。 */
 export async function viewerAccountIds(tenantId: string, userId: string): Promise<Set<string>> {
-  const u = await prisma.user.findFirst({ where: { id: userId, tenantId }, select: { name: true } });
-  if (!u?.name) return new Set();
-  const rows = await prisma.account.findMany({ where: { tenantId, primaryOwner: u.name }, select: { id: true } });
+  const u = await prisma.user.findFirst({ where: { id: userId, tenantId }, select: { id: true } });
+  if (!u) return new Set();
+  const rows = await prisma.account.findMany({ where: { tenantId, primaryOwnerUserId: userId }, select: { id: true } });
   return new Set(rows.map((r) => r.id));
 }
 

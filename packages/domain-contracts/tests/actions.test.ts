@@ -31,6 +31,11 @@ describe('ActionSchema', () => {
     expect(ActionSchema.safeParse({ type: 'ADD_PERSON', person: {} }).success).toBe(false);
   });
 
+  it('accepts explicit stable ownership and rejects bulk person log replacement', () => {
+    expect(ActionSchema.safeParse({ type: 'UPDATE_ACCOUNT', accId: 'a', patch: { primaryOwner: '同名', primaryOwnerUserId: 'user-1' } }).success).toBe(true);
+    expect(ActionSchema.safeParse({ type: 'UPDATE_PERSON', accId: 'a', personId: 'p', patch: { logs: [] } }).success).toBe(false);
+  });
+
   it('rejects the legacy TB role', () => {
     expect(ActionSchema.safeParse({
       type: 'SET_ROLE',

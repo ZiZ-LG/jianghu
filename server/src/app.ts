@@ -63,7 +63,7 @@ async function registerSecurityPlugins(app: FastifyInstance): Promise<void> {
     const role = ActorRoleSchema.safeParse(u.role);
     if (!role.success) { reply.code(401).send({ error: 'unauthorized' }); return; }
     req.user.role = role.data;
-    req.user.name = u.name; // viewer 归属过滤锚（Account.primaryOwner === User.name，契约 v1.0 §四）
+    req.user.name = u.name; // 仅展示；授权使用 userId。
   });
 }
 
@@ -92,17 +92,18 @@ function registerRoutes(app: FastifyInstance): void {
   pdeRoutes(app); // PDE 决策引擎（M3 评估主链）：ev / intel-priorities / action-ranking / snapshot
 
   // ── 数据：拉取整树 / 应用变更 ──
-  // viewer（只读投影）：只下发名下客户（primaryOwner === 姓名）；User.name 有 min(1) 校验，
-  // 空名兜底传不可能匹配的哨兵，绝不让空串匹配到"未归属"客户。
+  // 服务端组装时传入当前身份，统一执行归属与敏感字段 ACL。
   app.get('/api/state', { preHandler: [app.authenticate] }, async (req) => {
     const stateOptions = {
       onSecurityWarning: (warning: StateSecurityWarning) => {
         req.log.warn(warning, 'state scope rows dropped');
       },
     };
-    return req.user.role === 'viewer'
-      ? assembleState(req.user.tenantId, { primaryOwner: req.user.name || '\u0000' }, stateOptions)
-      : assembleState(req.user.tenantId, undefined, stateOptions);
+    return assembleState(req.user.tenantId, {
+      tenantId: req.user.tenantId,
+      userId: req.user.userId,
+      role: ActorRoleSchema.parse(req.user.role),
+    }, stateOptions);
   });
 
   app.post('/api/mutate', { preHandler: [app.authenticate] }, async (req, reply) => {
