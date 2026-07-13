@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import type { RelSuggestion } from '@prisma/client';
+import { Prisma, type RelSuggestion } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
@@ -15,6 +15,7 @@ import {
   ScopedNotFoundError,
 } from './mutation/scopeGuards.js';
 import { resolveScopedRelSuggestions } from './suggestionScope.js';
+import { createPdeSnapshot } from './pde/routes.js';
 
 const pairKey = (a: string, b: string) => [a, b].sort().join('|');
 const LAYER_COLOR: Record<string, string> = { L1: '#2563eb', L2: '#9333ea', L3: '#16a34a', L4: '#ef4444' };
@@ -28,6 +29,54 @@ class SuggestionConflictError extends Error {
   constructor() {
     super('该候选已被处理，请刷新后重试');
     this.name = 'SuggestionConflictError';
+  }
+}
+
+class EvidenceReviewNotFoundError extends Error {}
+
+const EVIDENCE_REVIEW_TX_ATTEMPTS = 3;
+
+const prismaErrorCode = (error: unknown): string | undefined =>
+  error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+    ? error.code
+    : undefined;
+
+async function approveEvidenceWithSnapshot(
+  tenantId: string,
+  evidenceId: string,
+  reviewedBy: string,
+  reviewedAt: string,
+  override: { direction?: -1 | 0 | 1; tier?: 'weak' | 'mid' | 'strong' },
+): Promise<void> {
+  for (let attempt = 1; attempt <= EVIDENCE_REVIEW_TX_ATTEMPTS; attempt += 1) {
+    try {
+      await prisma.$transaction(async (tx) => {
+        const evidence = await tx.evidenceEvent.findFirst({
+          where: { id: evidenceId, tenantId, status: 'pending_review' },
+        });
+        if (!evidence) throw new EvidenceReviewNotFoundError();
+        const approved = await tx.evidenceEvent.updateMany({
+          where: { id: evidence.id, tenantId, status: 'pending_review' },
+          data: {
+            status: 'approved',
+            ...(override.direction !== undefined ? { direction: override.direction } : {}),
+            ...(override.tier ? { tier: override.tier } : {}),
+            reviewedBy,
+            reviewedAt,
+          },
+        });
+        if (!approved.count) throw new EvidenceReviewNotFoundError();
+        await createPdeSnapshot(tx, tenantId, evidence.opportunityId, 'evidence_review', reviewedBy);
+      }, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 5_000,
+        timeout: 15_000,
+      });
+      return;
+    } catch (error) {
+      if (error instanceof EvidenceReviewNotFoundError) throw error;
+      if (prismaErrorCode(error) !== 'P2034' || attempt === EVIDENCE_REVIEW_TX_ATTEMPTS) throw error;
+    }
   }
 }
 
@@ -441,7 +490,7 @@ export function suggestRoutes(app: FastifyInstance) {
   });
 
   // M3 · 证据审核（第5类卡三按钮：approve 采纳 / 带 direction·tier 覆盖=修改后采纳 / reject 拒绝）。
-  // approve → 证据进 E2 燃料池（前端 adapter 过滤放行）+ fire-and-forget 落 EVSnapshot(trigger=evidence_review) 留痕；
+  // approve → pending CAS、PDE 重算与 EVSnapshot 写入同一 Serializable 事务；任一步失败整体回滚并明确报错；
   // reject → 不参与任何计算（留库审计）。tenantId 隔离 + 只审 pending_review 防重复处理。无静默生效路径（铁律②）。
   app.post('/api/evidence/:id/review', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (denyViewer(req, reply)) return; // viewer 只读，不可拍板/操作
@@ -452,24 +501,33 @@ export function suggestRoutes(app: FastifyInstance) {
     }).safeParse(req.body ?? {});
     if (!p.success) return reply.code(400).send({ error: '参数无效' });
     const tenantId = req.user.tenantId;
-    const ev = await prisma.evidenceEvent.findFirst({ where: { id: req.params.id, tenantId, status: 'pending_review' } });
-    if (!ev) return reply.code(404).send({ error: '证据不存在或已处理' });
     const today = new Date().toISOString().slice(0, 10);
-    await prisma.evidenceEvent.update({
-      where: { id: ev.id },
+    const reviewedBy = req.user.userId ?? '';
+    if (p.data.action === 'approve') {
+      try {
+        await approveEvidenceWithSnapshot(tenantId, req.params.id, reviewedBy, today, {
+          direction: p.data.direction,
+          tier: p.data.tier,
+        });
+        return { ok: true, status: 'approved' };
+      } catch (error) {
+        if (error instanceof EvidenceReviewNotFoundError) {
+          return reply.code(404).send({ error: '证据不存在或已处理' });
+        }
+        req.log.warn(error, 'evidence review transaction failed');
+        return reply.code(503).send({ error: '证据快照未落库，审核未生效，请重试' });
+      }
+    }
+
+    const resolved = await prisma.evidenceEvent.updateMany({
+      where: { id: req.params.id, tenantId, status: 'pending_review' },
       data: {
-        status: p.data.action === 'approve' ? 'approved' : 'rejected',
-        ...(p.data.action === 'approve' && p.data.direction !== undefined ? { direction: p.data.direction } : {}),
-        ...(p.data.action === 'approve' && p.data.tier ? { tier: p.data.tier } : {}),
-        reviewedBy: req.user.userId ?? '', reviewedAt: today,
+        status: 'rejected',
+        reviewedBy, reviewedAt: today,
       },
     });
-    if (p.data.action === 'approve') {
-      // 审核通过=局面燃料变化 → 落快照留痕（K7 evidence_review 触发；失败静默不阻塞审核）
-      const { takePdeSnapshot } = await import('./pde/routes.js');
-      void takePdeSnapshot(tenantId, ev.opportunityId, 'evidence_review', req.user.userId ?? '').catch(() => {});
-    }
-    return { ok: true, status: p.data.action === 'approve' ? 'approved' : 'rejected' };
+    if (!resolved.count) return reply.code(404).send({ error: '证据不存在或已处理' });
+    return { ok: true, status: 'rejected' };
   });
 
   // 忽略一条巡检提醒（提醒型提案：只读，人「忽略」→ dismissed；绝不改业务库）。tenantId 隔离 + status=pending 防重复处理。

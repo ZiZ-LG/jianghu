@@ -7,18 +7,37 @@ import type { Deal } from '../src/index.js';
 const golden = JSON.parse(readFileSync(fileURLToPath(new URL('../fixtures/golden-tests.json', import.meta.url)), 'utf8'));
 const TOL = 1e-6;
 
+function diff(actual: unknown, expected: unknown, path = '$'): string[] {
+  if (typeof expected === 'number' && typeof actual === 'number') {
+    return Math.abs(actual - expected) <= TOL ? [] : [`${path}: ${actual} != ${expected}`];
+  }
+  if (Array.isArray(expected)) {
+    if (!Array.isArray(actual)) return [`${path}: expected array`];
+    if (actual.length !== expected.length) return [`${path}: length ${actual.length} != ${expected.length}`];
+    return expected.flatMap((value, index) => diff(actual[index], value, `${path}[${index}]`));
+  }
+  if (expected !== null && typeof expected === 'object') {
+    if (actual === null || typeof actual !== 'object' || Array.isArray(actual)) return [`${path}: expected object`];
+    const expectedKeys = Object.keys(expected as object).sort();
+    const actualKeys = Object.keys(actual as object).sort();
+    const out: string[] = [];
+    for (const key of actualKeys) if (!expectedKeys.includes(key)) out.push(`${path}.${key}: extra key`);
+    for (const key of expectedKeys) {
+      if (!actualKeys.includes(key)) out.push(`${path}.${key}: missing key`);
+      else out.push(...diff((actual as any)[key], (expected as any)[key], `${path}.${key}`));
+    }
+    return out;
+  }
+  return Object.is(actual, expected) ? [] : [`${path}: ${JSON.stringify(actual)} != ${JSON.stringify(expected)}`];
+}
+
 describe('approved evidence pseudo-counts', () => {
   it('matches oracle for no-evidence, approved-positive, and approved-negative cases', () => {
     const cases = golden.evidence_cases as Record<string, { input: Deal; eval: ReturnType<typeof evaluate> }>;
     for (const [name, value] of Object.entries(cases)) {
       const actual = evaluate(value.input);
-      expect(actual.pwin, `${name}.pwin`).toBeCloseTo(value.eval.pwin, 6);
-      actual.stakeholders.forEach((stakeholder, index) => {
-        const expected = value.eval.stakeholders[index]!;
-        expect(Math.abs(stakeholder.pS - expected.pS), `${name}.pS`).toBeLessThanOrEqual(TOL);
-        expect(Math.abs(stakeholder.pN - expected.pN), `${name}.pN`).toBeLessThanOrEqual(TOL);
-        expect(Math.abs(stakeholder.pO - expected.pO), `${name}.pO`).toBeLessThanOrEqual(TOL);
-      });
+      const differences = diff(actual, value.eval);
+      expect(differences, `${name}\n${differences.join('\n')}`).toEqual([]);
     }
 
     const baseline = evaluate(cases.no_evidence!.input);

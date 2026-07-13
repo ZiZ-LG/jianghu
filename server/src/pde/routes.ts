@@ -13,6 +13,7 @@ import { denyViewer, viewerCanReadOpp } from '../scope.js';
 import { assembleDeal, CONF2CRED, CRED2CONF, MARK2SENT, SENT2MARK, type AssembledPde } from './assemble.js';
 import { ensureIndustryPack, PACK_KEY } from './pack.js';
 import { z } from 'zod';
+import type { DbClient } from '../mutation/scopeGuards.js';
 
 const STAGE_ORDER: Stage[] = ['initiation', 'feasibility', 'budget_approval', 'tender_design', 'tender_execution'];
 
@@ -95,47 +96,72 @@ interface PdeComputation {
   recommendation: Recommendation;
   confidenceFlag: string;
   s741: { posture: string; plays: string[] } | null;
+  packId: string;
+  packSchemaVersion: string;
+  signalCatalogSchemaVersion: string;
 }
 
 /** 核心计算（三路由与快照共用）。opp 不存在返回 null。 */
-export async function computePde(tenantId: string, oppId: string): Promise<PdeComputation | null> {
-  const { seeds } = await ensureIndustryPack(tenantId);
-  const asm = await assembleDeal(tenantId, oppId, seeds);
+export async function computePde(tenantId: string, oppId: string, db: DbClient = prisma): Promise<PdeComputation | null> {
+  const { seeds, packId, packSchemaVersion, signalCatalogSchemaVersion } = await ensureIndustryPack(tenantId, db);
+  const asm = await assembleDeal(tenantId, oppId, seeds, packId, db);
   if (!asm) return null;
-  const catalog = await prisma.actionCatalog.findMany({ where: { tenantId } });
+  const catalog = await db.actionCatalog.findMany({ where: { tenantId, packId } });
   const ev = evaluate(asm.deal);
   const score = weightedScore(asm.deal.items);
   const actions = rankActions(asm.deal, catalog, asm.personName);
   // prevEv：上一张快照的 ev_continue（FOLD 的「连续两期」判据；无快照=null 不触发 FOLD）
-  const prevSnap = await prisma.eVSnapshot.findFirst({ where: { tenantId, opportunityId: oppId }, orderBy: { createdAt: 'desc' } });
+  const prevSnap = await db.eVSnapshot.findFirst({ where: { tenantId, opportunityId: oppId }, orderBy: { createdAt: 'desc' } });
   let prevEv: number | null = null;
   try { prevEv = prevSnap ? (JSON.parse(prevSnap.resultJson)?.eval?.ev_continue ?? null) : null; } catch { prevEv = null; }
   const recommendation = recommend(ev, actions, ev.stakeholders, score, ev.m_stage, prevEv);
   const flags: string[] = [];
   if (recommendation.action === 'CHECK') flags.push('low_confidence');
   if (asm.potSource === 'missing') flags.push('no_pot');
-  return { asm, seeds, ev, score, actions, recommendation, confidenceFlag: flags.join(','), s741: strategy741Label(seeds, score) };
+  return {
+    asm, seeds, ev, score, actions, recommendation, confidenceFlag: flags.join(','),
+    s741: strategy741Label(seeds, score), packId, packSchemaVersion, signalCatalogSchemaVersion,
+  };
 }
 
 /** 无彩池时金额类字段降级（屏效护栏：pot 未填→只给排序不给绝对金额）。 */
 const moneyOrNull = (c: PdeComputation, v: number) => (c.asm.potSource === 'missing' ? null : Math.round(v * 100) / 100);
 
-/** 落一张 EVSnapshot（K7 四类触发共用：manual / evidence_review / stage_gate / import）。opp 不存在或引擎失败静默返回 null——快照是留痕不是业务态，绝不阻塞主流程。 */
-export async function takePdeSnapshot(tenantId: string, oppId: string, trigger: string, createdBy = ''): Promise<string | null> {
-  try {
-    const c = await computePde(tenantId, oppId);
-    if (!c) return null;
-    const snap = await prisma.eVSnapshot.create({
+/** 事务内快照原语：不吞异常，Evidence 审核与 approved CAS 共用同一 transaction client。 */
+export async function createPdeSnapshot(
+  db: DbClient,
+  tenantId: string,
+  oppId: string,
+  trigger: string,
+  createdBy = '',
+): Promise<string> {
+    const c = await computePde(tenantId, oppId, db);
+    if (!c) throw new Error('PDE opportunity unavailable');
+    const snap = await db.eVSnapshot.create({
       data: {
         id: 'evs_' + randomUUID().slice(0, 12), tenantId, opportunityId: oppId, trigger,
-        inputsJson: JSON.stringify({ deal: c.asm.deal, packKey: PACK_KEY, paramsSchemaVersion: c.seeds.params.schemaVersion }),
+        inputsJson: JSON.stringify({
+          deal: c.asm.deal,
+          evidence: c.asm.evidence,
+          metadata: {
+            activePackId: c.packId,
+            industryPack: { packKey: PACK_KEY, schemaVersion: c.packSchemaVersion },
+            signalCatalog: { schema: 'signal-catalog', version: c.signalCatalogSchemaVersion },
+          },
+          packKey: PACK_KEY,
+          paramsSchemaVersion: c.seeds.params.schemaVersion,
+        }),
         resultJson: JSON.stringify({ eval: c.ev, score: c.score, recommendation: c.recommendation, confidenceFlag: c.confidenceFlag }),
         schemaId: String(c.seeds.scoringSchema.schemaId ?? ''), schemaVersion: String(c.seeds.scoringSchema.schemaVersion ?? ''),
         confidenceFlag: c.confidenceFlag, createdBy,
       },
     });
     return snap.id;
-  } catch { return null; }
+}
+
+/** 非审核触发保留 nullable 兼容口径；审核流必须直接调用 createPdeSnapshot 并让异常回滚事务。 */
+export async function takePdeSnapshot(tenantId: string, oppId: string, trigger: string, createdBy = ''): Promise<string | null> {
+  try { return await createPdeSnapshot(prisma, tenantId, oppId, trigger, createdBy); } catch { return null; }
 }
 
 export function pdeRoutes(app: FastifyInstance) {
@@ -162,7 +188,7 @@ export function pdeRoutes(app: FastifyInstance) {
     if (!(await viewerCanReadOpp(req, reply, req.params.oppId))) return; // viewer 归属校验（契约 v1.0 §四）
     const c = await computePde(req.user.tenantId, req.params.oppId);
     if (!c) return reply.code(404).send({ error: '商机不存在' });
-    const catalog = await prisma.actionCatalog.findMany({ where: { tenantId: req.user.tenantId } });
+    const catalog = await prisma.actionCatalog.findMany({ where: { tenantId: req.user.tenantId, packId: c.packId } });
     const hangable = catalog.map((row) => {
       let targets: string[] = []; let effect: any = {};
       try { targets = JSON.parse(row.targetSlots); effect = JSON.parse(row.effectJson); } catch { /* 忽略坏行 */ }

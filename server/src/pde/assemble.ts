@@ -4,6 +4,7 @@ import type { Cred, Deal, Mark, ScoreItem, Slot, Stage, Stakeholder, Volatility 
 import { prisma } from '../prisma.js';
 import { scoreFromState, type ItemKey } from '../g64111.js';
 import { aggregateApprovedEvidence, type ApprovedEvidenceAggregate } from './evidence.js';
+import type { DbClient } from '../mutation/scopeGuards.js';
 
 // ── 值域映射（江湖 ↔ 内核）──
 export const SENT2MARK: Record<string, Mark> = { star: 'star', plus: 'plus', neutral: 'eq', unknown: 'unk', minus: 'minus', x: 'x' };
@@ -30,14 +31,20 @@ export interface AssembledPde {
 }
 
 /** 从江湖库组装一个 kernel Deal（按 tenantId 严格隔离）。opp 不存在返回 null。 */
-export async function assembleDeal(tenantId: string, oppId: string, seeds: any): Promise<AssembledPde | null> {
-  const opp = await prisma.opportunity.findFirst({
+export async function assembleDeal(
+  tenantId: string,
+  oppId: string,
+  seeds: any,
+  packId: string,
+  db: DbClient = prisma,
+): Promise<AssembledPde | null> {
+  const opp = await db.opportunity.findFirst({
     where: { id: oppId, tenantId },
     include: { roles: true, bis: true, ucvs: true, account: { include: { persons: true } } },
   });
   if (!opp) return null;
-  const cfg = await prisma.dealPdeConfig.findUnique({ where: { opportunityId: oppId } });
-  const itemStates = await prisma.scoringItemState.findMany({ where: { tenantId, opportunityId: oppId, subItemKey: '' } });
+  const cfg = await db.dealPdeConfig.findFirst({ where: { tenantId, opportunityId: oppId } });
+  const itemStates = await db.scoringItemState.findMany({ where: { tenantId, opportunityId: oppId, subItemKey: '' } });
 
   // 1) 干系人 → stakeholders（排除竞品；slots = 角色 + 招采身份 + 关键影响人，多 slot 权重相加）
   const personById = new Map(opp.account.persons.map((p) => [p.id, p]));
@@ -62,9 +69,11 @@ export async function assembleDeal(tenantId: string, oppId: string, seeds: any):
     });
   }
   const evidence = await aggregateApprovedEvidence(
+    db,
     tenantId,
     oppId,
     stakeholders.map((stakeholder) => stakeholder.id),
+    packId,
     seeds.signalCatalog.deltaAlphaMap,
   );
   for (const stakeholder of stakeholders) {

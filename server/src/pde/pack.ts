@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { prisma } from '../prisma.js';
+import type { DbClient } from '../mutation/scopeGuards.js';
 
 const require_ = createRequire(import.meta.url);
 
@@ -32,22 +33,32 @@ export function loadSeeds(): SeedBundle {
 export const PACK_KEY = 'digital-energy';
 
 /** 确保租户已装载行业包（IndustryPack + 展开目录表）。返回 pack 行与种子内容。 */
-export async function ensureIndustryPack(tenantId: string): Promise<{ packId: string; seeds: SeedBundle }> {
+export async function ensureIndustryPack(
+  tenantId: string,
+  db: DbClient = prisma,
+): Promise<{ packId: string; packSchemaVersion: string; signalCatalogSchemaVersion: string; seeds: SeedBundle }> {
   const seeds = loadSeeds();
   const schemaVersion = String(seeds.scoringSchema.schemaVersion ?? '1.1');
-  let pack = await prisma.industryPack.findUnique({ where: { tenantId_packKey_schemaVersion: { tenantId, packKey: PACK_KEY, schemaVersion } } });
+  let pack = await db.industryPack.findUnique({ where: { tenantId_packKey_schemaVersion: { tenantId, packKey: PACK_KEY, schemaVersion } } });
   if (!pack) {
-    pack = await prisma.industryPack.create({
+    pack = await db.industryPack.create({
       data: {
         id: 'pack_' + randomUUID().slice(0, 12), tenantId, packKey: PACK_KEY, schemaVersion,
         payload: JSON.stringify(seeds),
       },
     });
+  } else if (!pack.active) {
+    await db.industryPack.updateMany({
+      where: { id: pack.id, tenantId, active: false },
+      data: { active: true },
+    });
+    pack = await db.industryPack.findFirst({ where: { id: pack.id, tenantId, active: true } });
+    if (!pack) throw new Error('Industry pack activation failed');
   }
   // 展开动作库（幂等 upsert by unique；costWan 按 costTierWan 换算，租户后续可单独调）
   const tierWan: Record<string, number> = seeds.params.costTierWan ?? { low: 0.3, mid: 1.5, high: 5.0 };
   for (const a of seeds.actionLibrary.actions as any[]) {
-    await prisma.actionCatalog.upsert({
+    await db.actionCatalog.upsert({
       where: { tenantId_packId_actionKey: { tenantId, packId: pack.id, actionKey: a.id } },
       create: {
         id: 'ac_' + randomUUID().slice(0, 12), tenantId, packId: pack.id, actionKey: a.id,
@@ -61,7 +72,7 @@ export async function ensureIndustryPack(tenantId: string): Promise<{ packId: st
   }
   // 展开信号库
   for (const s of seeds.signalCatalog.signals as any[]) {
-    await prisma.signalCatalog.upsert({
+    await db.signalCatalog.upsert({
       where: { tenantId_packId_signalKey: { tenantId, packId: pack.id, signalKey: s.key } },
       create: {
         id: 'sig_' + randomUUID().slice(0, 12), tenantId, packId: pack.id, signalKey: s.key,
@@ -71,5 +82,10 @@ export async function ensureIndustryPack(tenantId: string): Promise<{ packId: st
       update: {},
     });
   }
-  return { packId: pack.id, seeds };
+  return {
+    packId: pack.id,
+    packSchemaVersion: pack.schemaVersion,
+    signalCatalogSchemaVersion: String(seeds.signalCatalog.schemaVersion ?? ''),
+    seeds,
+  };
 }

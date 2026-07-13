@@ -1,4 +1,4 @@
-import { prisma } from '../prisma.js';
+import type { DbClient } from '../mutation/scopeGuards.js';
 
 export type EvidenceAlpha = [number, number, number];
 
@@ -15,13 +15,15 @@ const isTier = (value: string): value is 'weak' | 'mid' | 'strong' =>
  * SignalCatalog is the tenant-scoped allowlist; numeric magnitudes come from the versioned industry-pack seed.
  */
 export async function aggregateApprovedEvidence(
+  db: DbClient,
   tenantId: string,
   opportunityId: string,
   stakeholderIds: readonly string[],
+  packId: string,
   deltaAlphaMap: Record<'weak' | 'mid' | 'strong', number>,
 ): Promise<ApprovedEvidenceAggregate> {
   if (!stakeholderIds.length) return { ids: [], alphaByStakeholder: {} };
-  const evidence = await prisma.evidenceEvent.findMany({
+  const evidence = await db.evidenceEvent.findMany({
     where: {
       tenantId,
       opportunityId,
@@ -32,8 +34,8 @@ export async function aggregateApprovedEvidence(
   });
   if (!evidence.length) return { ids: [], alphaByStakeholder: {} };
 
-  const catalog = await prisma.signalCatalog.findMany({
-    where: { tenantId, signalKey: { in: [...new Set(evidence.map((item) => item.signalKey))] } },
+  const catalog = await db.signalCatalog.findMany({
+    where: { tenantId, packId, signalKey: { in: [...new Set(evidence.map((item) => item.signalKey))] } },
     select: { signalKey: true },
   });
   const allowedSignals = new Set(catalog.map((item) => item.signalKey));
