@@ -25,6 +25,7 @@
     "@fastify/multipart": "^10.1.0",
     "@fastify/rate-limit": "^11.1.0",
     "@jianghu/domain-contracts": "file:../packages/domain-contracts",
+    "@jianghu/g64111": "file:../packages/g64111",
     "@prisma/client": "^5.22.0",
     "bcryptjs": "^2.4.3",
     "fastify": "^5.10.0",

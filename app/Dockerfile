@@ -4,8 +4,9 @@ FROM node:22-slim AS build
 WORKDIR /app
 # 国内构建加速：npm 用 npmmirror
 ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
-# app 依赖仓库内的共享契约包；构建 context 因此是仓库根目录。
+# app 依赖仓库内的共享契约与 G64111 包；构建 context 因此是仓库根目录。
 COPY packages/domain-contracts /packages/domain-contracts
+COPY packages/g64111 /packages/g64111
 COPY app/package.json app/package-lock.json ./
 RUN npm ci --install-links
 COPY app .

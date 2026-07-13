@@ -5,14 +5,7 @@ import { z } from 'zod';
 import { prisma } from './prisma.js';
 import { denyViewer } from './scope.js';
 import { loadAiConfig, callLLM } from './ai.js';
-
-// G64111 分项标签/满分（后端自持小映射，不依赖前端 lib；同 docs/G64111-评分规格.md）
-const ITEM_LABEL: Record<string, string> = {
-  C1: 'C1 组织图+D的FORM', C2: 'C2 拍板人BI', C3: 'C3 立项材料+排序', C4: 'C4 介入阶段',
-  C5: 'C5 招采事项', C6: 'C6 UCV解决度', P1: 'P1 多数人支持', P2: 'P2 招采关键人',
-  P3: 'P3 与D密谋/支持', P4: 'P4 关键影响人', '1K': '1K 与A密谋/支持',
-};
-const ITEM_MAX: Record<string, number> = { C1: 10, C2: 5, C3: 5, C4: 5, C5: 5, C6: 5, P1: 5, P2: 10, P3: 20, P4: 10, '1K': 20 };
+import { ITEM_LABEL, ITEM_MAX, type ItemKey } from './g64111.js';
 
 interface StrategyCand { gapItem: string; title: string; basis: string; }
 interface MilestoneCand { title: string; offsetDays: number; why: string; } // why=排期依据（P4：候选标注依据）
@@ -31,9 +24,13 @@ const FWD_TMPL: Record<string, string> = {
   C1: '补全组织图与 D 的 FORM 家庭七问',
   C4: '推动尽早介入（需求调研立项阶段最主动）',
 };
+const ITEM_KEYS = Object.keys(ITEM_MAX) as ItemKey[];
+const isItemKey = (value: unknown): value is ItemKey =>
+  typeof value === 'string' && ITEM_KEYS.includes(value as ItemKey);
+
 function mockForward(ctx: any): StrategyCand[] {
   const items = ctx?.winTendency?.items || {};
-  return Object.keys(ITEM_MAX)
+  return ITEM_KEYS
     .filter((k) => typeof items[k] === 'number' && items[k] < ITEM_MAX[k])
     .sort((a, b) => (ITEM_MAX[b] - items[b]) - (ITEM_MAX[a] - items[a]))
     .slice(0, 4)
@@ -77,7 +74,7 @@ async function llmForward(cfg: any, ctx: any): Promise<StrategyCand[]> {
   const system = '你是 B2B 大客户销售策略顾问，精通 G64111 趋赢力方法论（6必清 C1-C6 / 4优势 P1-P4 / 1决胜 1K）。基于商机现状（含各分项得分、干系人格局、局势），为"补强趋赢力短板"生成 3-5 条可执行的策略打法，每条挂靠一个 G64111 低分项。只输出 JSON 数组，每项 {gapItem,title,basis}；gapItem 取 C1..C6|P1..P4|1K 之一；title 是具体打法(≤30字)；basis 是依据(≤50字)；不要输出 JSON 以外内容。';
   const text = await callLLM(cfg, system, `# 商机现状快照\n${JSON.stringify(ctx, null, 1)}`, 800);
   return grabJsonArray(text).slice(0, 5)
-    .map((r) => ({ gapItem: ITEM_LABEL[r?.gapItem] ? String(r.gapItem) : '', title: String(r?.title || '').slice(0, 40), basis: String(r?.basis || '').slice(0, 80) }))
+    .map((r) => ({ gapItem: isItemKey(r?.gapItem) ? r.gapItem : '', title: String(r?.title || '').slice(0, 40), basis: String(r?.basis || '').slice(0, 80) }))
     .filter((c) => c.title);
 }
 
@@ -187,7 +184,7 @@ function mockPrefill(ctx: any, card: { title?: string; gapItem?: string }, perso
 
 async function llmPrefill(cfg: any, ctx: any, card: { title?: string; basis?: string; gapItem?: string }, person?: { name: string; title?: string }): Promise<Prefill | null> {
   const system = '你是 B2B 大客户销售策略顾问，精通 G64111 趋赢力方法论。给定一张策略打法卡与目标干系人，为执行它的下一步行动预填四要素初稿：\n- target 目的：这一手要达成什么（≤40字）\n- resources 所需资源：人/预算/内部支持（≤30字）\n- cautions 注意要点：风险/红线/话术提示（≤30字）\n- props 道具：方案/POC/报告/会议大纲等（≤30字）\n只输出 JSON 对象 {target,resources,cautions,props}，不要输出 JSON 以外内容。';
-  const user = `# 商机现状快照\n${JSON.stringify(ctx, null, 1)}\n\n# 策略打法卡\n标题：${card.title || '（未命名）'}\n依据：${card.basis || '无'}\n挂靠缺口：${card.gapItem ? (ITEM_LABEL[card.gapItem] || card.gapItem) : '无'}\n\n# 目标干系人\n${person ? `${person.name}（${person.title || '职务未知'}）` : '未指定'}`;
+  const user = `# 商机现状快照\n${JSON.stringify(ctx, null, 1)}\n\n# 策略打法卡\n标题：${card.title || '（未命名）'}\n依据：${card.basis || '无'}\n挂靠缺口：${card.gapItem ? (isItemKey(card.gapItem) ? ITEM_LABEL[card.gapItem] : card.gapItem) : '无'}\n\n# 目标干系人\n${person ? `${person.name}（${person.title || '职务未知'}）` : '未指定'}`;
   const text = await callLLM(cfg, system, user, 500);
   const o = grabJsonObject(text);
   if (!o) return null;

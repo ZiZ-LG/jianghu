@@ -163,7 +163,7 @@ curl -s -X POST http://localhost:3001/api/mcp -H "Authorization: Bearer $TOKEN" 
 
 - 协议处理在 `server/src/mcpServer.ts`，手写 JSON-RPC（不引第三方 MCP SDK，与 `qccMcp.ts` 风格一致、少依赖）。支持 `initialize` / `ping` / `tools/list` / `tools/call`，并接受 `notifications/*` 通知（返回 HTTP 204）。
 - 路由在 `server/src/index.ts` 的 `POST /api/mcp`，`preHandler` 走现有 `app.authenticate`（JWT 校验失败回 401），随后用 `req.user.tenantId` 调工具。
-- G64111 评分在 `server/src/g64111.ts`，按 `docs/G64111-评分规格.md` 在服务端自包含实现（不跨目录引用 `app/`），与前端 `app/src/lib/g64111.ts` 算法一致。
+- G64111 评分的唯一实现在 `packages/g64111/`，严格对齐 `docs/G64111-评分规格.md`。`server/src/g64111.ts` 与 `app/src/lib/g64111.ts` 只是 typed adapter/re-export；MCP 通过服务端 adapter 返回权威分。
 - **加新工具**：在 `mcpServer.ts` 的 `TOOL_DEFS` 加定义、`callTool` 加分支，函数内 Prisma 查询**必须** `where { tenantId }`。
 - **写工具铁律**：写工具**只写候选表**（`PersonSuggestion` / `RelSuggestion`，status=pending），**绝不**直接写 `Person`/`Edge`。候选采纳逻辑在 `server/src/suggest.ts`：候选人物 `materializePerson` 落正式 Person（带溯源日志 + `resolvedPersonId` 回写保证幂等）；候选关系 accept 走 `$transaction` 级联——端点是候选人物时先建 Person 再建 Edge，返回 `createdPersons` 供前端先 `ADD_PERSON` 再 `ADD_EDGE`。
 - **候选数据隔离**：候选表独立存放，天然不进 `state.ts`/`get_account_detail`/`get_win_tendency`/`g64111` 等 Person 查询路径——未采纳的候选不会泄漏到关系地图/趋赢力/只读工具。

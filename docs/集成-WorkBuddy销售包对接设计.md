@@ -175,6 +175,8 @@ model VisitNote {
 
 1. **VisitNote 做一等模型**（vs 塞进 Person.logs）？建议：是。
 2. **externalRef 作为跨系统幂等主锚**（销售包 customer_id）？建议：是，USCC 作副锚。
-3. **G64111「同步状态不同步分数」**（WorkBuddy 推必清状态/角色/BI，江湖算分）？建议：是（守硬规则⑥）。
+3. **G64111「同步状态不同步分数」**（WorkBuddy 推必清状态/角色/BI，江湖算分）？是。江湖 MCP 返回的分项、总分和 741 策略是唯一权威分数；WorkBuddy 不维护可独立演进的评分规则。`_shared/score.py` 仅用于断网兼容预览，必须通过江湖共享包发布的 `packages/g64111/fixtures/compatibility.json` 校验；在 `packages/g64111/` 执行 `npm run check:score-py -- --score-py <path>` 会逐项对比共享 fixture。fixture 不一致时以 MCP 结果为准并停止离线展示。
+
+   **2026-07-12 兼容性实测：PENDING。** 销售包源码与两份装配产物中的三份 `score.py` 内容一致（SHA-256 `bbe405a06c3c6d26717f3656b2bdf584a38307541935755aa7ddb14525eb84fd`），实际运行兼容执行器仅通过 8/9 组；`fractional-c1-procurement-third` 的 C1=`2.3333333333333335` 被旧脚本以“不是整数”拒绝。在 WorkBuddy 源码与装配产物更新并通过 9/9 前，离线评分必须保持禁用，M1 阶段门不得标记通过。
 4. **Opportunity 业务字段做成列**（status/competitor/金额…）vs 全塞 meta JSON？建议：常用于看板筛选的做列，其余进 meta。
 5. **win_probability 留给销售在江湖填、WorkBuddy 不推**（守"销售自填不覆盖"）？建议：是。

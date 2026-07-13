@@ -18,7 +18,7 @@
 ```
 app/                     前端 SPA
   src/store.ts           ★ 前后端数据契约（Action 定义）
-  src/lib/g64111.ts      ★ G64111 趋赢力评分引擎（17 单测，g64111.test.ts）
+  src/lib/g64111.ts      G64111 前端领域 adapter/re-export
   src/ui.ts              主题(useTheme)/UI偏好(usePersistentState，localStorage)
   src/aiContext.ts       AI 推演台上下文
   src/api.ts  types.ts  styles.css  data/seed.ts  components/
@@ -31,6 +31,7 @@ server/                  后端 API
   src/qccMcp.ts          企查查 MCP（streamable-HTTP）客户端
   prisma/schema.prisma   数据模型
 packages/pde-kernel/     ★ PDE 数学内核（G64111×EV 决策引擎，纯函数零依赖）；权威规范=docs/pde-handoff/（oracle+golden **禁手改**）；硬规则见包内 AGENTS.md
+packages/g64111/       ★ G64111 唯一评分实现（公式单测+兼容 fixtures）
 docs/                    PRD、G64111-评分规格.md、部署指南（设计权威来源）
 docs/pde-handoff/        PDE 交接包（SPEC/TASKS/DECISIONS/reference_impl.py/golden/seeds）
 参考文件/                 原始原型与方法论素材
@@ -55,13 +56,14 @@ cd app && npm install && npm run dev
 
 收尾必跑（提交前）
 ```bash
-cd app && npx tsc --noEmit && npm run test   # 前端类型 + 17 单测
+cd packages/g64111 && npm run typecheck && npm test   # G64111 类型 + 公式/兼容回归
+cd app && npx tsc --noEmit && npm run test   # 前端类型 + adapter 消费回归
 cd server && npx tsc --noEmit                # 后端类型
 # 改过 packages/pde-kernel 时追加：
 cd packages/pde-kernel && npx tsc --noEmit && npm run test   # 内核类型 + golden(1e-6) + 属性测试
 ```
 
-> 完整脚本以各 `package.json` 的 `scripts` 为准（含 build / preview）。**改算法后务必跑 `app/` 的单测。**
+> 完整脚本以各 `package.json` 的 `scripts` 为准（含 build / preview）。**改算法后务必跑 `packages/g64111/`、`app/` 和 server parity 单测。**
 
 ## 不可违背的硬规则
 
@@ -70,7 +72,7 @@ cd packages/pde-kernel && npx tsc --noEmit && npm run test   # 内核类型 + go
 3. **跨库可移植**：Prisma schema **不用原生 enum/json**，保证 SQLite ↔ Postgres 一致。
 4. **用户自配模型/数据 Key（BYO）**：Key（AI 模型、企查查 MCP token）经 **AES-256-GCM 加密存服务端**、用用户自己额度调用，平台零成本；无 Key 走演示/回退模式。**绝不明文落库、绝不外发、绝不写进提交。**
 5. **数据契约 = `app/src/store.ts` 的 Action**：改契约要前端 store、后端 `mutate.ts` / `types.ts` 同步。
-6. **G64111 引擎对齐规格**：改 `src/lib/g64111.ts` 前先读 `docs/G64111-评分规格.md`，改完跑通 17 个单测。
+6. **G64111 引擎对齐规格**：改 `packages/g64111/src/score.ts` 前先读 `docs/G64111-评分规格.md`；App/Server 只做 adapter，禁止复制公式。改完跑通共享包和 server parity 单测。
 7. **密钥/本地产物不入库**：`.env`、`server/.env`、`*.db` 等不提交（已在 `.gitignore`），变量清单走 `.env.example` / `.env.production.example`。
 
 ## 大陆合规上下文

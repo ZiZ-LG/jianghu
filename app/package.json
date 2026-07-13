@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@jianghu/domain-contracts": "file:../packages/domain-contracts",
+    "@jianghu/g64111": "file:../packages/g64111",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

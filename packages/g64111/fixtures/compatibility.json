@@ -1,0 +1,225 @@
+{
+  "schemaVersion": "1.0",
+  "authority": "@jianghu/g64111 scoreFromState",
+  "cases": [
+    {
+      "id": "full-default-band-boundary",
+      "account": {
+        "persons": [
+          { "id": "a", "form": { "family7": {} } },
+          { "id": "d", "form": { "family7": { "籍贯": "广州", "年纪": "42", "生日": "4-1", "毕业院校": "中大", "配偶": "已婚", "子女": "一子", "父母": "广州" } } }
+        ]
+      },
+      "opportunity": {
+        "engageStage": "需求调研立项",
+        "c3Items": { "立项原因": true, "项目名称": true, "项目预算": true, "实施计划": true, "资金来源": true, "项目排序": true, "采购方式": true },
+        "c5Items": { "竞标方家数": true, "招标参数": true, "评标规则": true, "甲方代表": true, "招标代理": true },
+        "roles": [
+          { "personId": "a", "role": "A", "sentiment": "plus", "confidence": "明确" },
+          { "personId": "d", "role": "D", "sentiment": "plus", "confidence": "明确", "isKeyInfluencer": true, "procurementType": "purchasing", "procurementStatus": "collude" },
+          { "personId": "u", "role": "U", "sentiment": "plus", "confidence": "明确", "procurementType": "agency", "procurementStatus": "collude" },
+          { "personId": "r", "role": "R", "sentiment": "plus", "confidence": "明确", "procurementType": "ownerRep", "procurementStatus": "collude" },
+          { "personId": "c", "role": "C", "sentiment": "plus", "confidence": "明确" }
+        ],
+        "bis": [{ "id": "bi-d", "personId": "d", "confidence": "明确" }],
+        "ucvs": [{ "targetBiId": "bi-d", "status": "已解决" }]
+      },
+      "expected": {
+        "items": { "C1": 10, "C2": 5, "C3": 5, "C4": 5, "C5": 5, "C6": 5, "P1": 5, "P2": 10, "P3": 10, "P4": 5, "1K": 10 },
+        "clears": 35, "priorities": 30, "key": 10, "total": 75, "percent": 0.75,
+        "band": "ABSOLUTE_ADVANTAGE", "bandLabel": "绝对优势 · 可承诺", "strategy": "直接赢单：控节奏、加速签约、绑框架/多项目复制、防节外生枝"
+      }
+    },
+    {
+      "id": "missing-roles-and-confidence-gates",
+      "account": {
+        "persons": [{ "id": "d", "form": { "family7": { "籍贯": "北京", "年纪": "40", "生日": "1-1", "毕业院校": "清华" } } }]
+      },
+      "opportunity": {
+        "engageStage": "非法阶段",
+        "c3Items": { "立项原因": true, "项目名称": true },
+        "c5Items": {},
+        "roles": [{ "personId": "d", "role": "D", "sentiment": "unknown", "confidence": "推理", "isKeyInfluencer": true }],
+        "bis": [{ "id": "bi-inferred", "personId": "d", "confidence": "推理" }],
+        "ucvs": [{ "targetBiId": "bi-inferred", "status": "获认可" }]
+      },
+      "expected": {
+        "items": { "C1": 2, "C2": 0, "C3": 0, "C4": 0, "C5": 0, "C6": 3, "P1": 0, "P2": -5, "P3": 0, "P4": 0, "1K": 0 },
+        "clears": 5, "priorities": -5, "key": 0, "total": 0, "percent": 0,
+        "band": "ABSOLUTE_DISADVANTAGE", "bandLabel": "绝对劣势 · 重新复盘", "strategy": "重新回炉：评估放弃或养单、优先补 C1/C2 与 D/A 关系、争下一期"
+      }
+    },
+    {
+      "id": "multiple-a-d-low-median-negative",
+      "account": { "persons": [] },
+      "opportunity": {
+        "engageStage": "招采执行",
+        "c3Items": {},
+        "c5Items": {},
+        "roles": [
+          { "personId": "a1", "role": "A", "sentiment": "minus", "confidence": "明确" },
+          { "personId": "a2", "role": "A", "sentiment": "star", "confidence": "明确" },
+          { "personId": "d1", "role": "D", "sentiment": "x", "confidence": "明确" },
+          { "personId": "d2", "role": "D", "sentiment": "plus", "confidence": "明确" },
+          { "personId": "u", "role": "U", "sentiment": "neutral", "confidence": "明确" },
+          { "personId": "r", "role": "R", "sentiment": "neutral", "confidence": "明确" },
+          { "personId": "c", "role": "C", "sentiment": "neutral", "confidence": "明确" }
+        ],
+        "bis": [],
+        "ucvs": []
+      },
+      "expected": {
+        "items": { "C1": 6, "C2": 0, "C3": 0, "C4": 1, "C5": 0, "C6": 0, "P1": 0, "P2": -5, "P3": -20, "P4": 0, "1K": -10 },
+        "clears": 7, "priorities": -25, "key": -10, "total": -28, "percent": -0.28,
+        "band": "ABSOLUTE_DISADVANTAGE", "bandLabel": "绝对劣势 · 重新复盘", "strategy": "重新回炉：评估放弃或养单、优先补 C1/C2 与 D/A 关系、争下一期"
+      }
+    },
+    {
+      "id": "c1-family7-c2-c6-and-p2",
+      "account": {
+        "persons": [{ "id": "d", "form": { "family7": { "籍贯": "成都", "年纪": "45", "生日": "2-2", "毕业院校": "川大", "配偶": "已婚", "子女": "一女", "父母": "成都" } } }]
+      },
+      "opportunity": {
+        "c3Items": {},
+        "c5Items": {},
+        "roles": [
+          { "personId": "a", "role": "A", "sentiment": "neutral", "confidence": "不清" },
+          { "personId": "d", "role": "D", "sentiment": "plus", "confidence": "明确", "isKeyInfluencer": true, "procurementType": "purchasing", "procurementStatus": "none" },
+          { "personId": "u", "role": "U", "sentiment": "neutral", "confidence": "推理", "procurementType": "agency", "procurementStatus": "none" },
+          { "personId": "r", "role": "R", "sentiment": "neutral", "confidence": "推理", "procurementType": "ownerRep", "procurementStatus": "none" },
+          { "personId": "c", "role": "C", "sentiment": "neutral", "confidence": "推理" }
+        ],
+        "bis": [
+          { "id": "bi-inferred", "personId": "d", "confidence": "推理" },
+          { "id": "bi-confirmed", "personId": "d", "confidence": "共识" }
+        ],
+        "ucvs": [
+          { "targetBiId": "bi-confirmed", "status": "获认可" },
+          { "targetBiId": "bi-inferred", "status": "已解决" }
+        ]
+      },
+      "expected": {
+        "items": { "C1": 10, "C2": 5, "C3": 0, "C4": 0, "C5": 0, "C6": 5, "P1": 1, "P2": -5, "P3": 10, "P4": 5, "1K": 0 },
+        "clears": 20, "priorities": 11, "key": 0, "total": 31, "percent": 0.31,
+        "band": "RELATIVE_DISADVANTAGE", "bandLabel": "相对劣势 · 可参与", "strategy": "改变规则/减速拖延/拆包：把客户从比价格引到比一体化降本、拖到有利时点、拆出对手强项模块"
+      }
+    },
+    {
+      "id": "custom-linear-profile-and-bands",
+      "profile": {
+        "id": "fixture-linear",
+        "name": "Fixture linear profile",
+        "formC1Curve": "linear",
+        "bands": { "absAdv": 0.03, "relAdv": 0.02, "relDis": 0.01 }
+      },
+      "account": {
+        "persons": [{ "id": "d", "form": { "family7": { "籍贯": "西安", "年纪": "39", "生日": "3-3", "毕业院校": "西交" } } }]
+      },
+      "opportunity": {
+        "c3Items": {},
+        "c5Items": {},
+        "roles": [
+          { "personId": "a", "role": "A", "sentiment": "neutral", "confidence": "不清" },
+          { "personId": "d", "role": "D", "sentiment": "neutral", "confidence": "不清" },
+          { "personId": "u", "role": "U", "sentiment": "neutral", "confidence": "不清" },
+          { "personId": "r", "role": "R", "sentiment": "neutral", "confidence": "不清" },
+          { "personId": "c", "role": "C", "sentiment": "neutral", "confidence": "不清" }
+        ],
+        "bis": [],
+        "ucvs": []
+      },
+      "expected": {
+        "items": { "C1": 8, "C2": 0, "C3": 0, "C4": 0, "C5": 0, "C6": 0, "P1": 0, "P2": -5, "P3": 0, "P4": 0, "1K": 0 },
+        "clears": 8, "priorities": -5, "key": 0, "total": 3, "percent": 0.03,
+        "band": "ABSOLUTE_ADVANTAGE", "bandLabel": "绝对优势 · 可承诺", "strategy": "直接赢单：控节奏、加速签约、绑框架/多项目复制、防节外生枝"
+      }
+    },
+    {
+      "id": "default-relative-advantage-boundary-50",
+      "account": {
+        "persons": [{ "id": "d", "form": { "family7": { "籍贯": "武汉", "年纪": "41", "生日": "5-5", "毕业院校": "武大", "配偶": "已婚", "子女": "一子", "父母": "武汉" } } }]
+      },
+      "opportunity": {
+        "engageStage": "需求调研立项",
+        "c3Items": { "立项原因": true, "项目名称": true, "项目预算": true, "实施计划": true, "资金来源": true, "项目排序": true, "采购方式": true },
+        "c5Items": { "竞标方家数": true, "招标参数": true, "评标规则": true, "甲方代表": true, "招标代理": true },
+        "roles": [
+          { "personId": "a", "role": "A", "sentiment": "neutral", "confidence": "明确" },
+          { "personId": "d", "role": "D", "sentiment": "plus", "confidence": "明确" },
+          { "personId": "u", "role": "U", "sentiment": "plus", "confidence": "明确", "procurementType": "purchasing", "procurementStatus": "verbal" },
+          { "personId": "r", "role": "R", "sentiment": "plus", "confidence": "明确", "procurementType": "agency", "procurementStatus": "none" },
+          { "personId": "c", "role": "C", "sentiment": "plus", "confidence": "明确", "procurementType": "ownerRep", "procurementStatus": "none" }
+        ],
+        "bis": [{ "id": "bi", "personId": "d", "confidence": "明确" }],
+        "ucvs": [{ "targetBiId": "bi", "status": "已解决" }]
+      },
+      "expected": {
+        "items": { "C1": 10, "C2": 5, "C3": 5, "C4": 5, "C5": 5, "C6": 5, "P1": 4, "P2": 1, "P3": 10, "P4": 0, "1K": 0 },
+        "clears": 35, "priorities": 15, "key": 0, "total": 50, "percent": 0.5,
+        "band": "RELATIVE_ADVANTAGE", "bandLabel": "相对优势 · 可争取", "strategy": "制定规则/加速进度/总包：主导技术参数与评分、推动尽快挂网、联合体绑定设计院"
+      }
+    },
+    {
+      "id": "default-relative-disadvantage-boundary-25",
+      "account": {
+        "persons": [{ "id": "d", "form": { "family7": { "籍贯": "南京", "年纪": "43", "生日": "6-6", "毕业院校": "南大", "配偶": "已婚", "子女": "一女", "父母": "南京" } } }]
+      },
+      "opportunity": {
+        "engageStage": "需求调研立项",
+        "c3Items": { "立项原因": true, "项目名称": true, "项目预算": true, "实施计划": true, "资金来源": true, "项目排序": true, "采购方式": true },
+        "c5Items": { "竞标方家数": true, "招标参数": true, "评标规则": true, "甲方代表": true, "招标代理": true },
+        "roles": [
+          { "personId": "a", "role": "A", "sentiment": "neutral", "confidence": "明确" },
+          { "personId": "d", "role": "D", "sentiment": "neutral", "confidence": "明确" },
+          { "personId": "u", "role": "U", "sentiment": "neutral", "confidence": "明确", "procurementType": "purchasing", "procurementStatus": "none" },
+          { "personId": "r", "role": "R", "sentiment": "neutral", "confidence": "明确", "procurementType": "agency", "procurementStatus": "none" },
+          { "personId": "c", "role": "C", "sentiment": "neutral", "confidence": "明确", "procurementType": "ownerRep", "procurementStatus": "none" },
+          { "personId": "n1", "role": "U", "sentiment": "minus", "confidence": "明确" },
+          { "personId": "n2", "role": "U", "sentiment": "minus", "confidence": "明确" },
+          { "personId": "n3", "role": "U", "sentiment": "minus", "confidence": "明确" },
+          { "personId": "n4", "role": "U", "sentiment": "minus", "confidence": "明确" },
+          { "personId": "n5", "role": "U", "sentiment": "minus", "confidence": "明确" }
+        ],
+        "bis": [{ "id": "bi", "personId": "d", "confidence": "明确" }],
+        "ucvs": [{ "targetBiId": "bi", "status": "已解决" }]
+      },
+      "expected": {
+        "items": { "C1": 10, "C2": 5, "C3": 5, "C4": 5, "C5": 5, "C6": 5, "P1": -5, "P2": -5, "P3": 0, "P4": 0, "1K": 0 },
+        "clears": 35, "priorities": -10, "key": 0, "total": 25, "percent": 0.25,
+        "band": "RELATIVE_DISADVANTAGE", "bandLabel": "相对劣势 · 可参与", "strategy": "改变规则/减速拖延/拆包：把客户从比价格引到比一体化降本、拖到有利时点、拆出对手强项模块"
+      }
+    },
+    {
+      "id": "fractional-c1-procurement-third",
+      "account": { "persons": [] },
+      "opportunity": {
+        "c3Items": {},
+        "c5Items": {},
+        "roles": [
+          { "personId": "d", "role": "D", "sentiment": "unknown", "confidence": "明确", "procurementType": "purchasing", "procurementStatus": "verbal" }
+        ],
+        "bis": [],
+        "ucvs": []
+      },
+      "expected": {
+        "items": { "C1": 2.3333333333333335, "C2": 0, "C3": 0, "C4": 0, "C5": 0, "C6": 0, "P1": 0, "P2": 1, "P3": 0, "P4": 0, "1K": 0 },
+        "clears": 2.3333333333333335, "priorities": 1, "key": 0, "total": 3.3333333333333335, "percent": 0.03333333333333333,
+        "band": "ABSOLUTE_DISADVANTAGE", "bandLabel": "绝对劣势 · 重新复盘", "strategy": "重新回炉：评估放弃或养单、优先补 C1/C2 与 D/A 关系、争下一期"
+      }
+    },
+    {
+      "id": "missing-collections-fail-closed",
+      "account": {},
+      "opportunity": {
+        "engageStage": "unknown",
+        "c3Items": { "立项原因": "yes" },
+        "c5Items": { "招标参数": 1 }
+      },
+      "expected": {
+        "items": { "C1": 3, "C2": 0, "C3": 0, "C4": 0, "C5": 0, "C6": 0, "P1": 0, "P2": -5, "P3": 0, "P4": 0, "1K": 0 },
+        "clears": 3, "priorities": -5, "key": 0, "total": -2, "percent": -0.02,
+        "band": "ABSOLUTE_DISADVANTAGE", "bandLabel": "绝对劣势 · 重新复盘", "strategy": "重新回炉：评估放弃或养单、优先补 C1/C2 与 D/A 关系、争下一期"
+      }
+    }
+  ]
+}

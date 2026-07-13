@@ -1,14 +1,19 @@
 // 江湖 · 领域类型（对应 docs/产品设计方案.md §3 与 G64111-评分规格.md）
 import type { JsonValue } from '@jianghu/domain-contracts';
+import { C3_ITEMS, C5_ITEMS, FAMILY_7Q } from '@jianghu/g64111';
+import type {
+  Confidence,
+  EngageStage,
+  ProcurementStatus,
+  ProcurementType,
+  Role,
+  Sentiment,
+} from '@jianghu/g64111';
+
+export { C3_ITEMS, C5_ITEMS, FAMILY_7Q };
+export type { Confidence, EngageStage, ProcurementStatus, ProcurementType, Role, Sentiment };
 
 /** 角色：A批准人 / D拍板人 / U使用者 / R影响者·技术把关 / C教练（竞争对手不是角色） */
-export type Role = 'A' | 'D' | 'U' | 'R' | 'C';
-
-/** 支持度符号：☆排他支持 / +明确支持 / =中立 / ?未知(不计分) / −负面 / x倒向对手 */
-export type Sentiment = 'star' | 'plus' | 'neutral' | 'unknown' | 'minus' | 'x';
-
-/** 信息可信度·四程度（P1 只计「明确」及以上） */
-export type Confidence = '共识' | '明确' | '推理' | '不清';
 
 /** 关系分层：L1组织架构 / L2决策权力 / L3情感阵营 / L4战略本质 */
 export type Layer = 'L1' | 'L2' | 'L3' | 'L4';
@@ -20,23 +25,8 @@ export type CustomerType = 1 | 2 | 3 | 4;
 export type PipelineStage =
   | '线索' | '需求引导' | '方案认可' | '客户立项' | '招投标' | '合同谈判' | '合同双签';
 
-/** C4 介入阶段（越早越主动，对应分值见评分规格） */
-export type EngageStage = '需求调研立项' | '方案可研' | '预算批复' | '招标论证' | '招采执行';
-
 /** 客户变化模式（分析标签，不计分） */
 export type ChangeMode = 'G' | 'T' | 'EK' | 'OC';
-
-/** 招采关键人三类（用于 P2） */
-export type ProcurementType = 'purchasing' | 'agency' | 'ownerRep';
-/** 招采公关状态（用于 P2） */
-export type ProcurementStatus = 'collude' | 'verbal' | 'none';
-
-/** C3 立项材料 7 项 */
-export const C3_ITEMS = ['立项原因', '项目名称', '项目预算', '实施计划', '资金来源', '项目排序', '采购方式'] as const;
-/** C5 招采事项 5 项 */
-export const C5_ITEMS = ['竞标方家数', '招标参数', '评标规则', '甲方代表', '招标代理'] as const;
-/** FORM 家庭 7 问 */
-export const FAMILY_7Q = ['籍贯', '年纪', '生日', '毕业院校', '配偶', '子女', '父母'] as const;
 
 export interface Form {
   family: string;
