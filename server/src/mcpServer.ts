@@ -24,8 +24,9 @@ import { resolveScopedRelSuggestions } from './suggestionScope.js';
 const MAX_PENDING_PERSON_SUGG = 200;
 const MAX_PENDING_REL_SUGG = 200;
 
-const applyMcpAction = (ctx: CommandContext, input: unknown): Promise<void> =>
-  applyAction(ctx, ActionSchema.parse(input));
+const applyMcpAction = async (ctx: CommandContext, input: unknown): Promise<void> => {
+  await applyAction(ctx, ActionSchema.parse(input));
+};
 
 const PROTOCOL_VERSION = '2024-11-05';
 const SERVER_INFO = { name: 'jianghu', version: '0.1.0' };
@@ -476,6 +477,39 @@ async function getWinTendency(tenantId: string, opportunityId: string) {
 
 const str = (v: unknown, max = 200): string => (typeof v === 'string' ? v.slice(0, max) : '');
 const num = (v: unknown): number | undefined => (typeof v === 'number' && isFinite(v) ? v : undefined);
+const proposalValue = (value: unknown): string => typeof value === 'string' ? value : JSON.stringify(value ?? null);
+
+async function proposeMachineFieldChanges(ctx: CommandContext, input: {
+  accountId: string;
+  opportunityId?: string;
+  entityKind: string;
+  entityId: string;
+  current: Record<string, unknown>;
+  patch: Record<string, unknown>;
+  evidence?: string;
+}): Promise<number> {
+  let count = 0;
+  for (const [field, value] of Object.entries(input.patch)) {
+    const oldValue = proposalValue(input.current[field]);
+    const newValue = proposalValue(value);
+    if (oldValue === newValue) continue;
+    await createFieldProposal(ctx.tenantId, {
+      accountId: input.accountId,
+      opportunityId: input.opportunityId,
+      entityKind: input.entityKind,
+      entityId: input.entityId,
+      field,
+      oldValue,
+      newValue,
+      origin: 'mcp',
+      evidence: input.evidence || `WorkBuddy 同步：${input.entityKind}.${field} 疑似变化`,
+      confidence: 0.6,
+      proposedBy: ctx.actorId,
+    });
+    count += 1;
+  }
+  return count;
+}
 
 /** propose_person：提议候选干系人 → 落 PersonSuggestion（不建正式 Person）。 */
 async function proposePerson(tenantId: string, userId: string, args: Record<string, unknown>) {
@@ -744,14 +778,15 @@ async function upsertOpportunity(ctx: CommandContext, args: Record<string, unkno
   const mcpMark = { source: 'mcp', at: new Date().toISOString(), needsReview: true };
 
   if (existing) {
-    // 合并 meta：保留原字段 + 入参传的 + 追加/刷新 _mcpOrigin
-    let curMeta: Record<string, unknown> = {};
-    try { curMeta = JSON.parse(existing.meta || '{}'); } catch { /* 存量坏值 */ }
-    const patch: Record<string, unknown> = { ...fields, meta: { ...curMeta, ...(fields.meta as Record<string, unknown> ?? {}), _mcpOrigin: mcpMark } };
+    const patch: Record<string, unknown> = { ...fields };
     if (name) patch.name = name;
     if (externalRef && !existing.externalRef) patch.externalRef = externalRef;
-    await applyMcpAction(ctx, { type: 'UPDATE_OPP', accId: account.id, oppId: existing.id, patch });
-    return { id: existing.id, accountId: account.id, updated: true, origin: 'mcp', note: `已命中商机「${existing.name}」并更新（外部来源·待核；winProbability 留给销售自填，未改）。` };
+    const proposed = await proposeMachineFieldChanges(ctx, {
+      accountId: account.id, opportunityId: existing.id, entityKind: 'opportunity', entityId: existing.id,
+      current: existing as unknown as Record<string, unknown>, patch,
+      evidence: 'WorkBuddy 同步现有商机字段，等待人工确认',
+    });
+    return { id: existing.id, accountId: account.id, proposed, origin: 'mcp', note: `已命中商机「${existing.name}」；${proposed} 个字段变更转入收件箱待人审（winProbability 未改）。` };
   }
 
   if (!name) throw new Error('未命中现有商机，新建需提供 name');
@@ -878,7 +913,7 @@ async function setOpportunityRoles(ctx: CommandContext, args: Record<string, unk
   const byId = new Map(persons.map((p) => [p.id, p]));
   const byName = new Map(persons.map((p) => [p.name, p]));
   const applied: any[] = [];
-  const proposed: any[] = []; // 已有干系人的支持度变更 → 转 ChangeProposal 待人审（human-wins，不静默改分）
+  const proposed: any[] = []; // 机器对已有正式角色字段的变更 → ChangeProposal（human-wins）
   const skipped: any[] = [];
   for (const r of rolesIn) {
     const pid = str(r?.personId, 40).trim();
@@ -888,31 +923,41 @@ async function setOpportunityRoles(ctx: CommandContext, args: Record<string, unk
     if (person.isCompetitor) { skipped.push({ personId: person.id, reason: '竞争对手不分配角色' }); continue; }
     const role = VALID_ROLE.includes(str(r?.role)) ? str(r?.role) : undefined;
     if (!role) { skipped.push({ personId: person.id, reason: '缺少有效 role(A/D/U/R/C)' }); continue; }
-    // 非 sentiment 字段（role/isKeyInfluencer/procurement*/confidence）不在 human-wins 范围 → 直写。
     const patch: Record<string, unknown> = { role };
     if (typeof r?.isKeyInfluencer === 'boolean') patch.isKeyInfluencer = r.isKeyInfluencer;
     if (['purchasing', 'agency', 'ownerRep'].includes(str(r?.procurementType))) patch.procurementType = str(r?.procurementType);
     if (['collude', 'verbal', 'none'].includes(str(r?.procurementStatus))) patch.procurementStatus = str(r?.procurementStatus);
     if (VALID_CONF.includes(str(r?.confidence))) patch.confidence = str(r?.confidence);
-    // human-wins（对齐 voice.ts）：sentiment 是趋赢力最大权重输入——已有干系人的支持度变更 → 进收件箱待人审，
-    // 不静默改分；首次设置 → 直写；unknown/无效 → 不动既有 sentiment（防机器用"未知"覆盖人审过的支持度）。
     const newSent = VALID_SENT.includes(str(r?.sentiment)) ? str(r?.sentiment) : undefined;
     const cur = await prisma.oppRole.findUnique({ where: { tenantId_opportunityId_personId: { tenantId, opportunityId: opp.id, personId: person.id } } });
-    let sentimentProposed = false;
-    if (newSent && newSent !== 'unknown') {
-      if (cur && cur.sentiment !== newSent) {
-        await createFieldProposal(tenantId, { accountId: opp.accountId, opportunityId: opp.id, entityKind: 'oppRole', entityId: person.id, field: 'sentiment', oldValue: cur.sentiment, newValue: newSent, origin: 'workbuddy', evidence: str(r?.evidence, 500) || `WorkBuddy 同步：${person.name} 支持度疑似 ${cur.sentiment}→${newSent}`, confidence: 0.6, proposedBy: 'workbuddy' });
-        proposed.push({ personId: person.id, name: person.name, from: cur.sentiment, to: newSent });
-        sentimentProposed = true;
-      } else if (!cur) {
-        patch.sentiment = newSent; // 首次设置该商机该人角色，无既有支持度可覆盖 → 直写
+    if (newSent && newSent !== 'unknown') patch.sentiment = newSent;
+    if (cur) {
+      const current = cur as unknown as Record<string, unknown>;
+      for (const [field, value] of Object.entries(patch)) {
+        const oldValue = current[field];
+        if (oldValue === value) continue;
+        await createFieldProposal(tenantId, {
+          accountId: opp.accountId,
+          opportunityId: opp.id,
+          entityKind: 'oppRole',
+          entityId: person.id,
+          field,
+          oldValue: oldValue == null ? '' : String(oldValue),
+          newValue: String(value),
+          origin: 'mcp',
+          evidence: str(r?.evidence, 500) || `WorkBuddy 同步：${person.name} 的 ${field} 疑似变化`,
+          confidence: 0.6,
+          proposedBy: ctx.actorId,
+        });
+        proposed.push({ personId: person.id, name: person.name, field, from: oldValue, to: value });
       }
+      continue;
     }
     await applyMcpAction(ctx, { type: 'SET_ROLE', accId: opp.accountId, oppId: opp.id, personId: person.id, patch });
-    if (!sentimentProposed) applied.push({ personId: person.id, name: person.name, role, sentiment: (patch.sentiment as string) ?? cur?.sentiment ?? 'unknown' });
+    applied.push({ personId: person.id, name: person.name, role, sentiment: (patch.sentiment as string) ?? 'unknown' });
   }
   const parts = [`已设 ${applied.length} 个角色`];
-  if (proposed.length) parts.push(`${proposed.length} 个支持度变更转入收件箱待人审`);
+  if (proposed.length) parts.push(`${proposed.length} 个正式字段变更转入收件箱待人审`);
   if (skipped.length) parts.push(`跳过 ${skipped.length} 个（见 skipped，多为候选未采纳）`);
   return { opportunityId: opp.id, applied, proposed, skipped, origin: 'workbuddy', note: parts.join('；') + '。趋赢力由江湖引擎实时算（同步状态不同步分数）。' };
 }
@@ -930,8 +975,12 @@ async function setBurningIssue(ctx: CommandContext, args: Record<string, unknown
   const isPrivate = typeof args.isPrivate === 'boolean' ? args.isPrivate : true;
   const existing = await prisma.burningIssue.findFirst({ where: { tenantId, opportunityId: opp.id, personId: person.id, category } });
   if (existing) {
-    await applyMcpAction(ctx, { type: 'UPDATE_BI', accId: opp.accountId, oppId: opp.id, biId: existing.id, patch: { description, confidence, isPrivate } });
-    return { id: existing.id, opportunityId: opp.id, personId: person.id, updated: true, origin: 'workbuddy', note: `已更新「${person.name}」的 BI（${category}）。` };
+    const proposed = await proposeMachineFieldChanges(ctx, {
+      accountId: opp.accountId, opportunityId: opp.id, entityKind: 'bi', entityId: existing.id,
+      current: existing as unknown as Record<string, unknown>, patch: { description, confidence, isPrivate },
+      evidence: `WorkBuddy 同步「${person.name}」的 BI（${category}）`,
+    });
+    return { id: existing.id, opportunityId: opp.id, personId: person.id, proposed, origin: 'workbuddy', note: `${proposed} 个 BI 字段变更转入收件箱待人审。` };
   }
   const id = 'bi_' + randomUUID().slice(0, 12);
   await applyMcpAction(ctx, { type: 'ADD_BI', accId: opp.accountId, oppId: opp.id, bi: { id, personId: person.id, description, category, isPrivate, confidence } });
@@ -960,8 +1009,12 @@ async function setUcv(ctx: CommandContext, args: Record<string, unknown>) {
   const status = ['建议', '获认可', '已解决'].includes(str(args.status)) ? str(args.status) : '建议';
   const existing = await prisma.uCV.findFirst({ where: { tenantId, opportunityId: opp.id, targetBiId } });
   if (existing) {
-    await applyMcpAction(ctx, { type: 'UPDATE_UCV', accId: opp.accountId, oppId: opp.id, ucvId: existing.id, patch: { description, competitorCannot, status } });
-    return { id: existing.id, opportunityId: opp.id, targetBiId, updated: true, origin: 'workbuddy', note: '已更新 UCV。' };
+    const proposed = await proposeMachineFieldChanges(ctx, {
+      accountId: opp.accountId, opportunityId: opp.id, entityKind: 'ucv', entityId: existing.id,
+      current: existing as unknown as Record<string, unknown>, patch: { description, competitorCannot, status },
+      evidence: 'WorkBuddy 同步现有 UCV 字段',
+    });
+    return { id: existing.id, opportunityId: opp.id, targetBiId, proposed, origin: 'workbuddy', note: `${proposed} 个 UCV 字段变更转入收件箱待人审。` };
   }
   const id = 'ucv_' + randomUUID().slice(0, 12);
   await applyMcpAction(ctx, { type: 'ADD_UCV', accId: opp.accountId, oppId: opp.id, ucv: { id, targetBiId, description, competitorCannot, status } });

@@ -11,6 +11,9 @@ export const CommandContextSchema = z.object({
   channel: CommandChannelSchema,
   requestId: z.string().min(1),
   assertionMode: AssertionModeSchema,
+  scopes: z.array(z.string().min(1)).optional(),
+  sourceRef: z.string().min(1).optional(),
+  sourceExcerpt: z.string().min(1).optional(),
 }).strict();
 
 export interface CommandContext {
@@ -20,6 +23,9 @@ export interface CommandContext {
   channel: 'web' | 'mcp' | 'worker' | 'system';
   requestId: string;
   assertionMode: 'user_asserted' | 'raw_append' | 'machine_proposed';
+  scopes?: string[];
+  sourceRef?: string;
+  sourceExcerpt?: string;
 }
 
 export function parseActorRole(value: unknown): CommandContext['actorRole'] {

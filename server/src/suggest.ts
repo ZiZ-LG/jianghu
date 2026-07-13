@@ -116,6 +116,15 @@ async function materializePerson(
 
 interface Cand { source: string; target: string; layer: string; label: string; confidence: number; origin: string; evidence: string; }
 
+const LlmCandidateSchema = z.object({
+  from: z.string(),
+  to: z.string(),
+  layer: z.enum(['L1', 'L2', 'L3', 'L4']).optional(),
+  label: z.string().optional(),
+  confidence: z.number().min(0).max(1).optional(),
+  evidence: z.string().optional(),
+}).strict();
+
 // ── 图算法：共同邻居 → 疑似关联 ──
 function graphCandidates(persons: any[], edges: any[], nameOf: (id: string) => string): Cand[] {
   const adj = new Map<string, Set<string>>();
@@ -175,12 +184,13 @@ async function llmCandidates(cfg: any, persons: any[], edges: any[], nameOf: (id
   try { text = await callLLM({ baseUrl: cfg.baseUrl, model: cfg.model, apiKey: cfg.apiKey }, system, user, 700); } catch { return []; }
   const m = text.match(/\[[\s\S]*\]/);
   if (!m) return [];
-  let arr: any[]; try { arr = JSON.parse(m[0]); } catch { return []; }
+  let arr: z.infer<typeof LlmCandidateSchema>[];
+  try { arr = z.array(LlmCandidateSchema).parse(JSON.parse(m[0])); } catch { return []; }
   const out: Cand[] = [];
   for (const r of Array.isArray(arr) ? arr : []) {
     const s = idByName.get(String(r.from)), t = idByName.get(String(r.to));
     if (!s || !t || s === t) continue;
-    out.push({ source: s, target: t, layer: ['L1', 'L2', 'L3', 'L4'].includes(r.layer) ? r.layer : 'L3', label: String(r.label || '疑似关联').slice(0, 20), confidence: Math.max(0, Math.min(1, Number(r.confidence) || 0.5)), origin: 'llm', evidence: String(r.evidence || '').slice(0, 120) });
+    out.push({ source: s, target: t, layer: r.layer ?? 'L3', label: String(r.label || '疑似关联').slice(0, 20), confidence: r.confidence ?? 0.5, origin: 'llm', evidence: String(r.evidence || '').slice(0, 120) });
   }
   return out.slice(0, 6);
 }

@@ -556,6 +556,7 @@ model ChangeProposal {
   evidence      String   @default("")
   confidence    Float    @default(0.5)
   status        String   @default("pending") // pending | accepted | rejected
+  dedupeKey     String?  @unique             // pending 时占用；处理后清空，跨 SQLite/Postgres 防并发重复草稿
   proposedBy    String   @default("")
   createdAt     DateTime @default(now())
 

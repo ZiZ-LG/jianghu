@@ -4,10 +4,35 @@ import { prisma } from './prisma.js';
 import { enqueueEnrichJob, enqueueProfileJob } from './jobs.js';
 import { requireActionScope } from './mutation/actionScope.js';
 import { requireScopedRow, type DbClient } from './mutation/scopeGuards.js';
+import { isTrustedHumanAssertion, normalizeActionTrust } from './ingestTrust.js';
 
 export type { DbClient } from './mutation/scopeGuards.js';
 
 const ACCOUNT_PROFILE_SERVER_KEYS = new Set<string>([...ACCOUNT_PROFILE_FIELDS, '_mcpOrigin']);
+
+type MachineActionPolicy = 'allow' | 'conditional_opp_role' | 'deny';
+const MACHINE_ACTION_POLICY: Record<Action['type'], MachineActionPolicy> = {
+  ADD_ACCOUNT: 'allow', UPDATE_ACCOUNT: 'allow', DELETE_ACCOUNT: 'deny',
+  ADD_OPP: 'allow', UPDATE_OPP: 'deny', DELETE_OPP: 'deny',
+  ADD_PERSON: 'deny', UPDATE_PERSON: 'deny', MOVE_PERSON: 'deny', DELETE_PERSON: 'deny', ADD_LOG: 'deny',
+  SET_ROLE: 'conditional_opp_role', REMOVE_ROLE: 'deny', ADD_OPP_MEMBER: 'deny', REMOVE_OPP_MEMBER: 'deny',
+  ADD_EDGE: 'deny', UPDATE_EDGE: 'deny', DELETE_EDGE: 'deny',
+  ADD_BI: 'allow', UPDATE_BI: 'deny', DELETE_BI: 'deny',
+  ADD_UCV: 'allow', UPDATE_UCV: 'deny', DELETE_UCV: 'deny',
+  ADD_VISIT: 'allow', UPDATE_VISIT: 'allow', DELETE_VISIT: 'deny',
+  ADD_NOTE: 'deny', UPDATE_NOTE: 'deny', DELETE_NOTE: 'deny',
+  ADD_PLAN_ACTION: 'deny', UPDATE_PLAN_ACTION: 'deny', DELETE_PLAN_ACTION: 'deny', TOGGLE_PLAN_ACTION: 'deny',
+  ADD_MILESTONE: 'deny', UPDATE_MILESTONE: 'deny', DELETE_MILESTONE: 'deny',
+  ADD_OPP_STAGE: 'deny', UPDATE_OPP_STAGE: 'deny', DELETE_OPP_STAGE: 'deny',
+  ADD_STRATEGY_CARD: 'deny', UPDATE_STRATEGY_CARD: 'deny', DELETE_STRATEGY_CARD: 'deny',
+  ADD_STRATEGY_RISK: 'deny', UPDATE_STRATEGY_RISK: 'deny', DELETE_STRATEGY_RISK: 'deny',
+  ADD_STRATEGY_RESOURCE: 'deny', UPDATE_STRATEGY_RESOURCE: 'deny', DELETE_STRATEGY_RESOURCE: 'deny',
+  ADD_EVIDENCE: 'allow', DELETE_EVIDENCE: 'deny',
+};
+
+export function machineActionPolicy(type: Action['type']): MachineActionPolicy {
+  return MACHINE_ACTION_POLICY[type];
+}
 
 function legacyProfileExtras(raw: string): Record<string, unknown> {
   try {
@@ -55,7 +80,7 @@ async function lockedUpdate(opts: {
   if (r.count === 0 && (await exists())) throw new ConflictError();
 }
 
-type PostCommitEffect =
+export type PostCommitEffect =
   | { type: 'account_created'; tenantId: string; accountId: string }
   | { type: 'opportunity_stage_changed'; tenantId: string; opportunityId: string }
   | undefined;
@@ -90,7 +115,7 @@ async function runTopLevelTransaction(
   throw new Error('unreachable serializable transaction retry state');
 }
 
-async function runPostCommitEffect(effect: PostCommitEffect): Promise<void> {
+export async function runPostCommitEffect(effect: PostCommitEffect): Promise<void> {
   if (!effect) return;
   if (effect.type === 'account_created') {
     try { await enqueueEnrichJob(effect.tenantId, effect.accountId, 'auto'); } catch { /* 超上限等，忽略 */ }
@@ -104,27 +129,33 @@ async function runPostCommitEffect(effect: PostCommitEffect): Promise<void> {
 
 
 /** 把经共享契约验证的 Action 落到数据库（全程按服务端 CommandContext.tenantId 隔离）。 */
-export async function applyAction(ctx: CommandContext, action: Action, db: DbClient = prisma): Promise<void> {
+export async function applyAction(ctx: CommandContext, action: Action, db: DbClient = prisma): Promise<PostCommitEffect> {
   CommandContextSchema.parse(ctx);
-  ActionSchema.parse(action);
+  const trustedAction = normalizeActionTrust(ctx, ActionSchema.parse(action));
   if (ctx.actorRole === 'viewer') throw new Error('mutation forbidden');
   // INT-103: legacy delete actions remain parseable for old clients, but are fail-closed.
   // Destructive account/opportunity removal is no longer an online operation.
-  if (action.type === 'DELETE_ACCOUNT' || action.type === 'DELETE_OPP') {
+  if (trustedAction.type === 'DELETE_ACCOUNT' || trustedAction.type === 'DELETE_OPP') {
     throw new Error('hard delete disabled; use archive');
   }
-  if (action.type === 'ADD_EVIDENCE' && ctx.assertionMode === 'machine_proposed') {
-    if (action.evidence.status !== 'pending_review' || !action.evidence.origin || action.evidence.origin === 'manual') {
-      throw new Error('machine-proposed evidence must remain pending review with machine provenance');
-    }
+  const machinePolicy = machineActionPolicy(trustedAction.type);
+  if (!isTrustedHumanAssertion(ctx) && machinePolicy === 'deny') {
+    throw new Error(`machine action ${trustedAction.type} must use candidate or proposal`);
+  }
+  if (!isTrustedHumanAssertion(ctx) && machinePolicy === 'conditional_opp_role' && trustedAction.type === 'SET_ROLE') {
+    const existing = await db.oppRole.findFirst({
+      where: { tenantId: ctx.tenantId, opportunityId: trustedAction.oppId, personId: trustedAction.personId },
+      select: { personId: true },
+    });
+    if (existing) throw new Error('machine formal oppRole update must use proposal');
   }
 
   if (isTopLevelClient(db)) {
-    const effect = await runTopLevelTransaction(db, ctx, action);
+    const effect = await runTopLevelTransaction(db, ctx, trustedAction);
     if (db === prisma) await runPostCommitEffect(effect);
-    return;
+    return effect;
   }
-  await applyActionInTransaction(ctx, action, db);
+  return applyActionInTransaction(ctx, trustedAction, db);
 }
 
 async function applyActionInTransaction(ctx: CommandContext, action: Action, db: DbClient): Promise<PostCommitEffect> {

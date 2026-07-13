@@ -16,9 +16,11 @@ import { enqueueEnrichJob, enqueueSuggestJob, enqueueProfileJob } from './jobs.j
 import { applyAction } from './mutate.js';
 import { createFieldProposal } from './proposals.js';
 import { nextFreeSlot } from './layout.js';
+import { canWriteFormal, hasExplicitTrustMetadata } from './ingestTrust.js';
 
-const applyIngestAction = (ctx: CommandContext, input: unknown): Promise<void> =>
-  applyAction(ctx, ActionSchema.parse(input));
+const applyIngestAction = async (ctx: CommandContext, input: unknown): Promise<void> => {
+  await applyAction(ctx, ActionSchema.parse(input));
+};
 
 const PIPELINE = ['线索', '需求引导', '方案认可', '客户立项', '招投标', '合同谈判', '合同双签'];
 const VALID_ROLE = ['A', 'D', 'U', 'R', 'C'];
@@ -28,8 +30,8 @@ const VALID_UCV_STATUS = ['建议', '获认可', '已解决'];
 const S = (v: unknown, max = 200): string => (typeof v === 'string' ? v.slice(0, max).trim() : '');
 const N = (v: unknown): number | undefined => (typeof v === 'number' && isFinite(v) ? v : undefined);
 const clampLevel = (v: unknown) => Math.min(4, Math.max(1, Math.round(N(v) ?? 3)));
-// explicit 判定：未标 inferred 且置信度≥0.6 才直落正式库，否则进候选
-const isExplicit = (item: any) => item?.kind !== 'inferred' && (N(item?.confidence) ?? 1) >= 0.6;
+// explicit 判定：kind/confidence 均须存在且合法；缺失或异常一律降级候选。
+const isExplicit = hasExplicitTrustMetadata;
 
 type IngestContextSelection =
   | { kind: 'structured'; source: 'voice' | 'recording'; item: unknown }
@@ -91,12 +93,12 @@ const EXTRACT_SYSTEM = `你是销售情报结构化助手，精通 G64111 销售
 
 【只输出 JSON】不要任何解释文字。结构：
 {
-  "account": {"name":"客户全称或简称","customerType":1或2或3或4,"region":"大区","kind":"explicit|inferred","evidence":"原话片段"} 或 null,
-  "opportunity": {"name":"商机名","pipelineStage":"七阶段之一","competitor":"主要友商","kind":"...","evidence":"..."} 或 null,
+  "account": {"name":"客户全称或简称","customerType":1或2或3或4,"region":"大区","kind":"explicit|inferred","confidence":0到1,"evidence":"原话片段"} 或 null,
+  "opportunity": {"name":"商机名","pipelineStage":"七阶段之一","competitor":"主要友商","kind":"...","confidence":0到1,"evidence":"..."} 或 null,
   "persons": [{"name":"姓名","title":"职务","orgLevel":1到4,"suggestedRole":"A|D|U|R|C","suggestedSentiment":"star|plus|neutral|unknown|minus|x","kind":"explicit|inferred","confidence":0到1,"evidence":"原话","form":{"family7":{"籍贯":"","年纪":"","生日":"","毕业院校":"","配偶":"","子女":"","父母":""},"occupation":"职业经历/晋升序列","recreation":"爱好/志趣","moneyMotivation":"金钱观/核心动机/价值观","family":"家庭情况补充"}}],
   "relationships": [{"source":"人名","target":"人名","layer":"L1|L2|L3|L4","label":"关系描述","kind":"...","confidence":0到1,"evidence":"..."}],
-  "burningIssues": [{"person":"姓名","description":"燃眉之急","category":"类别","kind":"..."}],
-  "ucvs": [{"person":"该价值针对谁的BI","biCategory":"对应BI的类别","description":"我方独特价值","competitorCannot":"竞品给不了什么","status":"建议|获认可|已解决","kind":"explicit|inferred","evidence":"原话"}],
+  "burningIssues": [{"person":"姓名","description":"燃眉之急","category":"类别","kind":"...","confidence":0到1,"evidence":"原话"}],
+  "ucvs": [{"person":"该价值针对谁的BI","biCategory":"对应BI的类别","description":"我方独特价值","competitorCannot":"竞品给不了什么","status":"建议|获认可|已解决","kind":"explicit|inferred","confidence":0到1,"evidence":"原话"}],
   "evidences": [{"person":"姓名","signalKey":"下方信号键之一","direction":1或-1或0,"evidence":"原话片段"}],
   "rawNote": "把整段口述原样保留作为拜访纪要"
 }
@@ -110,12 +112,33 @@ const EXTRACT_SYSTEM = `你是销售情报结构化助手，精通 G64111 销售
   信号键：co_plan_budget共同策划预算 provide_insider_info提供内幕 co_draft_tender_docs共制招标文件 share_competitor_intel给竞对情报 referral_to_1k_or_4p引荐高层 help_control_schedule帮控进度 guide_next_steps指导下一步 set_favorable_requirements定有利条款 exclusive_recommendation排他推荐 set_favorable_procurement_form定有利采购形式 pricing_guidance指导报价 help_solve_ab_bi助解燃眉 proc_strategy_alignment密谋评标策略 proc_verbal_commitment招采口头承诺 intro_referral动用政治资本引荐 spec_alignment条款向我方收敛 attendance_upgrade出席级别提升 verbal_positive口头积极表态 reply_latency_up回复显著变慢 meeting_cancel会议取消降级 competitor_quote_request索要竞品对比 internal_blocker_hint透露内部反对 bi_identified摸清燃眉之急 ucv_acknowledged价值获认可 ucv_delivered价值已落地
 - 没提到的部分填 null 或空数组 []。绝不编造。`;
 
-interface Extracted {
-  account?: any; opportunity?: any;
-  persons?: any[]; relationships?: any[]; burningIssues?: any[]; ucvs?: any[];
-  evidences?: any[]; // M3：行为信号证据（→ EvidenceEvent pending_review 待人审）
-  rawNote?: string;
-}
+// 信任字段故意接受 unknown：格式异常不让整次抽取崩溃，而由 hasExplicitTrustMetadata 失败关闭。
+const TrustFieldsSchema = {
+  kind: z.unknown().optional(),
+  confidence: z.unknown().optional(),
+  evidence: z.string().optional(),
+};
+const FormSchema = z.object({
+  family7: z.object({
+    籍贯: z.string().optional(), 年纪: z.string().optional(), 生日: z.string().optional(),
+    毕业院校: z.string().optional(), 配偶: z.string().optional(), 子女: z.string().optional(), 父母: z.string().optional(),
+  }).strict().optional(),
+  family: z.string().optional(), occupation: z.string().optional(), recreation: z.string().optional(), moneyMotivation: z.string().optional(),
+}).strict();
+const ExtractedSchema = z.object({
+  account: z.object({ name: z.string(), customerType: z.number().optional(), region: z.string().optional(), ...TrustFieldsSchema }).strict().nullable().optional(),
+  opportunity: z.object({ name: z.string(), pipelineStage: z.string().optional(), competitor: z.string().optional(), ...TrustFieldsSchema }).strict().nullable().optional(),
+  persons: z.array(z.object({
+    name: z.string(), title: z.string().optional(), orgLevel: z.number().optional(), suggestedRole: z.string().optional(),
+    suggestedSentiment: z.string().optional(), form: FormSchema.optional(), ...TrustFieldsSchema,
+  }).strict()).nullable().optional(),
+  relationships: z.array(z.object({ source: z.string(), target: z.string(), layer: z.string().optional(), label: z.string().optional(), ...TrustFieldsSchema }).strict()).nullable().optional(),
+  burningIssues: z.array(z.object({ person: z.string(), description: z.string(), category: z.string().optional(), ...TrustFieldsSchema }).strict()).nullable().optional(),
+  ucvs: z.array(z.object({ person: z.string(), biCategory: z.string().optional(), description: z.string(), competitorCannot: z.string().optional(), status: z.string().optional(), ...TrustFieldsSchema }).strict()).nullable().optional(),
+  evidences: z.array(z.object({ person: z.string(), signalKey: z.string(), direction: z.union([z.literal(-1), z.literal(0), z.literal(1)]), evidence: z.string().optional() }).strict()).nullable().optional(),
+  rawNote: z.string().nullable().optional(),
+}).strict();
+type Extracted = z.infer<typeof ExtractedSchema>;
 
 async function extractIntel(ai: { baseUrl: string; model: string; apiKey: string }, text: string, ctx: { accountName?: string; personNames: string[]; priorText?: string }): Promise<Extracted> {
   const prior = ctx.priorText ? `\n\n【本次拜访·前文（仅供理解"他/她/那位"等指代，请勿重复抽取前文已提到的人/关系）】\n${ctx.priorText}` : '';
@@ -126,7 +149,7 @@ async function extractIntel(ai: { baseUrl: string; model: string; apiKey: string
   const cleaned = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/```json|```/gi, '').trim();
   const m = cleaned.match(/\{[\s\S]*\}/);
   if (!m) throw new Error('模型未返回结构化结果');
-  return JSON.parse(m[0]);
+  return ExtractedSchema.parse(JSON.parse(m[0]));
 }
 
 // 口述/录音转写溯源标签：一处切换 origin 字段值与日志文案，让录音转写与手动口述可区分溯源。
@@ -156,6 +179,8 @@ export async function ingestVoiceText(baseCtx: CommandContext, input: IngestInpu
   const src = SRC[source];
   const structuredCtxFor = (item: unknown): CommandContext =>
     deriveIngestCommandContext(baseCtx, { kind: 'structured', source, item });
+  const mayWriteFormal = (item: unknown, entityKind: string): boolean =>
+    isExplicit(item) && canWriteFormal(structuredCtxFor(item), entityKind);
   const rawCtx = deriveIngestCommandContext(baseCtx, { kind: 'raw' });
   const machineCtx = deriveIngestCommandContext(baseCtx, { kind: 'machine' });
   const text = input.text.slice(0, 8000);
@@ -243,13 +268,19 @@ export async function ingestVoiceText(baseCtx: CommandContext, input: IngestInpu
   const setRoleIf = async (personId: string, per: any, name: string, isExisting = false) => {
     if (!opp || !VALID_ROLE.includes(S(per.suggestedRole))) return;
     const newSent = VALID_SENT.includes(S(per.suggestedSentiment)) ? S(per.suggestedSentiment) : 'unknown';
-    // v2.0 提案层：机器改【已有干系人的已有支持度】→ 进 ChangeProposal 待人审（不静默改分，守差距分析红线）；
-    // 新建/首次设角色 → 直写（无"覆盖人改"问题）。role 不在 v2.0 提案范围，已有角色保持不动。
-    if (isExisting && newSent !== 'unknown') {
+    // 已有角色的 role/sentiment 变化统一进 ChangeProposal；首次设角色才直写。
+    if (isExisting) {
       const cur = await prisma.oppRole.findUnique({ where: { tenantId_opportunityId_personId: { tenantId, opportunityId: opp.id, personId } } });
-      if (cur && cur.sentiment !== newSent) {
-        await createFieldProposal(tenantId, { accountId: acc!.id, opportunityId: opp.id, entityKind: 'oppRole', entityId: personId, field: 'sentiment', oldValue: cur.sentiment, newValue: newSent, origin: src.origin, evidence: `${src.word}推断：${name} 的支持度疑似变化`, confidence: 0.6, proposedBy: userId });
-        receipt.proposals = (receipt.proposals ?? 0) + 1;
+      if (cur) {
+        const changes = [
+          ['role', cur.role, S(per.suggestedRole)],
+          ...(newSent !== 'unknown' ? [['sentiment', cur.sentiment, newSent] as const] : []),
+        ] as const;
+        for (const [field, oldValue, newValue] of changes) {
+          if (oldValue === newValue) continue;
+          await createFieldProposal(tenantId, { accountId: acc!.id, opportunityId: opp.id, entityKind: 'oppRole', entityId: personId, field, oldValue, newValue, origin: src.origin, evidence: `${src.word}推断：${name} 的 ${field} 疑似变化`, confidence: N(per.confidence) ?? 0.5, proposedBy: userId });
+          receipt.proposals = (receipt.proposals ?? 0) + 1;
+        }
         return;
       }
     }
@@ -263,7 +294,7 @@ export async function ingestVoiceText(baseCtx: CommandContext, input: IngestInpu
     const existingId = formalId.get(name);
     if (existingId) { // 已存在正式干系人 → 复用（销售自己说的，默认同一人）
       receipt.personsReused.push({ id: existingId, name });
-      if (isExplicit(per)) {
+      if (mayWriteFormal(per, 'person')) {
         await setRoleIf(existingId, per, name, true); // 已有干系人：支持度变化走提案而非直写
         const nf = buildForm(per.form); // 抽到 FORM 情报 → 合并补充到已有 form（非空覆盖，不丢已填）
         if (nf) {
@@ -272,10 +303,23 @@ export async function ingestVoiceText(baseCtx: CommandContext, input: IngestInpu
           await applyIngestAction(structuredCtxFor(per), { type: 'UPDATE_PERSON', accId: acc.id, personId: existingId, patch: { form: mergeForm(curForm, nf) } });
           receipt.formsFilled = (receipt.formsFilled ?? 0) + 1;
         }
+      } else if (isExplicit(per)) {
+        await setRoleIf(existingId, per, name, true);
+        const nf = buildForm(per.form);
+        if (nf) {
+          const exist = acc.persons.find((pp) => pp.id === existingId);
+          let curForm: any = {}; try { curForm = JSON.parse((exist as any)?.form || '{}'); } catch { /* 容错 */ }
+          await createFieldProposal(tenantId, {
+            accountId: acc.id, opportunityId: opp?.id, entityKind: 'person', entityId: existingId, field: 'form',
+            oldValue: JSON.stringify(curForm), newValue: JSON.stringify(mergeForm(curForm, nf)), origin: src.origin,
+            evidence: `${src.word}抽取到 ${name} 的 FORM 信息`, confidence: N(per.confidence) ?? 0.5, proposedBy: userId,
+          });
+          receipt.proposals = (receipt.proposals ?? 0) + 1;
+        }
       }
       continue;
     }
-    if (isExplicit(per)) { // 明说 → 直落正式 Person（FORM 情报随抽随落，是 G64111 C1 计分项；logs 带来源溯源）
+    if (mayWriteFormal(per, 'person')) { // 仅认证 Web 人工明说可直落正式 Person
       // 同客户内相似名（如「李处」≈「李处长」，含本次已建）→ 回执提示疑似重复，不打断、仍新建
       const simName = [...formalId.keys()].find((k) => isSimilarName(k, name));
       const pid = 'p_' + randomUUID().slice(0, 12);
@@ -311,7 +355,20 @@ export async function ingestVoiceText(baseCtx: CommandContext, input: IngestInpu
       if (knownName) {
         const otherName = knownName === sName ? tName : sName;
         const clue = label.includes(otherName) ? label : `与「${otherName}」${label}`;
-        await applyIngestAction(structuredCtxFor(rel), { type: 'ADD_LOG', accId: acc.id, personId: formalId.get(knownName)!, log: { date: today, content: `${src.emoji} ${src.word}线索·待核实：${clue}`, visibility: 'team' } });
+        const personId = formalId.get(knownName)!;
+        const log = { date: today, content: `${src.emoji} ${src.word}线索·待核实：${clue}`, visibility: 'team' as const };
+        if (mayWriteFormal(rel, 'person')) {
+          await applyIngestAction(structuredCtxFor(rel), { type: 'ADD_LOG', accId: acc.id, personId, log });
+        } else {
+          const exist = acc.persons.find((pp) => pp.id === personId);
+          let logs: unknown[] = []; try { logs = JSON.parse((exist as any)?.logs || '[]'); } catch { /* 容错 */ }
+          await createFieldProposal(tenantId, {
+            accountId: acc.id, opportunityId: opp?.id, entityKind: 'person', entityId: personId, field: 'logs',
+            oldValue: JSON.stringify(logs), newValue: JSON.stringify([log, ...logs]), origin: src.origin,
+            evidence: `${src.word}抽取到 ${knownName} 的关系线索`, confidence: N(rel.confidence) ?? 0.5, proposedBy: userId,
+          });
+          receipt.proposals = (receipt.proposals ?? 0) + 1;
+        }
         receipt.notes.push({ person: knownName, content: clue });
       } else {
         receipt.skipped.push({ rel: `${sName}→${tName}`, reason: '端点未识别' });
@@ -319,7 +376,7 @@ export async function ingestVoiceText(baseCtx: CommandContext, input: IngestInpu
       continue;
     }
     const bothFormal = sEnd.kind === 'person' && tEnd.kind === 'person';
-    if (bothFormal && isExplicit(rel)) { // 明说 + 两端正式 → 直落正式 Edge
+    if (bothFormal && mayWriteFormal(rel, 'edge')) { // 仅认证 Web 人工明说 + 两端正式 → 直落正式 Edge
       const eid = 'e_' + randomUUID().slice(0, 12);
       await applyIngestAction(structuredCtxFor(rel), { type: 'ADD_EDGE', accId: acc.id, oppId: opp?.id, edge: { id: eid, source: sEnd.id, target: tEnd.id, layer, label, origin: src.origin, style: 'solid', directed: false } });
       receipt.edgesCreated.push({ source: sName, target: tName, label });
@@ -336,7 +393,7 @@ export async function ingestVoiceText(baseCtx: CommandContext, input: IngestInpu
   for (const bi of ex.burningIssues ?? []) {
     const personName = S(bi.person, 40);
     const pid = formalId.get(personName);
-    if (pid && opp && isExplicit(bi) && S(bi.description)) {
+    if (pid && opp && mayWriteFormal(bi, 'bi') && S(bi.description)) {
       const bid = 'bi_' + randomUUID().slice(0, 12);
       const category = S(bi.category, 40) || '其他';
       await applyIngestAction(structuredCtxFor(bi), { type: 'ADD_BI', accId: acc.id, oppId: opp.id, bi: { id: bid, personId: pid, description: S(bi.description, 500), category, isPrivate: true, confidence: '推理' } });
@@ -349,7 +406,7 @@ export async function ingestVoiceText(baseCtx: CommandContext, input: IngestInpu
   for (const u of ex.ucvs ?? []) {
     const personName = S(u.person, 40);
     const desc = S(u.description, 500);
-    if (!desc || !opp || !isExplicit(u)) continue;
+    if (!desc || !opp || !mayWriteFormal(u, 'ucv')) continue;
     const cands = bisByPerson.get(personName) ?? [];
     // 该人本次只一条 BI → 直接挂；多条 → 按 biCategory 匹配，匹配不到挂第一条；无 BI → 跳过（UCV 必依附 BI）
     const targetBiId = cands.length === 1 ? cands[0].biId
