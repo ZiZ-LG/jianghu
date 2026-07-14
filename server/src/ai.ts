@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from './prisma.js';
 import { denyViewer } from './scope.js';
 import { deploymentOutboundPolicy, fetchOutbound } from './security/outboundUrl.js';
+import type { DbClient } from './mutation/scopeGuards.js';
 
 // ── 加密（AES-256-GCM）：用用户自己的 Key，服务端只加密代管 ──
 function encryptionKey(): Buffer {
@@ -78,8 +79,8 @@ function mockAnalysis(ctx: any, hypothesis: string): string {
 }
 
 /** 读取并解密某租户的 AI 配置（供推断引擎复用）。无配置返回 null。 */
-export async function loadAiConfig(tenantId: string): Promise<{ provider: string; baseUrl: string; model: string; apiKey: string } | null> {
-  const c = await prisma.aiConfig.findUnique({ where: { tenantId } });
+export async function loadAiConfig(tenantId: string, db: DbClient = prisma): Promise<{ provider: string; baseUrl: string; model: string; apiKey: string } | null> {
+  const c = await db.aiConfig.findUnique({ where: { tenantId } });
   if (!c) return null;
   return { provider: c.provider, baseUrl: c.baseUrl, model: c.model, apiKey: dec(c.apiKeyEnc) };
 }

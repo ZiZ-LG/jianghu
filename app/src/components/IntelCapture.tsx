@@ -1,7 +1,7 @@
 import { useState, useRef, useMemo } from 'react';
 import type { ReactNode, PointerEvent as ReactPointerEvent } from 'react';
 import type { Account, Opportunity } from '../types';
-import { api } from '../api';
+import { api, newIdempotencyKey } from '../api';
 import { IntelReceipt } from './IntelReceipt';
 import { visitAsks } from '../lib/gaps';
 
@@ -76,7 +76,7 @@ export function IntelCapture({ account, opportunity, onClose, onDone, onEnterAcc
       const accId = account?.id ?? lockedAccountId ?? undefined; // fromScratch 多轮：首轮建的客户后续复用
       // 追问轮：把追问句拼进上文，LLM 才能消解「他挺支持的」这类对追问的指代式回答
       const prior = [priorText, askHint && `[江湖追问] ${askHint}`].filter(Boolean).join('\n');
-      const r = await api.voiceExtract({ text: text.trim(), accountId: accId, opportunityId: scope === 'opp' ? opportunity?.id : undefined, priorText: prior || undefined });
+      const r = await api.voiceExtract({ text: text.trim(), accountId: accId, opportunityId: scope === 'opp' ? opportunity?.id : undefined, priorText: prior || undefined }, newIdempotencyKey());
       setReceipt(r);
       if (!accId && r?.account?.id) setLockedAccountId(r.account.id); // 首轮从零建客户 → 锁定，「再补一句」补到同一客户
       setPriorText((prev) => (prev ? prev + '\n' : '') + text.trim()); // 累积上文供下一轮指代消解

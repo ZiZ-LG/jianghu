@@ -6,6 +6,7 @@ import { denyViewer } from './scope.js';
 import { discoverPersons, researchCompanyProfile } from './enrich.js';
 import { generateRelSuggestions } from './suggest.js';
 import { computeReminders, recordPatrol, type PatrolOpp, type PatrolRole, type PatrolAction } from './patrol.js';
+import type { DbClient } from './mutation/scopeGuards.js';
 
 // 江湖自算 · 轻量后台任务队列（DB-backed）。
 // 设计取舍（对齐架构纲领「加轻量 job 队列」）：单实例 setInterval 消费，原子 claim；
@@ -21,17 +22,17 @@ const ENRICH_CONFIDENCE: Record<string, number> = { qcc: 0.6, ai: 0.45, web: 0.4
  * 入队一个 enrich_account 自算任务。幂等：同客户已有 pending/processing 任务则复用，不重复入队。
  * 返回 { id, enqueued }。失败（超上限）抛错由调用方决定吞或传。
  */
-export async function enqueueEnrichJob(tenantId: string, accountId: string, mode: 'auto' | 'web' = 'auto'): Promise<{ id: string; enqueued: boolean }> {
-  const active = await prisma.enrichJob.findFirst({
+export async function enqueueEnrichJob(tenantId: string, accountId: string, mode: 'auto' | 'web' = 'auto', db: DbClient = prisma): Promise<{ id: string; enqueued: boolean }> {
+  const active = await db.enrichJob.findFirst({
     where: { tenantId, accountId, type: 'enrich_account', status: { in: ['pending', 'processing'] } },
   });
   if (active) return { id: active.id, enqueued: false };
 
-  const activeCount = await prisma.enrichJob.count({ where: { tenantId, status: { in: ['pending', 'processing'] } } });
+  const activeCount = await db.enrichJob.count({ where: { tenantId, status: { in: ['pending', 'processing'] } } });
   if (activeCount >= MAX_ACTIVE_JOBS_PER_TENANT) throw new Error(`在途自算任务已达上限（${MAX_ACTIVE_JOBS_PER_TENANT}），请稍候`);
 
   const id = 'job_' + randomUUID().slice(0, 12);
-  await prisma.enrichJob.create({ data: { id, tenantId, type: 'enrich_account', accountId, mode, status: 'pending' } });
+  await db.enrichJob.create({ data: { id, tenantId, type: 'enrich_account', accountId, mode, status: 'pending' } });
   return { id, enqueued: true };
 }
 
@@ -39,17 +40,17 @@ export async function enqueueEnrichJob(tenantId: string, accountId: string, mode
  * P9 入队一个 account_profile 任务（建客户自动研究企业背景：企查查/LLM 双轨）。
  * 幂等：同客户已有 pending/processing 则复用。
  */
-export async function enqueueProfileJob(tenantId: string, accountId: string): Promise<{ id: string; enqueued: boolean }> {
-  const active = await prisma.enrichJob.findFirst({
+export async function enqueueProfileJob(tenantId: string, accountId: string, db: DbClient = prisma): Promise<{ id: string; enqueued: boolean }> {
+  const active = await db.enrichJob.findFirst({
     where: { tenantId, accountId, type: 'account_profile', status: { in: ['pending', 'processing'] } },
   });
   if (active) return { id: active.id, enqueued: false };
 
-  const activeCount = await prisma.enrichJob.count({ where: { tenantId, status: { in: ['pending', 'processing'] } } });
+  const activeCount = await db.enrichJob.count({ where: { tenantId, status: { in: ['pending', 'processing'] } } });
   if (activeCount >= MAX_ACTIVE_JOBS_PER_TENANT) throw new Error(`在途自算任务已达上限（${MAX_ACTIVE_JOBS_PER_TENANT}），请稍候`);
 
   const id = 'job_' + randomUUID().slice(0, 12);
-  await prisma.enrichJob.create({ data: { id, tenantId, type: 'account_profile', accountId, status: 'pending' } });
+  await db.enrichJob.create({ data: { id, tenantId, type: 'account_profile', accountId, status: 'pending' } });
   return { id, enqueued: true };
 }
 
@@ -57,17 +58,17 @@ export async function enqueueProfileJob(tenantId: string, accountId: string): Pr
  * 入队一个 suggest_relations 自算任务（图算法 + LLM 推断商机内关系候选）。
  * 幂等：同商机已有 pending/processing 任务则复用。accountId 一并存便于隔离/分组。
  */
-export async function enqueueSuggestJob(tenantId: string, accountId: string, opportunityId: string): Promise<{ id: string; enqueued: boolean }> {
-  const active = await prisma.enrichJob.findFirst({
+export async function enqueueSuggestJob(tenantId: string, accountId: string, opportunityId: string, db: DbClient = prisma): Promise<{ id: string; enqueued: boolean }> {
+  const active = await db.enrichJob.findFirst({
     where: { tenantId, opportunityId, type: 'suggest_relations', status: { in: ['pending', 'processing'] } },
   });
   if (active) return { id: active.id, enqueued: false };
 
-  const activeCount = await prisma.enrichJob.count({ where: { tenantId, status: { in: ['pending', 'processing'] } } });
+  const activeCount = await db.enrichJob.count({ where: { tenantId, status: { in: ['pending', 'processing'] } } });
   if (activeCount >= MAX_ACTIVE_JOBS_PER_TENANT) throw new Error(`在途自算任务已达上限（${MAX_ACTIVE_JOBS_PER_TENANT}），请稍候`);
 
   const id = 'job_' + randomUUID().slice(0, 12);
-  await prisma.enrichJob.create({ data: { id, tenantId, type: 'suggest_relations', accountId, opportunityId, status: 'pending' } });
+  await db.enrichJob.create({ data: { id, tenantId, type: 'suggest_relations', accountId, opportunityId, status: 'pending' } });
   return { id, enqueued: true };
 }
 

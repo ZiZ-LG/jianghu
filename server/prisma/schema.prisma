@@ -194,6 +194,26 @@ model AuditEvent {
   @@index([tenantId, entityKind, entityId])
 }
 
+// 事务命令幂等记录：只保存非敏感结果摘要，不复制口述、FORM、BI、证据原文。
+model CommandRun {
+  id             String   @id @default(uuid())
+  tenantId       String
+  actorId        String
+  kind           String
+  idempotencyKey String
+  requestHash    String   @default("")
+  status         String   @default("running") // running | completed | failed
+  leaseToken     String   @default("")
+  leaseExpiresAt DateTime?
+  resultSummary  String   @default("{}")
+  errorCode      String   @default("")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([tenantId, actorId, kind, idempotencyKey])
+  @@index([tenantId, createdAt])
+}
+
 // AI 关系推断候选（待人审）。绝不自动写库，accept 后才生成正式 Edge。
 model RelSuggestion {
   id              String      @id

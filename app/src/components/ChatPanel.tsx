@@ -4,7 +4,7 @@
 // 与右栏参谋强分工：这里=「改·落库」，参谋=「问·不落库」。
 import { useEffect, useRef, useState } from 'react';
 import type { Account, Opportunity } from '../types';
-import { api } from '../api';
+import { api, newIdempotencyKey } from '../api';
 import { IntelReceipt } from './IntelReceipt';
 import { visitAsks } from '../lib/gaps';
 
@@ -31,7 +31,7 @@ export function ChatPanel({ account, opp, onDone, height, onCollapse }: { accoun
     try {
       // 追问轮：把追问句拼进上文，LLM 才能消解「他挺支持的」这类指代式回答
       const prior = [priorText, askHint && `[江湖追问] ${askHint}`].filter(Boolean).join('\n');
-      const r = await api.voiceExtract({ text, accountId: account.id, opportunityId: opp?.id, priorText: prior || undefined });
+      const r = await api.voiceExtract({ text, accountId: account.id, opportunityId: opp?.id, priorText: prior || undefined }, newIdempotencyKey());
       setMsgs((m) => [...m, { role: 'assistant', receipt: r }]);
       setPriorText((prev) => (prev ? prev + '\n' : '') + text);
       setAskHint('');

@@ -3,9 +3,9 @@ import type { Layer, Role, CustomerType, Edge, Person } from './types';
 import { LAYER_LABEL } from './types';
 import {
   reducer, computeInverse, injectBaseVersion, alignVersionAfterRetry, invalidateHistory, transitionHistory,
-  newAccount, newPerson, newEvidence, uid, type Action, type HistoryItem, type HistoryTransitionLock,
+  newAccount, newPerson, uid, type Action, type HistoryItem, type HistoryTransitionLock,
 } from './store';
-import { api, isConfirmedAuthFailure, type AuthResult, type Suggestion, type InboxRel, type InboxPerson, type InboxProposal, type InboxReminder, type InboxEvidence, type PatrolInfo } from './api';
+import { api, isConfirmedAuthFailure, newIdempotencyKey, type AuthResult, type Suggestion, type InboxRel, type InboxPerson, type InboxProposal, type InboxReminder, type InboxEvidence, type PatrolInfo } from './api';
 import { scoreFromDomain } from './lib/g64111';
 import { usePersistentState, useTheme, useViewport } from './ui';
 import { Auth } from './components/Auth';
@@ -30,7 +30,7 @@ import { PersonForm } from './components/PersonForm';
 import { TeamBilling } from './components/TeamBilling';
 import { AiSettings } from './components/AiSettings';
 import { WeComSettings } from './components/WeComSettings';
-import { InboxPanel } from './components/InboxPanel';
+import { InboxPanel, type InboxBatchItem } from './components/InboxPanel';
 import { RecordingPanel } from './components/RecordingPanel';
 import { HelpManual } from './components/HelpManual';
 import { McpAccess } from './components/McpAccess';
@@ -392,17 +392,12 @@ export default function App() {
     if (!account) return;
     setNewOppOpen(false);
     try {
-      const { opportunityId } = await api.cloneOpportunity({ accountId: account.id, name: params.name, fromOppId: params.fromOppId, personIds: params.personIds, withEdges: params.withEdges });
-      // M2 骨架预填：clone 建的新商机 memberScoped=true，占位人物须 ADD_OPP_MEMBER 才在画布可见，再 SET_ROLE 设角色（占位支持度=未知，待认领）。
-      if (params.skeleton?.length) {
-        for (const sk of layoutSkeleton(params.skeleton)) {
-          const p = newPerson(sk.title, sk.title, sk.x, sk.y, false);
-          p.orgLevel = sk.orgLevel;
-          await api.mutate({ type: 'ADD_PERSON', accId: account.id, person: p });
-          await api.mutate({ type: 'ADD_OPP_MEMBER', accId: account.id, oppId: opportunityId, personId: p.id });
-          await api.mutate({ type: 'SET_ROLE', accId: account.id, oppId: opportunityId, personId: p.id, patch: { role: sk.role, sentiment: 'unknown', confidence: '不清' } });
-        }
-      }
+      const command = await api.opportunitySkeleton({
+        accountId: account.id, name: params.name, fromOppId: params.fromOppId,
+        personIds: params.personIds, withEdges: params.withEdges,
+        skeleton: params.skeleton?.length ? layoutSkeleton(params.skeleton) : [],
+      }, newIdempotencyKey());
+      const { opportunityId } = command;
       const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts });
       setOppId(opportunityId); setSelectedId(null); setVisibleLayers(new Set(['L1']));
     } catch (e: any) { setSyncErr('新建商机失败：' + e.message); }
@@ -431,17 +426,15 @@ export default function App() {
   const selectEdge = (id: string | null) => { setSelectedEdgeId(id); setSelectedId(null); if (id && drawerEdgeId) setDrawerEdgeId(id); };
   const openEdge = (id: string) => { setSelectedId(null); setDrawerEdgeId(id); };
   // 画布行动牌就地反馈：标完成 + 态度↑↓ → 录一条互动证据喂策略引擎（复用坞的结果回填飞轮，守铁律②：人当场拍板）
-  const actionFeedback = (actionId: string, outcome: 'up' | 'flat' | 'down') => {
+  const actionFeedback = async (actionId: string, outcome: 'up' | 'flat' | 'down') => {
     if (!account || !opp) return;
     const a = (account.planActions ?? []).find((x) => x.id === actionId);
     if (!a) return;
     const today = new Date().toISOString().slice(0, 10);
-    act({ type: 'TOGGLE_PLAN_ACTION', accId: account.id, actionId, done: true, doneAt: today });
-    if (a.personId && (outcome === 'up' || outcome === 'down')) {
-      const ev = newEvidence(account.id, opp.id, a.personId, outcome === 'up' ? 'positive_interaction' : 'negative_interaction', outcome === 'up' ? 1 : -1, 'mid');
-      ev.rawContent = `行动结果回填：${a.title || '行动'}`; ev.occurredAt = today;
-      act({ type: 'ADD_EVIDENCE', accId: account.id, oppId: opp.id, evidence: ev });
-    }
+    try {
+      await api.actionFeedback({ accountId: account.id, opportunityId: opp.id, actionId, outcome, occurredAt: today }, newIdempotencyKey());
+      await refreshState();
+    } catch (error: any) { setSyncErr('行动回填失败：' + (error?.message || error)); }
   };
   // 切客户/商机时清空一切选中
   useEffect(() => { setSelectedId(null); setSelectedEdgeId(null); setDrawerEdgeId(null); }, [accId, oppId]);
@@ -532,6 +525,15 @@ export default function App() {
       if (action === 'approve') await refreshAfterAccept(); else await loadInbox();
     } catch (e: any) { setSyncErr('审核失败：' + e.message); }
   };
+  const inboxBatch = async (items: InboxBatchItem[]) => {
+    try {
+      await api.inboxBatch({ items }, newIdempotencyKey());
+      await refreshAfterAccept();
+    } catch (e: any) {
+      setSyncErr('批量审核失败：' + e.message);
+      throw e;
+    }
+  };
 
   if (booting) return <div className="boot">加载中…</div>;
   if (!auth) return <>
@@ -582,7 +584,7 @@ export default function App() {
         {phonePortrait && forceDesktop && <button className="mf-exit-desktop" onClick={() => setForceDesktop(false)}>📱 回手机版</button>}
         <SyncStatus coordinator={coordinator} onViewCloud={discardToCloudState} />
         {syncErr && <div className="sync-toast">{syncErr}</div>}
-        {inboxOpen && !readonly && <InboxPanel rels={inbox.rels} persons={inbox.persons} proposals={inbox.proposals} accounts={state.accounts} onAccept={inboxAcceptRel} onReject={inboxRejectRel} onAcceptPerson={inboxAcceptPerson} onRejectPerson={inboxRejectPerson} onAcceptProposal={inboxAcceptProposal} onRejectProposal={inboxRejectProposal} reminders={inbox.reminders} onDismissReminder={inboxDismissReminder} evidences={inbox.evidences} onReviewEvidence={inboxReviewEvidence} onClose={() => setInboxOpen(false)} />}
+        {inboxOpen && !readonly && <InboxPanel rels={inbox.rels} persons={inbox.persons} proposals={inbox.proposals} accounts={state.accounts} onAccept={inboxAcceptRel} onReject={inboxRejectRel} onAcceptPerson={inboxAcceptPerson} onRejectPerson={inboxRejectPerson} onAcceptProposal={inboxAcceptProposal} onRejectProposal={inboxRejectProposal} reminders={inbox.reminders} onDismissReminder={inboxDismissReminder} evidences={inbox.evidences} onReviewEvidence={inboxReviewEvidence} onBatch={inboxBatch} onClose={() => setInboxOpen(false)} />}
         {intelOpen && !readonly && (
           <IntelCapture
             onClose={() => setIntelOpen(false)}
@@ -769,7 +771,7 @@ export default function App() {
       {gapsOpen && account && opp && breakdown && !readonly && (
         <GapCards account={account} opp={opp} dispatch={act} onClose={() => setGapsOpen(false)} />
       )}
-      {inboxOpen && !readonly && <InboxPanel rels={inbox.rels} persons={inbox.persons} proposals={inbox.proposals} accounts={state.accounts} onAccept={inboxAcceptRel} onReject={inboxRejectRel} onAcceptPerson={inboxAcceptPerson} onRejectPerson={inboxRejectPerson} onAcceptProposal={inboxAcceptProposal} onRejectProposal={inboxRejectProposal} reminders={inbox.reminders} onDismissReminder={inboxDismissReminder} evidences={inbox.evidences} onReviewEvidence={inboxReviewEvidence} onClose={() => setInboxOpen(false)} />}
+      {inboxOpen && !readonly && <InboxPanel rels={inbox.rels} persons={inbox.persons} proposals={inbox.proposals} accounts={state.accounts} onAccept={inboxAcceptRel} onReject={inboxRejectRel} onAcceptPerson={inboxAcceptPerson} onRejectPerson={inboxRejectPerson} onAcceptProposal={inboxAcceptProposal} onRejectProposal={inboxRejectProposal} reminders={inbox.reminders} onDismissReminder={inboxDismissReminder} evidences={inbox.evidences} onReviewEvidence={inboxReviewEvidence} onBatch={inboxBatch} onClose={() => setInboxOpen(false)} />}
       <SyncStatus coordinator={coordinator} onViewCloud={discardToCloudState} />
       {syncErr && <div className="sync-toast">{syncErr}</div>}
       {undoHint && <div className="undo-toast">{undoHint}</div>}

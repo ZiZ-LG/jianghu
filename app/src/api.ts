@@ -97,6 +97,15 @@ export async function request<T = unknown>(
 }
 
 const req = request;
+const commandReq = async <T>(path: string, opts: RequestInit, requestOptions: { timeoutMs?: number } = {}): Promise<T> => {
+  try { return await request<T>(path, opts, requestOptions); }
+  catch (cause) {
+    const error = toApiError(cause);
+    if (error.code !== 'network_error' && error.code !== 'timeout') throw error;
+    return request<T>(path, opts, requestOptions); // 同一 opts 保留同一个 Idempotency-Key。
+  }
+};
+export const newIdempotencyKey = (): string => crypto.randomUUID();
 
 export interface AuthResult {
   token: string;
@@ -146,11 +155,17 @@ export const api = {
   getState: (): Promise<{ accounts: Account[] }> => req('/api/state'),
   mutate: (action: Action): Promise<{ ok: true }> => req('/api/mutate', { method: 'POST', body: JSON.stringify({ action: toWireAction(action) }) }),
   // 录入情报：口述文字 → 后端 LLM 抽取 + 双轨落库 → 回执
-  voiceExtract: (b: { text: string; accountId?: string; opportunityId?: string; priorText?: string; sourceVisitId?: string }): Promise<any> =>
-    req('/api/voice/extract', { method: 'POST', body: JSON.stringify(b) }, { timeoutMs: 120_000 }),
+  voiceExtract: (b: { text: string; accountId?: string; opportunityId?: string; priorText?: string; sourceVisitId?: string }, idempotencyKey: string): Promise<any> =>
+    commandReq('/api/voice/extract', { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(b) }, { timeoutMs: 120_000 }),
   // 新建商机：空白(personIds 空) 或 从 fromOppId 克隆选定人物(+角色，可选关系线)
   cloneOpportunity: (b: { accountId: string; name: string; fromOppId?: string; personIds: string[]; withEdges: boolean }): Promise<{ opportunityId: string; memberCount: number }> =>
     req('/api/opportunity/clone', { method: 'POST', body: JSON.stringify(b) }),
+  opportunitySkeleton: (b: { accountId: string; name: string; fromOppId?: string; personIds: string[]; withEdges: boolean; skeleton: Array<{ title: string; role: string; orgLevel: number; x: number; y: number }> }, idempotencyKey: string): Promise<{ opportunityId: string; memberCount: number; skeletonPersonIds: string[]; replayed: boolean }> =>
+    commandReq('/api/commands/opportunity-skeleton', { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(b) }),
+  actionFeedback: (b: { accountId: string; opportunityId: string; actionId: string; outcome: 'up' | 'flat' | 'down'; occurredAt: string }, idempotencyKey: string): Promise<{ evidenceId?: string; replayed: boolean }> =>
+    commandReq('/api/commands/action-feedback', { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(b) }),
+  inboxBatch: (b: { items: Array<{ kind: 'proposal' | 'person' | 'rel' | 'evidence' | 'reminder'; id: string; decision: 'accept' | 'reject'; overrideValue?: string; personOverride?: { name?: string; title?: string }; relOverride?: { layer?: string; label?: string }; direction?: -1 | 0 | 1 }> }, idempotencyKey: string): Promise<{ items: Array<{ kind: string; id: string; status: string }>; replayed: boolean }> =>
+    commandReq('/api/commands/inbox-batch', { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(b) }),
   demo: (): Promise<{ ok: true }> => req('/api/demo', { method: 'POST' }),
   archive: (target: 'account' | 'opportunity', id: string, reason: string): Promise<{ ok: true }> =>
     req('/api/archive', { method: 'POST', body: JSON.stringify({ target, id, reason }) }),
@@ -248,8 +263,8 @@ export const api = {
     req('/api/recording/pull', { method: 'POST', body: JSON.stringify(b) }),
   recordingTranscripts: (accountId?: string): Promise<{ transcripts: Transcript[] }> =>
     req('/api/recording/transcripts' + (accountId ? '?accountId=' + encodeURIComponent(accountId) : '')),
-  recordingExtract: (transcriptId: string): Promise<any> =>
-    req('/api/recording/extract', { method: 'POST', body: JSON.stringify({ transcriptId }) }, { timeoutMs: 120_000 }),
+  recordingExtract: (transcriptId: string, idempotencyKey: string): Promise<any> =>
+    commandReq('/api/recording/extract', { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify({ transcriptId }) }, { timeoutMs: 120_000 }),
   recordingRedact: (transcriptId: string): Promise<{ ok: true; id: string; status: string }> =>
     req('/api/recording/redact', { method: 'POST', body: JSON.stringify({ transcriptId }) }),
   recordingDelete: (transcriptId: string): Promise<{ ok: true; id: string }> =>

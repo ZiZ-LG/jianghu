@@ -65,4 +65,19 @@ describe('typed API failures', () => {
     expect(isConfirmedAuthFailure(new ApiError({ status: 503, message: 'down', retryable: true }))).toBe(false);
     expect(isConfirmedAuthFailure(new ApiError({ code: 'network_error', message: 'offline', retryable: true }))).toBe(false);
   });
+
+  it('retries a network-unknown command once with the same idempotency key', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError('network lost'))
+      .mockResolvedValueOnce(response(200, { opportunityId: 'opp-once', memberCount: 0, skeletonPersonIds: [], replayed: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.opportunitySkeleton({
+      accountId: 'acc', name: 'Once', personIds: [], withEdges: false, skeleton: [],
+    }, 'stable-command-key')).resolves.toMatchObject({ opportunityId: 'opp-once', replayed: true });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect((fetchMock.mock.calls[0][1] as RequestInit).headers).toMatchObject({ 'Idempotency-Key': 'stable-command-key' });
+    expect((fetchMock.mock.calls[1][1] as RequestInit).headers).toMatchObject({ 'Idempotency-Key': 'stable-command-key' });
+  });
 });

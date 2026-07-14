@@ -3,7 +3,7 @@
 // PIPL：转写原文加密存储、按工作区隔离、可降解/删。租户级飞书 App 凭据由管理员配(加密，不回明文)。
 import { useEffect, useState } from 'react';
 import type { ChangeEvent, CSSProperties } from 'react';
-import { api, type Transcript } from '../api';
+import { api, newIdempotencyKey, type Transcript } from '../api';
 import { Modal } from './Modal';
 import { IntelReceipt } from './IntelReceipt';
 
@@ -122,7 +122,7 @@ export function RecordingPanel({ accountId, role, onClose, onExtracted, embedded
   const extract = async (t: Transcript) => {
     setExtractingId(t.id); setReceipt(null); setMsg('');
     try {
-      const rc = await api.recordingExtract(t.id);
+      const rc = await api.recordingExtract(t.id, newIdempotencyKey());
       setReceipt(rc);
       onExtracted();
       await load();

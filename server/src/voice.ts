@@ -13,13 +13,14 @@ import { prisma } from './prisma.js';
 import { denyViewer } from './scope.js';
 import { loadAiConfig, callLLM } from './ai.js';
 import { enqueueEnrichJob, enqueueSuggestJob, enqueueProfileJob } from './jobs.js';
-import { applyAction } from './mutate.js';
+import { applyAction, type DbClient } from './mutate.js';
 import { createFieldProposal } from './proposals.js';
 import { nextFreeSlot } from './layout.js';
 import { canWriteFormal, hasExplicitTrustMetadata } from './ingestTrust.js';
+import { failReservedCommand, reserveCommand, runCommand } from './mutation/commandRunner.js';
 
-const applyIngestAction = async (ctx: CommandContext, input: unknown): Promise<void> => {
-  await applyAction(ctx, ActionSchema.parse(input));
+const applyIngestActionWithDb = async (ctx: CommandContext, input: unknown, db: DbClient): Promise<void> => {
+  await applyAction(ctx, ActionSchema.parse(input), db);
 };
 
 const PIPELINE = ['线索', '需求引导', '方案认可', '客户立项', '招投标', '合同谈判', '合同双签'];
@@ -167,13 +168,49 @@ export interface IngestInput {
   source?: keyof typeof SRC; // 'voice'(默认·手动口述) | 'recording'(录音转写)
 }
 export type IngestResult = { ok: true; receipt: any } | { ok: false; status: number; body: any };
+export type PreparedVoiceIngest = { extracted?: unknown; failure?: Extract<IngestResult, { ok: false }> };
+
+export class IngestCommandError extends Error {
+  constructor(readonly result: Extract<IngestResult, { ok: false }>) {
+    super(result.body?.error || '情报录入失败');
+    this.name = 'IngestCommandError';
+  }
+}
+
+/** 模型网络调用在事务外完成；事务内只重读作用域并持久化已验证的结构化结果。 */
+export async function prepareVoiceIngest(baseCtx: CommandContext, input: IngestInput, db: DbClient = prisma): Promise<PreparedVoiceIngest> {
+  const acc = input.accountId
+    ? await db.account.findFirst({ where: { id: input.accountId, tenantId: baseCtx.tenantId }, include: { persons: true } })
+    : null;
+  const ai = await loadAiConfig(baseCtx.tenantId, db);
+  if (!ai || ai.provider === 'mock' || !ai.baseUrl || !ai.model) return {};
+  try {
+    const extracted = await extractIntel(
+      { baseUrl: ai.baseUrl, model: ai.model, apiKey: ai.apiKey },
+      input.text.slice(0, 8000),
+      {
+        accountName: acc?.name,
+        personNames: (acc?.persons ?? []).map((person) => person.name),
+        priorText: (input.priorText ?? '').slice(0, 8000),
+      },
+    );
+    return { extracted };
+  } catch (error: any) {
+    return { failure: { ok: false, status: 400, body: { error: '情报抽取失败：' + (error?.message || '模型返回异常') } } };
+  }
+}
 
 /**
  * 文字情报抽取 + 双轨落库（手动口述 / 录音转写共用核心）。转写文字与口述文字同构，复用同一抽取链路。
  * 不碰 reply：返回 {ok:true,receipt}=正常；{ok:false,status,body}=路由应返回的错误码——供 recording.ts 复用。
  * source 切换溯源：voice=🎙️口述 / recording=🎧录音转写（origin 字段、日志前缀、拜访纪要 topic 一处统一）。
  */
-export async function ingestVoiceText(baseCtx: CommandContext, input: IngestInput): Promise<IngestResult> {
+export async function ingestVoiceText(
+  baseCtx: CommandContext,
+  input: IngestInput,
+  db: DbClient = prisma,
+  testOptions?: { extracted?: unknown; failAfterWrite?: number },
+): Promise<IngestResult> {
   const { tenantId, actorId: userId } = baseCtx;
   const source = input.source ?? 'voice';
   const src = SRC[source];
@@ -187,56 +224,65 @@ export async function ingestVoiceText(baseCtx: CommandContext, input: IngestInpu
   const priorText = (input.priorText ?? '').slice(0, 8000); // 多轮增量：上一轮口述，供 LLM 指代消解
   // 从「已存在的拜访纪要」抽取(M1 焊接缝)：源本身就是一条纪要，跳过末尾的纪要存档，避免重复落库
   const skipVisitNote = Boolean(input.sourceVisitId);
+  let writeStep = 0;
+  const applyIngestAction = async (ctx: CommandContext, action: unknown, client: DbClient): Promise<void> => {
+    await applyIngestActionWithDb(ctx, action, client);
+    writeStep += 1;
+    if (testOptions?.failAfterWrite === writeStep) throw new Error(`injected voice failure after write ${writeStep}`);
+  };
 
   // 上下文：当前客户（含 persons 用于去重、opportunities 用于定位）
   let acc = input.accountId
-    ? await prisma.account.findFirst({ where: { id: input.accountId, tenantId }, include: { persons: true, opportunities: true } })
+    ? await db.account.findFirst({ where: { id: input.accountId, tenantId }, include: { persons: true, opportunities: true } })
     : null;
 
-  const ai = await loadAiConfig(tenantId);
   const today = new Date().toISOString().slice(0, 10);
 
-  // 无可用模型 → 退化：仅把原文存为拜访纪要（无 key 也有基本价值，引导配模型）
-  if (!ai || ai.provider === 'mock' || !ai.baseUrl || !ai.model) {
-    // 从已有纪要抽取(skipVisitNote)：源就是纪要本身，无模型时无可抽取、也绝不再复制一条纪要
-    if (skipVisitNote) return { ok: true, receipt: { needConfig: true, account: acc ? { id: acc.id, name: acc.name, status: 'matched' } : null, visitNote: false, note: `未配置 AI 模型，无法从这条${src.from}抽取结构化情报。请先在「🧠 AI 模型」里配置模型。` } };
-    if (acc) {
-      const oppId = input.opportunityId && acc.opportunities.some((o) => o.id === input.opportunityId) ? input.opportunityId : null;
-      const vid = 'visit_' + randomUUID().slice(0, 12);
-      await applyIngestAction(rawCtx, { type: 'ADD_VISIT', accId: acc.id, visit: { id: vid, opportunityId: oppId ?? undefined, date: today, topic: src.topic, summary: text, origin: src.origin } });
-      return { ok: true, receipt: { needConfig: true, account: { id: acc.id, name: acc.name, status: 'matched' }, visitNote: true, note: `未配置 AI 模型，已先把${src.word}存为拜访纪要。配置模型后即可自动抽取客户/商机/干系人/关系。` } };
-    }
-    return { ok: false, status: 400, body: { error: '请先在「AI 模型」配置模型，才能自动抽取情报', needConfig: true } };
-  }
-
   let ex: Extracted;
-  try { ex = await extractIntel({ baseUrl: ai.baseUrl, model: ai.model, apiKey: ai.apiKey }, text, { accountName: acc?.name, personNames: (acc?.persons ?? []).map((x) => x.name), priorText }); }
-  catch (e: any) { return { ok: false, status: 400, body: { error: '情报抽取失败：' + (e?.message || '模型返回异常') } }; }
+  if (testOptions?.extracted !== undefined) {
+    ex = ExtractedSchema.parse(testOptions.extracted);
+  } else {
+    const ai = await loadAiConfig(tenantId, db);
+
+    // 无可用模型 → 退化：仅把原文存为拜访纪要（无 key 也有基本价值，引导配模型）
+    if (!ai || ai.provider === 'mock' || !ai.baseUrl || !ai.model) {
+      // 从已有纪要抽取(skipVisitNote)：源就是纪要本身，无模型时无可抽取、也绝不再复制一条纪要
+      if (skipVisitNote) return { ok: true, receipt: { needConfig: true, account: acc ? { id: acc.id, name: acc.name, status: 'matched' } : null, visitNote: false, note: `未配置 AI 模型，无法从这条${src.from}抽取结构化情报。请先在「🧠 AI 模型」里配置模型。` } };
+      if (acc) {
+        const oppId = input.opportunityId && acc.opportunities.some((o) => o.id === input.opportunityId) ? input.opportunityId : null;
+        const vid = 'visit_' + randomUUID().slice(0, 12);
+        await applyIngestAction(rawCtx, { type: 'ADD_VISIT', accId: acc.id, visit: { id: vid, opportunityId: oppId ?? undefined, date: today, topic: src.topic, summary: text, origin: src.origin } }, db);
+        return { ok: true, receipt: { needConfig: true, account: { id: acc.id, name: acc.name, status: 'matched' }, visitNote: true, note: `未配置 AI 模型，已先把${src.word}存为拜访纪要。配置模型后即可自动抽取客户/商机/干系人/关系。` } };
+      }
+      return { ok: false, status: 400, body: { error: '请先在「AI 模型」配置模型，才能自动抽取情报', needConfig: true } };
+    }
+
+    try { ex = await extractIntel({ baseUrl: ai.baseUrl, model: ai.model, apiKey: ai.apiKey }, text, { accountName: acc?.name, personNames: (acc?.persons ?? []).map((x) => x.name), priorText }); }
+    catch (e: any) { return { ok: false, status: 400, body: { error: '情报抽取失败：' + (e?.message || '模型返回异常') } }; }
+  }
 
   const receipt: any = { account: null, opportunity: null, personsCreated: [], personsReused: [], rolesSet: [], edgesCreated: [], burningIssues: [], ucvs: [], dupWarnings: [], candidates: { persons: [], relationships: [] }, notes: [], visitNote: false, skipped: [] };
 
   // ── 1) 客户（业务实体，明说直落；命中现有则补字段）──
   if (ex.account && S(ex.account.name)) {
     const name = S(ex.account.name, 100);
-    if (!acc) acc = await prisma.account.findFirst({ where: { tenantId, name }, include: { persons: true, opportunities: true } });
+    if (!acc) acc = await db.account.findFirst({ where: { tenantId, name }, include: { persons: true, opportunities: true } });
     if (acc) {
-      if (isExplicit(ex.account) && S(ex.account.region)) await applyIngestAction(structuredCtxFor(ex.account), { type: 'UPDATE_ACCOUNT', accId: acc.id, patch: { region: S(ex.account.region, 40) } });
+      if (isExplicit(ex.account) && S(ex.account.region)) await applyIngestAction(structuredCtxFor(ex.account), { type: 'UPDATE_ACCOUNT', accId: acc.id, patch: { region: S(ex.account.region, 40) } }, db);
       receipt.account = { id: acc.id, name: acc.name, status: 'matched' };
     } else {
       // 即将新建客户 → 先查 tenant 内相似名（命中则回执提示疑似重复，不打断、仍新建）
-      const others = await prisma.account.findMany({ where: { tenantId }, select: { name: true } });
+      const others = await db.account.findMany({ where: { tenantId }, select: { name: true } });
       const sim = others.find((o) => isSimilarName(stripCompany(o.name), stripCompany(name)));
       const id = 'acc_' + randomUUID().slice(0, 12);
       const ct = [1, 2, 3].includes(N(ex.account.customerType) as number) ? (N(ex.account.customerType) as number) : 2;
-      await applyIngestAction(structuredCtxFor(ex.account), { type: 'ADD_ACCOUNT', account: { id, name, customerType: ct, region: S(ex.account.region, 40) } });
-      acc = await prisma.account.findFirst({ where: { id, tenantId }, include: { persons: true, opportunities: true } });
+      await applyIngestAction(structuredCtxFor(ex.account), { type: 'ADD_ACCOUNT', account: { id, name, customerType: ct, region: S(ex.account.region, 40) } }, db);
+      acc = await db.account.findFirst({ where: { id, tenantId }, include: { persons: true, opportunities: true } });
       receipt.account = { id, name, status: 'created' };
       if (sim) receipt.dupWarnings.push({ kind: 'account', name, similarTo: sim.name });
       // 江湖自算：语音建客户后后台入队 enrich（企查查/AI 补充发现关键干系人 → 候选进收件箱人审）。
       // 与口述明说的干系人互补、按名去重；不阻塞回执、失败不影响建客户。
-      try { await enqueueEnrichJob(tenantId, id, 'auto'); } catch { /* 超上限等，忽略 */ }
-      // P9：同时入队企业背景研究（企查查/LLM 双轨 → account 级 Note 带溯源 → curated「AI 整理·待核」吸收）
-      try { await enqueueProfileJob(tenantId, id); } catch { /* 超上限等，忽略 */ }
+      // 后台任务须等事务提交后再入队；路由根据 receipt 统一触发。
     }
   }
   if (!acc) return { ok: true, receipt: { ...receipt, note: '未能确定客户：请在某个客户/商机里录入，或在口述中说明客户名称。', raw: S(ex.rawNote, 4000) || text } };
@@ -250,12 +296,12 @@ export async function ingestVoiceText(baseCtx: CommandContext, input: IngestInpu
       const simOpp = acc.opportunities.find((o) => isSimilarName(o.name, oname)); // 同客户内相似商机名
       const id = 'opp_' + randomUUID().slice(0, 12);
       const stage = PIPELINE.includes(S(ex.opportunity.pipelineStage)) ? S(ex.opportunity.pipelineStage) : '线索';
-      await applyIngestAction(structuredCtxFor(ex.opportunity), { type: 'ADD_OPP', accId: acc.id, opp: { id, name: oname, customerType: acc.customerType, pipelineStage: stage, engageStage: '需求调研立项', competitor: S(ex.opportunity.competitor, 200) } });
+      await applyIngestAction(structuredCtxFor(ex.opportunity), { type: 'ADD_OPP', accId: acc.id, opp: { id, name: oname, customerType: acc.customerType, pipelineStage: stage, engageStage: '需求调研立项', competitor: S(ex.opportunity.competitor, 200) } }, db);
       opp = { id, name: oname } as any;
       receipt.opportunity = { id, name: oname, status: 'created' };
       if (simOpp) receipt.dupWarnings.push({ kind: 'opportunity', name: oname, similarTo: simOpp.name });
       // 江湖自算：语音建商机后后台入队关系推断（worker 数秒后跑，届时本次口述的人/边已落库，图已完整）。
-      try { await enqueueSuggestJob(tenantId, acc.id, id); } catch { /* 超上限等，忽略 */ }
+      // 关系推断同样由路由在事务提交后触发。
     } else receipt.opportunity = { id: opp.id, name: opp.name, status: 'matched' };
   } else if (opp) receipt.opportunity = { id: opp.id, name: opp.name, status: 'matched' };
 
@@ -270,7 +316,7 @@ export async function ingestVoiceText(baseCtx: CommandContext, input: IngestInpu
     const newSent = VALID_SENT.includes(S(per.suggestedSentiment)) ? S(per.suggestedSentiment) : 'unknown';
     // 已有角色的 role/sentiment 变化统一进 ChangeProposal；首次设角色才直写。
     if (isExisting) {
-      const cur = await prisma.oppRole.findUnique({ where: { tenantId_opportunityId_personId: { tenantId, opportunityId: opp.id, personId } } });
+      const cur = await db.oppRole.findUnique({ where: { tenantId_opportunityId_personId: { tenantId, opportunityId: opp.id, personId } } });
       if (cur) {
         const changes = [
           ['role', cur.role, S(per.suggestedRole)],
@@ -278,13 +324,13 @@ export async function ingestVoiceText(baseCtx: CommandContext, input: IngestInpu
         ] as const;
         for (const [field, oldValue, newValue] of changes) {
           if (oldValue === newValue) continue;
-          await createFieldProposal(tenantId, { accountId: acc!.id, opportunityId: opp.id, entityKind: 'oppRole', entityId: personId, field, oldValue, newValue, origin: src.origin, evidence: `${src.word}推断：${name} 的 ${field} 疑似变化`, confidence: N(per.confidence) ?? 0.5, proposedBy: userId });
+          await createFieldProposal(tenantId, { accountId: acc!.id, opportunityId: opp.id, entityKind: 'oppRole', entityId: personId, field, oldValue, newValue, origin: src.origin, evidence: `${src.word}推断：${name} 的 ${field} 疑似变化`, confidence: N(per.confidence) ?? 0.5, proposedBy: userId }, db);
           receipt.proposals = (receipt.proposals ?? 0) + 1;
         }
         return;
       }
     }
-    await applyIngestAction(structuredCtxFor(per), { type: 'SET_ROLE', accId: acc!.id, oppId: opp.id, personId, patch: { role: S(per.suggestedRole), sentiment: newSent, confidence: '推理' } });
+    await applyIngestAction(structuredCtxFor(per), { type: 'SET_ROLE', accId: acc!.id, oppId: opp.id, personId, patch: { role: S(per.suggestedRole), sentiment: newSent, confidence: '推理' } }, db);
     receipt.rolesSet.push({ name, role: S(per.suggestedRole) });
   };
 
@@ -300,7 +346,7 @@ export async function ingestVoiceText(baseCtx: CommandContext, input: IngestInpu
         if (nf) {
           const exist = acc.persons.find((pp) => pp.id === existingId);
           let curForm: any = {}; try { curForm = JSON.parse((exist as any)?.form || '{}'); } catch { /* 容错 */ }
-          await applyIngestAction(structuredCtxFor(per), { type: 'UPDATE_PERSON', accId: acc.id, personId: existingId, patch: { form: mergeForm(curForm, nf) } });
+          await applyIngestAction(structuredCtxFor(per), { type: 'UPDATE_PERSON', accId: acc.id, personId: existingId, patch: { form: mergeForm(curForm, nf) } }, db);
           receipt.formsFilled = (receipt.formsFilled ?? 0) + 1;
         }
       } else if (isExplicit(per)) {
@@ -313,7 +359,7 @@ export async function ingestVoiceText(baseCtx: CommandContext, input: IngestInpu
             accountId: acc.id, opportunityId: opp?.id, entityKind: 'person', entityId: existingId, field: 'form',
             oldValue: JSON.stringify(curForm), newValue: JSON.stringify(mergeForm(curForm, nf)), origin: src.origin,
             evidence: `${src.word}抽取到 ${name} 的 FORM 信息`, confidence: N(per.confidence) ?? 0.5, proposedBy: userId,
-          });
+          }, db);
           receipt.proposals = (receipt.proposals ?? 0) + 1;
         }
       }
@@ -326,16 +372,16 @@ export async function ingestVoiceText(baseCtx: CommandContext, input: IngestInpu
       const { x, y } = nextFreeSlot(occupied); occupied.push({ x, y });
       const logs = [{ date: today, content: `${src.emoji} ${src.word}：${S(per.evidence, 80) || name}`, visibility: 'team' }];
       const form = buildForm(per.form); // 家庭七问/职业/爱好/动机随抽随落
-      await applyIngestAction(structuredCtxFor(per), { type: 'ADD_PERSON', accId: acc.id, person: { id: pid, name, title: S(per.title, 60), orgLevel: clampLevel(per.orgLevel), x, y, logs, ...(form ? { form } : {}) } });
+      await applyIngestAction(structuredCtxFor(per), { type: 'ADD_PERSON', accId: acc.id, person: { id: pid, name, title: S(per.title, 60), orgLevel: clampLevel(per.orgLevel), x, y, logs, ...(form ? { form } : {}) } }, db);
       if (form) receipt.formsFilled = (receipt.formsFilled ?? 0) + 1;
       formalId.set(name, pid);
-      if (opp?.memberScoped) await applyIngestAction(structuredCtxFor(per), { type: 'ADD_OPP_MEMBER', accId: acc.id, oppId: opp.id, personId: pid }); // memberScoped 商机 → 新人加入成员
+      if (opp?.memberScoped) await applyIngestAction(structuredCtxFor(per), { type: 'ADD_OPP_MEMBER', accId: acc.id, oppId: opp.id, personId: pid }, db); // memberScoped 商机 → 新人加入成员
       receipt.personsCreated.push({ id: pid, name, title: S(per.title, 60) });
       if (simName) receipt.dupWarnings.push({ kind: 'person', name, similarTo: simName });
       await setRoleIf(pid, per, name);
     } else { // AI 补充 → 候选 PersonSuggestion
       const sid = 'ps_' + randomUUID().slice(0, 12);
-      await prisma.personSuggestion.create({ data: { id: sid, tenantId, accountId: acc.id, opportunityId: opp?.id ?? null, name, title: S(per.title, 60), orgLevel: clampLevel(per.orgLevel), origin: src.origin, evidence: S(per.evidence, 500), confidence: N(per.confidence) ?? 0.5, status: 'pending', proposedBy: userId, suggestedRole: VALID_ROLE.includes(S(per.suggestedRole)) ? S(per.suggestedRole) : null, suggestedSentiment: VALID_SENT.includes(S(per.suggestedSentiment)) ? S(per.suggestedSentiment) : null } });
+      await db.personSuggestion.create({ data: { id: sid, tenantId, accountId: acc.id, opportunityId: opp?.id ?? null, name, title: S(per.title, 60), orgLevel: clampLevel(per.orgLevel), origin: src.origin, evidence: S(per.evidence, 500), confidence: N(per.confidence) ?? 0.5, status: 'pending', proposedBy: userId, suggestedRole: VALID_ROLE.includes(S(per.suggestedRole)) ? S(per.suggestedRole) : null, suggestedSentiment: VALID_SENT.includes(S(per.suggestedSentiment)) ? S(per.suggestedSentiment) : null } });
       suggId.set(name, sid);
       receipt.candidates.persons.push({ id: sid, name });
     }
@@ -358,14 +404,14 @@ export async function ingestVoiceText(baseCtx: CommandContext, input: IngestInpu
         const personId = formalId.get(knownName)!;
         const log = { date: today, content: `${src.emoji} ${src.word}线索·待核实：${clue}`, visibility: 'team' as const };
         if (mayWriteFormal(rel, 'person')) {
-          await applyIngestAction(structuredCtxFor(rel), { type: 'ADD_LOG', accId: acc.id, personId, log });
+          await applyIngestAction(structuredCtxFor(rel), { type: 'ADD_LOG', accId: acc.id, personId, log }, db);
         } else {
           const exist = acc.persons.find((pp) => pp.id === personId);
           await createFieldProposal(tenantId, {
             accountId: acc.id, opportunityId: opp?.id, entityKind: 'personLog', entityId: personId, field: 'append',
             oldValue: '', newValue: JSON.stringify(log), origin: src.origin,
             evidence: `${src.word}抽取到 ${knownName} 的关系线索`, confidence: N(rel.confidence) ?? 0.5, proposedBy: userId,
-          });
+          }, db);
           receipt.proposals = (receipt.proposals ?? 0) + 1;
         }
         receipt.notes.push({ person: knownName, content: clue });
@@ -377,12 +423,12 @@ export async function ingestVoiceText(baseCtx: CommandContext, input: IngestInpu
     const bothFormal = sEnd.kind === 'person' && tEnd.kind === 'person';
     if (bothFormal && mayWriteFormal(rel, 'edge')) { // 仅认证 Web 人工明说 + 两端正式 → 直落正式 Edge
       const eid = 'e_' + randomUUID().slice(0, 12);
-      await applyIngestAction(structuredCtxFor(rel), { type: 'ADD_EDGE', accId: acc.id, oppId: opp?.id, edge: { id: eid, source: sEnd.id, target: tEnd.id, layer, label, origin: src.origin, style: 'solid', directed: false } });
+      await applyIngestAction(structuredCtxFor(rel), { type: 'ADD_EDGE', accId: acc.id, oppId: opp?.id, edge: { id: eid, source: sEnd.id, target: tEnd.id, layer, label, origin: src.origin, style: 'solid', directed: false } }, db);
       receipt.edgesCreated.push({ source: sName, target: tName, label });
     } else { // 含候选端点 / inferred 关系 → 候选（须有商机，RelSuggestion 挂 opportunityId）
       if (!opp) { receipt.skipped.push({ rel: `${sName}→${tName}`, reason: '无商机上下文，候选关系跳过' }); continue; }
       const rid = 'rs_' + randomUUID().slice(0, 12);
-      await prisma.relSuggestion.create({ data: { id: rid, tenantId, opportunityId: opp.id, sourcePersonId: sEnd.id, sourceKind: sEnd.kind, targetPersonId: tEnd.id, targetKind: tEnd.kind, layer, label, confidence: N(rel.confidence) ?? 0.5, origin: src.origin, evidence: S(rel.evidence, 500), status: 'pending' } });
+      await db.relSuggestion.create({ data: { id: rid, tenantId, opportunityId: opp.id, sourcePersonId: sEnd.id, sourceKind: sEnd.kind, targetPersonId: tEnd.id, targetKind: tEnd.kind, layer, label, confidence: N(rel.confidence) ?? 0.5, origin: src.origin, evidence: S(rel.evidence, 500), status: 'pending' } });
       receipt.candidates.relationships.push({ source: sName, target: tName, label });
     }
   }
@@ -395,7 +441,7 @@ export async function ingestVoiceText(baseCtx: CommandContext, input: IngestInpu
     if (pid && opp && mayWriteFormal(bi, 'bi') && S(bi.description)) {
       const bid = 'bi_' + randomUUID().slice(0, 12);
       const category = S(bi.category, 40) || '其他';
-      await applyIngestAction(structuredCtxFor(bi), { type: 'ADD_BI', accId: acc.id, oppId: opp.id, bi: { id: bid, personId: pid, description: S(bi.description, 500), category, isPrivate: true, confidence: '推理' } });
+      await applyIngestAction(structuredCtxFor(bi), { type: 'ADD_BI', accId: acc.id, oppId: opp.id, bi: { id: bid, personId: pid, description: S(bi.description, 500), category, isPrivate: true, confidence: '推理' } }, db);
       const arr = bisByPerson.get(personName) ?? []; arr.push({ biId: bid, category }); bisByPerson.set(personName, arr);
       receipt.burningIssues.push({ person: personName, category });
     }
@@ -414,13 +460,13 @@ export async function ingestVoiceText(baseCtx: CommandContext, input: IngestInpu
     if (!targetBiId) { receipt.skipped.push({ ucv: desc.slice(0, 24), reason: 'UCV 未匹配到对应 BI（需先明说该人的燃眉之急）' }); continue; }
     const status = VALID_UCV_STATUS.includes(S(u.status)) ? S(u.status) : '建议';
     const uid = 'ucv_' + randomUUID().slice(0, 12);
-    await applyIngestAction(structuredCtxFor(u), { type: 'ADD_UCV', accId: acc.id, oppId: opp.id, ucv: { id: uid, targetBiId, description: desc, competitorCannot: S(u.competitorCannot, 500), status } });
+    await applyIngestAction(structuredCtxFor(u), { type: 'ADD_UCV', accId: acc.id, oppId: opp.id, ucv: { id: uid, targetBiId, description: desc, competitorCannot: S(u.competitorCannot, 500), status } }, db);
     receipt.ucvs.push({ person: personName, status });
   }
 
   // ── 5.6) 行为信号证据（M3 审核流：机器抽取 → pending_review 待人审进收件箱，人批准才进 E2 燃料池，守铁律②）──
   if ((ex.evidences ?? []).length && opp) {
-    const sigCatalog = new Map((await prisma.signalCatalog.findMany({ where: { tenantId } })).map((s) => [s.signalKey, s]));
+    const sigCatalog = new Map((await db.signalCatalog.findMany({ where: { tenantId } })).map((s) => [s.signalKey, s]));
     for (const evd of ex.evidences ?? []) {
       const pid = formalId.get(S(evd.person, 40));
       const sig = sigCatalog.get(S(evd.signalKey));
@@ -432,7 +478,7 @@ export async function ingestVoiceText(baseCtx: CommandContext, input: IngestInpu
         signalKey: sig.signalKey, direction: dir, tier: sig.tier, // tier 以信号库固有档位为准，不信 LLM
         rawContent: S(evd.evidence, 500), occurredAt: today,
         status: 'pending_review', origin: src.origin,
-      } });
+      } }, db);
       receipt.evidences = (receipt.evidences ?? 0) + 1;
     }
   }
@@ -441,28 +487,68 @@ export async function ingestVoiceText(baseCtx: CommandContext, input: IngestInpu
   const rawNote = S(ex.rawNote, 5000) || text;
   if (rawNote && !skipVisitNote) {
     const vid = 'visit_' + randomUUID().slice(0, 12);
-    await applyIngestAction(rawCtx, { type: 'ADD_VISIT', accId: acc.id, visit: { id: vid, opportunityId: opp?.id, date: today, topic: src.topic, summary: rawNote, origin: src.origin } });
+    await applyIngestAction(rawCtx, { type: 'ADD_VISIT', accId: acc.id, visit: { id: vid, opportunityId: opp?.id, date: today, topic: src.topic, summary: rawNote, origin: src.origin } }, db);
     receipt.visitNote = true;
   }
 
+  // 派生任务与业务落库同事务入队，避免命令完成后进程崩溃造成永久漏任务。
+  if (receipt?.account?.status === 'created') {
+    try { await enqueueEnrichJob(tenantId, receipt.account.id, 'auto', db); } catch { /* 超上限时保留主要录入结果 */ }
+    try { await enqueueProfileJob(tenantId, receipt.account.id, db); } catch { /* 同上 */ }
+  }
+  if (receipt?.opportunity?.status === 'created' && receipt?.account?.id) {
+    try { await enqueueSuggestJob(tenantId, receipt.account.id, receipt.opportunity.id, db); } catch { /* 同上 */ }
+  }
   return { ok: true, receipt };
+}
+
+export async function executePreparedVoiceIngest(
+  ctx: CommandContext,
+  input: IngestInput,
+  db: DbClient,
+  prepared: PreparedVoiceIngest,
+): Promise<Extract<IngestResult, { ok: true }>> {
+  if (prepared.failure) throw new IngestCommandError(prepared.failure);
+  const result = await ingestVoiceText(ctx, input, db, prepared.extracted === undefined ? undefined : { extracted: prepared.extracted });
+  if (!result.ok) throw new IngestCommandError(result);
+  return result;
 }
 
 export function voiceRoutes(app: FastifyInstance) {
   // 手动口述录入（Typeless 转文字）→ 抽取落库。录音转写走 recording.ts，复用同一 ingestVoiceText。
   app.post('/api/voice/extract', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (denyViewer(req, reply)) return; // viewer 只读，不可拍板/操作
+    const key = req.headers['idempotency-key'];
+    if (typeof key !== 'string' || key.trim().length < 8 || key.length > 200) return reply.code(400).send({ error: '缺少有效的 Idempotency-Key' });
     const p = z.object({ text: z.string().min(1), accountId: z.string().optional(), opportunityId: z.string().optional(), priorText: z.string().optional(), sourceVisitId: z.string().optional() }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '请输入要录入的文字' });
-    const r = await ingestVoiceText({
+    const ctx: CommandContext = {
       tenantId: req.user.tenantId,
       actorId: req.user.userId,
       actorRole: ActorRoleSchema.parse(req.user.role),
       channel: 'web',
       requestId: req.id,
       assertionMode: 'user_asserted',
-    }, p.data);
-    if (!r.ok) return reply.code(r.status).send(r.body);
-    return r.receipt;
+    };
+    const commandInput = { kind: 'voice-ingest', idempotencyKey: key, payload: p.data } as const;
+    let command: Awaited<ReturnType<typeof runCommand<Extract<IngestResult, { ok: true }>>>>;
+    try {
+      const reservation = await reserveCommand<Extract<IngestResult, { ok: true }>>(ctx, commandInput);
+      if (reservation.replayed) return { ...reservation.result.receipt, replayed: true };
+      let prepared: PreparedVoiceIngest;
+      try {
+        prepared = await prepareVoiceIngest(ctx, p.data);
+      } catch (error) {
+        await failReservedCommand(ctx, commandInput, reservation.reservationToken, error);
+        throw error;
+      }
+      command = await runCommand(ctx, { ...commandInput, reservationToken: reservation.reservationToken },
+        (tx) => executePreparedVoiceIngest(ctx, p.data, tx, prepared));
+    } catch (error) {
+      if (error instanceof IngestCommandError) return reply.code(error.result.status).send(error.result.body);
+      throw error;
+    }
+    const r = command.result;
+    return { ...r.receipt, replayed: command.replayed };
   });
 }

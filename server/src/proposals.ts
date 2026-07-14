@@ -13,27 +13,27 @@ import { applyAction, runPostCommitEffect, type DbClient, type PostCommitEffect 
 export async function createFieldProposal(tenantId: string, p: {
   accountId: string; opportunityId?: string; entityKind: string; entityId: string;
   field: string; oldValue: string; newValue: string; origin?: string; evidence?: string; confidence?: number; proposedBy?: string;
-}): Promise<void> {
+}, db: DbClient = prisma): Promise<void> {
   if (p.oldValue === p.newValue) return; // 无变化不提
   const dedupeKey = JSON.stringify([tenantId, p.accountId, p.entityKind, p.entityId, p.field]);
-  const existing = await prisma.changeProposal.findUnique({ where: { dedupeKey } })
-    ?? await prisma.changeProposal.findFirst({
+  const existing = await db.changeProposal.findUnique({ where: { dedupeKey } })
+    ?? await db.changeProposal.findFirst({
       where: { tenantId, accountId: p.accountId, entityKind: p.entityKind, entityId: p.entityId, field: p.field, status: 'pending', dedupeKey: null },
     });
   if (existing) {
-    await prisma.changeProposal.update({ where: { id: existing.id }, data: { opportunityId: p.opportunityId ?? null, oldValue: p.oldValue, newValue: p.newValue, evidence: p.evidence ?? '', confidence: p.confidence ?? 0.5, origin: p.origin ?? 'voice', proposedBy: p.proposedBy ?? '', dedupeKey } });
+    await db.changeProposal.update({ where: { id: existing.id }, data: { opportunityId: p.opportunityId ?? null, oldValue: p.oldValue, newValue: p.newValue, evidence: p.evidence ?? '', confidence: p.confidence ?? 0.5, origin: p.origin ?? 'voice', proposedBy: p.proposedBy ?? '', dedupeKey } });
     return;
   }
   const cpId = 'cp_' + randomUUID().slice(0, 12);
   try {
-    await prisma.changeProposal.create({ data: { id: cpId, tenantId, accountId: p.accountId, opportunityId: p.opportunityId ?? null, entityKind: p.entityKind, entityId: p.entityId, field: p.field, oldValue: p.oldValue, newValue: p.newValue, origin: p.origin ?? 'voice', evidence: p.evidence ?? '', confidence: p.confidence ?? 0.5, proposedBy: p.proposedBy ?? '', dedupeKey } });
+    await db.changeProposal.create({ data: { id: cpId, tenantId, accountId: p.accountId, opportunityId: p.opportunityId ?? null, entityKind: p.entityKind, entityId: p.entityId, field: p.field, oldValue: p.oldValue, newValue: p.newValue, origin: p.origin ?? 'voice', evidence: p.evidence ?? '', confidence: p.confidence ?? 0.5, proposedBy: p.proposedBy ?? '', dedupeKey } });
   } catch (error) {
     if (!(error && typeof error === 'object' && 'code' in error && error.code === 'P2002')) throw error;
-    await prisma.changeProposal.updateMany({ where: { dedupeKey, status: 'pending' }, data: { opportunityId: p.opportunityId ?? null, oldValue: p.oldValue, newValue: p.newValue, evidence: p.evidence ?? '', confidence: p.confidence ?? 0.5, origin: p.origin ?? 'voice', proposedBy: p.proposedBy ?? '' } });
+    await db.changeProposal.updateMany({ where: { dedupeKey, status: 'pending' }, data: { opportunityId: p.opportunityId ?? null, oldValue: p.oldValue, newValue: p.newValue, evidence: p.evidence ?? '', confidence: p.confidence ?? 0.5, origin: p.origin ?? 'voice', proposedBy: p.proposedBy ?? '' } });
     return;
   }
   // 场景 B：新提案推企微模板卡（一键采纳）。fire-and-forget + 动态 import 破 proposals↔wecom 循环依赖。
-  void import('./wecom.js').then((w) => w.pushProposalCard(tenantId, cpId)).catch(() => {});
+  if (db === prisma) void import('./wecom.js').then((w) => w.pushProposalCard(tenantId, cpId)).catch(() => {});
 }
 
 // P13 提案值域校验：非法值直接抛错（改后采纳的兜底），SET_ROLE.patch 精确对齐已有字段类型
@@ -147,9 +147,13 @@ async function applyProposal(ctx: CommandContext, cp: { accountId: string; oppor
 }
 
 /** 采纳一条提案（HTTP 路由与企微一键采纳共用）。'missing'=不存在(本租户)，'already'=已处理过。 */
-export async function acceptProposal(ctx: CommandContext, id: string, overrideValue?: string): Promise<'ok' | 'already' | 'missing'> {
-  const { tenantId } = ctx;
-  const outcome = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+export async function acceptProposalInTransaction(
+  ctx: CommandContext,
+  id: string,
+  overrideValue: string | undefined,
+  tx: Prisma.TransactionClient,
+): Promise<{ result: 'ok' | 'already' | 'missing'; effect: PostCommitEffect }> {
+    const { tenantId } = ctx;
     const cp = await tx.changeProposal.findFirst({ where: { id, tenantId } });
     if (!cp) return { result: 'missing' as const, effect: undefined };
     if (cp.status !== 'pending') return { result: 'already' as const, effect: undefined };
@@ -170,7 +174,10 @@ export async function acceptProposal(ctx: CommandContext, id: string, overrideVa
     });
     if (finalized.count !== 1) throw new Error('proposal acceptance lost claim');
     return { result: 'ok' as const, effect };
-  });
+}
+
+export async function acceptProposal(ctx: CommandContext, id: string, overrideValue?: string): Promise<'ok' | 'already' | 'missing'> {
+  const outcome = await prisma.$transaction((tx: Prisma.TransactionClient) => acceptProposalInTransaction(ctx, id, overrideValue, tx));
   if (outcome.result === 'ok') await runPostCommitEffect(outcome.effect);
   return outcome.result;
 }
@@ -178,6 +185,11 @@ export async function acceptProposal(ctx: CommandContext, id: string, overrideVa
 /** 驳回一条提案（幂等：非 pending 视为已处理）。 */
 export async function rejectProposal(tenantId: string, id: string): Promise<'ok' | 'already'> {
   const r = await prisma.changeProposal.updateMany({ where: { id, tenantId, status: 'pending' }, data: { status: 'rejected', dedupeKey: null } });
+  return r.count ? 'ok' : 'already';
+}
+
+export async function rejectProposalInTransaction(tenantId: string, id: string, tx: Prisma.TransactionClient): Promise<'ok' | 'already'> {
+  const r = await tx.changeProposal.updateMany({ where: { id, tenantId, status: 'pending' }, data: { status: 'rejected', dedupeKey: null } });
   return r.count ? 'ok' : 'already';
 }
 

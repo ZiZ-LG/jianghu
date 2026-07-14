@@ -30,7 +30,9 @@ type Item =
   | { kind: 'proposal'; id: string; accountId: string; accountName: string; data: InboxProposal }
   | { kind: 'evidence'; id: string; accountId: string; accountName: string; data: InboxEvidence };
 
-export function InboxPanel({ rels, persons, proposals, reminders, evidences, accounts, onAccept, onReject, onAcceptPerson, onRejectPerson, onAcceptProposal, onRejectProposal, onDismissReminder, onReviewEvidence, onClose }: {
+export type InboxBatchItem = { kind: Item['kind']; id: string; decision: 'accept' | 'reject'; overrideValue?: string; personOverride?: { name?: string; title?: string }; relOverride?: { layer?: string; label?: string }; direction?: -1 | 0 | 1 };
+
+export function InboxPanel({ rels, persons, proposals, reminders, evidences, accounts, onAccept, onReject, onAcceptPerson, onRejectPerson, onAcceptProposal, onRejectProposal, onDismissReminder, onReviewEvidence, onBatch, onClose }: {
   rels: InboxRel[];
   persons: InboxPerson[];
   proposals: InboxProposal[];
@@ -45,6 +47,7 @@ export function InboxPanel({ rels, persons, proposals, reminders, evidences, acc
   onRejectProposal: (id: string) => void;
   onDismissReminder: (id: string) => void;              // 提醒忽略（不改业务库）
   onReviewEvidence: (id: string, action: 'approve' | 'reject', direction?: -1 | 0 | 1) => void; // 证据审核（批准可带定向）
+  onBatch: (items: InboxBatchItem[]) => Promise<void>;
   onClose: () => void;
 }) {
   const [acctFilter, setAcctFilter] = useState('');
@@ -55,6 +58,7 @@ export function InboxPanel({ rels, persons, proposals, reminders, evidences, acc
   // P10 改后采纳扩到最后两类二元卡：人物（名字/职务）、关系（层级/标签）——编辑才建条目，采纳时带上
   const [personEdits, setPersonEdits] = useState<Record<string, { name: string; title: string }>>({});
   const [relEdits, setRelEdits] = useState<Record<string, { layer: string; label: string }>>({});
+  const [batchBusy, setBatchBusy] = useState(false);
 
   const acctList = useMemo(() => {
     const m = new Map<string, string>();
@@ -103,16 +107,24 @@ export function InboxPanel({ rels, persons, proposals, reminders, evidences, acc
   const total = persons.length + rels.length + proposals.length + reminders.length + evidences.length;
   const toggleSel = (k: string) => setSel((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
 
-  const batchApply = (accept: boolean) => {
+  const batchApply = async (accept: boolean) => {
+    const items: InboxBatchItem[] = [];
     for (const g of groups) for (const it of g.items) {
       if (!sel.has(keyOf(it))) continue;
-      if (it.kind === 'reminder') { if (!accept) onDismissReminder(it.id); } // 提醒只读：批量仅「忽略」，采纳无意义
-      else if (it.kind === 'evidence') onReviewEvidence(it.id, accept ? 'approve' : 'reject', accept ? (evDirs[it.id] ?? undefined) : undefined);
-      else if (it.kind === 'person') accept ? onAcceptPerson(it.id, personEdits[it.id]) : onRejectPerson(it.id);
-      else if (it.kind === 'rel') accept ? onAccept(it.id, relEdits[it.id]) : onReject(it.id);
-      else accept ? onAcceptProposal(it.id, overrides[it.id]) : onRejectProposal(it.id);
+      if (it.kind === 'reminder' && accept) continue; // 提醒只读，没有“采纳”语义。
+      items.push({
+        kind: it.kind, id: it.id, decision: accept ? 'accept' : 'reject',
+        ...(it.kind === 'proposal' && accept ? { overrideValue: overrides[it.id] } : {}),
+        ...(it.kind === 'person' && accept ? { personOverride: personEdits[it.id] } : {}),
+        ...(it.kind === 'rel' && accept ? { relOverride: relEdits[it.id] } : {}),
+        ...(it.kind === 'evidence' && accept ? { direction: evDirs[it.id] } : {}),
+      });
     }
-    setSel(new Set());
+    if (!items.length) return;
+    setBatchBusy(true);
+    try { await onBatch(items); setSel(new Set()); }
+    catch { /* App 已展示错误；保留选择供用户重试。 */ }
+    finally { setBatchBusy(false); }
   };
 
   // 提案影响预览：从全树找目标 account/opp 算趋赢力 before/after
@@ -128,8 +140,8 @@ export function InboxPanel({ rels, persons, proposals, reminders, evidences, acc
       footer={<>
         <span className="hint-text" style={{ marginRight: 'auto', fontSize: 12, opacity: 0.7 }}>机器写入先进这里 · 采纳后才落库（绝不自动写入）</span>
         {sel.size > 0 ? (<>
-          <button className="btn ghost" onClick={() => batchApply(false)}>忽略选中 {sel.size}</button>
-          <button className="btn primary" onClick={() => batchApply(true)}>采纳选中 {sel.size}</button>
+          <button className="btn ghost" disabled={batchBusy} onClick={() => void batchApply(false)}>忽略选中 {sel.size}</button>
+          <button className="btn primary" disabled={batchBusy} onClick={() => void batchApply(true)}>{batchBusy ? '处理中…' : `采纳选中 ${sel.size}`}</button>
         </>) : <button className="btn ghost" onClick={onClose}>关闭</button>}
       </>}>
 

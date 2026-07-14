@@ -1,0 +1,304 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { CommandContext } from '@jianghu/domain-contracts';
+import { createTestContext, type TestContext } from './helpers/testApp.js';
+import {
+  CommandInProgressError,
+  IdempotencyConflictError,
+  readCommandReplay,
+  reserveCommand,
+  runCommand,
+} from '../src/mutation/commandRunner.js';
+import {
+  executeActionFeedback,
+  executeInboxBatch,
+  executeOpportunitySkeleton,
+} from '../src/mutation/compoundCommands.js';
+import { IngestCommandError, ingestVoiceText } from '../src/voice.js';
+
+describe('atomic idempotent compound commands', () => {
+  let test: TestContext;
+  let ctx: CommandContext;
+
+  beforeEach(async () => {
+    test = await createTestContext();
+    ctx = {
+      tenantId: test.tenant.id, actorId: test.owner.id, actorRole: 'owner',
+      channel: 'web', requestId: 'compound-test', assertionMode: 'user_asserted',
+    };
+    await test.prisma.account.create({ data: {
+      id: 'acc-command', tenantId: test.tenant.id, name: 'Command Account', customerType: 2,
+    } });
+  });
+
+  afterEach(async () => test.cleanup());
+
+  it('rolls back opportunity, person, member and role when skeleton step 2 fails', async () => {
+    await expect(runCommand(ctx, { kind: 'opportunity-skeleton', idempotencyKey: 'skeleton-failure-key' },
+      (tx) => executeOpportunitySkeleton(ctx, {
+        accountId: 'acc-command', name: 'Atomic Opportunity', personIds: [], withEdges: false,
+        skeleton: [{ title: '决策人', role: 'D', orgLevel: 1, x: 100, y: 120 }],
+      }, tx, { failAfterStep: 2 }), test.prisma)).rejects.toThrow('injected failure');
+
+    expect(await test.prisma.opportunity.count({ where: { tenantId: test.tenant.id } })).toBe(0);
+    expect(await test.prisma.person.count({ where: { tenantId: test.tenant.id } })).toBe(0);
+    expect(await test.prisma.opportunityMember.count({ where: { tenantId: test.tenant.id } })).toBe(0);
+    expect(await test.prisma.oppRole.count({ where: { tenantId: test.tenant.id } })).toBe(0);
+    expect(await test.prisma.commandRun.findFirst({ where: { tenantId: test.tenant.id } })).toMatchObject({ status: 'failed' });
+  });
+
+  it('rolls back action completion when evidence creation fails', async () => {
+    await test.prisma.opportunity.create({ data: {
+      id: 'opp-command', tenantId: test.tenant.id, accountId: 'acc-command', name: 'Opp', customerType: 2,
+      pipelineStage: '线索', engageStage: '需求调研立项',
+    } });
+    await test.prisma.person.create({ data: {
+      id: 'person-command', tenantId: test.tenant.id, accountId: 'acc-command', name: 'D', title: '总经理',
+    } });
+    await test.prisma.planAction.create({ data: {
+      id: 'action-command', tenantId: test.tenant.id, accountId: 'acc-command', opportunityId: 'opp-command',
+      personId: 'person-command', title: '拜访', startDate: '2026-07-14', endDate: '2026-07-14',
+    } });
+
+    await expect(runCommand(ctx, { kind: 'action-feedback', idempotencyKey: 'feedback-failure-key' },
+      (tx) => executeActionFeedback(ctx, {
+        accountId: 'acc-command', opportunityId: 'opp-command', actionId: 'action-command',
+        outcome: 'up', occurredAt: '2026-07-14',
+      }, tx, { failAfterStep: 1 }), test.prisma)).rejects.toThrow('injected failure');
+
+    expect(await test.prisma.planAction.findUniqueOrThrow({ where: { id: 'action-command' } })).toMatchObject({ done: false, doneAt: null });
+    expect(await test.prisma.evidenceEvent.count({ where: { tenantId: test.tenant.id } })).toBe(0);
+  });
+
+  it('rolls back a voice ingest when a later extracted write fails', async () => {
+    await expect(runCommand(ctx, { kind: 'voice-ingest', idempotencyKey: 'voice-failure-key' },
+      (tx) => ingestVoiceText(ctx, { text: '明确新建商机和干系人', accountId: 'acc-command' }, tx, {
+        extracted: {
+          account: null,
+          opportunity: { name: 'Voice Opp', kind: 'explicit', confidence: 1, evidence: '明确新建商机' },
+          persons: [{ name: '王总', title: '总经理', orgLevel: 1, kind: 'explicit', confidence: 1, evidence: '王总是总经理' }],
+          relationships: [], burningIssues: [], ucvs: [], evidences: [], rawNote: '明确新建商机和干系人',
+        },
+        failAfterWrite: 2,
+      }), test.prisma)).rejects.toThrow('injected voice failure');
+
+    expect(await test.prisma.opportunity.count({ where: { tenantId: test.tenant.id } })).toBe(0);
+    expect(await test.prisma.person.count({ where: { tenantId: test.tenant.id } })).toBe(0);
+    expect(await test.prisma.visitNote.count({ where: { tenantId: test.tenant.id } })).toBe(0);
+  });
+
+  it('rolls back an inbox batch when a later item fails', async () => {
+    for (const id of ['cp-one', 'cp-two']) await test.prisma.changeProposal.create({ data: {
+      id, tenantId: test.tenant.id, accountId: 'acc-command', entityKind: 'person', entityId: 'missing',
+      field: 'name', oldValue: 'A', newValue: 'B', status: 'pending',
+    } });
+    await expect(runCommand(ctx, { kind: 'inbox-batch', idempotencyKey: 'inbox-failure-key' },
+      (tx) => executeInboxBatch(ctx, { items: [
+        { kind: 'proposal', id: 'cp-one', decision: 'reject' },
+        { kind: 'proposal', id: 'cp-two', decision: 'reject' },
+      ] }, tx, { failAfterStep: 1 }), test.prisma)).rejects.toThrow('injected failure');
+    expect(await test.prisma.changeProposal.findMany({ where: { tenantId: test.tenant.id }, orderBy: { id: 'asc' } }))
+      .toEqual(expect.arrayContaining([expect.objectContaining({ id: 'cp-one', status: 'pending' }), expect.objectContaining({ id: 'cp-two', status: 'pending' })]));
+  });
+
+  it('rolls back every earlier kind in a mixed inbox batch', async () => {
+    await test.prisma.opportunity.create({ data: {
+      id: 'opp-inbox', tenantId: test.tenant.id, accountId: 'acc-command', name: 'Inbox Opp', customerType: 2,
+      pipelineStage: '线索', engageStage: '需求调研立项',
+    } });
+    await test.prisma.person.create({ data: { id: 'person-inbox', tenantId: test.tenant.id, accountId: 'acc-command', name: 'D', title: '总经理' } });
+    await test.prisma.changeProposal.create({ data: {
+      id: 'cp-mixed', tenantId: test.tenant.id, accountId: 'acc-command', entityKind: 'person', entityId: 'person-inbox',
+      field: 'name', oldValue: 'D', newValue: 'D2', status: 'pending',
+    } });
+    await test.prisma.personSuggestion.create({ data: {
+      id: 'ps-mixed', tenantId: test.tenant.id, accountId: 'acc-command', opportunityId: 'opp-inbox', name: '候选人', status: 'pending',
+    } });
+    await test.prisma.relSuggestion.create({ data: {
+      id: 'rs-mixed', tenantId: test.tenant.id, opportunityId: 'opp-inbox', sourcePersonId: 'person-inbox', targetPersonId: 'person-inbox',
+      layer: 'L1', label: '候选关系', status: 'pending',
+    } });
+    await test.prisma.evidenceEvent.create({ data: {
+      id: 'ev-mixed', tenantId: test.tenant.id, accountId: 'acc-command', opportunityId: 'opp-inbox', personId: 'person-inbox',
+      signalKey: 'verbal_positive', status: 'pending_review',
+    } });
+    await test.prisma.reminder.create({ data: {
+      id: 'rem-mixed', tenantId: test.tenant.id, accountId: 'acc-command', kind: 'stalled', title: '提醒',
+      dedupeKey: 'mixed-reminder', status: 'pending',
+    } });
+
+    await expect(runCommand(ctx, { kind: 'inbox-batch', idempotencyKey: 'mixed-inbox-failure' },
+      (tx) => executeInboxBatch(ctx, { items: [
+        { kind: 'proposal', id: 'cp-mixed', decision: 'reject' },
+        { kind: 'person', id: 'ps-mixed', decision: 'reject' },
+        { kind: 'rel', id: 'rs-mixed', decision: 'reject' },
+        { kind: 'evidence', id: 'ev-mixed', decision: 'reject' },
+        { kind: 'reminder', id: 'rem-mixed', decision: 'reject' },
+      ] }, tx, { failAfterStep: 4 }), test.prisma)).rejects.toThrow('injected failure');
+
+    expect(await test.prisma.changeProposal.findUniqueOrThrow({ where: { id: 'cp-mixed' } })).toMatchObject({ status: 'pending' });
+    expect(await test.prisma.personSuggestion.findUniqueOrThrow({ where: { id: 'ps-mixed' } })).toMatchObject({ status: 'pending' });
+    expect(await test.prisma.relSuggestion.findUniqueOrThrow({ where: { id: 'rs-mixed' } })).toMatchObject({ status: 'pending' });
+    expect(await test.prisma.evidenceEvent.findUniqueOrThrow({ where: { id: 'ev-mixed' } })).toMatchObject({ status: 'pending_review' });
+    expect(await test.prisma.reminder.findUniqueOrThrow({ where: { id: 'rem-mixed' } })).toMatchObject({ status: 'pending' });
+  });
+
+  it('replays a completed command without creating a second opportunity', async () => {
+    const input = { accountId: 'acc-command', name: 'Once', personIds: [], withEdges: false, skeleton: [] };
+    const first = await runCommand(ctx, { kind: 'opportunity-skeleton', idempotencyKey: 'stable-replay-key' },
+      (tx) => executeOpportunitySkeleton(ctx, input, tx), test.prisma);
+    const replay = await runCommand(ctx, { kind: 'opportunity-skeleton', idempotencyKey: 'stable-replay-key' },
+      (tx) => executeOpportunitySkeleton(ctx, input, tx), test.prisma);
+    expect(first.replayed).toBe(false);
+    expect(replay).toEqual({ replayed: true, result: first.result });
+    expect(await test.prisma.opportunity.count({ where: { tenantId: test.tenant.id } })).toBe(1);
+  });
+
+  it('deduplicates concurrent same-key submissions at the database boundary', async () => {
+    const input = { accountId: 'acc-command', name: 'Concurrent Once', personIds: [], withEdges: false, skeleton: [] };
+    const attempts = await Promise.allSettled([
+      runCommand(ctx, { kind: 'opportunity-skeleton', idempotencyKey: 'concurrent-stable-key', payload: input },
+        (tx) => executeOpportunitySkeleton(ctx, input, tx), test.prisma),
+      runCommand(ctx, { kind: 'opportunity-skeleton', idempotencyKey: 'concurrent-stable-key', payload: input },
+        (tx) => executeOpportunitySkeleton(ctx, input, tx), test.prisma),
+    ]);
+    expect(attempts.some((attempt) => attempt.status === 'fulfilled')).toBe(true);
+    expect(await test.prisma.opportunity.count({ where: { tenantId: test.tenant.id, name: 'Concurrent Once' } })).toBe(1);
+    expect(await test.prisma.commandRun.count({ where: { tenantId: test.tenant.id, idempotencyKey: 'concurrent-stable-key' } })).toBe(1);
+  });
+
+  it('requires Idempotency-Key at the HTTP boundary and replays the same business action', async () => {
+    const payload = { accountId: 'acc-command', name: 'HTTP Once', personIds: [], withEdges: false, skeleton: [] };
+    const missing = await test.app.inject({
+      method: 'POST', url: '/api/commands/opportunity-skeleton',
+      headers: { authorization: `Bearer ${test.token}` }, payload,
+    });
+    expect(missing.statusCode).toBe(400);
+
+    const headers = { authorization: `Bearer ${test.token}`, 'idempotency-key': 'http-stable-replay-key' };
+    const first = await test.app.inject({ method: 'POST', url: '/api/commands/opportunity-skeleton', headers, payload });
+    const replay = await test.app.inject({ method: 'POST', url: '/api/commands/opportunity-skeleton', headers, payload });
+    expect(first.statusCode).toBe(200);
+    expect(first.json()).toMatchObject({ replayed: false });
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json()).toMatchObject({ replayed: true, opportunityId: first.json().opportunityId });
+    const mismatch = await test.app.inject({
+      method: 'POST', url: '/api/commands/opportunity-skeleton', headers,
+      payload: { ...payload, name: 'Different payload' },
+    });
+    expect(mismatch.statusCode).toBe(409);
+    expect(await test.prisma.opportunity.count({ where: { tenantId: test.tenant.id } })).toBe(1);
+  });
+
+  it('denies viewers and hides foreign-tenant command targets', async () => {
+    const viewer = await test.prisma.user.create({ data: {
+      tenantId: test.tenant.id, email: 'viewer-command@example.test', passwordHash: 'unused', name: 'Viewer', role: 'viewer',
+    } });
+    const viewerToken = test.app.jwt.sign({ userId: viewer.id, tenantId: test.tenant.id, role: 'viewer' });
+    const payload = { accountId: 'acc-command', name: 'Forbidden', personIds: [], withEdges: false, skeleton: [] };
+    const denied = await test.app.inject({
+      method: 'POST', url: '/api/commands/opportunity-skeleton',
+      headers: { authorization: `Bearer ${viewerToken}`, 'idempotency-key': 'viewer-command-key' }, payload,
+    });
+    expect(denied.statusCode).toBe(403);
+
+    await test.prisma.tenant.create({ data: { id: 'tenant-foreign-command', name: 'Foreign' } });
+    await test.prisma.account.create({ data: {
+      id: 'acc-foreign-command', tenantId: 'tenant-foreign-command', name: 'Foreign Account', customerType: 2,
+    } });
+    const hidden = await test.app.inject({
+      method: 'POST', url: '/api/commands/opportunity-skeleton',
+      headers: { authorization: `Bearer ${test.token}`, 'idempotency-key': 'foreign-command-key' },
+      payload: { ...payload, accountId: 'acc-foreign-command' },
+    });
+    expect(hidden.statusCode).toBe(404);
+    expect(hidden.json()).toEqual({ error: '资源不存在' });
+    expect(await test.prisma.opportunity.count({ where: { tenantId: 'tenant-foreign-command' } })).toBe(0);
+  });
+
+  it('stores a non-sensitive replay summary without changing receipt collection shapes', async () => {
+    const key = { kind: 'voice-ingest', idempotencyKey: 'voice-summary-replay-key' };
+    const first = await runCommand(ctx, key, async () => ({
+      ok: true,
+      receipt: { notes: [{ person: '王总', content: '客户原始敏感线索' }], note: '原始口述正文' },
+    }), test.prisma);
+    const replay = await runCommand(ctx, key, async () => first.result, test.prisma);
+    expect(replay.replayed).toBe(true);
+    expect(replay.result.receipt.notes).toEqual([{ person: '[redacted]', content: '[redacted]' }]);
+    expect(replay.result.receipt.note).toBe('[redacted]');
+    const stored = await test.prisma.commandRun.findFirstOrThrow({ where: { tenantId: test.tenant.id, idempotencyKey: key.idempotencyKey } });
+    expect(stored.resultSummary).not.toContain('客户原始敏感线索');
+    expect(stored.resultSummary).not.toContain('原始口述正文');
+    expect(stored.resultSummary).not.toContain('王总');
+  });
+
+  it('preflights completed external commands before expensive preparation', async () => {
+    const key = { kind: 'voice-ingest', idempotencyKey: 'voice-preflight-key', payload: { text: 'same' } };
+    await runCommand(ctx, key, async () => ({ ok: true, receipt: { visitNote: true } }), test.prisma);
+    await expect(readCommandReplay(ctx, key, test.prisma)).resolves.toMatchObject({ replayed: true, result: { ok: true } });
+    await expect(readCommandReplay(ctx, { ...key, payload: { text: 'different' } }, test.prisma)).rejects.toBeInstanceOf(IdempotencyConflictError);
+  });
+
+  it('reserves an external command before preparation and blocks overlapping BYO calls', async () => {
+    const key = { kind: 'voice-ingest', idempotencyKey: 'voice-reservation-key', payload: { text: 'same' } };
+    const reservation = await reserveCommand<{ ok: true; receipt: { visitNote: boolean } }>(ctx, key, test.prisma);
+    expect(reservation.replayed).toBe(false);
+    if (reservation.replayed) throw new Error('expected a reservation');
+    await expect(reserveCommand(ctx, key, test.prisma)).rejects.toBeInstanceOf(CommandInProgressError);
+
+    const completed = await runCommand(ctx, { ...key, reservationToken: reservation.reservationToken },
+      async () => ({ ok: true as const, receipt: { visitNote: true } }), test.prisma);
+    expect(completed.replayed).toBe(false);
+    await expect(reserveCommand(ctx, key, test.prisma)).resolves.toMatchObject({ replayed: true });
+  });
+
+  it('recovers an abandoned external-command lease after expiry', async () => {
+    const key = { kind: 'recording-ingest', idempotencyKey: 'expired-reservation-key', payload: { transcriptId: 'tr-1' } };
+    const first = await reserveCommand(ctx, key, test.prisma);
+    expect(first.replayed).toBe(false);
+    await test.prisma.commandRun.updateMany({
+      where: { tenantId: ctx.tenantId, idempotencyKey: key.idempotencyKey },
+      data: { leaseExpiresAt: new Date(Date.now() - 1_000) },
+    });
+    const recovered = await reserveCommand(ctx, key, test.prisma);
+    expect(recovered).toMatchObject({ replayed: false });
+    if (first.replayed || recovered.replayed) throw new Error('expected reservations');
+    expect(recovered.reservationToken).not.toBe(first.reservationToken);
+  });
+
+  it('claims an action outcome once even when callers use different idempotency keys', async () => {
+    await test.prisma.opportunity.create({ data: {
+      id: 'opp-action-once', tenantId: test.tenant.id, accountId: 'acc-command', name: 'Opp', customerType: 2,
+      pipelineStage: '线索', engageStage: '需求调研立项',
+    } });
+    await test.prisma.person.create({ data: {
+      id: 'person-action-once', tenantId: test.tenant.id, accountId: 'acc-command', name: 'D', title: '总经理',
+    } });
+    await test.prisma.planAction.create({ data: {
+      id: 'action-once', tenantId: test.tenant.id, accountId: 'acc-command', opportunityId: 'opp-action-once',
+      personId: 'person-action-once', title: '拜访', startDate: '2026-07-14', endDate: '2026-07-14',
+    } });
+    const input = {
+      accountId: 'acc-command', opportunityId: 'opp-action-once', actionId: 'action-once',
+      outcome: 'up' as const, occurredAt: '2026-07-14',
+    };
+    await runCommand(ctx, { kind: 'action-feedback', idempotencyKey: 'action-once-first', payload: input },
+      (tx) => executeActionFeedback(ctx, input, tx), test.prisma);
+    await expect(runCommand(ctx, { kind: 'action-feedback', idempotencyKey: 'action-once-second', payload: input },
+      (tx) => executeActionFeedback(ctx, input, tx), test.prisma)).rejects.toMatchObject({ statusCode: 409 });
+    expect(await test.prisma.evidenceEvent.count({ where: { tenantId: test.tenant.id, opportunityId: 'opp-action-once' } })).toBe(1);
+  });
+
+  it('records resolved ingest failures as failed and permits a same-key retry', async () => {
+    const key = { kind: 'voice-ingest', idempotencyKey: 'voice-retry-after-failure', payload: { text: 'same input' } };
+    await expect(runCommand(ctx, key, async () => {
+      throw new IngestCommandError({ ok: false, status: 400, body: { error: 'temporary model failure' } });
+    }, test.prisma)).rejects.toBeInstanceOf(IngestCommandError);
+    expect(await test.prisma.commandRun.findFirstOrThrow({ where: { tenantId: test.tenant.id, idempotencyKey: key.idempotencyKey } }))
+      .toMatchObject({ status: 'failed' });
+
+    const retry = await runCommand(ctx, key, async () => ({ ok: true, receipt: { visitNote: true } }), test.prisma);
+    expect(retry).toMatchObject({ replayed: false, result: { ok: true } });
+    expect(await test.prisma.commandRun.findFirstOrThrow({ where: { tenantId: test.tenant.id, idempotencyKey: key.idempotencyKey } }))
+      .toMatchObject({ status: 'completed' });
+  });
+});

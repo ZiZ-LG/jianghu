@@ -11,11 +11,16 @@ import { ActorRoleSchema, type CommandContext } from '@jianghu/domain-contracts'
 import { prisma } from './prisma.js';
 import { denyViewer } from './scope.js';
 import { enc, dec } from './ai.js';
-import { ingestVoiceText, type IngestResult } from './voice.js';
+import {
+  executePreparedVoiceIngest, IngestCommandError, prepareVoiceIngest,
+  type IngestInput, type IngestResult, type PreparedVoiceIngest,
+} from './voice.js';
 import { buildFeishuAuthUrl, exchangeFeishuCode, refreshFeishuToken, getFeishuMinute, extractFeishuMinuteToken, searchFeishuMinutes, type FeishuApp } from './feishu.js';
 import mammoth from 'mammoth';
 import { extractText, getDocumentProxy } from 'unpdf';
 import { listGetnoteNotes, getGetnoteTranscript } from './getnote.js';
+import { failReservedCommand, readCommandReplay, reserveCommand, runCommand } from './mutation/commandRunner.js';
+import type { DbClient } from './mutation/scopeGuards.js';
 
 export type RecordingSource = 'getnote' | 'feishu' | 'dingtalk' | 'mock' | 'manual' | 'upload';
 
@@ -119,23 +124,30 @@ export async function pullAndSave(
  * 从一条 Transcript 抽取：解密 → 复用 ingestVoiceText（source='recording'，双轨落库 + 候选人审）→ 标记 extracted。
  * 隔离：仅能抽取本租户的转写。降解/删除后的转写不可再抽。
  */
-export async function extractTranscript(ctx: CommandContext, transcriptId: string): Promise<IngestResult> {
+export async function extractTranscript(
+  ctx: CommandContext,
+  transcriptId: string,
+  db: DbClient = prisma,
+  prepared?: PreparedVoiceIngest,
+): Promise<IngestResult> {
   const { tenantId } = ctx;
-  const tr = await prisma.transcript.findFirst({ where: { id: transcriptId, tenantId } });
+  const tr = await db.transcript.findFirst({ where: { id: transcriptId, tenantId } });
   if (!tr) return { ok: false, status: 404, body: { error: '转写不存在或无权访问' } };
   if (tr.status === 'redacted' || !tr.contentEnc) return { ok: false, status: 400, body: { error: '该转写原文已降解/删除，无法再抽取' } };
   const text = dec(tr.contentEnc);
   if (!text) return { ok: false, status: 400, body: { error: '转写解密失败（密钥可能已变更）' } };
 
-  const r = await ingestVoiceText({ ...ctx, assertionMode: 'machine_proposed' }, {
+  const input: IngestInput = {
     text,
     accountId: tr.accountId ?? undefined,
     opportunityId: tr.opportunityId ?? undefined,
     source: 'recording',
-  });
+  };
+  const machineCtx = { ...ctx, assertionMode: 'machine_proposed' as const };
+  const r = await executePreparedVoiceIngest(machineCtx, input, db, prepared ?? await prepareVoiceIngest(machineCtx, input, db));
   // 真正抽取成功（非"未配模型"退化）才标记已抽取，可降解原文。
   if (r.ok && !r.receipt?.needConfig) {
-    await prisma.transcript.update({ where: { id: tr.id }, data: { status: 'extracted', extractedAt: new Date() } });
+    await db.transcript.update({ where: { id: tr.id }, data: { status: 'extracted', extractedAt: new Date() } });
   }
   return r;
 }
@@ -267,18 +279,58 @@ export function recordingRoutes(app: FastifyInstance): void {
   // 抽取某条转写 → 双轨落库 + 候选进收件箱。viewer 只读不可触发。
   app.post('/api/recording/extract', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (req.user.role === 'viewer') return reply.code(403).send({ error: '只读成员不可抽取转写' });
+    const key = req.headers['idempotency-key'];
+    if (typeof key !== 'string' || key.trim().length < 8 || key.length > 200) return reply.code(400).send({ error: '缺少有效的 Idempotency-Key' });
     const p = z.object({ transcriptId: z.string().min(1) }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '缺少 transcriptId' });
-    const r = await extractTranscript({
+    const ctx: CommandContext = {
       tenantId: req.user.tenantId,
       actorId: req.user.userId,
       actorRole: ActorRoleSchema.parse(req.user.role),
       channel: 'web',
       requestId: req.id,
       assertionMode: 'machine_proposed',
-    }, p.data.transcriptId);
-    if (!r.ok) return reply.code(r.status).send(r.body);
-    return r.receipt;
+    };
+    const commandInput = { kind: 'recording-ingest', idempotencyKey: key, payload: p.data } as const;
+    try {
+      const replay = await readCommandReplay<Extract<IngestResult, { ok: true }>>(ctx, commandInput);
+      if (replay) return { ...replay.result.receipt, replayed: true };
+    } catch (error) {
+      if (error instanceof IngestCommandError) return reply.code(error.result.status).send(error.result.body);
+      throw error;
+    }
+    const preview = await prisma.transcript.findFirst({ where: { id: p.data.transcriptId, tenantId: ctx.tenantId } });
+    if (!preview) return reply.code(404).send({ error: '转写不存在或无权访问' });
+    if (preview.status === 'redacted' || !preview.contentEnc) return reply.code(400).send({ error: '该转写原文已降解/删除，无法再抽取' });
+    const previewText = dec(preview.contentEnc);
+    if (!previewText) return reply.code(400).send({ error: '转写解密失败（密钥可能已变更）' });
+    const reservation = await reserveCommand<Extract<IngestResult, { ok: true }>>(ctx, commandInput);
+    if (reservation.replayed) return { ...reservation.result.receipt, replayed: true };
+    let prepared: Awaited<ReturnType<typeof prepareVoiceIngest>>;
+    try {
+      prepared = await prepareVoiceIngest(ctx, {
+        text: previewText,
+        accountId: preview.accountId ?? undefined,
+        opportunityId: preview.opportunityId ?? undefined,
+        source: 'recording',
+      });
+    } catch (error) {
+      await failReservedCommand(ctx, commandInput, reservation.reservationToken, error);
+      throw error;
+    }
+    let command: Awaited<ReturnType<typeof runCommand<Extract<IngestResult, { ok: true }>>>>;
+    try {
+      command = await runCommand(ctx, { ...commandInput, reservationToken: reservation.reservationToken }, async (tx) => {
+        const result = await extractTranscript(ctx, p.data.transcriptId, tx, prepared);
+        if (!result.ok) throw new IngestCommandError(result);
+        return result;
+      });
+    } catch (error) {
+      if (error instanceof IngestCommandError) return reply.code(error.result.status).send(error.result.body);
+      throw error;
+    }
+    const r = command.result;
+    return { ...r.receipt, replayed: command.replayed };
   });
 
   // 列转写。PIPL 脱敏：列表只返元数据，绝不返回转写明文（要正文须经抽取，不旁路泄露）。

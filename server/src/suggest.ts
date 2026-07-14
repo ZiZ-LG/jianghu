@@ -90,7 +90,7 @@ interface MaterializePersonOptions {
  * 从候选人物落一个正式 Person（在传入的事务客户端内执行）。幂等：若候选已 accepted 且有 resolvedPersonId 则直接复用。
  * 返回 { personId, createdPerson? }，createdPerson 用于前端 dispatch ADD_PERSON。
  */
-async function materializePerson(
+export async function materializePerson(
   tx: any,
   tenantId: string,
   suggId: string,
@@ -161,6 +161,52 @@ async function materializePerson(
   }
   const createdPerson = { id: personId, name: candidate.name, title: candidate.title, orgLevel: candidate.orgLevel, isCompetitor: false, x, y, form: { family: '', occupation: '', recreation: '', moneyMotivation: '', family7: {} }, logs };
   return { personId, accountId: candidate.accountId, createdPerson };
+}
+
+export async function acceptRelationSuggestionInTransaction(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  id: string,
+  override: { layer?: 'L1' | 'L2' | 'L3' | 'L4'; label?: string } = {},
+): Promise<{ edge: any; createdPersons: any[] }> {
+  const suggestion = await tx.relSuggestion.findFirst({ where: { id, tenantId } });
+  if (!suggestion) throw new ScopedNotFoundError();
+  if (suggestion.status !== 'pending') throw new SuggestionConflictError();
+  const opportunity = await tx.opportunity.findFirst({ where: { id: suggestion.opportunityId, tenantId }, select: { accountId: true } });
+  if (!opportunity) throw new ScopedNotFoundError();
+  await requireAccount(tx, tenantId, opportunity.accountId);
+  await requireOpportunity(tx, tenantId, opportunity.accountId, suggestion.opportunityId);
+  const claim = await tx.relSuggestion.updateMany({ where: { id, tenantId, status: 'pending' }, data: { status: 'accepted' } });
+  if (claim.count !== 1) throw new SuggestionConflictError();
+
+  const createdPersons: any[] = [];
+  const resolveEnd = async (kind: string, endpointId: string) => {
+    if (kind === 'suggestion') {
+      const resolved = await materializePerson(tx, tenantId, endpointId, { expectedAccountId: opportunity.accountId });
+      if (resolved.createdPerson) createdPersons.push(resolved.createdPerson);
+      return resolved.personId;
+    }
+    if (kind !== 'person') throw new ScopedNotFoundError();
+    await requirePerson(tx, tenantId, opportunity.accountId, endpointId);
+    return endpointId;
+  };
+  const source = await resolveEnd(suggestion.sourceKind, suggestion.sourcePersonId);
+  const target = await resolveEnd(suggestion.targetKind, suggestion.targetPersonId);
+  await requireEdgeEndpoints(tx, tenantId, opportunity.accountId, source, target);
+  const layer = override.layer ?? suggestion.layer;
+  const label = override.label ?? suggestion.label;
+  const edgeId = 'e_' + randomUUID().slice(0, 12);
+  const color = LAYER_COLOR[layer] || '#16a34a';
+  await tx.edge.create({ data: {
+    id: edgeId, tenantId, accountId: opportunity.accountId, opportunityId: suggestion.opportunityId,
+    source, target, layer, label, color, style: 'solid', width: null, directed: false, origin: 'ai',
+  } });
+  const finalized = await tx.relSuggestion.updateMany({
+    where: { id, tenantId, status: 'accepted' },
+    data: { layer, label, sourceKind: 'person', sourcePersonId: source, targetKind: 'person', targetPersonId: target },
+  });
+  if (finalized.count !== 1) throw new SuggestionConflictError();
+  return { edge: { id: edgeId, source, target, layer, label, color, style: 'solid', directed: false, origin: 'ai' }, createdPersons };
 }
 
 interface Cand { source: string; target: string; layer: string; label: string; confidence: number; origin: string; evidence: string; }
@@ -333,50 +379,7 @@ export function suggestRoutes(app: FastifyInstance) {
     if (!ov.success) return reply.code(400).send({ error: '改后采纳参数无效' });
 
     try {
-      const result = await prisma.$transaction(async (tx) => {
-        const s = await tx.relSuggestion.findFirst({ where: { id: req.params.id, tenantId } });
-        if (!s) throw new ScopedNotFoundError();
-        if (s.status !== 'pending') throw new SuggestionConflictError();
-        const opp = await tx.opportunity.findFirst({
-          where: { id: s.opportunityId, tenantId },
-          select: { accountId: true },
-        });
-        if (!opp) throw new ScopedNotFoundError();
-        await requireAccount(tx, tenantId, opp.accountId);
-        await requireOpportunity(tx, tenantId, opp.accountId, s.opportunityId);
-        const claim = await tx.relSuggestion.updateMany({
-          where: { id: s.id, tenantId, status: 'pending' },
-          data: { status: 'accepted' },
-        });
-        if (claim.count !== 1) throw new SuggestionConflictError();
-        const layer = ov.data.layer ?? s.layer;
-        const label = ov.data.label ?? s.label;
-        const createdPersons: any[] = [];
-        // 解析两端点为真实 Person.id（候选则级联落库）
-        const resolveEnd = async (kind: string, id: string) => {
-          if (kind === 'suggestion') {
-            const r = await materializePerson(tx, tenantId, id, { expectedAccountId: opp.accountId });
-            if (r.createdPerson) createdPersons.push(r.createdPerson);
-            return r.personId;
-          }
-          if (kind !== 'person') throw new ScopedNotFoundError();
-          await requirePerson(tx, tenantId, opp.accountId, id);
-          return id;
-        };
-        const sourceId = await resolveEnd(s.sourceKind, s.sourcePersonId);
-        const targetId = await resolveEnd(s.targetKind, s.targetPersonId);
-        await requireEdgeEndpoints(tx, tenantId, opp.accountId, sourceId, targetId);
-
-        const edgeId = 'e_' + randomUUID().slice(0, 12);
-        const color = LAYER_COLOR[layer] || '#16a34a';
-        await tx.edge.create({ data: { id: edgeId, tenantId, accountId: opp.accountId, opportunityId: s.opportunityId, source: sourceId, target: targetId, layer, label, color, style: 'solid', width: null, directed: false, origin: 'ai' } });
-        const finalized = await tx.relSuggestion.updateMany({
-          where: { id: s.id, tenantId, status: 'accepted' },
-          data: { layer, label, sourceKind: 'person', sourcePersonId: sourceId, targetKind: 'person', targetPersonId: targetId },
-        });
-        if (finalized.count !== 1) throw new SuggestionConflictError();
-        return { edge: { id: edgeId, source: sourceId, target: targetId, layer, label, color, style: 'solid', directed: false, origin: 'ai' }, createdPersons };
-      });
+      const result = await prisma.$transaction((tx) => acceptRelationSuggestionInTransaction(tx, tenantId, req.params.id, ov.data));
       return result;
     } catch (e: any) {
       if (e instanceof ScopedNotFoundError || e?.scopedNotFound) return reply.code(404).send({ error: '资源不存在' });
