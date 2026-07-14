@@ -9,6 +9,7 @@ import { prisma } from './prisma.js';
 import { denyViewer } from './scope.js';
 import type { DbClient } from './mutate.js';
 import { ScopedNotFoundError } from './mutation/scopeGuards.js';
+import { activePersonWhere } from './activePerson.js';
 
 export const CloneOpportunitySchema = z.object({
   accountId: z.string().min(1),
@@ -29,7 +30,7 @@ export async function cloneOpportunityInTransaction(
   const acc = await db.account.findFirst({ where: { id: accountId, tenantId } });
   if (!acc) throw new ScopedNotFoundError();
   const validIds = personIds.length
-    ? (await db.person.findMany({ where: { tenantId, accountId, id: { in: personIds } }, select: { id: true } })).map((x) => x.id)
+    ? (await db.person.findMany({ where: { tenantId, accountId, id: { in: personIds }, ...activePersonWhere }, select: { id: true } })).map((x) => x.id)
     : [];
   const sel = new Set(validIds);
   const oppId = 'opp_' + randomUUID().slice(0, 12);

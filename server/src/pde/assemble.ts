@@ -6,6 +6,7 @@ import { scoreFromState, type ItemKey } from '../g64111.js';
 import { aggregateApprovedEvidence, type ApprovedEvidenceAggregate } from './evidence.js';
 import type { DbClient } from '../mutation/scopeGuards.js';
 import type { ReadPrincipal } from '../visibility.js';
+import { activePersonWhere } from '../activePerson.js';
 
 // ── 值域映射（江湖 ↔ 内核）──
 export const SENT2MARK: Record<string, Mark> = { star: 'star', plus: 'plus', neutral: 'eq', unknown: 'unk', minus: 'minus', x: 'x' };
@@ -42,7 +43,7 @@ export async function assembleDeal(
 ): Promise<AssembledPde | null> {
   const opp = await db.opportunity.findFirst({
     where: { id: oppId, tenantId },
-    include: { roles: true, bis: true, ucvs: true, account: { include: { persons: true } } },
+    include: { roles: true, bis: true, ucvs: true, account: { include: { persons: { where: activePersonWhere } } } },
   });
   if (!opp) return null;
   const cfg = await db.dealPdeConfig.findFirst({ where: { tenantId, opportunityId: oppId } });

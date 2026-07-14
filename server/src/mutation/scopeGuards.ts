@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { activePersonWhere } from '../activePerson.js';
 
 export type DbClient = PrismaClient | Prisma.TransactionClient;
 
@@ -34,7 +35,7 @@ export async function requireOpportunity(db: DbClient, tenantId: string, account
 
 export async function requirePerson(db: DbClient, tenantId: string, accountId: string, personId: string): Promise<void> {
   await requireScopedRow(db.person.findFirst({
-    where: { id: personId, tenantId, accountId },
+    where: { id: personId, tenantId, accountId, ...activePersonWhere },
     select: { id: true },
   }));
 }
@@ -42,7 +43,7 @@ export async function requirePerson(db: DbClient, tenantId: string, accountId: s
 export async function requireEdgeEndpoints(db: DbClient, tenantId: string, accountId: string, sourceId: string, targetId: string): Promise<void> {
   const expected = new Set([sourceId, targetId]);
   const persons = await db.person.findMany({
-    where: { tenantId, accountId, id: { in: [...expected] } },
+    where: { tenantId, accountId, id: { in: [...expected] }, ...activePersonWhere },
     select: { id: true },
   });
   if (persons.length !== expected.size) throw new ScopedNotFoundError();

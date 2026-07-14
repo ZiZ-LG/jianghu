@@ -75,4 +75,61 @@ describe('INT-301 RepairPanel', () => {
     );
     expect(order).toEqual(['close', 'refresh', '纠错已保存，但刷新失败；请稍后重新进入客户。']);
   });
+
+  it('makes duplicate-person merge direction, archive consequence and conflict decisions explicit', () => {
+    const html = renderToStaticMarkup(createElement(RepairPanel, {
+      target: { kind: 'account', account: seedAccount },
+      accounts: [seedAccount],
+      onClose: vi.fn(),
+      onChanged: vi.fn(),
+    }));
+    expect(html).toContain('合并重复人物');
+    expect(html).toContain('源人物（将归档）');
+    expect(html).toContain('目标人物（保留）');
+    expect(html).toContain('源人物会被归档');
+    expect(html).toContain('每个角色冲突都必须明确选择');
+  });
+
+  it('allows only one in-flight merge submission and refreshes after the committed call', async () => {
+    const module = await import('./RepairPanel') as unknown as {
+      submitPersonMergeOnce?: (
+        lock: { current: boolean },
+        submit: () => Promise<void>,
+        afterCommit: () => Promise<void>,
+      ) => Promise<'committed' | 'ignored'>;
+    };
+    expect(typeof module.submitPersonMergeOnce).toBe('function');
+    const lock = { current: false };
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const calls: string[] = [];
+    const first = module.submitPersonMergeOnce!(lock, async () => { calls.push('submit'); await pending; }, async () => { calls.push('refresh'); });
+    const second = module.submitPersonMergeOnce!(lock, async () => { calls.push('duplicate'); }, async () => { calls.push('duplicate-refresh'); });
+    await expect(second).resolves.toBe('ignored');
+    release();
+    await expect(first).resolves.toBe('committed');
+    expect(calls).toEqual(['submit', 'refresh']);
+  });
+
+  it('reuses one idempotency key across manual retries until payload changes or success is confirmed', async () => {
+    const module = await import('./RepairPanel') as unknown as {
+      stablePersonMergeKey?: (
+        cache: { current: { signature: string; key: string } | null },
+        payload: { targetPersonId: string; sourcePersonId: string; roleConflictByOpportunity: Record<string, 'keep_target' | 'keep_source'> },
+        createKey: () => string,
+      ) => string;
+      clearStablePersonMergeKey?: (cache: { current: { signature: string; key: string } | null }) => void;
+    };
+    expect(typeof module.stablePersonMergeKey).toBe('function');
+    expect(typeof module.clearStablePersonMergeKey).toBe('function');
+    const cache = { current: null as { signature: string; key: string } | null };
+    let sequence = 0;
+    const createKey = () => `key-${++sequence}`;
+    const payload = { targetPersonId: 'target', sourcePersonId: 'source', roleConflictByOpportunity: { opp: 'keep_target' as const } };
+    expect(module.stablePersonMergeKey!(cache, payload, createKey)).toBe('key-1');
+    expect(module.stablePersonMergeKey!(cache, { ...payload, roleConflictByOpportunity: { opp: 'keep_target' } }, createKey)).toBe('key-1');
+    expect(module.stablePersonMergeKey!(cache, { ...payload, roleConflictByOpportunity: { opp: 'keep_source' } }, createKey)).toBe('key-2');
+    module.clearStablePersonMergeKey!(cache);
+    expect(module.stablePersonMergeKey!(cache, { ...payload, roleConflictByOpportunity: { opp: 'keep_source' } }, createKey)).toBe('key-3');
+  });
 });

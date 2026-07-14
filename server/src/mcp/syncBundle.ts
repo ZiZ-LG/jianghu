@@ -7,6 +7,7 @@ import type { DbClient } from '../mutate.js';
 import { createFieldProposal } from '../proposals.js';
 import { enqueueEnrichJob, enqueueProfileJob, enqueueSuggestJob } from '../jobs.js';
 import { replayReceipt, type StoredSyncReceipt, type SyncReceipt } from './syncReceipt.js';
+import { activePersonWhere } from '../activePerson.js';
 
 const OPAQUE_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:#/-]*$/;
 const OpaqueRefSchema = z.string().trim().min(1).max(80).regex(OPAQUE_REF_PATTERN, 'ref must be an opaque identifier without names or free text');
@@ -421,7 +422,7 @@ async function executeBundle(
 
   if (input.bundle.evidences.length && !opportunity) throw new Error('evidence candidates require an opportunity');
   for (const evidence of input.bundle.evidences) {
-    const person = await db.person.findFirst({ where: { id: evidence.personId, tenantId: ctx.tenantId, accountId: account.id } });
+    const person = await db.person.findFirst({ where: { id: evidence.personId, tenantId: ctx.tenantId, accountId: account.id, ...activePersonWhere } });
     if (!person) throw new Error(`evidence ${evidence.ref} person is outside the account`);
     await db.evidenceEvent.create({ data: {
       id: 'ev_' + randomUUID().slice(0, 12), tenantId: ctx.tenantId, accountId: account.id,

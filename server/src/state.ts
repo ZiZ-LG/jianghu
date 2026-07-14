@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from './prisma.js';
 import { canReadPrivateBusinessData, visiblePersonLogs, type ReadPrincipal } from './visibility.js';
+import { activePersonWhere } from './activePerson.js';
 
 const J = (s: string | null | undefined, d: unknown) => { try { return s ? JSON.parse(s) : d; } catch { return d; } };
 
@@ -58,7 +59,7 @@ function stringIds(raw: string): string[] | null {
 }
 
 const accountTreeInclude = {
-  persons: true,
+  persons: { where: activePersonWhere },
   edges: true,
   opportunities: {
     where: { archivedAt: null },

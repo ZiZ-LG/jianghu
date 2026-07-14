@@ -6,8 +6,18 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
 import { denyViewer } from './scope.js';
+import { activePersonWhere } from './activePerson.js';
 
 const MAX_KEEP = 200; // 每个 商机×人 会话保留上限（超出丢最旧——防止无限膨胀）
+
+async function advisorScope(tenantId: string, opportunityId: string, personId: string) {
+  const opp = await prisma.opportunity.findFirst({ where: { id: opportunityId, tenantId }, select: { id: true, accountId: true } });
+  if (!opp) return null;
+  const person = await prisma.person.findFirst({
+    where: { id: personId, tenantId, accountId: opp.accountId, ...activePersonWhere }, select: { id: true },
+  });
+  return person ? opp : null;
+}
 
 export function advisorRoutes(app: FastifyInstance) {
   // 读会话（按时间升序，最近 100 条）
@@ -16,7 +26,7 @@ export function advisorRoutes(app: FastifyInstance) {
     const p = z.object({ opportunityId: z.string().min(1), personId: z.string().min(1) }).safeParse(req.query);
     if (!p.success) return reply.code(400).send({ error: '参数无效' });
     const tenantId = req.user.tenantId;
-    const opp = await prisma.opportunity.findFirst({ where: { id: p.data.opportunityId, tenantId }, select: { id: true } });
+    const opp = await advisorScope(tenantId, p.data.opportunityId, p.data.personId);
     if (!opp) return reply.code(404).send({ error: '商机不存在' });
     const rows = await prisma.advisorMsg.findMany({
       where: { tenantId, opportunityId: p.data.opportunityId, personId: p.data.personId },
@@ -35,7 +45,7 @@ export function advisorRoutes(app: FastifyInstance) {
     }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '参数无效' });
     const tenantId = req.user.tenantId;
-    const opp = await prisma.opportunity.findFirst({ where: { id: p.data.opportunityId, tenantId }, select: { id: true, accountId: true } });
+    const opp = await advisorScope(tenantId, p.data.opportunityId, p.data.personId);
     if (!opp) return reply.code(404).send({ error: '商机不存在' });
     const now = Date.now();
     for (let i = 0; i < p.data.entries.length; i++) {
@@ -66,7 +76,7 @@ export function advisorRoutes(app: FastifyInstance) {
     const p = z.object({ opportunityId: z.string().min(1), personId: z.string().min(1) }).safeParse(req.query);
     if (!p.success) return reply.code(400).send({ error: '参数无效' });
     const tenantId = req.user.tenantId;
-    const opp = await prisma.opportunity.findFirst({ where: { id: p.data.opportunityId, tenantId }, select: { id: true } });
+    const opp = await advisorScope(tenantId, p.data.opportunityId, p.data.personId);
     if (!opp) return reply.code(404).send({ error: '商机不存在' });
     await prisma.advisorMsg.deleteMany({ where: { tenantId, opportunityId: p.data.opportunityId, personId: p.data.personId } });
     return { ok: true };

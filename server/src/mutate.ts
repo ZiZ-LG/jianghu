@@ -5,6 +5,7 @@ import { enqueueEnrichJob, enqueueProfileJob } from './jobs.js';
 import { requireActionScope } from './mutation/actionScope.js';
 import { requireScopedRow, type DbClient } from './mutation/scopeGuards.js';
 import { isTrustedHumanAssertion, normalizeActionTrust } from './ingestTrust.js';
+import { activePersonWhere } from './activePerson.js';
 
 export type { DbClient } from './mutation/scopeGuards.js';
 
@@ -261,13 +262,13 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
       if (action.patch?.form !== undefined) d.form = S(action.patch.form);
       await lockedUpdate({
         baseVersion: action.baseVersion,
-        update: (vw) => db.person.updateMany({ where: { id: action.personId, tenantId, accountId: action.accId, ...vw }, data: { ...d, version: { increment: 1 } } }),
-        exists: async () => !!(await db.person.findFirst({ where: { id: action.personId, tenantId, accountId: action.accId }, select: { id: true } })),
+        update: (vw) => db.person.updateMany({ where: { id: action.personId, tenantId, accountId: action.accId, ...activePersonWhere, ...vw }, data: { ...d, version: { increment: 1 } } }),
+        exists: async () => !!(await db.person.findFirst({ where: { id: action.personId, tenantId, accountId: action.accId, ...activePersonWhere }, select: { id: true } })),
       });
       return;
     }
     case 'MOVE_PERSON':
-      await db.person.updateMany({ where: { id: action.personId, tenantId, accountId: action.accId }, data: { x: action.x, y: action.y } });
+      await db.person.updateMany({ where: { id: action.personId, tenantId, accountId: action.accId, ...activePersonWhere }, data: { x: action.x, y: action.y } });
       return;
     case 'DELETE_PERSON': {
       const pid = action.personId;
@@ -286,15 +287,15 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
       await db.oppRole.deleteMany({ where: { personId: pid, tenantId, opportunityId: { in: opportunityIds } } });
       await db.opportunityMember.deleteMany({ where: { personId: pid, tenantId, opportunityId: { in: opportunityIds } } });
       await db.edge.deleteMany({ where: { tenantId, accountId: action.accId, OR: [{ source: pid }, { target: pid }] } });
-      await db.person.deleteMany({ where: { id: pid, tenantId, accountId: action.accId } });
+      await db.person.deleteMany({ where: { id: pid, tenantId, accountId: action.accId, ...activePersonWhere } });
       return;
     }
     case 'ADD_LOG': {
-      const person = await requireScopedRow(db.person.findFirst({ where: { id: action.personId, tenantId, accountId: action.accId } }));
+      const person = await requireScopedRow(db.person.findFirst({ where: { id: action.personId, tenantId, accountId: action.accId, ...activePersonWhere } }));
       const logs = (() => { try { return JSON.parse(person.logs); } catch { return []; } })();
       // createdBy 由服务端从已验证 CommandContext 注入，self ACL 不信任客户端。
       await db.person.updateMany({
-        where: { id: action.personId, tenantId, accountId: action.accId },
+        where: { id: action.personId, tenantId, accountId: action.accId, ...activePersonWhere },
         data: { logs: S([{ ...action.log, createdBy: ctx.actorId }, ...logs]) },
       });
       return;
@@ -478,7 +479,7 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
           where: { tenantId, accountId: action.accId, opportunityId: planAction.opportunityId },
           select: { id: true, personId: true },
         }),
-        db.person.findMany({ where: { tenantId, accountId: action.accId }, select: { id: true } }),
+        db.person.findMany({ where: { tenantId, accountId: action.accId, ...activePersonWhere }, select: { id: true } }),
       ]);
       const validPersonIds = new Set(persons.map((row) => row.id));
       const validActionIds = new Set(

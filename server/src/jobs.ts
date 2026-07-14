@@ -8,6 +8,7 @@ import { discoverPersons, researchCompanyProfile } from './enrich.js';
 import { generateRelSuggestions } from './suggest.js';
 import { computeReminders, recordPatrol, type PatrolOpp, type PatrolRole, type PatrolAction } from './patrol.js';
 import type { DbClient } from './mutation/scopeGuards.js';
+import { activePersonWhere } from './activePerson.js';
 
 // 江湖自算 · 轻量后台任务队列（DB-backed）。
 // 设计取舍（对齐架构纲领「加轻量 job 队列」）：单实例 setInterval 消费，原子 claim；
@@ -464,7 +465,7 @@ export async function runPatrol(): Promise<{ scanned: number; created: number; r
     const lastActivityAt = times.length ? new Date(Math.max(...times.map((t) => t.getTime()))) : null;
 
     const roles = await prisma.oppRole.findMany({ where: { opportunityId: opp.id } });
-    const persons = roles.length ? await prisma.person.findMany({ where: { id: { in: roles.map((r) => r.personId) } } }) : [];
+    const persons = roles.length ? await prisma.person.findMany({ where: { tenantId: opp.tenantId, accountId: opp.accountId, id: { in: roles.map((r) => r.personId) }, ...activePersonWhere } }) : [];
     const personById = new Map(persons.map((p) => [p.id, p]));
     const nameOf = new Map(persons.map((p) => [p.id, p.name]));
     // P14：FORM 四大项非空计数（family/occupation/recreation/moneyMotivation）——FORM 空缺规则的量化输入

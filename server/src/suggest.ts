@@ -16,6 +16,7 @@ import {
 } from './mutation/scopeGuards.js';
 import { resolveScopedRelSuggestions } from './suggestionScope.js';
 import { createPdeSnapshot } from './pde/routes.js';
+import { activePersonWhere } from './activePerson.js';
 import type { DbClient } from './mutation/scopeGuards.js';
 
 const pairKey = (a: string, b: string) => [a, b].sort().join('|');
@@ -123,7 +124,7 @@ export async function materializePerson(
   if (claim.count !== 1) throw new SuggestionConflictError();
   const candidate = { ...ps, ...options.override };
 
-  const others = await tx.person.findMany({ where: { tenantId, accountId: candidate.accountId, isCompetitor: false }, select: { x: true, y: true } });
+  const others = await tx.person.findMany({ where: { tenantId, accountId: candidate.accountId, isCompetitor: false, ...activePersonWhere }, select: { x: true, y: true } });
   const { x, y } = nextFreeSlot(others);
   const today = new Date().toISOString().slice(0, 10);
   const logs = [{ date: today, content: `📥 ${ORIGIN_LABEL[candidate.origin] || '外部导入'}（${candidate.evidence || '无备注'}）${candidate.sourceUrl ? ' · ' + candidate.sourceUrl : ''}`, visibility: 'team' }];
@@ -294,7 +295,7 @@ async function llmCandidates(cfg: any, persons: any[], edges: any[], nameOf: (id
 async function loadGraph(tenantId: string, oppId: string) {
   const opp = await prisma.opportunity.findFirst({ where: { id: oppId, tenantId } });
   if (!opp) return null;
-  const persons = await prisma.person.findMany({ where: { tenantId, accountId: opp.accountId } });
+  const persons = await prisma.person.findMany({ where: { tenantId, accountId: opp.accountId, ...activePersonWhere } });
   const edges = await prisma.edge.findMany({ where: { tenantId, accountId: opp.accountId, OR: [{ opportunityId: null }, { opportunityId: oppId }] } });
   return { opp, persons, edges };
 }
@@ -411,7 +412,7 @@ export function suggestRoutes(app: FastifyInstance) {
     if (!acc) return reply.code(404).send({ error: '客户不存在' });
     const rows = await prisma.personSuggestion.findMany({ where: { accountId, tenantId: req.user.tenantId, status: 'pending' }, orderBy: { confidence: 'desc' } });
     // 标注是否已有同名正式干系人（供前端给"合并/新建"选择）
-    const persons = await prisma.person.findMany({ where: { tenantId: req.user.tenantId, accountId }, select: { id: true, name: true } });
+    const persons = await prisma.person.findMany({ where: { tenantId: req.user.tenantId, accountId, ...activePersonWhere }, select: { id: true, name: true } });
     const nameToId = new Map(persons.map((p) => [p.name, p.id]));
     return { suggestions: rows.map((r) => ({ id: r.id, accountId: r.accountId, name: r.name, title: r.title, orgLevel: r.orgLevel, origin: r.origin, evidence: r.evidence, sourceUrl: r.sourceUrl ?? undefined, confidence: r.confidence, existingPersonId: nameToId.get(r.name) ?? undefined })) };
   });
@@ -459,7 +460,7 @@ export function suggestRoutes(app: FastifyInstance) {
       prisma.reminder.findMany({ where: { tenantId, status: 'pending' }, orderBy: { createdAt: 'desc' } }), // 巡检提醒（提醒型，自带 account/opp 名免 join）
       prisma.evidenceEvent.findMany({ where: { tenantId, status: 'pending_review' }, orderBy: { createdAt: 'desc' } }), // M3 第5类：机器抽取证据待人审
       prisma.signalCatalog.findMany({ where: { tenantId }, select: { signalKey: true, label: true, tier: true } }),
-      prisma.person.findMany({ where: { tenantId }, select: { id: true, name: true } }),
+      prisma.person.findMany({ where: { tenantId, ...activePersonWhere }, select: { id: true, name: true } }),
       prisma.opportunity.findMany({ where: { tenantId }, select: { id: true, name: true, accountId: true } }),
       prisma.account.findMany({ where: { tenantId }, select: { id: true, name: true } }),
     ]);

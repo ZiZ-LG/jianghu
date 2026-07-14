@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Account, Note, Opportunity, VisitNote } from '../types';
 import { CUSTOMER_TYPE_LABEL } from '../types';
-import { api, type AccountRepairPatch, type RepairContext } from '../api';
+import { api, newIdempotencyKey, type AccountRepairPatch, type PersonMergeDecision, type PersonMergePreview, type PersonMergeRoleDecision, type RepairContext } from '../api';
 import { Modal } from './Modal';
 
 export type RepairTarget =
@@ -52,6 +52,42 @@ export async function completeCommittedRepair(
   }
 }
 
+export async function submitPersonMergeOnce(
+  lock: { current: boolean },
+  submit: () => Promise<void>,
+  afterCommit: () => Promise<void>,
+): Promise<'committed' | 'ignored'> {
+  if (lock.current) return 'ignored';
+  lock.current = true;
+  try {
+    await submit();
+    await afterCommit();
+    return 'committed';
+  } finally {
+    lock.current = false;
+  }
+}
+
+type StablePersonMergeKeyCache = { current: { signature: string; key: string } | null };
+
+export function stablePersonMergeKey(
+  cache: StablePersonMergeKeyCache,
+  payload: PersonMergeDecision,
+  createKey: () => string = newIdempotencyKey,
+): string {
+  const signature = JSON.stringify([
+    payload.targetPersonId,
+    payload.sourcePersonId,
+    Object.entries(payload.roleConflictByOpportunity).sort(([left], [right]) => left.localeCompare(right)),
+  ]);
+  if (cache.current?.signature !== signature) cache.current = { signature, key: createKey() };
+  return cache.current.key;
+}
+
+export function clearStablePersonMergeKey(cache: StablePersonMergeKeyCache): void {
+  cache.current = null;
+}
+
 export function RepairPanel({ target, accounts, onClose, onChanged, onEditOpportunity, onRepairRecord, onRefreshError = () => undefined }: {
   target: RepairTarget;
   accounts: Account[];
@@ -73,6 +109,13 @@ export function RepairPanel({ target, accounts, onClose, onChanged, onEditOpport
   const [members, setMembers] = useState<Array<{ id: string; name: string }>>([]);
   const [accountId, setAccountId] = useState(record?.accountId ?? accounts[0]?.id ?? '');
   const [opportunityId, setOpportunityId] = useState(record?.opportunityId ?? '');
+  const mergePeople = account?.persons ?? [];
+  const [mergeTargetId, setMergeTargetId] = useState(mergePeople[0]?.id ?? '');
+  const [mergeSourceId, setMergeSourceId] = useState(mergePeople.find((person) => person.id !== mergePeople[0]?.id)?.id ?? '');
+  const [mergePreview, setMergePreview] = useState<PersonMergePreview | null>(null);
+  const [mergeDecisions, setMergeDecisions] = useState<Record<string, PersonMergeRoleDecision>>({});
+  const mergeSubmitting = useRef(false);
+  const mergeIdempotency = useRef<{ signature: string; key: string } | null>(null);
   const id = targetId(target);
   const loadContext = useCallback(async () => {
     setError('');
@@ -88,6 +131,20 @@ export function RepairPanel({ target, accounts, onClose, onChanged, onEditOpport
       .catch((cause: any) => { if (alive) setError(cause?.message || '负责人列表加载失败'); });
     return () => { alive = false; };
   }, [target.kind]);
+  useEffect(() => {
+    if (target.kind !== 'account' || !mergeTargetId || !mergeSourceId || mergeTargetId === mergeSourceId) {
+      setMergePreview(null);
+      setMergeDecisions({});
+      return;
+    }
+    let alive = true;
+    setMergePreview(null);
+    setMergeDecisions({});
+    api.repairPersonMergePreview(mergeTargetId, mergeSourceId)
+      .then((preview) => { if (alive) setMergePreview(preview); })
+      .catch((cause: any) => { if (alive) setError(cause?.message || '人物合并预览失败'); });
+    return () => { alive = false; };
+  }, [mergeSourceId, mergeTargetId, target.kind]);
   const opportunities = accounts.find((item) => item.id === accountId)?.opportunities ?? [];
   useEffect(() => {
     if (opportunityId && !opportunities.some((item) => item.id === opportunityId)) setOpportunityId('');
@@ -130,6 +187,34 @@ export function RepairPanel({ target, accounts, onClose, onChanged, onEditOpport
     } catch (cause: any) { setError(cause?.message || '归档失败'); }
     finally { setBusy(false); }
   };
+  const mergePerson = async () => {
+    if (mergeSubmitting.current || !mergePreview || mergeTargetId === mergeSourceId) return;
+    if (mergePreview.conflicts.some((conflict) => !mergeDecisions[conflict.opportunityId])) {
+      setError('请先为每个角色冲突选择保留哪条记录');
+      return;
+    }
+    setBusy(true); setError('');
+    try {
+      const decision: PersonMergeDecision = {
+        targetPersonId: mergeTargetId,
+        sourcePersonId: mergeSourceId,
+        roleConflictByOpportunity: mergeDecisions,
+      };
+      const idempotencyKey = stablePersonMergeKey(mergeIdempotency, decision);
+      await submitPersonMergeOnce(
+        mergeSubmitting,
+        async () => {
+          await api.repairPersonMerge(decision, idempotencyKey);
+          clearStablePersonMergeKey(mergeIdempotency);
+        },
+        () => completeCommittedRepair(onClose, onChanged, onRefreshError),
+      );
+    } catch (cause: any) {
+      setError(cause?.message || '人物合并失败');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <Modal title="🛠️ 纠错与溯源" width={600} onClose={onClose}
@@ -149,6 +234,30 @@ export function RepairPanel({ target, accounts, onClose, onChanged, onEditOpport
             {members.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}
           </select></label>
         </div>
+        {mergePeople.length >= 2 && <div style={{ marginTop: 14 }}>
+          <div className="section-t">合并重复人物</div>
+          <div className="empty-hint" style={{ marginBottom: 10 }}>方向不可逆：源人物会被归档，全部正式引用迁移到目标人物；每个角色冲突都必须明确选择。</div>
+          <div className="fld-row">
+            <label className="fld"><span>源人物（将归档）</span><select value={mergeSourceId} onChange={(event) => setMergeSourceId(event.target.value)}>
+              {mergePeople.map((person) => <option key={person.id} value={person.id}>{person.name} · {person.title}</option>)}
+            </select></label>
+            <label className="fld"><span>目标人物（保留）</span><select value={mergeTargetId} onChange={(event) => setMergeTargetId(event.target.value)}>
+              {mergePeople.map((person) => <option key={person.id} value={person.id}>{person.name} · {person.title}</option>)}
+            </select></label>
+          </div>
+          {mergeTargetId === mergeSourceId && <div role="alert" className="empty-hint">源人物和目标人物不能相同。</div>}
+          {mergePreview?.conflicts.map((conflict) => <label className="fld" key={conflict.opportunityId}>
+            <span>{conflict.opportunityName}{conflict.archived ? '（已归档商机）' : ''}：目标 {conflict.targetRole.role} / 源 {conflict.sourceRole.role}</span>
+            <select value={mergeDecisions[conflict.opportunityId] ?? ''} onChange={(event) => setMergeDecisions((current) => ({ ...current, [conflict.opportunityId]: event.target.value as PersonMergeRoleDecision }))}>
+              <option value="">请选择</option>
+              <option value="keep_target">保留目标人物的完整角色记录</option>
+              <option value="keep_source">保留源人物的完整角色记录并迁移</option>
+            </select>
+          </label>)}
+          <button className="btn primary sm" disabled={busy || !mergePreview || mergeTargetId === mergeSourceId || mergePreview.conflicts.some((conflict) => !mergeDecisions[conflict.opportunityId])} onClick={() => void mergePerson()}>
+            {busy ? '处理中…' : '确认合并并归档源人物'}
+          </button>
+        </div>}
       </>}
       {target.kind === 'opportunity' && <div style={{ marginBottom: 14 }}>
         <div>商机：{target.opportunity.name}</div>

@@ -12,6 +12,7 @@ import { enc, dec } from './ai.js';
 import { scoreFromState } from './g64111.js';
 import { wecomSignature, decryptWecomMsg, xmlTag } from './wecomCrypt.js';
 import { deploymentOutboundPolicy, fetchOutbound } from './security/outboundUrl.js';
+import { activePersonWhere } from './activePerson.js';
 
 const QYAPI = 'https://qyapi.weixin.qq.com';
 
@@ -236,7 +237,7 @@ export async function updateCardButton(cred: WeComCred, responseCode: string, re
 async function sentimentImpact(tenantId: string, oppId: string, personId: string, newValue: string): Promise<{ before: number; after: number } | null> {
   const opp = await prisma.opportunity.findFirst({
     where: { id: oppId, tenantId },
-    include: { roles: true, bis: true, ucvs: true, account: { include: { persons: true } } },
+    include: { roles: true, bis: true, ucvs: true, account: { include: { persons: { where: activePersonWhere } } } },
   });
   if (!opp) return null;
   const J = (s: string | null, d: any) => { try { return s ? JSON.parse(s) : d; } catch { return d; } };
@@ -283,7 +284,7 @@ export async function pushProposalCard(tenantId: string, proposalId: string): Pr
     });
     if (!binds.length) return;
 
-    const person = cp.entityKind === 'oppRole' ? await prisma.person.findFirst({ where: { id: cp.entityId, tenantId }, select: { name: true } }) : null;
+    const person = cp.entityKind === 'oppRole' ? await prisma.person.findFirst({ where: { id: cp.entityId, tenantId, ...activePersonWhere }, select: { name: true } }) : null;
     let impact = '';
     if (cp.entityKind === 'oppRole' && cp.field === 'sentiment' && cp.opportunityId) {
       const d = await sentimentImpact(tenantId, cp.opportunityId, cp.entityId, cp.newValue).catch(() => null);

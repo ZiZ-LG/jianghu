@@ -127,10 +127,16 @@ model Person {
   form         String  @default("{}") // JSON
   logs         String  @default("[]") // JSON
   version      Int     @default(0) // 乐观锁：内容编辑并发冲突检测（UPDATE_PERSON）
+  archivedAt   DateTime?
+  archivedBy   String?
+  archiveReason String @default("")
+  mergedIntoPersonId String?
 
   @@unique([tenantId, id])
   @@index([accountId])
   @@index([tenantId, accountId])
+  @@index([tenantId, accountId, archivedAt])
+  @@index([tenantId, mergedIntoPersonId])
 }
 
 model Opportunity {
@@ -191,6 +197,7 @@ model AuditEvent {
   requestId     String?
   sourceRef     String?
   changedFields String   @default("[]")
+  metadata      String   @default("{}") // 非敏感结构化命令元数据；禁止存正文
   createdAt     DateTime @default(now())
 
   @@index([tenantId, createdAt])

@@ -174,6 +174,25 @@ export interface RepairContext {
   }>;
 }
 
+export type PersonMergeRoleDecision = 'keep_target' | 'keep_source';
+export interface PersonMergeDecision {
+  targetPersonId: string;
+  sourcePersonId: string;
+  roleConflictByOpportunity: Record<string, PersonMergeRoleDecision>;
+}
+export interface PersonMergePreview {
+  accountId: string;
+  targetPerson: { id: string; name: string; title: string };
+  sourcePerson: { id: string; name: string; title: string };
+  conflicts: Array<{
+    opportunityId: string;
+    opportunityName: string;
+    archived: boolean;
+    targetRole: { role: string; sentiment: string; confidence: string };
+    sourceRole: { role: string; sentiment: string; confidence: string };
+  }>;
+}
+
 export const api = {
   getToken: () => token,
   setToken(t: string | null) {
@@ -218,6 +237,13 @@ export const api = {
     req('/api/repair/rebind', { method: 'POST', body: JSON.stringify(input) }),
   repairContext: (kind: 'account' | 'opportunity' | 'visitNote' | 'note', id: string): Promise<RepairContext> =>
     req(`/api/repair/context/${kind}/${encodeURIComponent(id)}`),
+  repairPersonMergePreview: (targetPersonId: string, sourcePersonId: string): Promise<PersonMergePreview> =>
+    req(`/api/repair/person-merge/preview?targetPersonId=${encodeURIComponent(targetPersonId)}&sourcePersonId=${encodeURIComponent(sourcePersonId)}`),
+  repairPersonMerge: (decision: PersonMergeDecision, idempotencyKey: string): Promise<{
+    sourcePersonId: string; targetPersonId: string; redirected: Record<string, number>;
+  }> => commandReq('/api/repair/person-merge', {
+    method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(decision),
+  }),
   billing: (): Promise<{ plan: string; subscriptionStatus: string; seatLimit: number; memberCount: number }> => req('/api/billing'),
   donate: (): Promise<{ url: string; qrUrl: string; note: string }> => req('/api/donate'),
   members: (): Promise<{ members: { id: string; phone: string | null; email: string | null; name: string; role: string; createdAt: string }[] }> => req('/api/members'),

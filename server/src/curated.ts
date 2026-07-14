@@ -10,6 +10,7 @@ import { prisma } from './prisma.js';
 import { viewerCanReadAccount, viewerCanReadOpp } from './scope.js';
 import { loadAiConfig, callLLM } from './ai.js';
 import { visiblePersonLogs } from './visibility.js';
+import { activePersonWhere } from './activePerson.js';
 
 type EntityKind = 'account' | 'opportunity';
 
@@ -36,7 +37,7 @@ async function collectRaw(tenantId: string, kind: EntityKind, entityId: string):
 
   let name = '';
   if (kind === 'account') {
-    const acc = await prisma.account.findFirst({ where: { id: entityId, tenantId }, include: { persons: true } });
+    const acc = await prisma.account.findFirst({ where: { id: entityId, tenantId }, include: { persons: { where: activePersonWhere } } });
     if (!acc) return { text: '', latestAt: null, name: '' };
     name = acc.name;
     const logLines: string[] = [];

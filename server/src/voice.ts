@@ -16,6 +16,7 @@ import { enqueueEnrichJob, enqueueSuggestJob, enqueueProfileJob } from './jobs.j
 import { applyAction, type DbClient } from './mutate.js';
 import { createFieldProposal } from './proposals.js';
 import { nextFreeSlot } from './layout.js';
+import { activePersonWhere } from './activePerson.js';
 import { canWriteFormal, hasExplicitTrustMetadata } from './ingestTrust.js';
 import { failReservedCommand, reserveCommand, runCommand } from './mutation/commandRunner.js';
 
@@ -180,7 +181,7 @@ export class IngestCommandError extends Error {
 /** 模型网络调用在事务外完成；事务内只重读作用域并持久化已验证的结构化结果。 */
 export async function prepareVoiceIngest(baseCtx: CommandContext, input: IngestInput, db: DbClient = prisma): Promise<PreparedVoiceIngest> {
   const acc = input.accountId
-    ? await db.account.findFirst({ where: { id: input.accountId, tenantId: baseCtx.tenantId }, include: { persons: true } })
+    ? await db.account.findFirst({ where: { id: input.accountId, tenantId: baseCtx.tenantId }, include: { persons: { where: activePersonWhere } } })
     : null;
   const ai = await loadAiConfig(baseCtx.tenantId, db);
   if (!ai || ai.provider === 'mock' || !ai.baseUrl || !ai.model) return {};
@@ -233,7 +234,7 @@ export async function ingestVoiceText(
 
   // 上下文：当前客户（含 persons 用于去重、opportunities 用于定位）
   let acc = input.accountId
-    ? await db.account.findFirst({ where: { id: input.accountId, tenantId }, include: { persons: true, opportunities: true } })
+    ? await db.account.findFirst({ where: { id: input.accountId, tenantId }, include: { persons: { where: activePersonWhere }, opportunities: true } })
     : null;
 
   const today = new Date().toISOString().slice(0, 10);
@@ -266,7 +267,7 @@ export async function ingestVoiceText(
   // ── 1) 客户（业务实体，明说直落；命中现有则补字段）──
   if (ex.account && S(ex.account.name)) {
     const name = S(ex.account.name, 100);
-    if (!acc) acc = await db.account.findFirst({ where: { tenantId, name }, include: { persons: true, opportunities: true } });
+    if (!acc) acc = await db.account.findFirst({ where: { tenantId, name }, include: { persons: { where: activePersonWhere }, opportunities: true } });
     if (acc) {
       if (isExplicit(ex.account) && S(ex.account.region)) await applyIngestAction(structuredCtxFor(ex.account), { type: 'UPDATE_ACCOUNT', accId: acc.id, patch: { region: S(ex.account.region, 40) } }, db);
       receipt.account = { id: acc.id, name: acc.name, status: 'matched' };
@@ -277,7 +278,7 @@ export async function ingestVoiceText(
       const id = 'acc_' + randomUUID().slice(0, 12);
       const ct = [1, 2, 3].includes(N(ex.account.customerType) as number) ? (N(ex.account.customerType) as number) : 2;
       await applyIngestAction(structuredCtxFor(ex.account), { type: 'ADD_ACCOUNT', account: { id, name, customerType: ct, region: S(ex.account.region, 40) } }, db);
-      acc = await db.account.findFirst({ where: { id, tenantId }, include: { persons: true, opportunities: true } });
+      acc = await db.account.findFirst({ where: { id, tenantId }, include: { persons: { where: activePersonWhere }, opportunities: true } });
       receipt.account = { id, name, status: 'created' };
       if (sim) receipt.dupWarnings.push({ kind: 'account', name, similarTo: sim.name });
       // 江湖自算：语音建客户后后台入队 enrich（企查查/AI 补充发现关键干系人 → 候选进收件箱人审）。

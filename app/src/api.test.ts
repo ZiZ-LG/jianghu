@@ -91,12 +91,16 @@ describe('typed API failures', () => {
     expect(typeof repairApi.repairOpportunity).toBe('function');
     expect(typeof repairApi.repairRebind).toBe('function');
     expect(typeof repairApi.repairContext).toBe('function');
+    expect(typeof repairApi.repairPersonMergePreview).toBe('function');
+    expect(typeof repairApi.repairPersonMerge).toBe('function');
 
     const base = { name: 'Old', customerType: 1 as const, primaryOwner: '', primaryOwnerUserId: null };
     await repairApi.repairAccount!('acc/1', { base, name: 'Correct' });
     await repairApi.repairOpportunity!('opp/1', { baseVersion: 3, status: 'paused' });
     await repairApi.repairRebind!({ kind: 'note', id: 'note-1', accountId: 'acc-2', opportunityId: 'opp-2' });
     await repairApi.repairContext!('account', 'acc/1');
+    await repairApi.repairPersonMergePreview!('person-target', 'person-source');
+    await repairApi.repairPersonMerge!({ targetPersonId: 'person-target', sourcePersonId: 'person-source', roleConflictByOpportunity: { 'opp-1': 'keep_target' } }, 'person-merge-key');
 
     expect(fetchMock.mock.calls.map(([url, init]) => ({
       url,
@@ -107,6 +111,9 @@ describe('typed API failures', () => {
       { url: 'http://localhost:3001/api/repair/opportunity/opp%2F1', method: 'PATCH', body: JSON.stringify({ baseVersion: 3, status: 'paused' }) },
       { url: 'http://localhost:3001/api/repair/rebind', method: 'POST', body: JSON.stringify({ kind: 'note', id: 'note-1', accountId: 'acc-2', opportunityId: 'opp-2' }) },
       { url: 'http://localhost:3001/api/repair/context/account/acc%2F1', method: 'GET', body: undefined },
+      { url: 'http://localhost:3001/api/repair/person-merge/preview?targetPersonId=person-target&sourcePersonId=person-source', method: 'GET', body: undefined },
+      { url: 'http://localhost:3001/api/repair/person-merge', method: 'POST', body: JSON.stringify({ targetPersonId: 'person-target', sourcePersonId: 'person-source', roleConflictByOpportunity: { 'opp-1': 'keep_target' } }) },
     ]);
+    expect((fetchMock.mock.calls[5][1] as RequestInit).headers).toMatchObject({ 'Idempotency-Key': 'person-merge-key' });
   });
 });

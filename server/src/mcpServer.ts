@@ -16,6 +16,7 @@ import { ACCOUNT_PROFILE_FIELDS, ActionSchema, type CommandContext } from '@jian
 import { prisma } from './prisma.js';
 import { applyAction } from './mutate.js';
 import { scoreFromState, ITEM_LABEL, ITEM_MAX, type ItemKey } from './g64111.js';
+import { activePersonWhere } from './activePerson.js';
 import { createFieldProposal } from './proposals.js';
 import { enqueueEnrichJob, enqueueSuggestJob, enqueueProfileJob } from './jobs.js';
 import { resolveScopedRelSuggestions } from './suggestionScope.js';
@@ -435,7 +436,7 @@ async function listAccounts(tenantId: string) {
   const accounts = await prisma.account.findMany({
     where: { tenantId },
     orderBy: { createdAt: 'asc' },
-    include: { _count: { select: { persons: true, opportunities: true } } },
+    include: { _count: { select: { persons: { where: activePersonWhere }, opportunities: true } } },
   });
   return {
     accounts: accounts.map((a) => ({
@@ -456,7 +457,7 @@ async function getAccountDetail(tenantId: string, accountId: string) {
   const account = await prisma.account.findFirst({
     where: { id: accountId, tenantId },
     include: {
-      persons: true,
+      persons: { where: activePersonWhere },
       edges: true,
       opportunities: { include: { roles: true } },
     },
@@ -518,7 +519,7 @@ async function getWinTendency(tenantId: string, opportunityId: string) {
       roles: true,
       bis: true,
       ucvs: true,
-      account: { include: { persons: true } },
+      account: { include: { persons: { where: activePersonWhere } } },
     },
   });
   if (!opp) throw new Error('商机不存在或不属于当前工作区');
@@ -647,7 +648,7 @@ async function proposePerson(tenantId: string, userId: string, args: Record<stri
   }
 
   // 提示：是否已有同名正式干系人（由人审决定合并，AI 不替判）
-  const existingPerson = await prisma.person.findFirst({ where: { tenantId, accountId, name } });
+  const existingPerson = await prisma.person.findFirst({ where: { tenantId, accountId, name, ...activePersonWhere } });
 
   const id = 'ps_' + randomUUID().slice(0, 12);
   await prisma.personSuggestion.create({
@@ -689,7 +690,7 @@ async function proposeRelationship(tenantId: string, _userId: string, args: Reco
   // 校验两端点存在且属于该商机的 Account（person → Person 表；suggestion → PersonSuggestion 表）
   const checkEndpoint = async (e: { kind: string; id: string }, role: string) => {
     if (e.kind === 'person') {
-      const p = await prisma.person.findFirst({ where: { id: e.id, tenantId, accountId: opp.accountId } });
+      const p = await prisma.person.findFirst({ where: { id: e.id, tenantId, accountId: opp.accountId, ...activePersonWhere } });
       if (!p) throw new Error(`${role}端点（正式干系人 ${e.id}）不存在或不属于该商机客户`);
     } else {
       const s = await prisma.personSuggestion.findFirst({ where: { id: e.id, tenantId, accountId: opp.accountId } });
@@ -1164,8 +1165,8 @@ async function resolveOppFromArgs(tenantId: string, args: Record<string, unknown
 
 /** 在某客户下按 id 或 name 找正式干系人（非候选）。 */
 async function findPersonInAccount(tenantId: string, accountId: string, personId: string, personName: string) {
-  if (personId) return prisma.person.findFirst({ where: { id: personId, tenantId, accountId } });
-  if (personName) return prisma.person.findFirst({ where: { tenantId, accountId, name: personName } });
+  if (personId) return prisma.person.findFirst({ where: { id: personId, tenantId, accountId, ...activePersonWhere } });
+  if (personName) return prisma.person.findFirst({ where: { tenantId, accountId, name: personName, ...activePersonWhere } });
   return null;
 }
 
@@ -1179,7 +1180,7 @@ async function setOpportunityRoles(ctx: CommandContext, args: Record<string, unk
   const opp = await resolveOppFromArgs(tenantId, args);
   const rolesIn = Array.isArray(args.roles) ? (args.roles as any[]) : [];
   if (!rolesIn.length) throw new Error('缺少 roles 数组');
-  const persons = await prisma.person.findMany({ where: { tenantId, accountId: opp.accountId } });
+  const persons = await prisma.person.findMany({ where: { tenantId, accountId: opp.accountId, ...activePersonWhere } });
   const byId = new Map(persons.map((p) => [p.id, p]));
   const byName = new Map(persons.map((p) => [p.name, p]));
   const applied: any[] = [];

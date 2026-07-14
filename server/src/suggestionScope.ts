@@ -1,5 +1,6 @@
 import type { RelSuggestion } from '@prisma/client';
 import type { DbClient } from './mutation/scopeGuards.js';
+import { activePersonWhere } from './activePerson.js';
 
 const endpointKey = (kind: 'person' | 'suggestion', id: string) => `${kind}:${id}`;
 
@@ -36,7 +37,7 @@ export async function resolveScopedRelSuggestions(
       select: { id: true, accountId: true },
     }),
     db.person.findMany({
-      where: { tenantId, id: { in: [...formalIds] } },
+      where: { tenantId, id: { in: [...formalIds] }, ...activePersonWhere },
       select: { id: true, accountId: true, name: true },
     }),
     db.personSuggestion.findMany({

@@ -8,6 +8,7 @@ import { ActionSchema, ActorRoleSchema, type CommandContext } from '@jianghu/dom
 import { prisma } from './prisma.js';
 import { denyViewer } from './scope.js';
 import { applyAction, runPostCommitEffect, type DbClient, type PostCommitEffect } from './mutate.js';
+import { activePersonWhere } from './activePerson.js';
 
 /** 建字段更新提案（去重：同 实体+字段 已有 pending 则覆盖最新值，避免堆叠重复打扰）。供 voice/MCP 等机器写源调用。 */
 export async function createFieldProposal(tenantId: string, p: {
@@ -54,7 +55,7 @@ async function proposalCurrentValue(
     return row ? (row as unknown as Record<string, unknown>)[cp.field] : undefined;
   }
   if (cp.entityKind === 'person') {
-    const row = await db.person.findFirst({ where: { id: cp.entityId, tenantId, accountId: cp.accountId } });
+    const row = await db.person.findFirst({ where: { id: cp.entityId, tenantId, accountId: cp.accountId, ...activePersonWhere } });
     return row ? (row as unknown as Record<string, unknown>)[cp.field] : undefined;
   }
   if (cp.entityKind === 'personLog' && cp.field === 'append') return '';
