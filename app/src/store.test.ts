@@ -2,7 +2,7 @@
 // ① injectBaseVersion 在 dispatch 前正确取出实体当前 version 作 baseVersion；
 // ② reducer 对 UPDATE_PERSON/OPP/EDGE 乐观自增 version，保持本地与服务端步调一致。
 import { describe, it, expect } from 'vitest';
-import { applyActionsSequentially, computeInverse, reducer, injectBaseVersion, type Action, type StoreState } from './store';
+import { alignVersionAfterRetry, applyActionsSequentially, computeInverse, reducer, injectBaseVersion, invalidateHistory, transitionHistory, type Action, type StoreState } from './store';
 import type { Account } from './types';
 
 function baseState(): StoreState {
@@ -77,6 +77,30 @@ describe('乐观锁 · reducer 乐观自增 version', () => {
     delete (st.accounts[0].persons[0] as { version?: number }).version;
     const s = reducer(st, { type: 'UPDATE_PERSON', accId: 'acc1', personId: 'p1', patch: {} });
     expect(s.accounts[0].persons[0].version).toBe(1);
+  });
+});
+
+describe('乐观锁 · retry 版本对齐', () => {
+  it('保留本地草稿并将 Person 对齐到重试后版本', () => {
+    const optimistic = reducer(baseState(), { type: 'UPDATE_PERSON', accId: 'acc1', personId: 'p1', patch: { name: '我的值' } });
+    const aligned = alignVersionAfterRetry(optimistic, {
+      type: 'UPDATE_PERSON', accId: 'acc1', personId: 'p1', patch: { name: '我的值' }, baseVersion: 8,
+    }, 5);
+    expect(aligned.accounts[0].persons[0]).toMatchObject({ name: '我的值', version: 9 });
+  });
+
+  it('对齐 Opportunity 和 Edge 版本时不覆盖其他本地字段', () => {
+    const state = baseState();
+    state.accounts[0].opportunities[0].name = '本地商机';
+    state.accounts[0].baseEdges[0].label = '本地关系';
+    const opp = alignVersionAfterRetry(state, {
+      type: 'UPDATE_OPP', accId: 'acc1', oppId: 'opp1', patch: { name: '本地商机' }, baseVersion: 12,
+    }, 4);
+    const edge = alignVersionAfterRetry(opp, {
+      type: 'UPDATE_EDGE', accId: 'acc1', oppId: 'opp1', edgeId: 'e1', patch: { label: '本地关系' }, baseVersion: 14,
+    }, 10);
+    expect(edge.accounts[0].opportunities[0]).toMatchObject({ name: '本地商机', version: 13 });
+    expect(edge.accounts[0].baseEdges[0]).toMatchObject({ label: '本地关系', version: 15 });
   });
 });
 
@@ -249,7 +273,7 @@ describe('DELETE_PLAN_ACTION reverse references and undo', () => {
           destination: Array<{ redo: Action[]; undo: Action[] }>,
           direction: 'undo' | 'redo',
           applyBatch: (actions: readonly Action[]) => Promise<void>,
-          refresh: () => Promise<void>,
+          refresh: (failedActions: readonly Action[]) => Promise<void>,
         ) => Promise<string>;
       }).transitionHistory;
       expect(transition).toBeTypeOf('function');
@@ -267,6 +291,7 @@ describe('DELETE_PLAN_ACTION reverse references and undo', () => {
       const redoStack: typeof undoStack = [];
       const calls: string[] = [];
       let refreshes = 0;
+      let recoveredActions: readonly Action[] = [];
 
       const result = await transition(
         undoStack,
@@ -276,13 +301,14 @@ describe('DELETE_PLAN_ACTION reverse references and undo', () => {
           calls.push(candidate.type);
           if (candidate.type === failureType) throw new Error('synthetic persistence failure');
         }),
-        async () => { refreshes += 1; },
+        async (failedActions) => { refreshes += 1; recoveredActions = failedActions; },
       );
 
       expect(result).toBe('failed');
       expect(undoStack).toEqual([item]);
       expect(redoStack).toEqual([]);
       expect(refreshes).toBe(1);
+      expect(recoveredActions).toEqual(item.undo);
       expect(calls).toEqual(failureType === 'ADD_PLAN_ACTION'
         ? ['ADD_PLAN_ACTION']
         : ['ADD_PLAN_ACTION', 'UPDATE_STRATEGY_CARD']);
@@ -417,5 +443,33 @@ describe('DELETE_PLAN_ACTION reverse references and undo', () => {
     await expect(pending).resolves.toBe('failed');
     expect(redoStack).toEqual([]);
     expect(undoStack).toEqual([]);
+  });
+
+  it('does not restore a partial batch history item when authoritative refresh also fails', async () => {
+    const item = { redo: [action], undo: [{ type: 'DELETE_PERSON', accId: 'acc1', personId: 'partial' }] satisfies Action[] };
+    const source = [item];
+    const destination: typeof source = [];
+    let revision = 0;
+    const claimedRevision = revision;
+    const result = await transitionHistory(
+      source,
+      destination,
+      'undo',
+      async () => { throw new Error('batch failed'); },
+      async () => { revision += 1; throw new Error('refresh failed'); },
+      { canRestoreToSource: () => revision === claimedRevision },
+    );
+    expect(result).toBe('failed');
+    expect(source).toEqual([]);
+    expect(destination).toEqual([]);
+  });
+
+  it('invalidates stale undo and redo entries after choosing the cloud value', () => {
+    const stale = { redo: [action], undo: [{ type: 'DELETE_PERSON', accId: 'acc1', personId: 'stale' }] satisfies Action[] };
+    const undo = [stale];
+    const redo = [stale];
+    invalidateHistory(undo, redo);
+    expect(undo).toEqual([]);
+    expect(redo).toEqual([]);
   });
 });

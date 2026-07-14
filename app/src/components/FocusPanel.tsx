@@ -11,6 +11,7 @@ import { ReadonlyProfile } from './ReadonlyProfile';
 import { AdvisorPanel } from './AdvisorPanel';
 import type { ScoreBreakdown } from '../lib/g64111';
 import { api } from '../api';
+import type { MutationCoordinator } from '../lib/sync/mutationCoordinator';
 
 type Tab = 'profile' | 'dynamic' | 'advisor';
 type DynItem = { date: string; title?: string; body: string; source: string; sensitive?: boolean; pending?: boolean };
@@ -18,7 +19,7 @@ type DynItem = { date: string; title?: string; body: string; source: string; sen
 type StanceDetail = { id: string; pS: number; pN: number; pO: number; n_eff: number };
 
 export function FocusPanel({
-  accId, oppId, account, opp, breakdown, person, oppRole, bis, ucvs, visitNotes, tab, onTabChange, dispatch, onRefresh, onClose, readonly = false,
+  accId, oppId, account, opp, breakdown, person, oppRole, bis, ucvs, visitNotes, tab, onTabChange, dispatch, draftDispatch, flushDraft, coordinator, onRefresh, onViewCloud, onClose, readonly = false,
 }: {
   accId: string; oppId: string;
   account: Account; opp: Opportunity; breakdown: ScoreBreakdown;
@@ -26,7 +27,11 @@ export function FocusPanel({
   visitNotes: VisitNote[];
   tab: Tab; onTabChange: (t: Tab) => void;
   dispatch: Dispatch<Action>;
+  draftDispatch?: Dispatch<Action>;
+  flushDraft?: (action: Action) => void | Promise<void>;
+  coordinator?: MutationCoordinator;
   onRefresh: () => void; // 参谋改图后刷新整树
+  onViewCloud?: () => void | Promise<void>;
   onClose: () => void;
   readonly?: boolean; // viewer 只读投影：档案纯呈现、参谋 tab 不渲染（契约 v1.0 §二-1）
 }) {
@@ -105,8 +110,9 @@ export function FocusPanel({
             )}
             {readonly
               ? <ReadonlyProfile person={person} oppRole={oppRole} bis={bis} ucvs={ucvs} />
-              : <DetailDrawer embedded accId={accId} oppId={oppId} person={person}
-                  oppRole={oppRole} bis={bis} ucvs={ucvs} dispatch={dispatch} onClose={onClose} />}
+              : <DetailDrawer key={person.id} embedded accId={accId} oppId={oppId} person={person}
+                  oppRole={oppRole} bis={bis} ucvs={ucvs} dispatch={dispatch} draftDispatch={draftDispatch}
+                  flushDraft={flushDraft} coordinator={coordinator} onViewCloud={onViewCloud ?? onRefresh} onClose={onClose} />}
           </>
         )}
 

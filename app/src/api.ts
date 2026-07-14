@@ -6,9 +6,56 @@ import { toWireAction } from './wireAction';
 // 开发未设(undefined) → 回退本地后端。用 ?? 而非 ||，确保空串不被误回退。
 const BASE = (import.meta as any).env?.VITE_API_URL ?? 'http://localhost:3001';
 const TOKEN_KEY = 'jianghu.token';
-let token: string | null = localStorage.getItem(TOKEN_KEY);
+const storage = typeof localStorage !== 'undefined' && typeof localStorage.getItem === 'function' ? localStorage : null;
+let token: string | null = storage?.getItem(TOKEN_KEY) ?? null;
+const unauthorizedListeners = new Set<(error: ApiError) => void>();
 
-async function req(path: string, opts: RequestInit = {}): Promise<any> {
+export interface ApiErrorInit {
+  status?: number;
+  code?: string;
+  message: string;
+  retryable?: boolean;
+  cause?: unknown;
+}
+
+export class ApiError extends Error {
+  readonly status?: number;
+  readonly code: string;
+  readonly retryable: boolean;
+  readonly cause?: unknown;
+
+  constructor({ status, code = 'request_failed', message, retryable = false, cause }: ApiErrorInit) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+    this.retryable = retryable;
+    this.cause = cause;
+  }
+}
+
+export function toApiError(cause: unknown): ApiError {
+  if (cause instanceof ApiError) return cause;
+  if (cause instanceof Error && cause.name === 'AbortError') {
+    return new ApiError({ code: 'aborted', message: '请求已取消', retryable: true, cause });
+  }
+  return new ApiError({ code: 'network_error', message: cause instanceof Error ? cause.message : '网络请求失败', retryable: true, cause });
+}
+
+export function isConfirmedAuthFailure(cause: unknown): boolean {
+  const status = cause instanceof ApiError
+    ? cause.status
+    : typeof cause === 'object' && cause !== null && 'status' in cause
+      ? Number((cause as { status?: unknown }).status)
+      : undefined;
+  return status === 401 || status === 403;
+}
+
+export async function request<T = unknown>(
+  path: string,
+  opts: RequestInit = {},
+  requestOptions: { timeoutMs?: number } = {},
+): Promise<T> {
   const headers: Record<string, string> = {
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...((opts.headers as Record<string, string>) || {}),
@@ -16,11 +63,40 @@ async function req(path: string, opts: RequestInit = {}): Promise<any> {
   // 仅在确有请求体时声明 JSON content-type，否则 Fastify 会因空 body 报 400。
   // FormData（文件上传）例外：让浏览器自动带 multipart boundary，不能手动设。
   if (opts.body && !(opts.body instanceof FormData)) headers['Content-Type'] = 'application/json';
-  const res = await fetch(BASE + path, { ...opts, headers });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(data.error || `请求失败（HTTP ${res.status}）`), { status: res.status });
-  return data;
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeoutMs = requestOptions.timeoutMs ?? 30_000;
+  const timeout = timeoutMs > 0
+    ? setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs)
+    : undefined;
+  const onExternalAbort = () => controller.abort();
+  if (opts.signal?.aborted) controller.abort();
+  else opts.signal?.addEventListener('abort', onExternalAbort, { once: true });
+  try {
+    const res = await fetch(BASE + path, { ...opts, headers, signal: controller.signal });
+    const data = await res.json().catch(() => ({})) as { error?: string; message?: string; code?: string };
+    if (!res.ok) {
+      const error = new ApiError({
+        status: res.status,
+        code: data.code ?? (res.status === 409 ? 'version_conflict' : `http_${res.status}`),
+        message: data.error || data.message || `请求失败（HTTP ${res.status}）`,
+        retryable: res.status === 408 || res.status === 429 || res.status >= 500,
+      });
+      if (res.status === 401) unauthorizedListeners.forEach((listener) => listener(error));
+      throw error;
+    }
+    return data as T;
+  } catch (cause) {
+    if (cause instanceof ApiError) throw cause;
+    if (timedOut) throw new ApiError({ code: 'timeout', message: '请求超时，请重试', retryable: true, cause });
+    throw toApiError(cause);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    opts.signal?.removeEventListener('abort', onExternalAbort);
+  }
 }
+
+const req = request;
 
 export interface AuthResult {
   token: string;
@@ -55,8 +131,12 @@ export const api = {
   getToken: () => token,
   setToken(t: string | null) {
     token = t;
-    if (t) localStorage.setItem(TOKEN_KEY, t);
-    else localStorage.removeItem(TOKEN_KEY);
+    if (t) storage?.setItem(TOKEN_KEY, t);
+    else storage?.removeItem(TOKEN_KEY);
+  },
+  onUnauthorized(listener: (error: ApiError) => void) {
+    unauthorizedListeners.add(listener);
+    return () => { unauthorizedListeners.delete(listener); };
   },
   register: (b: Credentials & { name: string; tenantName: string }): Promise<AuthResult> =>
     req('/api/auth/register', { method: 'POST', body: JSON.stringify(b) }),
@@ -67,7 +147,7 @@ export const api = {
   mutate: (action: Action): Promise<{ ok: true }> => req('/api/mutate', { method: 'POST', body: JSON.stringify({ action: toWireAction(action) }) }),
   // 录入情报：口述文字 → 后端 LLM 抽取 + 双轨落库 → 回执
   voiceExtract: (b: { text: string; accountId?: string; opportunityId?: string; priorText?: string; sourceVisitId?: string }): Promise<any> =>
-    req('/api/voice/extract', { method: 'POST', body: JSON.stringify(b) }),
+    req('/api/voice/extract', { method: 'POST', body: JSON.stringify(b) }, { timeoutMs: 120_000 }),
   // 新建商机：空白(personIds 空) 或 从 fromOppId 克隆选定人物(+角色，可选关系线)
   cloneOpportunity: (b: { accountId: string; name: string; fromOppId?: string; personIds: string[]; withEdges: boolean }): Promise<{ opportunityId: string; memberCount: number }> =>
     req('/api/opportunity/clone', { method: 'POST', body: JSON.stringify(b) }),
@@ -169,7 +249,7 @@ export const api = {
   recordingTranscripts: (accountId?: string): Promise<{ transcripts: Transcript[] }> =>
     req('/api/recording/transcripts' + (accountId ? '?accountId=' + encodeURIComponent(accountId) : '')),
   recordingExtract: (transcriptId: string): Promise<any> =>
-    req('/api/recording/extract', { method: 'POST', body: JSON.stringify({ transcriptId }) }),
+    req('/api/recording/extract', { method: 'POST', body: JSON.stringify({ transcriptId }) }, { timeoutMs: 120_000 }),
   recordingRedact: (transcriptId: string): Promise<{ ok: true; id: string; status: string }> =>
     req('/api/recording/redact', { method: 'POST', body: JSON.stringify({ transcriptId }) }),
   recordingDelete: (transcriptId: string): Promise<{ ok: true; id: string }> =>
@@ -177,7 +257,7 @@ export const api = {
   // 录音源（P2-b）：文件上传 / per-user 凭据状态 / 飞书 App 配置(租户级) / 飞书 OAuth / 得到大脑 token
   recordingUpload: (file: File, accountId?: string): Promise<{ source: string; saved: number; skipped: number }> => {
     const fd = new FormData(); fd.append('file', file);
-    return req('/api/recording/upload' + (accountId ? '?accountId=' + encodeURIComponent(accountId) : ''), { method: 'POST', body: fd });
+    return req('/api/recording/upload' + (accountId ? '?accountId=' + encodeURIComponent(accountId) : ''), { method: 'POST', body: fd }, { timeoutMs: 300_000 });
   },
   recordingCredentials: (): Promise<{ credentials: { source: string; status: string; expiresAt: string | null; updatedAt: string }[] }> =>
     req('/api/recording/credentials'),

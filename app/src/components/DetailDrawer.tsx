@@ -1,16 +1,18 @@
-import { useState, type Dispatch } from 'react';
+import { useEffect, useRef, useState, type Dispatch } from 'react';
 import type { Person, OppRole, BurningIssue, UCV, Role, Sentiment, ProcurementType, ProcurementStatus } from '../types';
 import {
   ROLE_LABEL, SENTIMENT_LABEL, FAMILY_7Q, CONFIDENCES, BI_CATEGORIES,
   PROCUREMENT_TYPE_LABEL, PROCUREMENT_STATUS_LABEL,
 } from '../types';
 import { type Action, uid } from '../store';
+import type { MutationCoordinator } from '../lib/sync/mutationCoordinator';
+import { SyncStatus } from './SyncStatus';
 
 const ROLES: Role[] = ['A', 'D', 'U', 'R', 'C'];
 const SENTIMENTS: Sentiment[] = ['star', 'plus', 'neutral', 'unknown', 'minus', 'x'];
 
 export function DetailDrawer({
-  accId, oppId, person, oppRole, bis, ucvs, dispatch, onClose, embedded,
+  accId, oppId, person, oppRole, bis, ucvs, dispatch, draftDispatch, flushDraft, coordinator, onViewCloud, onClose, embedded,
 }: {
   accId: string; oppId: string;
   person: Person;
@@ -18,15 +20,71 @@ export function DetailDrawer({
   bis: BurningIssue[];
   ucvs: UCV[];
   dispatch: Dispatch<Action>;
+  draftDispatch?: Dispatch<Action>;
+  flushDraft?: (action: Action) => void | Promise<void>;
+  coordinator?: MutationCoordinator;
+  onViewCloud?: () => void | Promise<void>;
   onClose: () => void;
   embedded?: boolean; // 焦点面板「档案」tab 复用：去掉 .drawer 外壳与标题栏，只渲染 body
 }) {
   const [logText, setLogText] = useState('');
   const [logSensitive, setLogSensitive] = useState(false);
-
-  const patchPerson = (patch: Partial<Person>) => dispatch({ type: 'UPDATE_PERSON', accId, personId: person.id, patch });
-  const patchForm = (fp: Partial<Person['form']>) => patchPerson({ form: { ...person.form, ...fp } });
+  const [personDraft, setPersonDraft] = useState(person);
+  const [biDrafts, setBiDrafts] = useState<Record<string, string>>(() => Object.fromEntries(bis.map((bi) => [bi.id, bi.description])));
+  const [ucvDrafts, setUcvDrafts] = useState<Record<string, { description: string; competitorCannot: string }>>(
+    () => Object.fromEntries(ucvs.map((u) => [u.id, { description: u.description, competitorCannot: u.competitorCannot }])),
+  );
+  const personDirty = useRef(false);
+  const personIdRef = useRef(person.id);
+  const biDirty = useRef(new Set<string>());
+  const ucvDirty = useRef(new Set<string>());
+  const pendingDraftActions = useRef(new Map<string, Action>());
+  useEffect(() => setPersonDraft((current) => {
+    const switchedPerson = personIdRef.current !== person.id;
+    const draftMatchesCloud = current.name === person.name
+      && current.title === person.title
+      && JSON.stringify(current.form) === JSON.stringify(person.form);
+    if (switchedPerson || !personDirty.current || draftMatchesCloud) {
+      personIdRef.current = person.id;
+      personDirty.current = false;
+      return person;
+    }
+    return current;
+  }), [person]);
+  useEffect(() => setBiDrafts((current) => Object.fromEntries(bis.map((bi) => {
+    if (!biDirty.current.has(bi.id) || current[bi.id] === bi.description) {
+      biDirty.current.delete(bi.id);
+      return [bi.id, bi.description];
+    }
+    return [bi.id, current[bi.id]];
+  }))), [bis]);
+  useEffect(() => setUcvDrafts((current) => Object.fromEntries(ucvs.map((u) => {
+    const cloud = { description: u.description, competitorCannot: u.competitorCannot };
+    if (!ucvDirty.current.has(u.id) || JSON.stringify(current[u.id]) === JSON.stringify(cloud)) {
+      ucvDirty.current.delete(u.id);
+      return [u.id, cloud];
+    }
+    return [u.id, current[u.id]];
+  }))), [ucvs]);
+  const personFlushAction: Action = { type: 'UPDATE_PERSON', accId, personId: person.id, patch: {} };
+  useEffect(() => () => {
+    for (const action of pendingDraftActions.current.values()) void flushDraft?.(action);
+    pendingDraftActions.current.clear();
+  }, [accId, oppId, person.id, flushDraft]);
+  const patchPerson = (patch: Partial<Person>) => {
+    personDirty.current = true;
+    pendingDraftActions.current.set(`person:${person.id}`, personFlushAction);
+    setPersonDraft((current) => ({ ...current, ...patch, form: patch.form ? { ...current.form, ...patch.form } : current.form }));
+    (draftDispatch ?? dispatch)({ type: 'UPDATE_PERSON', accId, personId: person.id, patch });
+  };
+  const patchForm = (fp: Partial<Person['form']>) => patchPerson({ form: { ...personDraft.form, ...fp } });
   const setRole = (patch: Partial<OppRole>) => dispatch({ type: 'SET_ROLE', accId, oppId, personId: person.id, patch });
+  const viewCloud = async () => {
+    await onViewCloud?.();
+    personDirty.current = false;
+    biDirty.current.clear();
+    ucvDirty.current.clear();
+  };
 
   const addBI = () => dispatch({ type: 'ADD_BI', accId, oppId, bi: { id: uid('bi'), personId: person.id, description: '', category: '其他', isPrivate: true, confidence: '推理' } });
   const addUCV = () => bis[0] && dispatch({ type: 'ADD_UCV', accId, oppId, ucv: { id: uid('ucv'), targetBiId: bis[0].id, description: '', competitorCannot: '', status: '建议' } });
@@ -39,11 +97,14 @@ export function DetailDrawer({
 
   const body = (
       <div className="drawer-body">
+        {coordinator && <SyncStatus coordinator={coordinator} entityKey={`person:${person.id}`} onViewCloud={viewCloud} />}
         <div className="person-hd">
-          <div className="avatar">{person.name[0] || '?'}</div>
+          <div className="avatar">{personDraft.name[0] || '?'}</div>
           <div style={{ flex: 1 }}>
-            <input className="inline-name" value={person.name} onChange={(e) => patchPerson({ name: e.target.value })} placeholder="姓名" />
-            <input className="inline-title" value={person.title} onChange={(e) => patchPerson({ title: e.target.value })} placeholder="职务" />
+            <input className="inline-name" value={personDraft.name} onChange={(e) => patchPerson({ name: e.target.value })}
+              onBlur={() => { void flushDraft?.(personFlushAction); }} placeholder="姓名" />
+            <input className="inline-title" value={personDraft.title} onChange={(e) => patchPerson({ title: e.target.value })}
+              onBlur={() => { void flushDraft?.(personFlushAction); }} placeholder="职务" />
           </div>
         </div>
 
@@ -99,17 +160,18 @@ export function DetailDrawer({
             )}
 
             <div className="section-t">FORM 情报</div>
-            <label className="fld sm"><span>F 家庭</span><textarea rows={1} value={person.form.family} onChange={(e) => patchForm({ family: e.target.value })} /></label>
-            <label className="fld sm"><span>O 事业</span><textarea rows={1} value={person.form.occupation} onChange={(e) => patchForm({ occupation: e.target.value })} /></label>
-            <label className="fld sm"><span>R 休闲</span><textarea rows={1} value={person.form.recreation} onChange={(e) => patchForm({ recreation: e.target.value })} /></label>
-            <label className="fld sm"><span>M 金钱与梦想</span><textarea rows={1} value={person.form.moneyMotivation} onChange={(e) => patchForm({ moneyMotivation: e.target.value })} /></label>
+            <label className="fld sm"><span>F 家庭</span><textarea rows={1} value={personDraft.form.family} onChange={(e) => patchForm({ family: e.target.value })} onBlur={() => { void flushDraft?.(personFlushAction); }} /></label>
+            <label className="fld sm"><span>O 事业</span><textarea rows={1} value={personDraft.form.occupation} onChange={(e) => patchForm({ occupation: e.target.value })} onBlur={() => { void flushDraft?.(personFlushAction); }} /></label>
+            <label className="fld sm"><span>R 休闲</span><textarea rows={1} value={personDraft.form.recreation} onChange={(e) => patchForm({ recreation: e.target.value })} onBlur={() => { void flushDraft?.(personFlushAction); }} /></label>
+            <label className="fld sm"><span>M 金钱与梦想</span><textarea rows={1} value={personDraft.form.moneyMotivation} onChange={(e) => patchForm({ moneyMotivation: e.target.value })} onBlur={() => { void flushDraft?.(personFlushAction); }} /></label>
 
             <div className="section-t">家庭 7 问（C1 计分项）</div>
             <div className="fam7">
               {FAMILY_7Q.map((q) => (
                 <label key={q} className="fam7-edit">
                   <b>{q}</b>
-                  <input value={person.form.family7[q] ?? ''} onChange={(e) => patchForm({ family7: { ...person.form.family7, [q]: e.target.value } })} placeholder="待补" />
+                  <input value={personDraft.form.family7[q] ?? ''} onChange={(e) => patchForm({ family7: { ...personDraft.form.family7, [q]: e.target.value } })}
+                    onBlur={() => { void flushDraft?.(personFlushAction); }} placeholder="待补" />
                 </label>
               ))}
             </div>
@@ -129,8 +191,9 @@ export function DetailDrawer({
                     <button className="row-del" onClick={() => dispatch({ type: 'DELETE_BI', accId, oppId, biId: bi.id })}>🗑</button>
                   </div>
                 </div>
-                <textarea rows={2} className="bare-area" placeholder="D 的私人/紧急痛点…" value={bi.description}
-                  onChange={(e) => dispatch({ type: 'UPDATE_BI', accId, oppId, biId: bi.id, patch: { description: e.target.value } })} />
+                <textarea rows={2} className="bare-area" placeholder="D 的私人/紧急痛点…" value={biDrafts[bi.id] ?? bi.description}
+                  onChange={(e) => { biDirty.current.add(bi.id); pendingDraftActions.current.set(`bi:${bi.id}`, { type: 'UPDATE_BI', accId, oppId, biId: bi.id, patch: {} }); setBiDrafts((current) => ({ ...current, [bi.id]: e.target.value })); (draftDispatch ?? dispatch)({ type: 'UPDATE_BI', accId, oppId, biId: bi.id, patch: { description: e.target.value } }); }}
+                  onBlur={() => { void flushDraft?.({ type: 'UPDATE_BI', accId, oppId, biId: bi.id, patch: {} }); }} />
               </div>
             ))}
 
@@ -144,10 +207,12 @@ export function DetailDrawer({
                   </select>
                   <button className="row-del" onClick={() => dispatch({ type: 'DELETE_UCV', accId, oppId, ucvId: u.id })}>🗑</button>
                 </div>
-                <textarea rows={2} className="bare-area" placeholder="对手给不了的、能解决 BI 的独特价值…" value={u.description}
-                  onChange={(e) => dispatch({ type: 'UPDATE_UCV', accId, oppId, ucvId: u.id, patch: { description: e.target.value } })} />
-                <input className="bare-input" placeholder="对手给不了的点" value={u.competitorCannot}
-                  onChange={(e) => dispatch({ type: 'UPDATE_UCV', accId, oppId, ucvId: u.id, patch: { competitorCannot: e.target.value } })} />
+                <textarea rows={2} className="bare-area" placeholder="对手给不了的、能解决 BI 的独特价值…" value={ucvDrafts[u.id]?.description ?? u.description}
+                  onChange={(e) => { ucvDirty.current.add(u.id); pendingDraftActions.current.set(`ucv:${u.id}`, { type: 'UPDATE_UCV', accId, oppId, ucvId: u.id, patch: {} }); setUcvDrafts((current) => ({ ...current, [u.id]: { description: e.target.value, competitorCannot: current[u.id]?.competitorCannot ?? u.competitorCannot } })); (draftDispatch ?? dispatch)({ type: 'UPDATE_UCV', accId, oppId, ucvId: u.id, patch: { description: e.target.value } }); }}
+                  onBlur={() => { void flushDraft?.({ type: 'UPDATE_UCV', accId, oppId, ucvId: u.id, patch: {} }); }} />
+                <input className="bare-input" placeholder="对手给不了的点" value={ucvDrafts[u.id]?.competitorCannot ?? u.competitorCannot}
+                  onChange={(e) => { ucvDirty.current.add(u.id); pendingDraftActions.current.set(`ucv:${u.id}`, { type: 'UPDATE_UCV', accId, oppId, ucvId: u.id, patch: {} }); setUcvDrafts((current) => ({ ...current, [u.id]: { description: current[u.id]?.description ?? u.description, competitorCannot: e.target.value } })); (draftDispatch ?? dispatch)({ type: 'UPDATE_UCV', accId, oppId, ucvId: u.id, patch: { competitorCannot: e.target.value } }); }}
+                  onBlur={() => { void flushDraft?.({ type: 'UPDATE_UCV', accId, oppId, ucvId: u.id, patch: {} }); }} />
               </div>
             ))}
 

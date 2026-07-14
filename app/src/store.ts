@@ -406,6 +406,11 @@ export interface HistoryItem {
 
 export interface HistoryTransitionLock { busy: boolean }
 
+export function invalidateHistory(undo: HistoryItem[], redo: HistoryItem[]): void {
+  undo.length = 0;
+  redo.length = 0;
+}
+
 export interface HistoryTransitionOptions {
   limit?: number;
   lock?: HistoryTransitionLock;
@@ -421,7 +426,7 @@ export async function transitionHistory(
   destination: HistoryItem[],
   direction: 'undo' | 'redo',
   applyBatch: (actions: readonly Action[]) => Promise<void>,
-  refresh?: () => Promise<void>,
+  refresh?: (failedActions: readonly Action[]) => Promise<void>,
   options: HistoryTransitionOptions = {},
 ): Promise<HistoryTransitionResult> {
   const { lock, canMoveToDestination, canRestoreToSource } = options;
@@ -435,10 +440,10 @@ export async function transitionHistory(
     try {
       await applyBatch(item[direction]);
     } catch {
+      try { await refresh?.(item[direction]); } catch { /* 网络仍不可用时保留失败提示与源栈项 */ }
       if (!canRestoreToSource || canRestoreToSource()) {
         source.splice(Math.min(sourceIndex, source.length), 0, item);
       }
-      try { await refresh?.(); } catch { /* 网络仍不可用时保留失败提示与源栈项 */ }
       return 'failed';
     }
     if (!canMoveToDestination || canMoveToDestination()) {
@@ -473,5 +478,34 @@ export function injectBaseVersion(s: StoreState, action: Action): Action {
     }
     default:
       return action;
+  }
+}
+
+/**
+ * A retried optimistic-lock mutation can be rebased onto a newer cloud version.
+ * Preserve local draft fields while aligning only the entity version produced
+ * by the successful retry.
+ */
+export function alignVersionAfterRetry(s: StoreState, action: Action, baseVersionDelta: number): StoreState {
+  if (baseVersionDelta === 0) return s;
+  switch (action.type) {
+    case 'UPDATE_PERSON':
+      return mapAcc(s, action.accId, (account) => ({
+        ...account,
+        persons: account.persons.map((person) => person.id === action.personId ? { ...person, version: (person.version ?? 0) + baseVersionDelta } : person),
+      }));
+    case 'UPDATE_OPP':
+      return mapOpp(s, action.accId, action.oppId, (opportunity) => ({ ...opportunity, version: (opportunity.version ?? 0) + baseVersionDelta }));
+    case 'UPDATE_EDGE':
+      return mapAcc(s, action.accId, (account) => ({
+        ...account,
+        baseEdges: account.baseEdges.map((edge) => edge.id === action.edgeId ? { ...edge, version: (edge.version ?? 0) + baseVersionDelta } : edge),
+        opportunities: account.opportunities.map((opportunity) => ({
+          ...opportunity,
+          edges: opportunity.edges.map((edge) => edge.id === action.edgeId ? { ...edge, version: (edge.version ?? 0) + baseVersionDelta } : edge),
+        })),
+      }));
+    default:
+      return s;
   }
 }

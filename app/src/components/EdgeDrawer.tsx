@@ -1,5 +1,8 @@
+import { useEffect, useRef, useState } from 'react';
 import type { Edge, Person, Layer, EdgeShape } from '../types';
 import { LAYER_LABEL, LAYER_HINT } from '../types';
+import type { MutationCoordinator } from '../lib/sync/mutationCoordinator';
+import { SyncStatus } from './SyncStatus';
 
 const COLORS = [
   { v: '#2563eb', n: '蓝·汇报' }, { v: '#16a34a', n: '绿·同盟' }, { v: '#ef4444', n: '红·冲突' },
@@ -11,17 +14,35 @@ const SHAPES: { v: EdgeShape; n: string }[] = [
 
 /** 双击连线打开的右侧边栏：编辑这条关系的各种属性（viewer=只读呈现，编辑控件不渲染） */
 export function EdgeDrawer({
-  edge, persons, onUpdate, onDelete, onClose, readonly = false,
+  edge, persons, onUpdate, onDraftUpdate, onDraftFlush, onDelete, onClose, readonly = false, coordinator, onViewCloud,
 }: {
   edge: Edge;
   persons: Person[];
   onUpdate: (patch: Partial<Edge>) => void;
+  onDraftUpdate?: (patch: Partial<Edge>) => void;
+  onDraftFlush?: () => void | Promise<void>;
   onDelete: () => void;
   onClose: () => void;
   readonly?: boolean;
+  coordinator?: MutationCoordinator;
+  onViewCloud?: () => void | Promise<void>;
 }) {
   const nameOf = (id: string) => persons.find((p) => p.id === id)?.name ?? '?';
   const shape: EdgeShape = edge.shape ?? (edge.layer === 'L1' ? 'orthogonal' : 'straight');
+  const [labelDraft, setLabelDraft] = useState(edge.label);
+  const dirty = useRef(false);
+  const edgeId = useRef(edge.id);
+  const pendingFlush = useRef<(() => void | Promise<void>) | undefined>(undefined);
+  useEffect(() => setLabelDraft((current) => {
+    if (edgeId.current !== edge.id || !dirty.current || current === edge.label) {
+      edgeId.current = edge.id;
+      dirty.current = false;
+      return edge.label;
+    }
+    return current;
+  }), [edge.id, edge.label]);
+  useEffect(() => () => { void pendingFlush.current?.(); pendingFlush.current = undefined; }, [edge.id]);
+  const viewCloud = async () => { await onViewCloud?.(); dirty.current = false; };
 
   if (readonly) {
     return (
@@ -47,6 +68,7 @@ export function EdgeDrawer({
         <div className="t">关系编辑</div>
         <button className="x-btn" onClick={onClose}>✕</button>
       </div>
+      {coordinator && <SyncStatus coordinator={coordinator} entityKey={`edge:${edge.id}`} onViewCloud={viewCloud} />}
       <div className="drawer-body">
         <div className="rel-head-txt">{nameOf(edge.source)} <b>{edge.directed ? '→' : '—'}</b> {nameOf(edge.target)}</div>
 
@@ -71,7 +93,8 @@ export function EdgeDrawer({
         <div className="hint-text">{LAYER_HINT[edge.layer]}</div>
 
         <div className="fld sm"><span>关系标签</span>
-          <input value={edge.label} onChange={(e) => onUpdate({ label: e.target.value })} placeholder="如：直属/技术否决/校友/利益输送" />
+          <input value={labelDraft} onChange={(e) => { dirty.current = true; pendingFlush.current = onDraftFlush; setLabelDraft(e.target.value); (onDraftUpdate ?? onUpdate)({ label: e.target.value }); }}
+            onBlur={() => { void pendingFlush.current?.(); pendingFlush.current = undefined; }} placeholder="如：直属/技术否决/校友/利益输送" />
         </div>
 
         <div className="fld-row">

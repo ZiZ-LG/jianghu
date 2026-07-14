@@ -12,6 +12,7 @@
   --accent: #2563eb;     /* 强调色（蓝）*/
   --accent-soft: #eff6ff;/* 强调浅底 */
   --accent-ink: #1e40af; /* 强调文字 */
+  --danger: #b91c1c;     /* 错误/冲突 */
   --canvas-dot: rgba(15,23,42,.045); /* 画布网点 */
   --node-fill: #ffffff;  /* 画布节点底 */
   --node-stroke: #cbd5e1;/* 画布节点描边 */
@@ -33,6 +34,7 @@ html[data-theme="dark"] {
   --accent: #3b82f6;
   --accent-soft: #18283f;
   --accent-ink: #93c5fd;
+  --danger: #f87171;
   --canvas-dot: rgba(148,163,184,.10);
   --node-fill: #1b2538;
   --node-stroke: #3a4a66;
@@ -1722,3 +1724,35 @@ html[data-theme="dark"] {
 .ro-sub { font-size: 12px; color: var(--faint, #94a3b8); margin-top: 3px; }
 .mdv-field-ro { display: inline-block; min-width: 40px; font-size: inherit; color: var(--ink); white-space: pre-wrap; word-break: break-word; }
 .mdv-area-ro { display: block; }
+.sync-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 7px 10px;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12px;
+}
+.sync-status.failed,
+.sync-status.conflict { color: var(--danger); }
+.sync-status-error { flex-basis: 100%; color: inherit; }
+.session-recovery {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(92vw, 720px);
+  padding: 12px 14px;
+  color: var(--danger);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}

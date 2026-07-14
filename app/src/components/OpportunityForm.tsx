@@ -1,26 +1,54 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Opportunity, PipelineStage, EngageStage, ChangeMode, OpportunityStatus, CompetitiveSituation } from '../types';
 import { PIPELINE_STAGES, ENGAGE_STAGES, CHANGE_MODES, C3_ITEMS, C5_ITEMS } from '../types';
 import { Modal } from './Modal';
+import type { MutationCoordinator } from '../lib/sync/mutationCoordinator';
+import { SyncStatus } from './SyncStatus';
 
 export function OpportunityForm({
-  opp, onSave, onClose,
+  opp, onSave, onClose, coordinator, onViewCloud,
 }: {
   opp: Opportunity;
-  onSave: (patch: Partial<Opportunity>) => void;
+  onSave: (patch: Partial<Opportunity>) => void | Promise<void>;
   onClose: () => void;
+  coordinator?: MutationCoordinator;
+  onViewCloud?: () => void | Promise<void>;
 }) {
   const [f, setF] = useState<Opportunity>(opp);
-  const set = (patch: Partial<Opportunity>) => setF((p) => ({ ...p, ...patch }));
+  const [saving, setSaving] = useState(false);
+  const dirty = useRef(false);
+  const oppId = useRef(opp.id);
+  useEffect(() => setF((current) => {
+    if (oppId.current !== opp.id || !dirty.current || JSON.stringify(current) === JSON.stringify(opp)) {
+      oppId.current = opp.id;
+      dirty.current = false;
+      return opp;
+    }
+    return current;
+  }), [opp]);
+  const set = (patch: Partial<Opportunity>) => { dirty.current = true; setF((p) => ({ ...p, ...patch })); };
+  const viewCloud = async () => { await onViewCloud?.(); dirty.current = false; };
   const toggleC3 = (k: string) => set({ c3Items: { ...f.c3Items, [k]: !f.c3Items[k] } });
   const toggleC5 = (k: string) => set({ c5Items: { ...f.c5Items, [k]: !f.c5Items[k] } });
+  const save = async () => {
+    setSaving(true);
+    try {
+      await onSave(f);
+      onClose();
+    } catch {
+      // coordinator 保留失败 action；409 时表单和本地草稿保持打开。
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <Modal title="编辑商机" width={560} onClose={onClose}
       footer={<>
         <button className="btn ghost" onClick={onClose}>取消</button>
-        <button className="btn primary" onClick={() => { onSave(f); onClose(); }}>保存</button>
+        <button className="btn primary" disabled={saving} onClick={() => void save()}>{saving ? '保存中…' : '保存'}</button>
       </>}>
+      {coordinator && <SyncStatus coordinator={coordinator} entityKey={`opportunity:${opp.id}`} onViewCloud={viewCloud} />}
       <label className="fld"><span>商机名称</span>
         <input value={f.name} onChange={(e) => set({ name: e.target.value })} /></label>
 

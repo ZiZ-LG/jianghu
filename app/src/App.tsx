@@ -2,10 +2,10 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'r
 import type { Layer, Role, CustomerType, Edge, Person } from './types';
 import { LAYER_LABEL } from './types';
 import {
-  createActionPersistenceQueue, reducer, computeInverse, injectBaseVersion, transitionHistory,
+  reducer, computeInverse, injectBaseVersion, alignVersionAfterRetry, invalidateHistory, transitionHistory,
   newAccount, newPerson, newEvidence, uid, type Action, type HistoryItem, type HistoryTransitionLock,
 } from './store';
-import { api, type AuthResult, type Suggestion, type InboxRel, type InboxPerson, type InboxProposal, type InboxReminder, type InboxEvidence, type PatrolInfo } from './api';
+import { api, isConfirmedAuthFailure, type AuthResult, type Suggestion, type InboxRel, type InboxPerson, type InboxProposal, type InboxReminder, type InboxEvidence, type PatrolInfo } from './api';
 import { scoreFromDomain } from './lib/g64111';
 import { usePersistentState, useTheme, useViewport } from './ui';
 import { Auth } from './components/Auth';
@@ -38,6 +38,9 @@ import { OverflowMenu } from './components/OverflowMenu';
 import { OrientationGate } from './components/OrientationGate';
 import { MomentFlow } from './components/MomentFlow';
 import { Footer } from './components/Footer';
+import { SyncStatus } from './components/SyncStatus';
+import { createCommitScheduler } from './lib/sync/commitScheduler';
+import { createMutationCoordinator, createMutationExecutionGate, entityKeyForAction } from './lib/sync/mutationCoordinator';
 
 export default function App() {
   const [state, dispatch] = useReducer(reducer, { accounts: [] });
@@ -45,6 +48,17 @@ export default function App() {
   const [booting, setBooting] = useState(true);
   const [syncErr, setSyncErr] = useState('');
   const [undoHint, setUndoHint] = useState('');
+  const [cloudDiscardRevisions, setCloudDiscardRevisions] = useState<Record<string, number>>({});
+  const coordinatorResetRef = useRef<() => void>(() => undefined);
+  const schedulerResetRef = useRef<() => void>(() => undefined);
+  const schedulerCancelRef = useRef<(entityKey: string) => void>(() => undefined);
+  const stateRef = useRef(state);
+  const undoStack = useRef<HistoryItem[]>([]);
+  const redoStack = useRef<HistoryItem[]>([]);
+  const historyLock = useRef<HistoryTransitionLock>({ busy: false });
+  const historyRevision = useRef(0);
+  const historyRecovery = useRef<'refreshed' | 'refresh-failed'>('refreshed');
+  stateRef.current = state;
   // viewer 角色 = 只读投影（契约 v1.0 §二-1）：编辑/录入控件一律不渲染（非置灰）；视图交互全保留
   const readonly = auth?.user.role === 'viewer';
 
@@ -124,37 +138,48 @@ export default function App() {
     }
   }, []);
 
+  const restoreSession = useCallback(async () => {
+    if (!api.getToken()) { setBooting(false); return; }
+    setBooting(true);
+    setSyncErr('');
+    try {
+      const me = await api.me();
+      const st = await api.getState();
+      stateRef.current = st;
+      dispatch({ type: 'HYDRATE', accounts: st.accounts });
+      setAuth({ token: api.getToken()!, user: me.user, tenant: me.tenant });
+      applyRoute(st.accounts);
+      if (me.user.role !== 'viewer') api.inboxList().then(setInbox).catch(() => { /* 收件箱角标，失败忽略 */ });
+    } catch (error) {
+      if (isConfirmedAuthFailure(error)) {
+        api.setToken(null);
+        setAuth(null);
+      } else {
+        setSyncErr('暂时无法连接云端，已保留登录状态，请稍后重试。');
+      }
+    } finally { setBooting(false); }
+  }, [applyRoute]);
   // 启动：有 token 则恢复会话 + 拉取云端数据
-  useEffect(() => {
-    (async () => {
-      if (!api.getToken()) { setBooting(false); return; }
-      try {
-        const me = await api.me();
-        const st = await api.getState();
-        dispatch({ type: 'HYDRATE', accounts: st.accounts });
-        setAuth({ token: api.getToken()!, user: me.user, tenant: me.tenant });
-        applyRoute(st.accounts);
-        if (me.user.role !== 'viewer') api.inboxList().then(setInbox).catch(() => { /* 收件箱角标，失败忽略 */ });
-      } catch { api.setToken(null); } finally { setBooting(false); }
-    })();
-  }, []);
+  useEffect(() => { void restoreSession(); }, [restoreSession]);
 
   const onAuthed = async (res: AuthResult) => {
     const st = await api.getState();
+    stateRef.current = st;
     dispatch({ type: 'HYDRATE', accounts: st.accounts });
     setAuth(res);
     applyRoute(st.accounts);
     if (res.user.role !== 'viewer') api.inboxList().then(setInbox).catch(() => { /* 收件箱角标 */ });
   };
-  const logout = () => {
+  const logout = useCallback(() => {
+    coordinatorResetRef.current();
+    schedulerResetRef.current();
     api.setToken(null); setAuth(null); setAccId(null); setSelectedId(null);
+    stateRef.current = { accounts: [] };
     dispatch({ type: 'HYDRATE', accounts: [] });
+    setSyncErr('');
     window.history.replaceState(null, '', '/'); // 登出清 URL，避免登录页残留目标路径造成误解（重新登录会重新解析）
-  };
-
-  // 最新 state 镜像：供 computeInverse 取旧值 + 乐观锁注入 baseVersion
-  const stateRef = useRef(state);
-  stateRef.current = state;
+  }, []);
+  useEffect(() => api.onUnauthorized(() => logout()), [logout]);
 
   // 选中客户/商机 ↔ URL 双向同步：导航 pushState 入历史；popstate（前进/后退）解析回状态并规范化 URL
   useEffect(() => {
@@ -183,37 +208,78 @@ export default function App() {
     stateRef.current = st;
     dispatch({ type: 'HYDRATE', accounts: st.accounts });
   }, []);
-  // 持久化单项：UI 处理错误后仍 rethrow，让 undo/redo 批次能停止并保持历史栈不误迁移。
-  const persistAction = useCallback(async (action: Action) => {
-    try { await api.mutate(action); setSyncErr(''); }
-    catch (e: any) {
-      if (e?.status === 409) {
-        setSyncErr('⚠️ 该数据刚被其他成员修改，已为你刷新到最新——你这步未保存，请在最新内容上重做。');
-      } else {
-        setSyncErr('云端保存失败：' + e.message);
-      }
-      throw e;
+  const discardToCloudState = useCallback(async (entityKey?: string) => {
+    await refreshState();
+    invalidateHistory(undoStack.current, redoStack.current);
+    historyRevision.current += 1;
+    if (entityKey) {
+      setCloudDiscardRevisions((revisions) => ({
+        ...revisions,
+        [entityKey]: (revisions[entityKey] ?? 0) + 1,
+      }));
     }
-  }, []);
-  // inject + 乐观 dispatch 也在批次抵达队头时发生：前批失败刷新完成后，后批才会更新 UI/落库。
+  }, [refreshState]);
+  const coordinator = useMemo(() => createMutationCoordinator(async (action) => {
+    await api.mutate(action);
+    setSyncErr('');
+  }, {
+    // 用户选“保留我的值”时只读云端版本号重建 action，不 HYDRATE 覆盖屏幕上的本地草稿。
+    prepareConflictRetry: async (action) => {
+      const cloud = await api.getState();
+      return injectBaseVersion(cloud, action);
+    },
+    onRetrySuccess: (_originalAction, action, delta) => {
+      const aligned = alignVersionAfterRetry(stateRef.current, action, delta);
+      if (aligned !== stateRef.current) {
+        stateRef.current = aligned;
+        dispatch({ type: 'HYDRATE', accounts: aligned.accounts });
+      }
+    },
+    onCancelDraft: (entityKey) => schedulerCancelRef.current(entityKey),
+  }), []);
+  coordinatorResetRef.current = coordinator.reset;
+  // 入队前从最新本地镜像注入乐观锁版本；coordinator 保证同实体严格串行。
   const applyQueuedAction = useCallback(async (action: Action) => {
     const injected = injectBaseVersion(stateRef.current, action);
     stateRef.current = reducer(stateRef.current, injected);
     dispatch(injected);
-    await persistAction(injected);
-  }, [persistAction]);
-  const enqueuePersistenceBatch = useMemo(
-    () => createActionPersistenceQueue(applyQueuedAction, refreshState),
-    [applyQueuedAction, refreshState],
+    await coordinator.enqueue(entityKeyForAction(injected), injected);
+  }, [coordinator]);
+  const executionGate = useMemo(() => createMutationExecutionGate(applyQueuedAction), [applyQueuedAction]);
+  const commitScheduler = useMemo(
+    () => createCommitScheduler((_key, action) => executionGate.run(action)),
+    [executionGate],
   );
-  // 网络写入以“整批”为队列原子，normal/undo/redo 共用同一 happens-before 链。
-  const applyBatch = enqueuePersistenceBatch;
-  const undoStack = useRef<HistoryItem[]>([]);
-  const redoStack = useRef<HistoryItem[]>([]);
-  const historyLock = useRef<HistoryTransitionLock>({ busy: false });
-  const historyRevision = useRef(0);
-  // 用户操作：先算逆 action 入撤销栈（前后各 10 次），再落地
-  const act = useCallback((action: Action) => {
+  schedulerResetRef.current = commitScheduler.reset;
+  schedulerCancelRef.current = commitScheduler.cancel;
+  const scheduleDraft = useCallback((action: Action, delayMs = 400) => {
+    commitScheduler.schedule(entityKeyForAction(action), action, { delayMs });
+  }, [commitScheduler]);
+  const flushDraft = useCallback((action: Action) => commitScheduler.flush(entityKeyForAction(action)), [commitScheduler]);
+  useEffect(() => () => { void commitScheduler.flushAll().catch(() => undefined); }, [commitScheduler]);
+  const recoverHistoryFailure = useCallback(async (failedActions: readonly Action[]) => {
+    // 批次可能已部分落库；丢弃两端历史，避免下一次撤销重复已成功的子动作。
+    invalidateHistory(undoStack.current, redoStack.current);
+    historyRevision.current += 1;
+    const keys = new Set(failedActions.map(entityKeyForAction));
+    for (const key of keys) commitScheduler.cancel(key);
+    try {
+      await refreshState();
+      historyRecovery.current = 'refreshed';
+    } catch (error) {
+      historyRecovery.current = 'refresh-failed';
+      // 保留 coordinator 的 failed/conflict Action，网络恢复后仍可重试或查看云端。
+      throw error;
+    }
+    for (const key of keys) coordinator.dismiss(key);
+  }, [commitScheduler, coordinator, refreshState]);
+  // undo/redo 的失败恢复属于同一批次 barrier；恢复结束前，后续普通写入不会开始。
+  const applyBatch = useCallback(
+    (actions: readonly Action[]) => executionGate.runBatch(actions, () => recoverHistoryFailure(actions)),
+    [executionGate, recoverHistoryFailure],
+  );
+  // 普通操作真正越过批次 barrier 时，才基于最新 state 计算逆动作并记录历史。
+  const actAsync = useCallback((action: Action): Promise<void> => executionGate.run(action, () => {
     const inv = computeInverse(action, stateRef.current);
     if (inv && inv.length) {
       undoStack.current.push({ redo: [action], undo: inv });
@@ -221,17 +287,25 @@ export default function App() {
     }
     redoStack.current.length = 0;
     historyRevision.current += 1;
-    void applyBatch([action]).catch(() => { /* persistAction 已展示错误；队列已挂 rejection handler */ });
-  }, [applyBatch]);
+  }), [executionGate]);
+  const act = useCallback((action: Action) => {
+    void actAsync(action).catch(() => { /* SyncStatus 保留失败 action 和重试入口 */ });
+  }, [actAsync]);
   const undo = useCallback(async () => {
     const revision = historyRevision.current;
     const result = await transitionHistory(undoStack.current, redoStack.current, 'undo', applyBatch, undefined, {
       lock: historyLock.current,
       canMoveToDestination: () => historyRevision.current === revision,
+      canRestoreToSource: () => historyRevision.current === revision,
     });
     if (result === 'empty') { setUndoHint('⊘ 没有可撤销的操作'); return; }
     if (result === 'busy') { setUndoHint('⏳ 撤销/重做正在同步，请稍候'); return; }
-    if (result === 'failed') { setUndoHint('⚠️ 撤销未完成，已尝试刷新云端真实状态'); return; }
+    if (result === 'failed') {
+      setUndoHint(historyRecovery.current === 'refreshed'
+        ? '⚠️ 撤销未完成，已刷新云端并清空旧历史以防重复执行'
+        : '⚠️ 撤销未完成且云端刷新失败，失败操作已保留，可稍后重试');
+      return;
+    }
     setUndoHint(`↶ 已撤销 · 还可撤销 ${undoStack.current.length} 步`);
   }, [applyBatch]);
   const redo = useCallback(async () => {
@@ -242,7 +316,12 @@ export default function App() {
     });
     if (result === 'empty') { setUndoHint('⊘ 没有可重做的操作'); return; }
     if (result === 'busy') { setUndoHint('⏳ 撤销/重做正在同步，请稍候'); return; }
-    if (result === 'failed') { setUndoHint('⚠️ 重做未完成，已尝试刷新云端真实状态'); return; }
+    if (result === 'failed') {
+      setUndoHint(historyRecovery.current === 'refreshed'
+        ? '⚠️ 重做未完成，已刷新云端并清空旧历史以防重复执行'
+        : '⚠️ 重做未完成且云端刷新失败，失败操作已保留，可稍后重试');
+      return;
+    }
     setUndoHint(`↷ 已重做 · 还可重做 ${redoStack.current.length} 步`);
   }, [applyBatch]);
   // 全局快捷键：Ctrl/Cmd+Z 撤销 · Ctrl/Cmd+Shift+Z 或 Ctrl+Y 重做（输入框内不拦截）
@@ -455,7 +534,14 @@ export default function App() {
   };
 
   if (booting) return <div className="boot">加载中…</div>;
-  if (!auth) return <Auth onAuthed={onAuthed} />;
+  if (!auth) return <>
+    <Auth onAuthed={onAuthed} />
+    {syncErr && api.getToken() && <div className="session-recovery" role="alert">
+      <span>{syncErr}</span>
+      <button className="btn sm" onClick={() => void restoreSession()}>重试连接</button>
+      <button className="btn ghost sm" onClick={logout}>退出登录</button>
+    </div>}
+  </>;
 
   // ── Hub / 手机竖屏时刻流（场景 A：竖屏默认=时刻流，横屏提示只在进作战室后）──
   const phonePortrait = isMobile && !isLandscape;
@@ -494,6 +580,7 @@ export default function App() {
         />
         )}
         {phonePortrait && forceDesktop && <button className="mf-exit-desktop" onClick={() => setForceDesktop(false)}>📱 回手机版</button>}
+        <SyncStatus coordinator={coordinator} onViewCloud={discardToCloudState} />
         {syncErr && <div className="sync-toast">{syncErr}</div>}
         {inboxOpen && !readonly && <InboxPanel rels={inbox.rels} persons={inbox.persons} proposals={inbox.proposals} accounts={state.accounts} onAccept={inboxAcceptRel} onReject={inboxRejectRel} onAcceptPerson={inboxAcceptPerson} onRejectPerson={inboxRejectPerson} onAcceptProposal={inboxAcceptProposal} onRejectProposal={inboxRejectProposal} reminders={inbox.reminders} onDismissReminder={inboxDismissReminder} evidences={inbox.evidences} onReviewEvidence={inboxReviewEvidence} onClose={() => setInboxOpen(false)} />}
         {intelOpen && !readonly && (
@@ -607,7 +694,7 @@ export default function App() {
               selectedId={selectedId} selectedEdgeId={selectedEdgeId}
               onSelectPerson={selectPerson} onSelectEdge={selectEdge}
               onOpenPerson={openPerson} onOpenEdge={openEdge} onOpenAction={readonly ? undefined : setOpenActionId} onActionFeedback={readonly ? undefined : actionFeedback}
-              onMovePerson={(id, x, y) => act({ type: 'MOVE_PERSON', accId: account.id, personId: id, x, y })}
+              onMovePerson={(id, x, y) => scheduleDraft({ type: 'MOVE_PERSON', accId: account.id, personId: id, x, y }, 80)}
               onAddPersonAt={addPersonAt} onAddConnectedNode={addConnectedNode} onConnect={connectNodes}
               onUpdateEdge={updateEdge} onDeleteEdge={deleteEdgeById}
               onUpdatePerson={updatePerson} onDeletePerson={deletePerson}
@@ -630,17 +717,21 @@ export default function App() {
 
       {/* 第9刀：右栏面板归位 .app-upper——absolute 于上半区，底边天然止于坞顶，不再遮挡坞内卡片 */}
       {selectedPerson && opp && breakdown && (
-        <FocusPanel accId={account.id} oppId={opp.id} account={account} opp={opp} breakdown={breakdown}
+        <FocusPanel key={`focus:${selectedPerson.id}:${cloudDiscardRevisions[`person:${selectedPerson.id}`] ?? 0}`} accId={account.id} oppId={opp.id} account={account} opp={opp} breakdown={breakdown}
           readonly={readonly}
           person={selectedPerson} oppRole={selectedRole} bis={selectedBis} ucvs={selectedUcvs}
           visitNotes={account.visitNotes ?? []} tab={focusTab} onTabChange={setFocusTab} dispatch={act}
-          onRefresh={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); } catch { /* 静默：改图已成功，仅刷新失败 */ } }}
+          draftDispatch={scheduleDraft} flushDraft={flushDraft} coordinator={coordinator}
+          onRefresh={refreshState} onViewCloud={discardToCloudState}
           onClose={() => setSelectedId(null)} />
       )}
-      {drawerEdge && (
-        <EdgeDrawer edge={drawerEdge} persons={account.persons}
+      {drawerEdge && opp && (
+        <EdgeDrawer key={`edge:${drawerEdge.id}:${cloudDiscardRevisions[`edge:${drawerEdge.id}`] ?? 0}`} edge={drawerEdge} persons={account.persons}
           readonly={readonly}
           onUpdate={(patch) => updateEdge(drawerEdge.id, patch)}
+          onDraftUpdate={(patch) => scheduleDraft({ type: 'UPDATE_EDGE', accId: account.id, oppId: opp.id, edgeId: drawerEdge.id, patch })}
+          onDraftFlush={() => flushDraft({ type: 'UPDATE_EDGE', accId: account.id, oppId: opp.id, edgeId: drawerEdge.id, patch: {} })}
+          coordinator={coordinator} onViewCloud={discardToCloudState}
           onDelete={() => { deleteEdgeById(drawerEdge.id); setDrawerEdgeId(null); setSelectedEdgeId(null); }}
           onClose={() => setDrawerEdgeId(null)} />
       )}
@@ -657,8 +748,9 @@ export default function App() {
       )}
 
       {oppFormOpen && opp && !readonly && (
-        <OpportunityForm opp={opp} onClose={() => setOppFormOpen(false)}
-          onSave={(patch) => act({ type: 'UPDATE_OPP', accId: account.id, oppId: opp.id, patch })} />
+        <OpportunityForm key={`opportunity:${opp.id}:${cloudDiscardRevisions[`opportunity:${opp.id}`] ?? 0}`} opp={opp} onClose={() => setOppFormOpen(false)}
+          coordinator={coordinator} onViewCloud={discardToCloudState}
+          onSave={(patch) => actAsync({ type: 'UPDATE_OPP', accId: account.id, oppId: opp.id, patch })} />
       )}
       {newOppOpen && !readonly && (
         <NewOpportunityDialog account={account} onClose={() => setNewOppOpen(false)} onCreate={createOpportunity} />
@@ -678,6 +770,7 @@ export default function App() {
         <GapCards account={account} opp={opp} dispatch={act} onClose={() => setGapsOpen(false)} />
       )}
       {inboxOpen && !readonly && <InboxPanel rels={inbox.rels} persons={inbox.persons} proposals={inbox.proposals} accounts={state.accounts} onAccept={inboxAcceptRel} onReject={inboxRejectRel} onAcceptPerson={inboxAcceptPerson} onRejectPerson={inboxRejectPerson} onAcceptProposal={inboxAcceptProposal} onRejectProposal={inboxRejectProposal} reminders={inbox.reminders} onDismissReminder={inboxDismissReminder} evidences={inbox.evidences} onReviewEvidence={inboxReviewEvidence} onClose={() => setInboxOpen(false)} />}
+      <SyncStatus coordinator={coordinator} onViewCloud={discardToCloudState} />
       {syncErr && <div className="sync-toast">{syncErr}</div>}
       {undoHint && <div className="undo-toast">{undoHint}</div>}
     </div>
