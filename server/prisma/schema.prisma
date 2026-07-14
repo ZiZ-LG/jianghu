@@ -613,17 +613,25 @@ model ChangeProposal {
 model EnrichJob {
   id            String   @id
   tenantId      String
+  dedupeKey     String?                             // 存量行可空；新任务写租户内业务幂等键
+  enqueueToken  String?                             // 存量行可空；新任务用于准确返回并发 enqueued
   type          String   @default("enrich_account") // enrich_account | suggest_relations | pull_recording | account_profile(P9)
   accountId     String                              // 目标客户（两类任务都带，便于隔离/分组）
   opportunityId String?                             // suggest_relations 的目标商机
   mode          String   @default("auto")           // auto | web（enrich 数据源）
   status        String   @default("pending")        // pending | processing | done | failed
-  attempts      Int      @default(0)
+  attemptCount  Int      @default(0) @map("attempts")
+  leaseOwner    String   @default("")
+  leaseToken    String   @default("")             // 每次 claim 唯一 fencing token，阻止旧 worker 晚到提交
+  leaseUntil    DateTime?
+  nextAttemptAt DateTime @default(now())
   result        String   @default("")               // JSON 摘要：{source, created, deduped, note} 或 {added}
   error         String   @default("")
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  @@unique([tenantId, dedupeKey])
+  @@index([status, nextAttemptAt])
   @@index([tenantId, status])
   @@index([accountId])
 }

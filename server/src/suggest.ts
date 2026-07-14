@@ -16,6 +16,7 @@ import {
 } from './mutation/scopeGuards.js';
 import { resolveScopedRelSuggestions } from './suggestionScope.js';
 import { createPdeSnapshot } from './pde/routes.js';
+import type { DbClient } from './mutation/scopeGuards.js';
 
 const pairKey = (a: string, b: string) => [a, b].sort().join('|');
 const LAYER_COLOR: Record<string, string> = { L1: '#2563eb', L2: '#9333ea', L3: '#16a34a', L4: '#ef4444' };
@@ -303,7 +304,11 @@ async function loadGraph(tenantId: string, oppId: string) {
  * 路由 /api/suggest/generate 与后台 suggest_relations job 共用此核心。返回 { added, total } 或 null（商机不存在）。
  * 效率护栏：非竞品干系人 < 2 时无可推断，直接返回（避免空图也烧 LLM token）。
  */
-export async function generateRelSuggestions(tenantId: string, opportunityId: string): Promise<{ added: number; total: number } | null> {
+export async function generateRelSuggestions(
+  tenantId: string,
+  opportunityId: string,
+  commitWrite?: <T>(write: (db: DbClient) => Promise<T>) => Promise<T>,
+): Promise<{ added: number; total: number } | null> {
   const g = await loadGraph(tenantId, opportunityId);
   if (!g) return null;
   const nameOf = (id: string) => g.persons.find((x) => x.id === id)?.name || id;
@@ -319,7 +324,9 @@ export async function generateRelSuggestions(tenantId: string, opportunityId: st
     if (cfg) cands = cands.concat(cfg.provider === 'mock' || !cfg.baseUrl || !cfg.model ? mockLlmCandidates(g.persons, connected) : await llmCandidates(cfg, g.persons, g.edges, nameOf));
     const fresh = cands.filter((c) => { const k = pairKey(c.source, c.target); if (c.source === c.target || seen.has(k)) return false; seen.add(k); return true; });
     if (fresh.length) {
-      await prisma.relSuggestion.createMany({ data: fresh.map((c) => ({ id: 'rs_' + randomUUID().slice(0, 12), tenantId, opportunityId, sourcePersonId: c.source, targetPersonId: c.target, layer: c.layer, label: c.label, confidence: c.confidence, origin: c.origin, evidence: c.evidence })) });
+      const write = (db: DbClient) => db.relSuggestion.createMany({ data: fresh.map((c) => ({ id: 'rs_' + randomUUID().slice(0, 12), tenantId, opportunityId, sourcePersonId: c.source, targetPersonId: c.target, layer: c.layer, label: c.label, confidence: c.confidence, origin: c.origin, evidence: c.evidence })) });
+      if (commitWrite) await commitWrite(write);
+      else await write(prisma);
     }
     added = fresh.length;
   }

@@ -79,15 +79,16 @@ async function saveTranscripts(
   source: RecordingSource,
   items: PulledTranscript[],
   mount: { accountId?: string; opportunityId?: string },
+  db: DbClient = prisma,
 ): Promise<{ saved: number; skipped: number }> {
   let saved = 0, skipped = 0;
   for (const it of items) {
     const ref = it.externalRef?.trim() || '';
     if (ref) {
-      const dup = await prisma.transcript.findFirst({ where: { tenantId, source, externalRef: ref } });
+      const dup = await db.transcript.findFirst({ where: { tenantId, source, externalRef: ref } });
       if (dup) { skipped++; continue; } // 同一条录音不重复拉取（幂等）
     }
-    await prisma.transcript.create({
+    await db.transcript.create({
       data: {
         id: 'tr_' + randomUUID().slice(0, 12),
         tenantId,
@@ -114,9 +115,11 @@ export async function pullAndSave(
   userId: string,
   source: RecordingSource,
   mount: { accountId?: string; opportunityId?: string },
+  commitWrite?: <T>(write: (db: DbClient) => Promise<T>) => Promise<T>,
 ): Promise<{ source: RecordingSource; saved: number; skipped: number; note: string }> {
   const { items, note } = await pullFromSource(tenantId, userId, source);
-  const stat = await saveTranscripts(tenantId, userId, source, items, mount);
+  const write = (db: DbClient) => saveTranscripts(tenantId, userId, source, items, mount, db);
+  const stat = commitWrite ? await commitWrite(write) : await write(prisma);
   return { source, ...stat, note };
 }
 

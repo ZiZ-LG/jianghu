@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
+import { Prisma, type EnrichJob, type PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
 import { denyViewer } from './scope.js';
@@ -17,23 +18,103 @@ const MAX_PENDING_PERSON_SUGG = 200; // 与 mcpServer 一致：候选容量上�
 const MAX_ACTIVE_JOBS_PER_TENANT = 50; // 单租户在途任务上限，防滥用
 const POLL_MS = 5000;
 const ENRICH_CONFIDENCE: Record<string, number> = { qcc: 0.6, ai: 0.45, web: 0.45 };
+export const JOB_LEASE_MS = 5 * 60 * 1000;
+export const JOB_MAX_ATTEMPTS = 3;
+const JOB_RETRY_BASE_MS = 1000;
+const JOB_CLAIM_SCAN_LIMIT = 5;
+const JOB_HEARTBEAT_MS = Math.floor(JOB_LEASE_MS / 3);
+
+export type ClaimedJob = EnrichJob;
+
+interface JobSeed {
+  tenantId: string;
+  dedupeKey: string;
+  type: string;
+  accountId: string;
+  opportunityId?: string | null;
+  mode?: string;
+}
+
+type JobWrite<T> = (db: DbClient) => Promise<T>;
+
+async function enqueueUniqueJob(seed: JobSeed, db: DbClient): Promise<{ id: string; enqueued: boolean }> {
+  const existing = await db.enrichJob.findUnique({ where: { tenantId_dedupeKey: {
+    tenantId: seed.tenantId, dedupeKey: seed.dedupeKey,
+  } } });
+  const enqueueToken = randomUUID();
+  if (existing) {
+    if (existing.status === 'pending' || existing.status === 'processing') return { id: existing.id, enqueued: false };
+    const activeCount = await db.enrichJob.count({ where: { tenantId: seed.tenantId, status: { in: ['pending', 'processing'] } } });
+    if (activeCount >= MAX_ACTIVE_JOBS_PER_TENANT) throw new Error(`在途自算任务已达上限（${MAX_ACTIVE_JOBS_PER_TENANT}），请稍候`);
+    const requeued = await db.enrichJob.updateMany({ where: {
+      id: existing.id, tenantId: seed.tenantId, status: { in: ['done', 'failed'] },
+    }, data: {
+      type: seed.type, accountId: seed.accountId, opportunityId: seed.opportunityId ?? null,
+      mode: seed.mode ?? 'auto', status: 'pending', attemptCount: 0,
+      leaseOwner: '', leaseToken: '', leaseUntil: null, nextAttemptAt: new Date(), result: '', error: '', enqueueToken,
+    } });
+    return { id: existing.id, enqueued: requeued.count === 1 };
+  }
+
+  // INT-204 上线前的在途行没有 dedupeKey；继续按旧业务锚复用，避免升级瞬间重复入队。
+  const legacyActive = await db.enrichJob.findFirst({ where: {
+    tenantId: seed.tenantId, type: seed.type, dedupeKey: null, status: { in: ['pending', 'processing'] },
+    ...(seed.type === 'suggest_relations'
+      ? { opportunityId: seed.opportunityId }
+      : seed.type === 'pull_recording'
+        ? { mode: seed.mode }
+        : { accountId: seed.accountId }),
+  } });
+  if (legacyActive) return { id: legacyActive.id, enqueued: false };
+
+  const activeCount = await db.enrichJob.count({ where: { tenantId: seed.tenantId, status: { in: ['pending', 'processing'] } } });
+  if (activeCount >= MAX_ACTIVE_JOBS_PER_TENANT) throw new Error(`在途自算任务已达上限（${MAX_ACTIVE_JOBS_PER_TENANT}），请稍候`);
+  const id = 'job_' + randomUUID().slice(0, 12);
+  const row = await db.enrichJob.upsert({
+    where: { tenantId_dedupeKey: { tenantId: seed.tenantId, dedupeKey: seed.dedupeKey } },
+    create: {
+      id, tenantId: seed.tenantId, dedupeKey: seed.dedupeKey, enqueueToken,
+      type: seed.type, accountId: seed.accountId, opportunityId: seed.opportunityId ?? null,
+      mode: seed.mode ?? 'auto', status: 'pending', nextAttemptAt: new Date(),
+    },
+    update: {},
+  });
+  return { id: row.id, enqueued: row.enqueueToken === enqueueToken };
+}
+
+const prismaCode = (error: unknown): string | undefined => (
+  error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : undefined
+);
+
+const retryableQueueTransaction = (error: unknown): boolean => {
+  const code = prismaCode(error);
+  return code === 'P2034' || code === 'P1008' || code === 'P2028'
+    || (error instanceof Error && error.message.toLowerCase().includes('database is locked'));
+};
+
+async function enqueueJob(seed: JobSeed, db: DbClient): Promise<{ id: string; enqueued: boolean }> {
+  const root = db as DbClient & Partial<Pick<PrismaClient, '$transaction'>>;
+  if (typeof root.$transaction !== 'function') return enqueueUniqueJob(seed, db);
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await root.$transaction(
+        (tx) => enqueueUniqueJob(seed, tx),
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5_000, timeout: 10_000 },
+      );
+    } catch (error) {
+      if (!retryableQueueTransaction(error) || attempt === 3) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 15 * attempt));
+    }
+  }
+  throw new Error('job enqueue transaction could not be completed');
+}
 
 /**
  * 入队一个 enrich_account 自算任务。幂等：同客户已有 pending/processing 任务则复用，不重复入队。
  * 返回 { id, enqueued }。失败（超上限）抛错由调用方决定吞或传。
  */
 export async function enqueueEnrichJob(tenantId: string, accountId: string, mode: 'auto' | 'web' = 'auto', db: DbClient = prisma): Promise<{ id: string; enqueued: boolean }> {
-  const active = await db.enrichJob.findFirst({
-    where: { tenantId, accountId, type: 'enrich_account', status: { in: ['pending', 'processing'] } },
-  });
-  if (active) return { id: active.id, enqueued: false };
-
-  const activeCount = await db.enrichJob.count({ where: { tenantId, status: { in: ['pending', 'processing'] } } });
-  if (activeCount >= MAX_ACTIVE_JOBS_PER_TENANT) throw new Error(`在途自算任务已达上限（${MAX_ACTIVE_JOBS_PER_TENANT}），请稍候`);
-
-  const id = 'job_' + randomUUID().slice(0, 12);
-  await db.enrichJob.create({ data: { id, tenantId, type: 'enrich_account', accountId, mode, status: 'pending' } });
-  return { id, enqueued: true };
+  return enqueueJob({ tenantId, dedupeKey: `enrich_account:${accountId}`, type: 'enrich_account', accountId, mode }, db);
 }
 
 /**
@@ -41,17 +122,7 @@ export async function enqueueEnrichJob(tenantId: string, accountId: string, mode
  * 幂等：同客户已有 pending/processing 则复用。
  */
 export async function enqueueProfileJob(tenantId: string, accountId: string, db: DbClient = prisma): Promise<{ id: string; enqueued: boolean }> {
-  const active = await db.enrichJob.findFirst({
-    where: { tenantId, accountId, type: 'account_profile', status: { in: ['pending', 'processing'] } },
-  });
-  if (active) return { id: active.id, enqueued: false };
-
-  const activeCount = await db.enrichJob.count({ where: { tenantId, status: { in: ['pending', 'processing'] } } });
-  if (activeCount >= MAX_ACTIVE_JOBS_PER_TENANT) throw new Error(`在途自算任务已达上限（${MAX_ACTIVE_JOBS_PER_TENANT}），请稍候`);
-
-  const id = 'job_' + randomUUID().slice(0, 12);
-  await db.enrichJob.create({ data: { id, tenantId, type: 'account_profile', accountId, status: 'pending' } });
-  return { id, enqueued: true };
+  return enqueueJob({ tenantId, dedupeKey: `account_profile:${accountId}`, type: 'account_profile', accountId }, db);
 }
 
 /**
@@ -59,61 +130,51 @@ export async function enqueueProfileJob(tenantId: string, accountId: string, db:
  * 幂等：同商机已有 pending/processing 任务则复用。accountId 一并存便于隔离/分组。
  */
 export async function enqueueSuggestJob(tenantId: string, accountId: string, opportunityId: string, db: DbClient = prisma): Promise<{ id: string; enqueued: boolean }> {
-  const active = await db.enrichJob.findFirst({
-    where: { tenantId, opportunityId, type: 'suggest_relations', status: { in: ['pending', 'processing'] } },
-  });
-  if (active) return { id: active.id, enqueued: false };
-
-  const activeCount = await db.enrichJob.count({ where: { tenantId, status: { in: ['pending', 'processing'] } } });
-  if (activeCount >= MAX_ACTIVE_JOBS_PER_TENANT) throw new Error(`在途自算任务已达上限（${MAX_ACTIVE_JOBS_PER_TENANT}），请稍候`);
-
-  const id = 'job_' + randomUUID().slice(0, 12);
-  await db.enrichJob.create({ data: { id, tenantId, type: 'suggest_relations', accountId, opportunityId, status: 'pending' } });
-  return { id, enqueued: true };
+  return enqueueJob({
+    tenantId, dedupeKey: `suggest_relations:${opportunityId}`, type: 'suggest_relations', accountId, opportunityId,
+  }, db);
 }
 
 /**
  * 入队一个 pull_recording 任务（后台从录音源拉转写 → 加密存 Transcript，供"定时/真实源自动拉取"用）。
  * 幂等：同租户+同源已有 pending/processing 则复用（mode 复用存 source）。accountId 可空（全局拉=''）。
  */
-export async function enqueuePullRecordingJob(tenantId: string, source: string, accountId?: string): Promise<{ id: string; enqueued: boolean }> {
-  const active = await prisma.enrichJob.findFirst({
-    where: { tenantId, type: 'pull_recording', mode: source, status: { in: ['pending', 'processing'] } },
-  });
-  if (active) return { id: active.id, enqueued: false };
-
-  const activeCount = await prisma.enrichJob.count({ where: { tenantId, status: { in: ['pending', 'processing'] } } });
-  if (activeCount >= MAX_ACTIVE_JOBS_PER_TENANT) throw new Error(`在途自算任务已达上限（${MAX_ACTIVE_JOBS_PER_TENANT}），请稍候`);
-
-  const id = 'job_' + randomUUID().slice(0, 12);
-  await prisma.enrichJob.create({ data: { id, tenantId, type: 'pull_recording', accountId: accountId || '', mode: source, status: 'pending' } });
-  return { id, enqueued: true };
+export async function enqueuePullRecordingJob(tenantId: string, source: string, accountId?: string, db: DbClient = prisma): Promise<{ id: string; enqueued: boolean }> {
+  return enqueueJob({
+    tenantId, dedupeKey: `pull_recording:${source}`, type: 'pull_recording', accountId: accountId || '', mode: source,
+  }, db);
 }
 
 /** 把发现的关键人写入 PersonSuggestion 候选（带去重 + 容量上限）。返回 {created, deduped, skipped}。 */
-async function writeCandidates(tenantId: string, accountId: string, source: string, persons: { name: string; title: string }[]): Promise<{ created: number; deduped: number; skipped: number }> {
+async function writeCandidates(
+  job: ClaimedJob,
+  source: string,
+  persons: { name: string; title: string }[],
+  note: string,
+): Promise<{ created: number; deduped: number; skipped: number }> {
+  return commitJobSideEffectAndComplete(job, async (db) => {
   const origin = source === 'qcc' ? 'qcc' : 'ai'; // web 本质也是 AI 联网
   const confidence = ENRICH_CONFIDENCE[source] ?? 0.45;
   let created = 0, deduped = 0, skipped = 0;
   for (const p of persons) {
     const name = (p.name || '').trim();
     if (!name) { skipped++; continue; }
-    const pendingCount = await prisma.personSuggestion.count({ where: { tenantId, status: 'pending' } });
+    const pendingCount = await db.personSuggestion.count({ where: { tenantId: job.tenantId, status: 'pending' } });
     if (pendingCount >= MAX_PENDING_PERSON_SUGG) { skipped++; continue; }
     // 去重：同租户+同客户+同名+pending → 更新（取高 confidence、补 title），不新增
-    const dup = await prisma.personSuggestion.findFirst({ where: { tenantId, accountId, name, status: 'pending' } });
+    const dup = await db.personSuggestion.findFirst({ where: { tenantId: job.tenantId, accountId: job.accountId, name, status: 'pending' } });
     if (dup) {
-      await prisma.personSuggestion.update({
+      await db.personSuggestion.update({
         where: { id: dup.id },
         data: { title: (p.title || '').trim() || dup.title, confidence: Math.max(dup.confidence, confidence) },
       });
       deduped++;
       continue;
     }
-    await prisma.personSuggestion.create({
+    await db.personSuggestion.create({
       data: {
         id: 'ps_' + randomUUID().slice(0, 12),
-        tenantId, accountId,
+        tenantId: job.tenantId, accountId: job.accountId,
         name, title: (p.title || '').trim(),
         orgLevel: 3,
         origin,
@@ -125,30 +186,31 @@ async function writeCandidates(tenantId: string, accountId: string, source: stri
     });
     created++;
   }
-  return { created, deduped, skipped };
+  const value = { created, deduped, skipped };
+  return { value, result: JSON.stringify({ source, ...value, note }) };
+  });
 }
 
 /** 执行一个 enrich_account 任务：发现关键人 → 写候选。mock 源（无数据源配置）不写候选，避免占位噪声进收件箱。 */
-async function runEnrichJob(job: { id: string; tenantId: string; accountId: string; mode: string }): Promise<void> {
+async function runEnrichJob(job: ClaimedJob): Promise<void> {
   const acc = await prisma.account.findFirst({ where: { id: job.accountId, tenantId: job.tenantId } });
-  if (!acc) { await finish(job.id, 'failed', '', '目标客户不存在或已删除'); return; }
+  if (!acc) { await finish(job, 'failed', '', '目标客户不存在或已删除'); return; }
 
   const r = await discoverPersons(job.tenantId, acc.name, job.mode === 'web' ? 'web' : 'auto');
   if (r.source === 'mock') {
     // 未配置企查查/AI：没有真实情报可算，跳过写候选（占位角色清单走 M2 骨架预填，不污染收件箱）
-    await finish(job.id, 'done', JSON.stringify({ source: 'mock', created: 0, deduped: 0, note: r.note }), '');
+    await finish(job, 'done', JSON.stringify({ source: 'mock', created: 0, deduped: 0, note: r.note }), '');
     return;
   }
-  const stat = await writeCandidates(job.tenantId, job.accountId, r.source, r.persons);
-  await finish(job.id, 'done', JSON.stringify({ source: r.source, ...stat, note: r.note }), '');
+  await writeCandidates(job, r.source, r.persons, r.note);
 }
 
 /** 执行一个 suggest_relations 任务：图算法 + LLM 推断商机内关系 → RelSuggestion 候选。 */
-async function runSuggestJob(job: { id: string; tenantId: string; opportunityId: string | null }): Promise<void> {
-  if (!job.opportunityId) { await finish(job.id, 'failed', '', '缺少 opportunityId'); return; }
-  const r = await generateRelSuggestions(job.tenantId, job.opportunityId);
-  if (!r) { await finish(job.id, 'failed', '', '目标商机不存在或已删除'); return; }
-  await finish(job.id, 'done', JSON.stringify({ added: r.added, total: r.total }), '');
+async function runSuggestJob(job: ClaimedJob): Promise<void> {
+  if (!job.opportunityId) { await finish(job, 'failed', '', '缺少 opportunityId'); return; }
+  const r = await generateRelSuggestions(job.tenantId, job.opportunityId, (write) => commitJobSideEffect(job, write));
+  if (!r) { await finish(job, 'failed', '', '目标商机不存在或已删除'); return; }
+  await finish(job, 'done', JSON.stringify({ added: r.added, total: r.total }), '');
 }
 
 // P9 企业背景研究产物的笔记前缀（溯源 + 防重复研究的判重键）
@@ -156,25 +218,29 @@ const PROFILE_NOTE_PREFIX = '【AI 企业背景研究·待核】';
 
 /** P9 执行一个 account_profile 任务：研究企业背景（企查查/LLM 双轨）→ 落 account 级 Note（source=ai 带前缀溯源）。
  *  产物经 curated 素材层进「AI 整理·待核」综述，绝不写结构化字段（铁律②）；已研究过（同前缀笔记在）则跳过不重复堆。 */
-async function runProfileJob(job: { id: string; tenantId: string; accountId: string }): Promise<void> {
+async function runProfileJob(job: ClaimedJob): Promise<void> {
   const acc = await prisma.account.findFirst({ where: { id: job.accountId, tenantId: job.tenantId } });
-  if (!acc) { await finish(job.id, 'failed', '', '目标客户不存在或已删除'); return; }
+  if (!acc) { await finish(job, 'failed', '', '目标客户不存在或已删除'); return; }
   const dup = await prisma.note.findFirst({ where: { tenantId: job.tenantId, accountId: acc.id, source: 'ai', content: { startsWith: PROFILE_NOTE_PREFIX } } });
-  if (dup) { await finish(job.id, 'done', JSON.stringify({ skipped: 'exists' }), ''); return; }
+  if (dup) { await finish(job, 'done', JSON.stringify({ skipped: 'exists' }), ''); return; }
   const r = await researchCompanyProfile(job.tenantId, acc.name);
-  if (!r) { await finish(job.id, 'done', JSON.stringify({ source: 'none', note: '未配置企查查/AI，跳过背景研究' }), ''); return; }
-  await prisma.note.create({
-    data: {
+  if (!r) { await finish(job, 'done', JSON.stringify({ source: 'none', note: '未配置企查查/AI，跳过背景研究' }), ''); return; }
+  await commitJobSideEffect(job, async (db) => {
+    const current = await db.note.findFirst({ where: {
+      tenantId: job.tenantId, accountId: acc.id, source: 'ai', content: { startsWith: PROFILE_NOTE_PREFIX },
+    } });
+    if (current) return;
+    await db.note.create({ data: {
       id: 'note_' + randomUUID().slice(0, 12), tenantId: job.tenantId, accountId: acc.id,
       content: `${PROFILE_NOTE_PREFIX}（来源：${r.source === 'qcc' ? '企查查工商数据' : 'AI 生成·未联网核实'}）\n${r.content}`,
       source: 'ai',
-    },
+    } });
   });
-  await finish(job.id, 'done', JSON.stringify({ source: r.source, chars: r.content.length }), '');
+  await finish(job, 'done', JSON.stringify({ source: r.source, chars: r.content.length }), '');
 }
 
 /** 按 type 分派任务执行。 */
-async function runJob(job: { id: string; tenantId: string; type: string; accountId: string; opportunityId: string | null; mode: string }): Promise<void> {
+async function runJob(job: ClaimedJob): Promise<void> {
   if (job.type === 'suggest_relations') return runSuggestJob(job);
   if (job.type === 'pull_recording') return runPullRecordingJob(job);
   if (job.type === 'account_profile') return runProfileJob(job);
@@ -182,34 +248,170 @@ async function runJob(job: { id: string; tenantId: string; type: string; account
 }
 
 /** 执行一个 pull_recording 任务：从录音源拉转写 → 加密存 Transcript（不自动抽取，抽取由人触发，守铁律②）。 */
-async function runPullRecordingJob(job: { id: string; tenantId: string; accountId: string; mode: string }): Promise<void> {
+async function runPullRecordingJob(job: ClaimedJob): Promise<void> {
   // 动态 import 打破 jobs → recording → voice → jobs 的顶层循环依赖。
   const { pullAndSave } = await import('./recording.js');
-  const r = await pullAndSave(job.tenantId, '', (job.mode || 'mock') as any, { accountId: job.accountId || undefined });
-  await finish(job.id, 'done', JSON.stringify(r), '');
+  const r = await pullAndSave(
+    job.tenantId, '', (job.mode || 'mock') as any, { accountId: job.accountId || undefined },
+    (write) => commitJobSideEffect(job, write),
+  );
+  await finish(job, 'done', JSON.stringify(r), '');
 }
 
-async function finish(id: string, status: 'done' | 'failed', result: string, error: string): Promise<void> {
-  await prisma.enrichJob.update({ where: { id }, data: { status, result, error } });
+async function finish(job: Pick<ClaimedJob, 'id' | 'tenantId' | 'leaseOwner' | 'leaseToken'>, status: 'done' | 'failed', result: string, error: string): Promise<void> {
+  const finished = await prisma.enrichJob.updateMany({ where: {
+    id: job.id, tenantId: job.tenantId, status: 'processing',
+    leaseOwner: job.leaseOwner, leaseToken: job.leaseToken,
+  }, data: { status, result, error, leaseOwner: '', leaseToken: '', leaseUntil: null } });
+  if (finished.count !== 1) throw new Error('stale job lease: completion rejected');
+}
+
+const retryDelayMs = (attemptCount: number): number => JOB_RETRY_BASE_MS * (2 ** Math.max(0, attemptCount - 1));
+
+export async function commitJobSideEffect<T>(
+  job: Pick<ClaimedJob, 'id' | 'tenantId' | 'leaseOwner' | 'leaseToken'>,
+  write: JobWrite<T>,
+  db: PrismaClient = prisma,
+): Promise<T> {
+  return db.$transaction(async (tx) => {
+    const fenced = await tx.enrichJob.updateMany({ where: {
+      id: job.id, tenantId: job.tenantId, status: 'processing',
+      leaseOwner: job.leaseOwner, leaseToken: job.leaseToken,
+    }, data: { leaseUntil: new Date(Date.now() + JOB_LEASE_MS) } });
+    if (fenced.count !== 1) throw new Error('stale job lease: side effect rejected');
+    return write(tx);
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5_000, timeout: 30_000 });
+}
+
+export async function commitJobSideEffectAndComplete<T>(
+  job: Pick<ClaimedJob, 'id' | 'tenantId' | 'leaseOwner' | 'leaseToken'>,
+  write: JobWrite<{ value: T; result: string }>,
+  db: PrismaClient = prisma,
+): Promise<T> {
+  return commitJobSideEffect(job, async (tx) => {
+    const outcome = await write(tx);
+    const completed = await tx.enrichJob.updateMany({ where: {
+      id: job.id, tenantId: job.tenantId, status: 'processing',
+      leaseOwner: job.leaseOwner, leaseToken: job.leaseToken,
+    }, data: {
+      status: 'done', result: outcome.result, error: '', leaseOwner: '', leaseToken: '', leaseUntil: null,
+    } });
+    if (completed.count !== 1) throw new Error('stale job lease: completion rejected');
+    return outcome.value;
+  }, db);
+}
+
+export async function claimNextJob(workerId: string, now: Date, db: PrismaClient = prisma): Promise<ClaimedJob | null> {
+  if (!workerId.trim()) throw new Error('workerId is required');
+  for (let scan = 0; scan < JOB_CLAIM_SCAN_LIMIT; scan += 1) {
+    const next = await db.enrichJob.findFirst({
+      where: { status: 'pending', nextAttemptAt: { lte: now } },
+      orderBy: [{ nextAttemptAt: 'asc' }, { createdAt: 'asc' }],
+    });
+    if (!next) return null;
+    const leaseUntil = new Date(now.getTime() + JOB_LEASE_MS);
+    const leaseToken = randomUUID();
+    const claimed = await db.enrichJob.updateMany({ where: {
+      id: next.id, tenantId: next.tenantId, status: 'pending', nextAttemptAt: { lte: now },
+    }, data: {
+      status: 'processing', leaseOwner: workerId, leaseToken, leaseUntil, attemptCount: { increment: 1 },
+    } });
+    if (claimed.count === 1) {
+      return db.enrichJob.findFirst({ where: {
+        id: next.id, tenantId: next.tenantId, status: 'processing', leaseOwner: workerId, leaseToken,
+      } });
+    }
+  }
+  return null;
+}
+
+export async function renewJobLease(
+  job: Pick<ClaimedJob, 'id' | 'tenantId' | 'leaseOwner' | 'leaseToken'>,
+  now: Date,
+  db: PrismaClient = prisma,
+): Promise<boolean> {
+  const renewed = await db.enrichJob.updateMany({ where: {
+    id: job.id, tenantId: job.tenantId, status: 'processing',
+    leaseOwner: job.leaseOwner, leaseToken: job.leaseToken,
+  }, data: { leaseUntil: new Date(now.getTime() + JOB_LEASE_MS) } });
+  return renewed.count === 1;
+}
+
+export async function recoverExpiredLeases(now: Date, db: PrismaClient = prisma): Promise<number> {
+  const expired = await db.enrichJob.findMany({ where: {
+    status: 'processing', OR: [{ leaseUntil: { lte: now } }, { leaseUntil: null }],
+  } });
+  let recovered = 0;
+  for (const job of expired) {
+    const terminal = job.attemptCount >= JOB_MAX_ATTEMPTS;
+    const result = await db.enrichJob.updateMany({ where: {
+      id: job.id, tenantId: job.tenantId, status: 'processing', leaseOwner: job.leaseOwner,
+      leaseToken: job.leaseToken, leaseUntil: job.leaseUntil,
+    }, data: terminal ? {
+      status: 'failed', leaseOwner: '', leaseToken: '', leaseUntil: null,
+      error: `worker lease expired after ${job.attemptCount} attempts`,
+    } : {
+      status: 'pending', leaseOwner: '', leaseToken: '', leaseUntil: null,
+      nextAttemptAt: new Date(now.getTime() + retryDelayMs(job.attemptCount)),
+      error: 'worker lease expired; scheduled for retry',
+    } });
+    recovered += result.count;
+  }
+  return recovered;
+}
+
+async function retryOrFail(job: ClaimedJob, error: unknown, now: Date): Promise<void> {
+  const message = String(error instanceof Error ? error.message : error).slice(0, 500);
+  const terminal = job.attemptCount >= JOB_MAX_ATTEMPTS;
+  await prisma.enrichJob.updateMany({ where: {
+    id: job.id, tenantId: job.tenantId, status: 'processing',
+    leaseOwner: job.leaseOwner, leaseToken: job.leaseToken,
+  }, data: terminal ? {
+    status: 'failed', leaseOwner: '', leaseToken: '', leaseUntil: null, error: message,
+  } : {
+    status: 'pending', leaseOwner: '', leaseToken: '', leaseUntil: null,
+    nextAttemptAt: new Date(now.getTime() + retryDelayMs(job.attemptCount)), error: message,
+  } });
 }
 
 let workerTimer: NodeJS.Timeout | null = null;
 let ticking = false;
 
 /** 单次轮询：原子 claim 最旧一个 pending 任务并执行。串行（一次一个），避免并发抢同一任务。 */
-async function tick(): Promise<void> {
+const WORKER_ID = `worker-${process.pid}-${randomUUID().slice(0, 8)}`;
+
+async function runJobWithHeartbeat(job: ClaimedJob): Promise<void> {
+  let renewing = false;
+  let leaseLost = false;
+  const timer = setInterval(() => {
+    if (renewing) return;
+    renewing = true;
+    void renewJobLease(job, new Date())
+      .then((renewed) => { if (!renewed) leaseLost = true; })
+      .catch(() => { leaseLost = true; })
+      .finally(() => { renewing = false; });
+  }, JOB_HEARTBEAT_MS);
+  timer.unref?.();
+  try {
+    await runJob(job);
+    if (leaseLost) throw new Error('stale job lease: heartbeat lost');
+  } finally {
+    clearInterval(timer);
+  }
+}
+
+async function tick(workerId: string): Promise<void> {
   if (ticking) return;
   ticking = true;
   try {
-    const next = await prisma.enrichJob.findFirst({ where: { status: 'pending' }, orderBy: { createdAt: 'asc' } });
+    const now = new Date();
+    await recoverExpiredLeases(now);
+    const next = await claimNextJob(workerId, now);
     if (!next) return;
-    // 原子认领：仅当仍为 pending 才置 processing（防多 worker/多 tick 抢同一条）
-    const claim = await prisma.enrichJob.updateMany({ where: { id: next.id, status: 'pending' }, data: { status: 'processing', attempts: { increment: 1 } } });
-    if (claim.count !== 1) return; // 被别处抢走
     try {
-      await runJob(next);
-    } catch (e: any) {
-      await prisma.enrichJob.update({ where: { id: next.id }, data: { status: 'failed', error: String(e?.message || e).slice(0, 500) } }).catch(() => {});
+      await runJobWithHeartbeat(next);
+    } catch (error) {
+      await retryOrFail(next, error, new Date()).catch(() => {});
     }
   } catch {
     /* 轮询本身异常（如 DB 抖动）忽略，下个 tick 再来 */
@@ -221,7 +423,8 @@ async function tick(): Promise<void> {
 /** 启动后台 worker（index.ts 在 listen 成功后调用一次）。 */
 export function startJobWorker(): void {
   if (workerTimer) return;
-  workerTimer = setInterval(() => { void tick(); }, POLL_MS);
+  void tick(WORKER_ID);
+  workerTimer = setInterval(() => { void tick(WORKER_ID); }, POLL_MS);
   workerTimer.unref?.(); // 不阻止进程退出
   console.log(`江湖自算 worker 已启动（每 ${POLL_MS / 1000}s 轮询）`);
 }
