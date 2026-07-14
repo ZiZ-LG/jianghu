@@ -10,7 +10,7 @@
 //   · 写工具（propose_person/propose_relationship）：只写【候选层】(PersonSuggestion/RelSuggestion，status=pending)，
 //     绝不直接写正式 Person/Edge。候选须经用户在前端人审采纳才上图（PIPL 红线）。
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { ACCOUNT_PROFILE_FIELDS, ActionSchema, type CommandContext } from '@jianghu/domain-contracts';
 import { prisma } from './prisma.js';
@@ -19,6 +19,7 @@ import { scoreFromState, ITEM_LABEL, ITEM_MAX, type ItemKey } from './g64111.js'
 import { createFieldProposal } from './proposals.js';
 import { enqueueEnrichJob, enqueueSuggestJob, enqueueProfileJob } from './jobs.js';
 import { resolveScopedRelSuggestions } from './suggestionScope.js';
+import { syncIntelBundle } from './mcp/syncBundle.js';
 
 // 每租户 pending 候选容量上限（防外部 agent 刷爆）
 const MAX_PENDING_PERSON_SUGG = 200;
@@ -75,6 +76,97 @@ function toolError(message: string) {
 // ───────────────────────── 工具定义（tools/list 用） ─────────────────────────
 
 const TOOL_DEFS = [
+  {
+    name: 'sync_intel_bundle',
+    description: '【推荐·原子同步】一次同步客户、商机、拜访原文及人物/关系/证据候选；按 idempotencyKey 返回可重放 SyncReceipt。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        idempotencyKey: { type: 'string', minLength: 8, maxLength: 200, pattern: '^[A-Za-z0-9][A-Za-z0-9._:#/-]*$', description: '同一次业务同步重试时必须保持不变；只允许不含姓名/正文的 opaque ID' },
+        bundle: {
+          type: 'object',
+          properties: {
+            account: {
+              type: 'object',
+              properties: {
+                id: { type: 'string', minLength: 1, maxLength: 80, pattern: '\\S', description: '仅兼容旧工具：必须是本租户已存在 Account.id' },
+                externalRef: { type: 'string', minLength: 1, maxLength: 80, pattern: '\\S' },
+                unifiedCreditCode: { type: 'string', minLength: 1, maxLength: 40, pattern: '\\S' },
+                name: { type: 'string', minLength: 1, maxLength: 100, pattern: '\\S' },
+                customerType: { type: 'integer', minimum: 1, maximum: 4 },
+                region: { type: 'string', maxLength: 40 }, group: { type: 'string', maxLength: 100 },
+                primaryOwner: { type: 'string', maxLength: 40 }, primaryOwnerUserId: { type: ['string', 'null'], maxLength: 100 },
+                profile: { type: 'object', properties: ACCOUNT_PROFILE_TOOL_PROPERTIES, additionalProperties: false },
+              },
+              required: ['name'], additionalProperties: false,
+            },
+            opportunity: {
+              type: 'object', properties: {
+                externalRef: { type: 'string', minLength: 1, maxLength: 80, pattern: '\\S' },
+                name: { type: 'string', minLength: 1, maxLength: 100, pattern: '\\S' },
+                pipelineStage: { type: 'string', enum: ['线索', '需求引导', '方案认可', '客户立项', '招投标', '合同谈判', '合同双签'] },
+                engageStage: { type: 'string', enum: ['需求调研立项', '方案可研', '预算批复', '招标论证', '招采执行'] },
+                status: { type: 'string', enum: ['active', 'paused', 'won', 'lost'] },
+                changeMode: { type: ['string', 'null'], enum: ['G', 'T', 'EK', 'OC', null] },
+                productSolution: { type: 'string', maxLength: 500 }, competitor: { type: 'string', maxLength: 200 },
+                competitiveSituation: { type: 'string', enum: ['', '领先', '胶着', '落后', '未识别'] },
+                singleSalesGoal: { type: 'string', maxLength: 500 },
+                customerBusinessGoal: { type: ['string', 'null'], maxLength: 500 }, buyingMotivation: { type: ['string', 'null'], maxLength: 500 },
+                expectedSignDate: { type: 'string', maxLength: 20 }, expectedAmountW: { type: 'number' },
+                c3Items: { type: 'object', additionalProperties: { type: 'boolean' } },
+                c5Items: { type: 'object', additionalProperties: { type: 'boolean' } },
+                meta: { type: 'object', not: { required: ['_mcpOrigin'] }, additionalProperties: true },
+              }, required: ['externalRef', 'name'], additionalProperties: false,
+            },
+            visit: {
+              type: 'object', properties: {
+                externalRef: { type: 'string', minLength: 1, maxLength: 120, pattern: '\\S' },
+                opportunityId: { type: 'string', minLength: 1, maxLength: 80, pattern: '\\S' },
+                date: { type: 'string', minLength: 1, maxLength: 20, pattern: '\\S' },
+                summary: { type: 'string', minLength: 1, maxLength: 5000, pattern: '\\S' }, topic: { type: 'string', maxLength: 200 },
+                participants: { type: 'array', maxItems: 50, items: {
+                  type: 'object', properties: {
+                    name: { type: 'string', minLength: 1, maxLength: 40, pattern: '\\S' },
+                    side: { type: 'string', enum: ['our', 'customer'] },
+                  },
+                  required: ['name', 'side'], additionalProperties: false,
+                } },
+              }, required: ['externalRef', 'date', 'summary'], additionalProperties: false,
+            },
+            people: { type: 'array', maxItems: 100, items: {
+              type: 'object', properties: {
+                ref: { type: 'string', minLength: 1, maxLength: 80, pattern: '^[A-Za-z0-9][A-Za-z0-9._:#/-]*$' },
+                name: { type: 'string', minLength: 1, maxLength: 40, pattern: '\\S' },
+                title: { type: 'string', maxLength: 60 }, orgLevel: { type: 'integer', minimum: 1, maximum: 4 },
+                evidence: { type: 'string', maxLength: 500 }, confidence: { type: 'number', minimum: 0, maximum: 1 },
+              }, required: ['ref', 'name'], additionalProperties: false,
+            } },
+            relations: { type: 'array', maxItems: 100, items: {
+              type: 'object', properties: {
+                ref: { type: 'string', minLength: 1, maxLength: 80, pattern: '^[A-Za-z0-9][A-Za-z0-9._:#/-]*$' },
+                sourceRef: { type: 'string', minLength: 1, maxLength: 80, pattern: '^[A-Za-z0-9][A-Za-z0-9._:#/-]*$' },
+                targetRef: { type: 'string', minLength: 1, maxLength: 80, pattern: '^[A-Za-z0-9][A-Za-z0-9._:#/-]*$' },
+                layer: { type: 'string', enum: ['L1', 'L2', 'L3', 'L4'] }, label: { type: 'string' },
+                evidence: { type: 'string', maxLength: 500 }, confidence: { type: 'number', minimum: 0, maximum: 1 },
+              }, required: ['ref', 'sourceRef', 'targetRef', 'label'], additionalProperties: false,
+            } },
+            evidences: { type: 'array', maxItems: 100, items: {
+              type: 'object', properties: {
+                ref: { type: 'string', minLength: 1, maxLength: 80, pattern: '^[A-Za-z0-9][A-Za-z0-9._:#/-]*$' },
+                personId: { type: 'string', minLength: 1, maxLength: 80, pattern: '\\S' },
+                signalKey: { type: 'string', minLength: 1, maxLength: 80, pattern: '\\S' },
+                direction: { type: 'number', enum: [-1, 0, 1] }, tier: { type: 'string', enum: ['weak', 'mid', 'strong'] },
+                rawContent: { type: 'string', maxLength: 2000 }, occurredAt: { type: 'string', maxLength: 20 },
+              }, required: ['ref', 'personId', 'signalKey'], additionalProperties: false,
+            } },
+          },
+          required: ['account'], additionalProperties: false,
+        },
+      },
+      required: ['idempotencyKey', 'bundle'],
+      additionalProperties: false,
+    },
+  },
   {
     name: 'list_accounts',
     description: '列出本工作区（租户）下的所有客户/Account，含客户类型、干系人数、商机数。只读。',
@@ -729,6 +821,181 @@ async function upsertAccount(ctx: CommandContext, args: Record<string, unknown>)
   return { id, created: true, origin: 'mcp', note: `已新建客户「${name}」（外部来源·待核，见客户卡）。${selfCompute ? '已启动后台自算补全干系人+企业背景研究，完成后见收件箱/客户档案。' : ''}` };
 }
 
+const LEGACY_SYNC_DEPRECATED_AFTER = '2026-10-01';
+const canonicalLegacyPayload = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(canonicalLegacyPayload);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, canonicalLegacyPayload(item)]));
+};
+const legacySyncKey = (tool: string, args: Record<string, unknown>) => `legacy-${tool}-${createHash('sha256')
+  .update(JSON.stringify(canonicalLegacyPayload(args))).digest('hex').slice(0, 32)}`;
+
+async function syncLegacyAccount(ctx: CommandContext, args: Record<string, unknown>) {
+  const externalRef = str(args.externalRef, 80).trim();
+  const unifiedCreditCode = str(args.unifiedCreditCode, 40).trim();
+  let existing = externalRef ? await prisma.account.findFirst({ where: { tenantId: ctx.tenantId, externalRef } }) : null;
+  if (!existing && unifiedCreditCode) existing = await prisma.account.findFirst({ where: { tenantId: ctx.tenantId, unifiedCreditCode } });
+  if (typeof args.primaryOwnerUserId === 'string') {
+    const owner = await prisma.user.findFirst({ where: { id: str(args.primaryOwnerUserId, 100), tenantId: ctx.tenantId } });
+    if (!owner) throw new Error('primary owner not found in tenant');
+  }
+  const name = str(args.name, 100).trim() || existing?.name;
+  if (!name) throw new Error('未命中现有客户，新建需提供 name');
+  const rawType = num(args.customerType);
+  const customerType = rawType && [1, 2, 3, 4].includes(rawType) ? rawType : existing?.customerType ?? 1;
+  const syncReceipt = await syncIntelBundle(ctx, {
+    idempotencyKey: legacySyncKey('upsert_account', args),
+    bundle: { account: {
+      ...(externalRef ? { externalRef } : {}),
+      ...(unifiedCreditCode ? { unifiedCreditCode } : {}),
+      name, customerType,
+      ...(args.region !== undefined ? { region: str(args.region, 40) } : {}),
+      ...(args.group !== undefined ? { group: str(args.group, 100) } : {}),
+      ...(args.primaryOwner !== undefined ? { primaryOwner: str(args.primaryOwner, 40) } : {}),
+      ...(args.primaryOwnerUserId !== undefined
+        ? { primaryOwnerUserId: typeof args.primaryOwnerUserId === 'string' ? str(args.primaryOwnerUserId, 100) : null }
+        : {}),
+      ...(args.profile !== undefined ? { profile: projectAccountProfile(args.profile) } : {}),
+    } },
+  });
+  const account = await prisma.account.findFirst({ where: {
+    tenantId: ctx.tenantId,
+    ...(externalRef ? { externalRef } : { unifiedCreditCode }),
+  } });
+  if (!account) throw new Error('同步完成后未找到客户');
+  const created = syncReceipt.created.includes(`account:${externalRef || unifiedCreditCode}`);
+  return {
+    id: account.id, ...(created ? { created: true } : { updated: true }), origin: 'mcp',
+    note: created ? `已新建客户「${account.name}」（外部来源·待核，见客户卡）。` : `已命中客户「${account.name}」并完成同步。`,
+    deprecatedAfter: LEGACY_SYNC_DEPRECATED_AFTER, syncReceipt,
+  };
+}
+
+async function resolveLegacySyncAccount(ctx: CommandContext, args: Record<string, unknown>) {
+  const accountId = str(args.accountId, 40).trim();
+  const externalRef = str(args.accountExternalRef, 80).trim();
+  const unifiedCreditCode = str(args.unifiedCreditCode, 40).trim();
+  const [byId, byExternal, byCredit] = await Promise.all([
+    accountId ? prisma.account.findFirst({ where: { id: accountId, tenantId: ctx.tenantId } }) : null,
+    externalRef ? prisma.account.findFirst({ where: { tenantId: ctx.tenantId, externalRef } }) : null,
+    unifiedCreditCode ? prisma.account.findFirst({ where: { tenantId: ctx.tenantId, unifiedCreditCode } }) : null,
+  ]);
+  if ((accountId && !byId) || (externalRef && !byExternal) || (unifiedCreditCode && !byCredit)) {
+    throw new Error('account anchor does not resolve in the current tenant');
+  }
+  const ids = new Set([byId?.id, byExternal?.id, byCredit?.id].filter(Boolean));
+  if (ids.size > 1) throw new Error('account anchors resolve to different rows');
+  const account = byId ?? byExternal ?? byCredit;
+  if (!account) throw new Error('未定位到父客户：请提供 accountId / accountExternalRef / unifiedCreditCode 之一（该客户须已存在）');
+  return account;
+}
+
+async function syncLegacyOpportunity(ctx: CommandContext, args: Record<string, unknown>) {
+  const account = await resolveLegacySyncAccount(ctx, args);
+  const externalRef = str(args.externalRef, 80).trim();
+  if (!externalRef) throw new Error('缺少商机幂等锚 externalRef');
+  const existing = await prisma.opportunity.findFirst({ where: { tenantId: ctx.tenantId, accountId: account.id, externalRef } });
+  const name = str(args.name, 100).trim() || existing?.name;
+  if (!name) throw new Error('未命中现有商机，新建需提供 name');
+  const pipelineInput = str(args.pipelineStage, 40) === '合同签约' ? '合同双签' : str(args.pipelineStage, 40);
+  const pipelineStage = ['线索', '需求引导', '方案认可', '客户立项', '招投标', '合同谈判', '合同双签'].includes(pipelineInput)
+    ? pipelineInput : existing?.pipelineStage;
+  const engageInput = str(args.engageStage, 40);
+  const engageStage = ['需求调研立项', '方案可研', '预算批复', '招标论证', '招采执行'].includes(engageInput)
+    ? engageInput : existing?.engageStage;
+  const statusInput = str(args.status, 20);
+  const status = ['active', 'paused', 'won', 'lost'].includes(statusInput) ? statusInput : undefined;
+  const changeModeInput = str(args.changeMode, 20);
+  const changeMode = ['G', 'T', 'EK', 'OC'].includes(changeModeInput) ? changeModeInput : undefined;
+  const objectInput = (value: unknown): Record<string, unknown> | undefined => (
+    value != null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+  );
+  const syncReceipt = await syncIntelBundle(ctx, {
+    idempotencyKey: legacySyncKey('upsert_opportunity', args),
+    bundle: {
+      account: { id: account.id, name: account.name, customerType: account.customerType },
+      opportunity: {
+        externalRef, name,
+        ...(pipelineStage ? { pipelineStage } : {}),
+        ...(engageStage ? { engageStage } : {}),
+        ...(status ? { status } : {}),
+        ...(changeMode ? { changeMode } : {}),
+        ...(args.productSolution !== undefined ? { productSolution: str(args.productSolution, 500) } : {}),
+        ...(args.competitor !== undefined ? { competitor: str(args.competitor, 200) } : {}),
+        ...(args.competitiveSituation !== undefined ? { competitiveSituation: str(args.competitiveSituation, 40) } : {}),
+        ...(args.singleSalesGoal !== undefined ? { singleSalesGoal: str(args.singleSalesGoal, 500) } : {}),
+        ...(args.customerBusinessGoal !== undefined ? { customerBusinessGoal: str(args.customerBusinessGoal, 500) } : {}),
+        ...(args.buyingMotivation !== undefined ? { buyingMotivation: str(args.buyingMotivation, 500) } : {}),
+        ...(args.expectedSignDate !== undefined ? { expectedSignDate: str(args.expectedSignDate, 20) } : {}),
+        ...(num(args.expectedAmountW) !== undefined ? { expectedAmountW: num(args.expectedAmountW)! } : {}),
+        ...(objectInput(args.c3Items) ? { c3Items: objectInput(args.c3Items) as Record<string, boolean> } : {}),
+        ...(objectInput(args.c5Items) ? { c5Items: objectInput(args.c5Items) as Record<string, boolean> } : {}),
+        ...(objectInput(args.meta) ? { meta: objectInput(args.meta)! } : {}),
+      },
+    },
+  });
+  const opportunity = await prisma.opportunity.findFirst({ where: { tenantId: ctx.tenantId, accountId: account.id, externalRef } });
+  if (!opportunity) throw new Error('同步完成后未找到商机');
+  const created = syncReceipt.created.includes(`opportunity:${externalRef}`);
+  const proposed = syncReceipt.proposed.filter((ref) => ref.startsWith(`opportunity:${externalRef}:`)).length;
+  return {
+    id: opportunity.id, accountId: account.id, ...(created ? { created: true } : { proposed }), origin: 'mcp',
+    note: created
+      ? `已在客户「${account.name}」下新建商机「${opportunity.name}」（外部来源·待核）。`
+      : `已命中商机「${opportunity.name}」；${proposed} 个字段变更转入收件箱待人审（winProbability 未改）。`,
+    deprecatedAfter: LEGACY_SYNC_DEPRECATED_AFTER, syncReceipt,
+  };
+}
+
+async function syncLegacyVisit(ctx: CommandContext, args: Record<string, unknown>) {
+  const account = await resolveLegacySyncAccount(ctx, args);
+  const externalRef = str(args.externalRef, 120).trim();
+  if (!externalRef) throw new Error('缺少拜访记录幂等锚 externalRef');
+  const opportunityId = str(args.opportunityId, 40).trim();
+  const opportunityExternalRef = str(args.opportunityExternalRef, 80).trim();
+  const [byId, byExternal] = await Promise.all([
+    opportunityId ? prisma.opportunity.findFirst({ where: { id: opportunityId, tenantId: ctx.tenantId, accountId: account.id } }) : null,
+    opportunityExternalRef
+      ? prisma.opportunity.findFirst({ where: { tenantId: ctx.tenantId, accountId: account.id, externalRef: opportunityExternalRef } })
+      : null,
+  ]);
+  if ((opportunityId && !byId) || (opportunityExternalRef && !byExternal)) throw new Error('opportunity anchor does not resolve under the account');
+  if (byId && byExternal && byId.id !== byExternal.id) throw new Error('opportunity anchors resolve to different rows');
+  const opportunity = byId ?? byExternal;
+  const participants = Array.isArray(args.participants)
+    ? args.participants.slice(0, 50).map((item: unknown) => {
+      const participant = item && typeof item === 'object' ? item as Record<string, unknown> : {};
+      return { name: str(participant.name, 40).trim(), side: participant.side === 'our' ? 'our' as const : 'customer' as const };
+    }).filter((participant) => participant.name)
+    : undefined;
+  const syncReceipt = await syncIntelBundle(ctx, {
+    idempotencyKey: legacySyncKey('append_visit_note', args),
+    bundle: {
+      account: { id: account.id, name: account.name, customerType: account.customerType },
+      ...(opportunity?.externalRef ? { opportunity: {
+        externalRef: opportunity.externalRef, name: opportunity.name,
+        pipelineStage: opportunity.pipelineStage, engageStage: opportunity.engageStage,
+      } } : {}),
+      visit: {
+        externalRef, date: str(args.date, 20), summary: str(args.summary, 5000),
+        ...(opportunity ? { opportunityId: opportunity.id } : {}),
+        ...(args.topic !== undefined ? { topic: str(args.topic, 200) } : {}),
+        ...(participants !== undefined ? { participants } : {}),
+      },
+    },
+  });
+  const visit = await prisma.visitNote.findFirst({ where: { tenantId: ctx.tenantId, accountId: account.id, externalRef } });
+  if (!visit) throw new Error('同步完成后未找到拜访记录');
+  const created = syncReceipt.created.includes(`visit:${externalRef}`);
+  return {
+    id: visit.id, accountId: account.id, opportunityId: visit.opportunityId ?? undefined,
+    ...(created ? { created: true } : { updated: true }), origin: 'mcp',
+    note: created ? `已记录拜访（${visit.date}·外部来源·待核）。` : `已按 externalRef 命中拜访记录并更新（${visit.date}·外部来源·待核）。`,
+    deprecatedAfter: LEGACY_SYNC_DEPRECATED_AFTER, syncReceipt,
+  };
+}
+
 /** upsert_opportunity：定位父客户 → 按商机 externalRef 幂等 upsert。守"winProbability 不由 WB 推/覆盖"。 */
 async function upsertOpportunity(ctx: CommandContext, args: Record<string, unknown>) {
   const { tenantId } = ctx;
@@ -1029,6 +1296,8 @@ async function setUcv(ctx: CommandContext, args: Record<string, unknown>) {
 async function callTool(ctx: CommandContext, name: string, args: Record<string, unknown>) {
   const { tenantId, actorId: userId } = ctx;
   switch (name) {
+    case 'sync_intel_bundle':
+      return syncIntelBundle(ctx, args);
     case 'list_accounts':
       return listAccounts(tenantId);
     case 'get_account_detail': {
@@ -1048,11 +1317,11 @@ async function callTool(ctx: CommandContext, name: string, args: Record<string, 
     case 'list_pending':
       return listPending(tenantId, typeof args.accountId === 'string' ? args.accountId : '');
     case 'upsert_account':
-      return upsertAccount(ctx, args);
+      return syncLegacyAccount(ctx, args);
     case 'upsert_opportunity':
-      return upsertOpportunity(ctx, args);
+      return syncLegacyOpportunity(ctx, args);
     case 'append_visit_note':
-      return appendVisitNote(ctx, args);
+      return syncLegacyVisit(ctx, args);
     case 'set_opportunity_roles':
       return setOpportunityRoles(ctx, args);
     case 'set_burning_issue':
@@ -1088,7 +1357,7 @@ export async function handleMcpMessage(ctx: CommandContext, msg: JsonRpcRequest)
           protocolVersion: PROTOCOL_VERSION,
           capabilities: { tools: {} },
           serverInfo: SERVER_INFO,
-          instructions: '江湖 MCP：读——list_accounts 看客户、get_account_detail 看某客户干系人与关系、get_win_tendency 看商机 G64111 趋赢力评分；提议（写候选，须用户人审采纳才上图）——propose_person 提议新干系人、propose_relationship 提议关系、list_pending 看待审候选。所有数据按你的工作区隔离。绝不会自动写入正式数据。',
+          instructions: '江湖 MCP：WorkBuddy 业务同步优先使用 sync_intel_bundle，并在重试时复用同一 idempotencyKey；客户/商机/拜访事实原子写入，人物/关系/Evidence 只进候选层。读工具和候选人审继续按工作区隔离。',
         });
 
       case 'ping':

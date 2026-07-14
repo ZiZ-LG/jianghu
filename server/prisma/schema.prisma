@@ -103,6 +103,8 @@ model Account {
   edges             Edge[]
 
   @@unique([tenantId, id])
+  @@unique([tenantId, externalRef])
+  @@unique([tenantId, unifiedCreditCode])
   @@index([tenantId])
   @@index([tenantId, primaryOwnerUserId])
   @@index([tenantId, archivedAt])
@@ -169,6 +171,7 @@ model Opportunity {
   members              OpportunityMember[]
 
   @@unique([tenantId, id])
+  @@unique([tenantId, accountId, externalRef])
   @@index([accountId])
   @@index([tenantId, accountId])
   @@index([tenantId, archivedAt])
@@ -200,7 +203,7 @@ model CommandRun {
   tenantId       String
   actorId        String
   kind           String
-  idempotencyKey String
+  idempotencyKey String   // SHA-256(raw key)，不保存调用方原始 key
   requestHash    String   @default("")
   status         String   @default("running") // running | completed | failed
   leaseToken     String   @default("")
@@ -211,6 +214,22 @@ model CommandRun {
   updatedAt      DateTime @updatedAt
 
   @@unique([tenantId, actorId, kind, idempotencyKey])
+  @@index([tenantId, createdAt])
+}
+
+// WorkBuddy 原子同步执行记录：保存非敏感引用回执，支持同 key 安全重放。
+model SyncRun {
+  id             String   @id @default(uuid())
+  tenantId       String
+  actorId        String
+  idempotencyKey String
+  requestHash    String
+  status         String   @default("running") // running | completed | failed
+  receipt        String   @default("{}")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([tenantId, idempotencyKey])
   @@index([tenantId, createdAt])
 }
 
@@ -373,6 +392,7 @@ model VisitNote {
   @@index([accountId])
   @@index([opportunityId])
   @@index([tenantId, accountId])
+  @@unique([tenantId, accountId, externalRef])
   @@index([tenantId, opportunityId])
 }
 

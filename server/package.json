@@ -16,6 +16,7 @@
     "db:studio": "prisma studio",
     "migrate:account-owners": "tsx scripts/backfill-account-owners.ts",
     "migrate:wecom-bind-report": "tsx scripts/report-wecom-bind-conflicts.ts",
+    "migrate:sync-anchor-report": "tsx scripts/report-sync-anchor-conflicts.ts",
     "generate": "prisma generate"
   },
   "dependencies": {

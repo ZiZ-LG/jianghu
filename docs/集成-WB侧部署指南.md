@@ -1,6 +1,6 @@
 # 集成 · WorkBuddy 侧部署指南（M-A/B/C 端到端最小链）
 
-> 让 WorkBuddy 把 客户档案 / 商机 / 干系人 / 拜访 / 评分 自动同步到江湖（云端 SoR + 关系地图）。
+> 让 WorkBuddy 通过原子 `sync_intel_bundle` 把客户档案、商机、拜访原文和机器候选同步到江湖（云端 SoR + 关系地图）。
 > 江湖侧已就绪并验证；本指南 = WorkBuddy 侧配置 + 部署 + 真机验证（GUI 操作，需你执行）。
 > 配套：`集成-端到端最小链实施方案v1.md`。
 
@@ -54,6 +54,22 @@
 | `append_visit_note` | `accountExternalRef` + `opportunityExternalRef` | 幂等 ✓ |
 | `propose_person` | `accountId`（WB 经 `list_accounts` 按 externalRef 反查）+ `opportunityId`（`get_account_detail` 按 oppExtRef 反查） | 候选不进 state ✓ |
 | `set_opportunity_roles` | `opportunityExternalRef` + `accountExternalRef` | 首次直写 / 变更转提案 / unknown 不覆盖 ✓ |
+
+### 新 Flow 迁移口径
+
+1. 同一次 WorkBuddy 业务处理生成一个稳定 `idempotencyKey`，网络重试不得重新生成。
+2. 用一次 `sync_intel_bundle` 提交客户、商机、拜访和候选；不要再把一次业务拆成多个相互独立的 upsert。
+3. 保存返回的 `syncRunId`，按 `created / updated / proposed / skipped / failed` 判断结果。只有工具明确失败时才重试；重试复用原 key 与原 bundle。
+4. `upsert_account`、`upsert_opportunity`、`append_visit_note` 兼容到 `2026-10-01`，响应会带 `deprecatedAfter` 和同结构 `syncReceipt`。迁移完成后再评估是否移除，不在本次部署中强删。
+
+部署数据库唯一约束前先在目标环境运行：
+
+```bash
+cd server
+npm run migrate:sync-anchor-report
+```
+
+若 `conflictCount` 非零，停止部署并人工核对清单；不得自动合并客户、商机或拜访。
 
 ---
 

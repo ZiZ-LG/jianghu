@@ -60,6 +60,7 @@ export async function clearTestTenant(client: PrismaClient, tenantId: string): P
     client.transcript.deleteMany({ where: { tenantId } }),
     client.enrichJob.deleteMany({ where: { tenantId } }),
     client.changeProposal.deleteMany({ where: { tenantId } }),
+    client.syncRun.deleteMany({ where: { tenantId } }),
     client.commandRun.deleteMany({ where: { tenantId } }),
     client.evidenceEvent.deleteMany({ where: { tenantId } }),
     client.strategyResource.deleteMany({ where: { tenantId } }),

@@ -2,12 +2,13 @@
 
 > 让 AI 客户端（Claude Desktop、Cline、Workbuddy、或任何支持 MCP 的客户端）连接「江湖」：
 > **读**——查询客户、干系人、关系网、商机的 G64111 趋赢力评分；
+> **同步**——把用户确认的客户/商机事实、原始拜访与机器候选作为一个原子 bundle 写入，并返回可重放回执；
 > **提议**——把外部联网调研到的新干系人/关系**写入候选层**，由你在江湖里人审采纳后才画到关系地图上。
 >
 > - **传输**：streamable-HTTP，单一端点 `POST /api/mcp`（无状态，每个请求自带鉴权）。
 > - **鉴权**：复用平台 JWT。请求头 `Authorization: Bearer <平台token>`，服务端据此解出工作区（tenantId）。
 > - **隔离**：所有工具严格按你所在的工作区过滤，**不会跨租户**。
-> - **红线**：写工具**只写候选层（pending）、绝不直接写正式数据**。AI 提议的人/关系必须经用户在江湖里人工采纳才上图——这是 PIPL 合规底线，AI 不替用户做身份判定。
+> - **红线**：只有带稳定业务锚的客户/商机事实和原始拜访可进入正式事实层；机器提出的人、关系、Evidence 只进入 pending 候选层。正式商机已有字段的变化进入 ChangeProposal，不静默覆盖。
 > - **联网在客户端侧**：江湖后端不联网。由外部 agent 用自己的 WebSearch/WebFetch 调研，再经下面的 `propose_*` 工具把结果交给江湖。
 
 ---
@@ -83,6 +84,35 @@ Claude Desktop 原生 MCP 配置走 stdio，要连远程 HTTP MCP 需通过 `mcp
 
 ## 3. 可用工具
 
+**WorkBuddy 推荐同步工具**
+
+| 工具 | 作用 | 入参 |
+|---|---|---|
+| `sync_intel_bundle` | 一次原子同步客户、商机、拜访原文、人物候选、关系候选和 Evidence 候选；返回 `SyncReceipt` | `idempotencyKey`、`bundle` |
+
+同一次业务同步的首次调用、网络超时重试和进程恢复必须复用同一个 `idempotencyKey`。该 key 及 people/relation/evidence 的 `ref` 必须是只含字母、数字和 `._:#/-` 的 opaque ID，禁止放姓名、手机号或正文；服务端只保存 key 的 SHA-256。相同 key + 相同 bundle 返回同一个 `syncRunId` 且 `replayed=true`；相同 key + 不同 bundle 会失败，不会误回放旧结果。
+
+```json
+{
+  "idempotencyKey": "wb:customer-42:visit-20260714:v1",
+  "bundle": {
+    "account": { "externalRef": "customer-42", "name": "示例能源集团", "customerType": 2 },
+    "opportunity": { "externalRef": "customer-42#opp", "name": "新能源数字化项目" },
+    "visit": { "externalRef": "visit-20260714", "date": "2026-07-14", "summary": "用户确认的原始拜访纪要" },
+    "people": [
+      { "ref": "leader", "name": "李总", "title": "总经理", "evidence": "用户确认的参会名单" },
+      { "ref": "director", "name": "王处长", "title": "信息处处长", "evidence": "用户确认的参会名单" }
+    ],
+    "relations": [
+      { "ref": "reports-to", "sourceRef": "director", "targetRef": "leader", "layer": "L1", "label": "汇报" }
+    ],
+    "evidences": []
+  }
+}
+```
+
+`SyncReceipt` 字段：`created`、`updated`、`proposed`、`skipped`、`failed`。回执保存调用方提供的 opaque 业务引用和状态，不复制拜访正文、Evidence 原文或人员姓名；调用方不得把个人信息编码进引用。Bundle 在写入前整体校验，事务中任一步失败都会整体回滚。
+
 **读工具（只读）**
 
 | 工具 | 作用 | 入参 |
@@ -104,6 +134,8 @@ Claude Desktop 原生 MCP 配置走 stdio，要连远程 HTTP MCP 需通过 `mcp
 - **提议建图**：（外部 agent 先联网调研）→ `propose_person` 提交新发现的人 → `propose_relationship` 把他和已知干系人/其他候选连起来 → 提示用户「已提交 N 个候选，请到江湖『🔮 荐关系』面板人审采纳」。
 
 > 写工具返回里会带 `note`/`deduped` 等提示：同名候选自动去重；若该客户已有同名正式干系人，会提醒由人审决定合并还是新建（AI 不自动合并）。
+
+`upsert_account`、`upsert_opportunity`、`append_visit_note` 暂保留一版兼容，内部已复用同步服务，响应增加 `syncReceipt` 和 `deprecatedAfter: "2026-10-01"`。新 Flow 应直接改用 `sync_intel_bundle`；到期是否移除仍需单独决策。
 
 ---
 
@@ -165,6 +197,7 @@ curl -s -X POST http://localhost:3001/api/mcp -H "Authorization: Bearer $TOKEN" 
 - 路由在 `server/src/index.ts` 的 `POST /api/mcp`，`preHandler` 走现有 `app.authenticate`（JWT 校验失败回 401），随后用 `req.user.tenantId` 调工具。
 - G64111 评分的唯一实现在 `packages/g64111/`，严格对齐 `docs/G64111-评分规格.md`。`server/src/g64111.ts` 与 `app/src/lib/g64111.ts` 只是 typed adapter/re-export；MCP 通过服务端 adapter 返回权威分。
 - **加新工具**：在 `mcpServer.ts` 的 `TOOL_DEFS` 加定义、`callTool` 加分支，函数内 Prisma 查询**必须** `where { tenantId }`。
-- **写工具铁律**：写工具**只写候选表**（`PersonSuggestion` / `RelSuggestion`，status=pending），**绝不**直接写 `Person`/`Edge`。候选采纳逻辑在 `server/src/suggest.ts`：候选人物 `materializePerson` 落正式 Person（带溯源日志 + `resolvedPersonId` 回写保证幂等）；候选关系 accept 走 `$transaction` 级联——端点是候选人物时先建 Person 再建 Edge，返回 `createdPersons` 供前端先 `ADD_PERSON` 再 `ADD_EDGE`。
+- **写工具铁律**：业务事实同步与机器候选分层；`PersonSuggestion` / `RelSuggestion` / pending Evidence 绝不自动成为正式 Person/Edge/approved Evidence。候选采纳逻辑在 `server/src/suggest.ts`。
+- 部署唯一约束前先运行 `cd server && npm run migrate:sync-anchor-report`。若输出冲突，脚本以非零状态停止；必须人工处理清单，禁止自动合并。
 - **候选数据隔离**：候选表独立存放，天然不进 `state.ts`/`get_account_detail`/`get_win_tendency`/`g64111` 等 Person 查询路径——未采纳的候选不会泄漏到关系地图/趋赢力/只读工具。
 - **容量与去重**：写工具有每租户 pending 上限（防 agent 刷爆）+ 应用层去重（不靠 DB unique，保持跨 SQLite/PG 可移植）。
