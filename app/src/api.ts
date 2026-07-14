@@ -1,5 +1,5 @@
 import type { Action } from './store';
-import type { Account } from './types';
+import type { Account, PipelineStage } from './types';
 import { toWireAction } from './wireAction';
 
 // 生产构建把 VITE_API_URL 设为空串 "" → 走同源相对路径 /api（由 Nginx 反代到后端）。
@@ -136,6 +136,44 @@ export interface ArchivedEntity {
   canRestore?: boolean;
 }
 
+export interface AccountRepairPatch {
+  base: {
+    name: string;
+    customerType: 1 | 2 | 3 | 4;
+    primaryOwner: string;
+    primaryOwnerUserId: string | null;
+  };
+  name?: string;
+  customerType?: 1 | 2 | 3 | 4;
+  primaryOwnerUserId?: string | null;
+}
+
+export interface OpportunityRepairPatch {
+  baseVersion: number;
+  name?: string;
+  pipelineStage?: PipelineStage;
+  status?: 'active' | 'paused' | 'won' | 'lost';
+  expectedAmountW?: number;
+  expectedSignDate?: string;
+  singleSalesGoal?: string;
+  competitiveSituation?: '' | '领先' | '胶着' | '落后' | '未识别';
+}
+
+export interface RepairContext {
+  source: string;
+  sourceRef: string | null;
+  syncedAt: string | null;
+  syncRuns: Array<{ id: string; status: string; createdAt: string; updatedAt: string }>;
+  auditEvents: Array<{
+    id: string;
+    action: string;
+    actorId: string;
+    channel: string;
+    changedFields: string[];
+    createdAt: string;
+  }>;
+}
+
 export const api = {
   getToken: () => token,
   setToken(t: string | null) {
@@ -172,6 +210,14 @@ export const api = {
   archived: (): Promise<{ accounts: ArchivedEntity[]; opportunities: ArchivedEntity[] }> => req('/api/archive'),
   restore: (target: 'account' | 'opportunity', id: string): Promise<{ ok: true }> =>
     req('/api/archive/restore', { method: 'POST', body: JSON.stringify({ target, id }) }),
+  repairAccount: (id: string, patch: AccountRepairPatch): Promise<{ ok: true }> =>
+    req(`/api/repair/account/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  repairOpportunity: (id: string, patch: OpportunityRepairPatch): Promise<{ ok: true }> =>
+    req(`/api/repair/opportunity/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  repairRebind: (input: { kind: 'visitNote' | 'note'; id: string; accountId: string; opportunityId?: string | null }): Promise<{ ok: true }> =>
+    req('/api/repair/rebind', { method: 'POST', body: JSON.stringify(input) }),
+  repairContext: (kind: 'account' | 'opportunity' | 'visitNote' | 'note', id: string): Promise<RepairContext> =>
+    req(`/api/repair/context/${kind}/${encodeURIComponent(id)}`),
   billing: (): Promise<{ plan: string; subscriptionStatus: string; seatLimit: number; memberCount: number }> => req('/api/billing'),
   donate: (): Promise<{ url: string; qrUrl: string; note: string }> => req('/api/donate'),
   members: (): Promise<{ members: { id: string; phone: string | null; email: string | null; name: string; role: string; createdAt: string }[] }> => req('/api/members'),

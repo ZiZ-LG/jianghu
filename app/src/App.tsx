@@ -41,6 +41,7 @@ import { Footer } from './components/Footer';
 import { SyncStatus } from './components/SyncStatus';
 import { createCommitScheduler } from './lib/sync/commitScheduler';
 import { createMutationCoordinator, createMutationExecutionGate, entityKeyForAction } from './lib/sync/mutationCoordinator';
+import { RepairPanel, type RepairTarget } from './components/RepairPanel';
 
 export default function App() {
   const [state, dispatch] = useReducer(reducer, { accounts: [] });
@@ -68,6 +69,7 @@ export default function App() {
   const [visibleLayers, setVisibleLayers] = useState<Set<Layer>>(() => new Set<Layer>(['L1'])); // 关系层级=点亮/熄灭多选(可层叠)
   const toggleLayer = (l: Layer) => setVisibleLayers((s) => { const n = new Set(s); n.has(l) ? n.delete(l) : n.add(l); if (n.size === 0) n.add(l); return n; });
   const [oppFormOpen, setOppFormOpen] = useState(false);
+  const [repairTarget, setRepairTarget] = useState<RepairTarget | null>(null);
   const [personFormOpen, setPersonFormOpen] = useState(false);
   const [mdDocOpen, setMdDocOpen] = useState(false);
   const [intelOpen, setIntelOpen] = useState(false);
@@ -376,6 +378,21 @@ export default function App() {
     act({ type: 'ADD_ACCOUNT', account: a });
     setAccId(a.id); setOppId(null); setSelectedId(null); setVisibleLayers(new Set(['L1']));
   };
+  const openRepairRecord = (kind: 'visitNote' | 'note', id: string) => {
+    for (const candidate of state.accounts) {
+      if (kind === 'visitNote') {
+        const record = (candidate.visitNotes ?? []).find((item) => item.id === id);
+        if (!record) continue;
+        setRepairTarget({ kind, record });
+        return;
+      }
+      const record = (candidate.notes ?? []).find((item) => item.id === id);
+      if (record) {
+        setRepairTarget({ kind, record });
+        return;
+      }
+    }
+  };
   const loadDemo = async () => {
     setSyncErr('');
     const prev = new Set(state.accounts.map((a) => a.id));
@@ -570,6 +587,7 @@ export default function App() {
           readonly={readonly}
           today={hubToday} needsYou={hubNeedsYou}
           onArchiveAccount={archiveAccount}
+          onRepairAccount={(selectedAccount) => setRepairTarget({ kind: 'account', account: selectedAccount })}
           canRestoreArchives={auth.user.role === 'owner' || auth.user.role === 'admin'}
           onArchiveRestored={async () => { await refreshState(); }}
           tenantName={auth.tenant.name} userName={auth.user.name} plan={auth.tenant.plan}
@@ -605,6 +623,9 @@ export default function App() {
         {wecomSettingsOpen && <WeComSettings role={auth.user.role} onClose={() => setWecomSettingsOpen(false)} />}
         {helpOpen && <HelpManual onClose={() => setHelpOpen(false)} />}
         {mcpAccessOpen && <McpAccess onClose={() => setMcpAccessOpen(false)} />}
+        {repairTarget && <RepairPanel key={`${repairTarget.kind}:${repairTarget.kind === 'account' ? repairTarget.account.id : repairTarget.kind === 'opportunity' ? repairTarget.opportunity.id : repairTarget.record.id}`}
+          target={repairTarget} accounts={state.accounts} onClose={() => setRepairTarget(null)} onChanged={refreshState}
+          onRefreshError={setSyncErr} onRepairRecord={openRepairRecord} />}
         <Footer />
       </>
     );
@@ -664,6 +685,8 @@ export default function App() {
                 {!isMobile && (<>
                   {/* viewer（只读投影）：录入/自算/审核入口不渲染；档案（可导出喂 WorkBuddy）与视图操作保留 */}
                   {!readonly && <button className="btn cta xs" onClick={() => setAddIntelOpen(true)} title="接入录音：飞书妙记 / 上传音频 / 得到大脑——转写后一键抽取成图（打字/粘口述走坞底「和地图对话」）">🎧 接入录音</button>}
+                  {!readonly && <button className="btn ghost xs" onClick={() => setOppFormOpen(true)}>✏️ 编辑商机</button>}
+                  {!readonly && <button className="btn ghost xs" onClick={() => setRepairTarget({ kind: 'opportunity', account, opportunity: opp })}>🛠️ 溯源/归档</button>}
                   <button className="btn ghost xs" onClick={() => setMdDocOpen(true)} title="客户档案 / 商机档案 / 拜访记录（.md 文档）">📋 作战档案</button>
                   {!readonly && <button className="btn ghost xs" onClick={selfCompute} disabled={selfComputeBusy} title="再跑一遍自算：后台用企查查/AI 发现干系人 + 推断商机内关系 + 补企业背景研究，候选进收件箱人审。建客户已自动跑过一次，这里是「再来一遍」。">{selfComputeBusy ? '⏳ 已启动…' : '↻ 重新补全'}</button>}
                   {!readonly && <button className="btn ghost xs" onClick={() => setInboxOpen(true)}>📥 收件箱{inbox.total > 0 ? ` (${inbox.total})` : ''}</button>}
@@ -679,6 +702,7 @@ export default function App() {
                     items={(['L1', 'L2', 'L3', 'L4'] as Layer[]).map((l) => ({ label: LAYER_LABEL[l], active: visibleLayers.has(l), onClick: () => toggleLayer(l) }))} />
                   <OverflowMenu align="left" label="⋯ 操作" items={[
                     ...(!readonly ? [{ label: '🎧 接入录音', primary: true, onClick: () => setAddIntelOpen(true) }] : []),
+                    ...(!readonly ? [{ label: '✏️ 编辑商机', onClick: () => setOppFormOpen(true) }, { label: '🛠️ 溯源/归档', onClick: () => setRepairTarget({ kind: 'opportunity', account, opportunity: opp }) }] : []),
                     { label: '📋 作战档案', onClick: () => setMdDocOpen(true) },
                     ...(!readonly ? [
                       { label: selfComputeBusy ? '⏳ 自算中…' : '↻ 重新补全', onClick: selfCompute },
@@ -725,6 +749,15 @@ export default function App() {
           visitNotes={account.visitNotes ?? []} tab={focusTab} onTabChange={setFocusTab} dispatch={act}
           draftDispatch={scheduleDraft} flushDraft={flushDraft} coordinator={coordinator}
           onRefresh={refreshState} onViewCloud={discardToCloudState}
+          onRepairRecord={(kind, id) => {
+            if (kind === 'visitNote') {
+              const record = (account.visitNotes ?? []).find((item) => item.id === id);
+              if (record) setRepairTarget({ kind, record });
+            } else {
+              const record = (account.notes ?? []).find((item) => item.id === id);
+              if (record) setRepairTarget({ kind, record });
+            }
+          }}
           onClose={() => setSelectedId(null)} />
       )}
       {drawerEdge && opp && (
@@ -752,7 +785,11 @@ export default function App() {
       {oppFormOpen && opp && !readonly && (
         <OpportunityForm key={`opportunity:${opp.id}:${cloudDiscardRevisions[`opportunity:${opp.id}`] ?? 0}`} opp={opp} onClose={() => setOppFormOpen(false)}
           coordinator={coordinator} onViewCloud={discardToCloudState}
-          onSave={(patch) => actAsync({ type: 'UPDATE_OPP', accId: account.id, oppId: opp.id, patch })} />
+          onSave={async (patch) => {
+            await api.repairOpportunity(opp.id, patch);
+            setOppFormOpen(false);
+            void refreshState().catch(() => setSyncErr('商机纠错已保存，但刷新失败；请稍后重新进入客户。'));
+          }} />
       )}
       {newOppOpen && !readonly && (
         <NewOpportunityDialog account={account} onClose={() => setNewOppOpen(false)} onCreate={createOpportunity} />
@@ -772,6 +809,11 @@ export default function App() {
         <GapCards account={account} opp={opp} dispatch={act} onClose={() => setGapsOpen(false)} />
       )}
       {inboxOpen && !readonly && <InboxPanel rels={inbox.rels} persons={inbox.persons} proposals={inbox.proposals} accounts={state.accounts} onAccept={inboxAcceptRel} onReject={inboxRejectRel} onAcceptPerson={inboxAcceptPerson} onRejectPerson={inboxRejectPerson} onAcceptProposal={inboxAcceptProposal} onRejectProposal={inboxRejectProposal} reminders={inbox.reminders} onDismissReminder={inboxDismissReminder} evidences={inbox.evidences} onReviewEvidence={inboxReviewEvidence} onBatch={inboxBatch} onClose={() => setInboxOpen(false)} />}
+      {repairTarget && <RepairPanel key={`${repairTarget.kind}:${repairTarget.kind === 'account' ? repairTarget.account.id : repairTarget.kind === 'opportunity' ? repairTarget.opportunity.id : repairTarget.record.id}`}
+        target={repairTarget} accounts={state.accounts} onClose={() => setRepairTarget(null)} onChanged={refreshState}
+        onRefreshError={setSyncErr}
+        onRepairRecord={openRepairRecord}
+        onEditOpportunity={repairTarget.kind === 'opportunity' ? () => { setRepairTarget(null); setOppFormOpen(true); } : undefined} />}
       <SyncStatus coordinator={coordinator} onViewCloud={discardToCloudState} />
       {syncErr && <div className="sync-toast">{syncErr}</div>}
       {undoHint && <div className="undo-toast">{undoHint}</div>}

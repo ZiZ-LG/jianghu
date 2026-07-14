@@ -80,4 +80,33 @@ describe('typed API failures', () => {
     expect((fetchMock.mock.calls[0][1] as RequestInit).headers).toMatchObject({ 'Idempotency-Key': 'stable-command-key' });
     expect((fetchMock.mock.calls[1][1] as RequestInit).headers).toMatchObject({ 'Idempotency-Key': 'stable-command-key' });
   });
+
+  it('sends minimum repair commands to the dedicated audited endpoints', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => response(200, {
+      source: 'workbuddy', sourceRef: 'acc-ref', syncedAt: null, syncRuns: [], auditEvents: [],
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const repairApi = api;
+    expect(typeof repairApi.repairAccount).toBe('function');
+    expect(typeof repairApi.repairOpportunity).toBe('function');
+    expect(typeof repairApi.repairRebind).toBe('function');
+    expect(typeof repairApi.repairContext).toBe('function');
+
+    const base = { name: 'Old', customerType: 1 as const, primaryOwner: '', primaryOwnerUserId: null };
+    await repairApi.repairAccount!('acc/1', { base, name: 'Correct' });
+    await repairApi.repairOpportunity!('opp/1', { baseVersion: 3, status: 'paused' });
+    await repairApi.repairRebind!({ kind: 'note', id: 'note-1', accountId: 'acc-2', opportunityId: 'opp-2' });
+    await repairApi.repairContext!('account', 'acc/1');
+
+    expect(fetchMock.mock.calls.map(([url, init]) => ({
+      url,
+      method: (init as RequestInit | undefined)?.method ?? 'GET',
+      body: (init as RequestInit | undefined)?.body,
+    }))).toEqual([
+      { url: 'http://localhost:3001/api/repair/account/acc%2F1', method: 'PATCH', body: JSON.stringify({ base, name: 'Correct' }) },
+      { url: 'http://localhost:3001/api/repair/opportunity/opp%2F1', method: 'PATCH', body: JSON.stringify({ baseVersion: 3, status: 'paused' }) },
+      { url: 'http://localhost:3001/api/repair/rebind', method: 'POST', body: JSON.stringify({ kind: 'note', id: 'note-1', accountId: 'acc-2', opportunityId: 'opp-2' }) },
+      { url: 'http://localhost:3001/api/repair/context/account/acc%2F1', method: 'GET', body: undefined },
+    ]);
+  });
 });

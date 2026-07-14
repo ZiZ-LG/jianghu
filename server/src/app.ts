@@ -31,6 +31,7 @@ import { pdeRoutes } from './pde/routes.js';
 import { handleMcpBody } from './mcpServer.js';
 import { accessTokenRoutes, mcpAuthenticate } from './accessToken.js';
 import { compoundCommandRoutes } from './mutation/compoundCommands.js';
+import { repairRoutes } from './repair.js';
 
 async function registerSecurityPlugins(app: FastifyInstance): Promise<void> {
   const isProd = process.env.NODE_ENV === 'production';
@@ -92,6 +93,7 @@ function registerRoutes(app: FastifyInstance): void {
   wecomRoutes(app); // 企微日历：配置/绑定（江湖→企微同步在 mutate 落库后触发）
   pdeRoutes(app); // PDE 决策引擎（M3 评估主链）：ev / intel-priorities / action-ranking / snapshot
   compoundCommandRoutes(app);
+  repairRoutes(app);
 
   // ── 数据：拉取整树 / 应用变更 ──
   // 服务端组装时传入当前身份，统一执行归属与敏感字段 ACL。

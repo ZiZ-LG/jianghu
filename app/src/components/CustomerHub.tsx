@@ -10,7 +10,7 @@ import type { TodayItem } from '../lib/today';
 import { Freshness } from '../lib/freshness';
 
 export function CustomerHub({
-  accounts, onOpen, onCreate, onLoadDemo, onArchiveAccount,
+  accounts, onOpen, onCreate, onLoadDemo, onArchiveAccount, onRepairAccount,
   tenantName, userName, plan, onOpenTeam, onLogout, onOpenAiSettings, onOpenWecom, theme, onToggleTheme, onOpenHelp, onOpenMcpAccess, onOpenIntel: _unusedOnOpenIntel, onOpenInbox, inboxCount = 0, patrol, today = [], needsYou, onIntelDone, readonly = false,
   canRestoreArchives = false, onArchiveRestored,
 }: {
@@ -19,6 +19,7 @@ export function CustomerHub({
   onCreate: (name: string, customerType: CustomerType) => void;
   onLoadDemo: () => void;
   onArchiveAccount: (accId: string, reason: string) => void | Promise<void>;
+  onRepairAccount: (account: Account) => void;
   tenantName: string;
   userName: string;
   plan: string;
@@ -179,6 +180,7 @@ export function CustomerHub({
                 <div className="acc-sub">{[a.region, a.group, a.primaryOwner].filter(Boolean).join(' · ')}</div>
               )}
               <div className="acc-meta">{a.opportunities.length} 个商机 · {a.persons.length} 位干系人</div>
+              {!readonly && <button className="btn ghost xs" style={{ marginTop: 8 }} onClick={(event) => { event.stopPropagation(); onRepairAccount(a); }}>🛠️ 纠错与溯源</button>}
               <Freshness mark={mcpMark} />
             </div>
             );

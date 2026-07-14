@@ -13,6 +13,7 @@ const SENTIMENTS: Sentiment[] = ['star', 'plus', 'neutral', 'unknown', 'minus', 
 
 export function DetailDrawer({
   accId, oppId, person, oppRole, bis, ucvs, dispatch, draftDispatch, flushDraft, coordinator, onViewCloud, onClose, embedded,
+  repairRecords = [], onRepairRecord,
 }: {
   accId: string; oppId: string;
   person: Person;
@@ -26,6 +27,8 @@ export function DetailDrawer({
   onViewCloud?: () => void | Promise<void>;
   onClose: () => void;
   embedded?: boolean; // 焦点面板「档案」tab 复用：去掉 .drawer 外壳与标题栏，只渲染 body
+  repairRecords?: Array<{ kind: 'visitNote' | 'note'; id: string; label: string; source: string }>;
+  onRepairRecord?: (kind: 'visitNote' | 'note', id: string) => void;
 }) {
   const [logText, setLogText] = useState('');
   const [logSensitive, setLogSensitive] = useState(false);
@@ -234,6 +237,16 @@ export function DetailDrawer({
             ) : <div className="empty-hint">暂无记录</div>}
           </>
         )}
+
+        {repairRecords.length > 0 && <>
+          <div className="section-t">关联记录纠错</div>
+          <div style={{ display: 'grid', gap: 6 }}>
+            {repairRecords.map((record) => <div key={`${record.kind}:${record.id}`} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12 }}>
+              <span style={{ minWidth: 0, flex: 1 }}>{record.label} · {record.source}</span>
+              <button className="btn ghost xs" onClick={() => onRepairRecord?.(record.kind, record.id)}>修正挂载/溯源</button>
+            </div>)}
+          </div>
+        </>}
 
         {/* 删除节点：与「删除关系线」一致——放在详情页底部 */}
         <button className="btn ghost" style={{ width: '100%', marginTop: 18, color: '#b91c1c' }}

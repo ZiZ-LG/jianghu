@@ -19,7 +19,7 @@ type DynItem = { date: string; title?: string; body: string; source: string; sen
 type StanceDetail = { id: string; pS: number; pN: number; pO: number; n_eff: number };
 
 export function FocusPanel({
-  accId, oppId, account, opp, breakdown, person, oppRole, bis, ucvs, visitNotes, tab, onTabChange, dispatch, draftDispatch, flushDraft, coordinator, onRefresh, onViewCloud, onClose, readonly = false,
+  accId, oppId, account, opp, breakdown, person, oppRole, bis, ucvs, visitNotes, tab, onTabChange, dispatch, draftDispatch, flushDraft, coordinator, onRefresh, onViewCloud, onClose, onRepairRecord, readonly = false,
 }: {
   accId: string; oppId: string;
   account: Account; opp: Opportunity; breakdown: ScoreBreakdown;
@@ -33,6 +33,7 @@ export function FocusPanel({
   onRefresh: () => void; // 参谋改图后刷新整树
   onViewCloud?: () => void | Promise<void>;
   onClose: () => void;
+  onRepairRecord?: (kind: 'visitNote' | 'note', id: string) => void;
   readonly?: boolean; // viewer 只读投影：档案纯呈现、参谋 tab 不渲染（契约 v1.0 §二-1）
 }) {
   const f = person.form;
@@ -66,6 +67,14 @@ export function FocusPanel({
       .map((vn) => ({ date: vn.date, title: vn.topic, body: vn.summary, source: `拜访 · ${vn.origin === 'mcp' ? '外部·MCP·待核' : vn.origin === 'workbuddy' ? 'WorkBuddy' : '手动'}` })),
     ...evDyn,
   ].sort((a, b) => (a.date < b.date ? 1 : -1));
+  const repairRecords = [
+    ...visitNotes
+      .filter((visit) => visit.participants.some((participant) => participant.name === person.name))
+      .map((visit) => ({ kind: 'visitNote' as const, id: visit.id, label: visit.topic || visit.date || '拜访记录', source: visit.origin || 'manual' })),
+    ...(account.notes ?? [])
+      .filter((note) => note.personId === person.id)
+      .map((note) => ({ kind: 'note' as const, id: note.id, label: note.content.slice(0, 24) || '笔记', source: note.source || 'manual' })),
+  ];
 
   return (
     <div className="drawer focus-panel">
@@ -112,7 +121,8 @@ export function FocusPanel({
               ? <ReadonlyProfile person={person} oppRole={oppRole} bis={bis} ucvs={ucvs} />
               : <DetailDrawer key={person.id} embedded accId={accId} oppId={oppId} person={person}
                   oppRole={oppRole} bis={bis} ucvs={ucvs} dispatch={dispatch} draftDispatch={draftDispatch}
-                  flushDraft={flushDraft} coordinator={coordinator} onViewCloud={onViewCloud ?? onRefresh} onClose={onClose} />}
+                  flushDraft={flushDraft} coordinator={coordinator} onViewCloud={onViewCloud ?? onRefresh} onClose={onClose}
+                  repairRecords={repairRecords} onRepairRecord={onRepairRecord} />}
           </>
         )}
 
