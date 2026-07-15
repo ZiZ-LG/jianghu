@@ -72,6 +72,43 @@
 3. 保存返回的 `syncRunId`，按 `created / updated / proposed / skipped / failed` 判断结果。只有工具明确失败时才重试；重试复用原 key 与原 bundle。
 4. `upsert_account`、`upsert_opportunity`、`append_visit_note` 兼容到 `2026-10-01`，响应会带 `deprecatedAfter` 和同结构 `syncReceipt`。迁移完成后再评估是否移除，不在本次部署中强删。
 
+标准请求外壳与回执：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 304,
+  "method": "tools/call",
+  "params": {
+    "name": "sync_intel_bundle",
+    "arguments": { "idempotencyKey": "wb:customer-42:phase-a:v1", "bundle": { "account": { "externalRef": "customer-42", "name": "示例客户" } } }
+  }
+}
+```
+
+成功回执包含 `syncRunId / created / updated / proposed / skipped / failed / replayed`。首次为 `replayed: false`；同 key + **逐字段相同 bundle**重试时 `syncRunId` 和明细保持稳定，仅变为 `replayed: true`。同 key + 不同 bundle 是冲突，不能用“补字段”的方式重试。
+
+### Evidence 必须分两阶段
+
+1. **Phase A** 用 key A 同步客户、商机、拜访、人物候选和关系候选；人物/关系只进收件箱。
+2. 销售在江湖逐个采纳或修改后采纳人物，再采纳关系；取得江湖生成的正式 `personId`。
+3. **Phase B** 用 key B 提交 Evidence 候选，`personId` 必须是上一步的正式 ID。Phase B 不要再携带待审人物 ref 冒充 personId。
+4. Evidence 仍为 `pending_review`，人审批准后才改变 PDE 并生成可复盘快照。
+
+Phase A 和 Phase B 各自保存 key 与原请求；任何超时只原样重放对应 Phase。WorkBuddy 不得根据网络结果猜测“已经写入”并换新 key。
+
+### 行动结果回填示例（人类登录态）
+
+```bash
+curl -s -X POST https://<江湖域名>/api/commands/action-feedback \
+  -H "Authorization: Bearer <登录 JWT>" \
+  -H "Idempotency-Key: cmd_01J304WB7R6M9K2Q5T8V1X3Z4A" \
+  -H 'Content-Type: application/json' \
+  -d '{"accountId":"<ACCOUNT_ID>","opportunityId":"<OPPORTUNITY_ID>","actionId":"<PLAN_ACTION_ID>","outcome":"up","occurredAt":"2026-07-14"}'
+```
+
+这一步只能由当前工作区有写权限的登录用户执行。key 必须随机生成且保持 opaque，禁止放客户标识、姓名、日期、正文或 Token。相同 key 与参数重试返回 `replayed: true`，行动只完成一次、适用的结果 Evidence 只写一次；首次成功会与行动及 Evidence 在同一事务写一条脱敏审计，重放不会增加审计。不要把 `jh_…` WorkBuddy Token 当作人工命令凭证。
+
 部署数据库唯一约束前先在目标环境运行：
 
 ```bash

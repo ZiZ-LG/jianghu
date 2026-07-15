@@ -99,22 +99,38 @@ export async function executeActionFeedback(
   });
   if (claimed.count !== 1) throw new ActionAlreadyCompletedError();
   fault(options, 1);
-  if (!plan.personId || input.outcome === 'flat') return {};
-  const evidenceId = 'ev_action_' + createHash('sha256')
-    .update(`${ctx.tenantId}:${input.opportunityId}:${input.actionId}`)
-    .digest('hex').slice(0, 16);
-  await applyAction(ctx, {
-    type: 'ADD_EVIDENCE', accId: input.accountId, oppId: input.opportunityId,
-    evidence: {
-      id: evidenceId, personId: plan.personId,
-      signalKey: input.outcome === 'up' ? 'positive_interaction' : 'negative_interaction',
-      direction: input.outcome === 'up' ? 1 : -1, tier: 'mid',
-      rawContent: `行动结果回填：${plan.title || '行动'}`, occurredAt: input.occurredAt,
-      origin: 'manual', status: 'approved',
-    },
-  }, db);
-  fault(options, 2);
-  return { evidenceId };
+  let evidenceId: string | undefined;
+  if (plan.personId && input.outcome !== 'flat') {
+    evidenceId = 'ev_action_' + createHash('sha256')
+      .update(`${ctx.tenantId}:${input.opportunityId}:${input.actionId}`)
+      .digest('hex').slice(0, 16);
+    await applyAction(ctx, {
+      type: 'ADD_EVIDENCE', accId: input.accountId, oppId: input.opportunityId,
+      evidence: {
+        id: evidenceId, personId: plan.personId,
+        signalKey: input.outcome === 'up' ? 'positive_interaction' : 'negative_interaction',
+        direction: input.outcome === 'up' ? 1 : -1, tier: 'mid',
+        rawContent: `行动结果回填：${plan.title || '行动'}`, occurredAt: input.occurredAt,
+        origin: 'manual', status: 'approved',
+      },
+    }, db);
+    fault(options, 2);
+  }
+  await db.auditEvent.create({ data: {
+    id: `audit_${randomUUID()}`,
+    tenantId: ctx.tenantId,
+    actorId: ctx.actorId,
+    channel: ctx.channel,
+    action: 'action_feedback',
+    entityKind: 'plan_action',
+    entityId: input.actionId,
+    requestId: ctx.requestId ?? null,
+    sourceRef: evidenceId ?? null,
+    changedFields: JSON.stringify(evidenceId ? ['done', 'doneAt', 'evidenceId'] : ['done', 'doneAt']),
+    metadata: JSON.stringify(evidenceId ? { evidenceId } : {}),
+  } });
+  fault(options, 3);
+  return evidenceId ? { evidenceId } : {};
 }
 
 export async function executeInboxBatch(

@@ -111,7 +111,49 @@ Claude Desktop 原生 MCP 配置走 stdio，要连远程 HTTP MCP 需通过 `mcp
 }
 ```
 
-`SyncReceipt` 字段：`created`、`updated`、`proposed`、`skipped`、`failed`。回执保存调用方提供的 opaque 业务引用和状态，不复制拜访正文、Evidence 原文或人员姓名；调用方不得把个人信息编码进引用。Bundle 在写入前整体校验，事务中任一步失败都会整体回滚。
+`SyncReceipt` 字段：`syncRunId`、`created`、`updated`、`proposed`、`skipped`、`failed`、`replayed`。首次成功为 `replayed: false`；用**完全相同的 key 和 bundle**重试，返回同一个 `syncRunId`、相同的五类明细和 `replayed: true`，且不会增加正式实体、候选或 SyncRun。回执保存调用方提供的 opaque 业务引用和状态，不复制拜访正文、Evidence 原文或人员姓名；调用方不得把个人信息编码进引用。Bundle 在写入前整体校验，事务中任一步失败都会整体回滚。
+
+```json
+{
+  "syncRunId": "9b84d55b-0000-4000-8000-000000000000",
+  "created": ["account:customer-42", "opportunity:customer-42#opp", "visit:visit-20260714"],
+  "updated": [],
+  "proposed": ["person:leader", "person:director", "relationship:reports-to"],
+  "skipped": [],
+  "failed": [],
+  "replayed": false
+}
+```
+
+### Evidence 的两阶段顺序
+
+Evidence 候选必须引用江湖内已经正式存在、且属于同一客户的 `personId`，不能把 Phase A 的候选 `ref` 当作正式 ID：
+
+1. **Phase A**：同步 Account / Opportunity / Visit / Person candidates / Relation candidates，保存 Phase A 的 opaque `idempotencyKey` 和完整 bundle。
+2. 人在江湖收件箱采纳或“修改后采纳”人物，再采纳关系；从采纳结果或江湖状态取得正式 `personId`。
+3. **Phase B**：使用另一个稳定 opaque key，同步 `evidences: [{ ref, personId, signalKey, ... }]`。Evidence 初始为 `pending_review`，不会影响 PDE。
+4. 人通过 Evidence 审核后，江湖才将它标为 `approved`、重算 PDE 并写入 `evidence_review` 快照。
+
+每个 Phase 单独重试：网络超时时原样重发该 Phase 的 key + bundle；不要为同一业务尝试生成新 key，也不要在 Phase B 重放时改写已接受的正式 `personId`。
+
+### 人工行动回填
+
+行动完成后由已登录的人类用户调用 `POST /api/commands/action-feedback`，而不是由外部 Token 绕过人审。请求必须带稳定、随机生成的 opaque `Idempotency-Key`，禁止编码客户标识、姓名、日期、正文或 Token；相同 key + 相同参数重试返回 `replayed: true`，只完成一次行动，并在适用时只写一条结果 Evidence。首次成功会在同一事务写一条脱敏 `action_feedback` AuditEvent；审计只含行动 ID、变更字段和可选 Evidence ID，不含行动标题、Evidence 原文或人员信息。
+
+```http
+POST /api/commands/action-feedback
+Authorization: Bearer <登录 JWT>
+Idempotency-Key: cmd_01J304WB7R6M9K2Q5T8V1X3Z4A
+Content-Type: application/json
+
+{
+  "accountId": "<ACCOUNT_ID>",
+  "opportunityId": "<OPPORTUNITY_ID>",
+  "actionId": "<PLAN_ACTION_ID>",
+  "outcome": "up",
+  "occurredAt": "2026-07-14"
+}
+```
 
 **读工具（只读）**
 

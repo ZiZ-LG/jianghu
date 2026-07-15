@@ -69,6 +69,120 @@ describe('atomic idempotent compound commands', () => {
     expect(await test.prisma.evidenceEvent.count({ where: { tenantId: test.tenant.id } })).toBe(0);
   });
 
+  it('rolls back action completion, evidence and audit when a later audit step fails', async () => {
+    await test.prisma.opportunity.create({ data: {
+      id: 'opp-action-audit-rollback', tenantId: test.tenant.id, accountId: 'acc-command', name: 'Opp', customerType: 2,
+      pipelineStage: '线索', engageStage: '需求调研立项',
+    } });
+    await test.prisma.person.create({ data: {
+      id: 'person-action-audit-rollback', tenantId: test.tenant.id, accountId: 'acc-command', name: 'D', title: '总经理',
+    } });
+    await test.prisma.planAction.create({ data: {
+      id: 'action-audit-rollback', tenantId: test.tenant.id, accountId: 'acc-command', opportunityId: 'opp-action-audit-rollback',
+      personId: 'person-action-audit-rollback', title: '敏感行动标题', startDate: '2026-07-14', endDate: '2026-07-14',
+    } });
+
+    await expect(runCommand(ctx, { kind: 'action-feedback', idempotencyKey: 'feedback-audit-rollback-key' },
+      (tx) => executeActionFeedback(ctx, {
+        accountId: 'acc-command', opportunityId: 'opp-action-audit-rollback', actionId: 'action-audit-rollback',
+        outcome: 'up', occurredAt: '2026-07-14',
+      }, tx, { failAfterStep: 3 }), test.prisma)).rejects.toThrow('injected failure after step 3');
+
+    expect(await test.prisma.planAction.findUniqueOrThrow({ where: { id: 'action-audit-rollback' } })).toMatchObject({ done: false, doneAt: null });
+    expect(await test.prisma.evidenceEvent.count({ where: { tenantId: test.tenant.id } })).toBe(0);
+    expect(await test.prisma.auditEvent.count({ where: { tenantId: test.tenant.id } })).toBe(0);
+    expect(await test.prisma.commandRun.findFirstOrThrow({ where: {
+      tenantId: test.tenant.id, idempotencyKey: 'feedback-audit-rollback-key',
+    } })).toMatchObject({ status: 'failed' });
+  });
+
+  it('writes minimal audits without evidence for flat and personless action outcomes', async () => {
+    await test.prisma.opportunity.create({ data: {
+      id: 'opp-action-audit-minimal', tenantId: test.tenant.id, accountId: 'acc-command', name: 'Opp', customerType: 2,
+      pipelineStage: '线索', engageStage: '需求调研立项',
+    } });
+    await test.prisma.person.create({ data: {
+      id: 'person-action-audit-minimal', tenantId: test.tenant.id, accountId: 'acc-command', name: 'D', title: '总经理',
+    } });
+    await test.prisma.planAction.createMany({ data: [{
+      id: 'action-audit-flat', tenantId: test.tenant.id, accountId: 'acc-command', opportunityId: 'opp-action-audit-minimal',
+      personId: 'person-action-audit-minimal', title: '敏感平盘行动', startDate: '2026-07-14', endDate: '2026-07-14',
+    }, {
+      id: 'action-audit-no-person', tenantId: test.tenant.id, accountId: 'acc-command', opportunityId: 'opp-action-audit-minimal',
+      title: '敏感无人物行动', startDate: '2026-07-14', endDate: '2026-07-14',
+    }] });
+
+    for (const input of [{
+      accountId: 'acc-command', opportunityId: 'opp-action-audit-minimal', actionId: 'action-audit-flat',
+      outcome: 'flat' as const, occurredAt: '2026-07-14',
+    }, {
+      accountId: 'acc-command', opportunityId: 'opp-action-audit-minimal', actionId: 'action-audit-no-person',
+      outcome: 'up' as const, occurredAt: '2026-07-14',
+    }]) {
+      await expect(runCommand(ctx, {
+        kind: 'action-feedback', idempotencyKey: `feedback-${input.actionId}`, payload: input,
+      }, (tx) => executeActionFeedback(ctx, input, tx), test.prisma)).resolves.toMatchObject({
+        replayed: false, result: {},
+      });
+    }
+
+    expect(await test.prisma.evidenceEvent.count({ where: { tenantId: test.tenant.id } })).toBe(0);
+    const audits = await test.prisma.auditEvent.findMany({
+      where: { tenantId: test.tenant.id, action: 'action_feedback' }, orderBy: { entityId: 'asc' },
+    });
+    expect(audits).toHaveLength(2);
+    for (const audit of audits) expect(audit).toMatchObject({
+      actorId: test.owner.id,
+      channel: 'web',
+      action: 'action_feedback',
+      entityKind: 'plan_action',
+      requestId: 'compound-test',
+      sourceRef: null,
+      changedFields: JSON.stringify(['done', 'doneAt']),
+      metadata: JSON.stringify({}),
+    });
+    expect(audits.map((audit) => audit.entityId)).toEqual(['action-audit-flat', 'action-audit-no-person']);
+    expect(JSON.stringify(audits)).not.toContain('敏感平盘行动');
+    expect(JSON.stringify(audits)).not.toContain('敏感无人物行动');
+  });
+
+  it('maps a down outcome to negative evidence and links the minimal audit', async () => {
+    await test.prisma.opportunity.create({ data: {
+      id: 'opp-action-down', tenantId: test.tenant.id, accountId: 'acc-command', name: 'Opp', customerType: 2,
+      pipelineStage: '线索', engageStage: '需求调研立项',
+    } });
+    await test.prisma.person.create({ data: {
+      id: 'person-action-down', tenantId: test.tenant.id, accountId: 'acc-command', name: 'D', title: '总经理',
+    } });
+    await test.prisma.planAction.create({ data: {
+      id: 'action-down', tenantId: test.tenant.id, accountId: 'acc-command', opportunityId: 'opp-action-down',
+      personId: 'person-action-down', title: '敏感负向行动', startDate: '2026-07-14', endDate: '2026-07-14',
+    } });
+    const input = {
+      accountId: 'acc-command', opportunityId: 'opp-action-down', actionId: 'action-down',
+      outcome: 'down' as const, occurredAt: '2026-07-14',
+    };
+
+    const result = await runCommand(ctx, {
+      kind: 'action-feedback', idempotencyKey: 'feedback-action-down', payload: input,
+    }, (tx) => executeActionFeedback(ctx, input, tx), test.prisma);
+
+    const evidence = await test.prisma.evidenceEvent.findUniqueOrThrow({ where: { id: result.result.evidenceId } });
+    expect(evidence).toMatchObject({
+      tenantId: test.tenant.id, personId: 'person-action-down',
+      signalKey: 'negative_interaction', direction: -1, status: 'approved',
+    });
+    const audit = await test.prisma.auditEvent.findFirstOrThrow({ where: {
+      tenantId: test.tenant.id, action: 'action_feedback', entityId: 'action-down',
+    } });
+    expect(audit).toMatchObject({
+      sourceRef: evidence.id,
+      changedFields: JSON.stringify(['done', 'doneAt', 'evidenceId']),
+      metadata: JSON.stringify({ evidenceId: evidence.id }),
+    });
+    expect(JSON.stringify(audit)).not.toContain('敏感负向行动');
+  });
+
   it('rolls back a voice ingest when a later extracted write fails', async () => {
     await expect(runCommand(ctx, { kind: 'voice-ingest', idempotencyKey: 'voice-failure-key' },
       (tx) => ingestVoiceText(ctx, { text: '明确新建商机和干系人', accountId: 'acc-command' }, tx, {
@@ -215,6 +329,39 @@ describe('atomic idempotent compound commands', () => {
     expect(await test.prisma.opportunity.count({ where: { tenantId: 'tenant-foreign-command' } })).toBe(0);
   });
 
+  it('hides a foreign-tenant action target without changing its evidence or audit trail', async () => {
+    await test.prisma.tenant.create({ data: { id: 'tenant-foreign-action', name: 'Foreign Action Tenant' } });
+    await test.prisma.account.create({ data: {
+      id: 'acc-foreign-action', tenantId: 'tenant-foreign-action', name: 'Foreign Account', customerType: 2,
+    } });
+    await test.prisma.opportunity.create({ data: {
+      id: 'opp-foreign-action', tenantId: 'tenant-foreign-action', accountId: 'acc-foreign-action', name: 'Foreign Opp', customerType: 2,
+      pipelineStage: '线索', engageStage: '需求调研立项',
+    } });
+    await test.prisma.person.create({ data: {
+      id: 'person-foreign-action', tenantId: 'tenant-foreign-action', accountId: 'acc-foreign-action', name: 'Foreign D', title: '总经理',
+    } });
+    await test.prisma.planAction.create({ data: {
+      id: 'action-foreign-action', tenantId: 'tenant-foreign-action', accountId: 'acc-foreign-action', opportunityId: 'opp-foreign-action',
+      personId: 'person-foreign-action', title: 'Foreign Action', startDate: '2026-07-14', endDate: '2026-07-14',
+    } });
+
+    const hidden = await test.app.inject({
+      method: 'POST', url: '/api/commands/action-feedback',
+      headers: { authorization: `Bearer ${test.token}`, 'idempotency-key': 'foreign-action-feedback-key' },
+      payload: {
+        accountId: 'acc-foreign-action', opportunityId: 'opp-foreign-action', actionId: 'action-foreign-action',
+        outcome: 'up', occurredAt: '2026-07-14',
+      },
+    });
+
+    expect(hidden.statusCode).toBe(404);
+    expect(hidden.json()).toEqual({ error: '资源不存在' });
+    expect(await test.prisma.planAction.findUniqueOrThrow({ where: { id: 'action-foreign-action' } })).toMatchObject({ done: false, doneAt: null });
+    expect(await test.prisma.evidenceEvent.count({ where: { tenantId: 'tenant-foreign-action' } })).toBe(0);
+    expect(await test.prisma.auditEvent.count({ where: { tenantId: 'tenant-foreign-action' } })).toBe(0);
+  });
+
   it('stores a non-sensitive replay summary without changing receipt collection shapes', async () => {
     const key = { kind: 'voice-ingest', idempotencyKey: 'voice-summary-replay-key' };
     const first = await runCommand(ctx, key, async () => ({
@@ -281,11 +428,19 @@ describe('atomic idempotent compound commands', () => {
       accountId: 'acc-command', opportunityId: 'opp-action-once', actionId: 'action-once',
       outcome: 'up' as const, occurredAt: '2026-07-14',
     };
-    await runCommand(ctx, { kind: 'action-feedback', idempotencyKey: 'action-once-first', payload: input },
-      (tx) => executeActionFeedback(ctx, input, tx), test.prisma);
-    await expect(runCommand(ctx, { kind: 'action-feedback', idempotencyKey: 'action-once-second', payload: input },
-      (tx) => executeActionFeedback(ctx, input, tx), test.prisma)).rejects.toMatchObject({ statusCode: 409 });
+    const attempts = await Promise.allSettled([
+      runCommand(ctx, { kind: 'action-feedback', idempotencyKey: 'action-once-first', payload: input },
+        (tx) => executeActionFeedback(ctx, input, tx), test.prisma),
+      runCommand(ctx, { kind: 'action-feedback', idempotencyKey: 'action-once-second', payload: input },
+        (tx) => executeActionFeedback(ctx, input, tx), test.prisma),
+    ]);
+    expect(attempts.filter((attempt) => attempt.status === 'fulfilled')).toHaveLength(1);
+    const rejected = attempts.find((attempt) => attempt.status === 'rejected');
+    expect(rejected).toMatchObject({ status: 'rejected', reason: { statusCode: 409 } });
     expect(await test.prisma.evidenceEvent.count({ where: { tenantId: test.tenant.id, opportunityId: 'opp-action-once' } })).toBe(1);
+    expect(await test.prisma.auditEvent.count({ where: {
+      tenantId: test.tenant.id, action: 'action_feedback', entityId: 'action-once',
+    } })).toBe(1);
   });
 
   it('records resolved ingest failures as failed and permits a same-key retry', async () => {

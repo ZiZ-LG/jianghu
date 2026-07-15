@@ -1,0 +1,94 @@
+{
+  "phaseA": {
+    "idempotencyKey": "wb-e2e-phase-a-304",
+    "bundle": {
+      "account": {
+        "externalRef": "fictional-account-304",
+        "name": "虚构星河能源集团",
+        "customerType": 2,
+        "region": "虚构示范区"
+      },
+      "opportunity": {
+        "externalRef": "fictional-opportunity-304",
+        "name": "虚构零碳调度项目",
+        "pipelineStage": "需求引导",
+        "engageStage": "需求调研立项",
+        "expectedAmountW": 100
+      },
+      "visit": {
+        "externalRef": "fictional-visit-304",
+        "date": "2026-07-14",
+        "topic": "虚构需求澄清会",
+        "summary": "虚构纪要原文：仅用于 INT-304 契约回归，禁止进入同步回执或审计元数据。",
+        "participants": [
+          { "name": "虚构客户甲", "side": "customer" },
+          { "name": "虚构顾问乙", "side": "our" }
+        ]
+      },
+      "people": [
+        {
+          "ref": "fictional-person-a-304",
+          "name": "虚构候选甲",
+          "title": "虚构平台主管",
+          "orgLevel": 2,
+          "evidence": "虚构公开组织说明",
+          "confidence": 0.73
+        },
+        {
+          "ref": "fictional-person-b-304",
+          "name": "虚构候选乙",
+          "title": "虚构技术负责人",
+          "orgLevel": 3,
+          "evidence": "虚构会议角色说明",
+          "confidence": 0.68
+        }
+      ],
+      "relations": [
+        {
+          "ref": "fictional-relation-304",
+          "sourceRef": "fictional-person-b-304",
+          "targetRef": "fictional-person-a-304",
+          "layer": "L1",
+          "label": "虚构汇报",
+          "evidence": "虚构组织关系说明",
+          "confidence": 0.66
+        }
+      ],
+      "evidences": []
+    }
+  },
+  "phaseB": {
+    "idempotencyKey": "wb-e2e-phase-b-304",
+    "evidence": {
+      "ref": "fictional-evidence-304",
+      "signalKey": "intro_referral",
+      "direction": 1,
+      "tier": "strong",
+      "rawContent": "虚构证据原文：仅用于 INT-304，审批前不得影响 PDE。",
+      "occurredAt": "2026-07-14"
+    }
+  },
+  "review": {
+    "personOverrides": {
+      "fictional-person-a-304": {
+        "name": "虚构已核验决策人",
+        "title": "虚构决策委员会主任"
+      },
+      "fictional-person-b-304": {
+        "name": "虚构已核验技术人",
+        "title": "虚构技术委员会主任"
+      }
+    },
+    "relationOverride": {
+      "layer": "L2",
+      "label": "虚构已核验决策影响"
+    }
+  },
+  "actionFeedback": {
+    "idempotencyKey": "wb-e2e-action-feedback-304",
+    "actionId": "act-fictional-304",
+    "title": "虚构方案复核行动",
+    "outcome": "up",
+    "occurredAt": "2026-07-14"
+  }
+}
