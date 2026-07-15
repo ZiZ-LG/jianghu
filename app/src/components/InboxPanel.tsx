@@ -6,6 +6,7 @@ import { useMemo, useState } from 'react';
 import type { Account } from '../types';
 import type { InboxRel, InboxPerson, InboxProposal, InboxReminder, InboxEvidence } from '../api';
 import { previewProposalImpact } from '../lib/impact';
+import { removeSuccessfulSelections, type BatchProgress } from '../lib/reviewBatch';
 import { Modal } from './Modal';
 
 const LAYER_COLOR: Record<string, string> = { L1: '#2563eb', L2: '#9333ea', L3: '#16a34a', L4: '#ef4444' };
@@ -31,6 +32,7 @@ type Item =
   | { kind: 'evidence'; id: string; accountId: string; accountName: string; data: InboxEvidence };
 
 export type InboxBatchItem = { kind: Item['kind']; id: string; decision: 'accept' | 'reject'; overrideValue?: string; personOverride?: { name?: string; title?: string }; relOverride?: { layer?: string; label?: string }; direction?: -1 | 0 | 1 };
+export type InboxBatchProgress = BatchProgress<InboxBatchItem>;
 
 export function InboxPanel({ rels, persons, proposals, reminders, evidences, accounts, onAccept, onReject, onAcceptPerson, onRejectPerson, onAcceptProposal, onRejectProposal, onDismissReminder, onReviewEvidence, onBatch, onClose }: {
   rels: InboxRel[];
@@ -39,15 +41,15 @@ export function InboxPanel({ rels, persons, proposals, reminders, evidences, acc
   reminders: InboxReminder[];                            // 巡检提醒（提醒型，只读）
   evidences: InboxEvidence[];                            // M3 证据待审（机器抽取的行为信号）
   accounts: Account[];                                  // 全树（算影响预览：找目标 account/opp）
-  onAccept: (id: string, override?: { layer?: string; label?: string }) => void;   // 关系候选采纳（P10 可改层级/标签后采纳）
-  onReject: (id: string) => void;
-  onAcceptPerson: (id: string, override?: { name?: string; title?: string }) => void; // 人物候选采纳（P10 可改名字/职务后采纳）
-  onRejectPerson: (id: string) => void;
-  onAcceptProposal: (id: string, overrideValue?: string) => void; // 字段提案采纳（可改后采纳）
-  onRejectProposal: (id: string) => void;
-  onDismissReminder: (id: string) => void;              // 提醒忽略（不改业务库）
-  onReviewEvidence: (id: string, action: 'approve' | 'reject', direction?: -1 | 0 | 1) => void; // 证据审核（批准可带定向）
-  onBatch: (items: InboxBatchItem[]) => Promise<void>;
+  onAccept: (id: string, override?: { layer?: string; label?: string }) => Promise<void>;   // 关系候选采纳（P10 可改层级/标签后采纳）
+  onReject: (id: string) => Promise<void>;
+  onAcceptPerson: (id: string, override?: { name?: string; title?: string }) => Promise<void>; // 人物候选采纳（P10 可改名字/职务后采纳）
+  onRejectPerson: (id: string) => Promise<void>;
+  onAcceptProposal: (id: string, overrideValue?: string) => Promise<void>; // 字段提案采纳（可改后采纳）
+  onRejectProposal: (id: string) => Promise<void>;
+  onDismissReminder: (id: string) => Promise<void>;              // 提醒忽略（不改业务库）
+  onReviewEvidence: (id: string, action: 'approve' | 'reject', direction?: -1 | 0 | 1) => Promise<void>; // 证据审核（批准可带定向）
+  onBatch: (items: InboxBatchItem[], onProgress: (progress: InboxBatchProgress) => void) => Promise<InboxBatchProgress>;
   onClose: () => void;
 }) {
   const [acctFilter, setAcctFilter] = useState('');
@@ -59,6 +61,7 @@ export function InboxPanel({ rels, persons, proposals, reminders, evidences, acc
   const [personEdits, setPersonEdits] = useState<Record<string, { name: string; title: string }>>({});
   const [relEdits, setRelEdits] = useState<Record<string, { layer: string; label: string }>>({});
   const [batchBusy, setBatchBusy] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<InboxBatchProgress | null>(null);
 
   const acctList = useMemo(() => {
     const m = new Map<string, string>();
@@ -106,6 +109,7 @@ export function InboxPanel({ rels, persons, proposals, reminders, evidences, acc
   const keyOf = (it: Item) => `${it.kind}:${it.id}`;
   const total = persons.length + rels.length + proposals.length + reminders.length + evidences.length;
   const toggleSel = (k: string) => setSel((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  const fire = (operation: Promise<unknown>) => { void operation.catch(() => undefined); };
 
   const batchApply = async (accept: boolean) => {
     const items: InboxBatchItem[] = [];
@@ -121,9 +125,19 @@ export function InboxPanel({ rels, persons, proposals, reminders, evidences, acc
       });
     }
     if (!items.length) return;
-    setBatchBusy(true);
-    try { await onBatch(items); setSel(new Set()); }
-    catch { /* App 已展示错误；保留选择供用户重试。 */ }
+    setBatchBusy(true); setBatchProgress(null);
+    try {
+      const result = await onBatch(items, setBatchProgress);
+      setSel((selected) => removeSuccessfulSelections(selected, result.successes));
+    } catch (cause) {
+      const error = cause instanceof Error ? cause.message : String(cause || '未知错误');
+      setBatchProgress({
+        total: items.length,
+        processed: items.length,
+        successes: [],
+        failures: items.map((item) => ({ item, error })),
+      });
+    }
     finally { setBatchBusy(false); }
   };
 
@@ -158,6 +172,17 @@ export function InboxPanel({ rels, persons, proposals, reminders, evidences, acc
           ))}
         </div>
       </div>
+
+      {batchProgress && (
+        <div className="empty-hint" role="status" style={{ marginBottom: 10 }}>
+          已处理 {batchProgress.processed}/{batchProgress.total} · 成功 {batchProgress.successes.length} · 失败 {batchProgress.failures.length}
+          {batchProgress.failures.length > 0 && (
+            <div role="alert" style={{ marginTop: 4 }}>
+              失败项：{batchProgress.failures.map(({ item, error }) => `${item.kind}:${item.id}（${error}）`).join('；')}
+            </div>
+          )}
+        </div>
+      )}
 
       {total === 0 ? (
         <div className="sc-empty" style={{ padding: '36px 0' }}>
@@ -292,13 +317,13 @@ export function InboxPanel({ rels, persons, proposals, reminders, evidences, acc
                         </span>);
                       })()}
                       {it.kind === 'reminder' ? (
-                        <button className="btn ghost sm" onClick={() => onDismissReminder(it.id)} title="忽略这条提醒（不影响业务数据）">忽略</button>
+                        <button className="btn ghost sm" onClick={() => fire(onDismissReminder(it.id))} title="忽略这条提醒（不影响业务数据）">忽略</button>
                       ) : it.kind === 'evidence' ? (<>
-                        <button className="btn primary sm" title="批准：这条信号属实，计入引擎证据池" onClick={() => onReviewEvidence(it.id, 'approve', evDirs[it.id])}>批准</button>
-                        <button className="btn ghost sm" title="拒绝：信号不实，不参与任何计算" onClick={() => onReviewEvidence(it.id, 'reject')}>拒绝</button>
+                        <button className="btn primary sm" title="批准：这条信号属实，计入引擎证据池" onClick={() => fire(onReviewEvidence(it.id, 'approve', evDirs[it.id]))}>批准</button>
+                        <button className="btn ghost sm" title="拒绝：信号不实，不参与任何计算" onClick={() => fire(onReviewEvidence(it.id, 'reject'))}>拒绝</button>
                       </>) : (<>
-                        <button className="btn primary sm" onClick={() => (it.kind === 'person' ? onAcceptPerson(it.id, personEdits[it.id]) : it.kind === 'rel' ? onAccept(it.id, relEdits[it.id]) : onAcceptProposal(it.id, overrides[it.id]))}>采纳</button>
-                        <button className="btn ghost sm" onClick={() => (it.kind === 'person' ? onRejectPerson(it.id) : it.kind === 'rel' ? onReject(it.id) : onRejectProposal(it.id))}>忽略</button>
+                        <button className="btn primary sm" onClick={() => fire(it.kind === 'person' ? onAcceptPerson(it.id, personEdits[it.id]) : it.kind === 'rel' ? onAccept(it.id, relEdits[it.id]) : onAcceptProposal(it.id, overrides[it.id]))}>采纳</button>
+                        <button className="btn ghost sm" onClick={() => fire(it.kind === 'person' ? onRejectPerson(it.id) : it.kind === 'rel' ? onReject(it.id) : onRejectProposal(it.id))}>忽略</button>
                       </>)}
                     </div>
                   </div>

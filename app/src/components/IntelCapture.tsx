@@ -5,6 +5,18 @@ import { api, newIdempotencyKey } from '../api';
 import { IntelReceipt } from './IntelReceipt';
 import { visitAsks } from '../lib/gaps';
 
+interface VoiceExtractPayload {
+  text: string;
+  accountId?: string;
+  opportunityId?: string;
+  personId?: string;
+  priorText?: string;
+}
+
+export function buildVoiceExtractPayload(payload: VoiceExtractPayload): VoiceExtractPayload {
+  return payload;
+}
+
 /** 可拖动悬浮面板：替代 Modal 的居中遮罩——无遮罩、默认右上角、拖标题栏移动，便于边录边看图。 */
 function FloatPanel({ title, onClose, footer, width = 420, children }: {
   title: string; onClose: () => void; footer?: ReactNode; width?: number; children: ReactNode;
@@ -40,9 +52,10 @@ function FloatPanel({ title, onClose, footer, width = 420, children }: {
  * 双轨（见 docs/录入情报-设计方案.md）：口述明说直落正式库；AI 补充进「🔮 荐关系」候选。
  * 两态：输入 → 回执（不逐项二次确认）。
  */
-export function IntelCapture({ account, opportunity, onClose, onDone, onEnterAccount, embedded }: {
+export function IntelCapture({ account, opportunity, personId, onClose, onDone, onEnterAccount, embedded }: {
   account?: Account | null;
   opportunity?: Opportunity | null;
+  personId?: string;
   onClose: () => void;
   onDone: () => void; // 落库后通知 App 重新拉取 state
   onEnterAccount?: (accId: string) => void; // 从零口述建客户后，回执里「进入客户」用
@@ -57,6 +70,7 @@ export function IntelCapture({ account, opportunity, onClose, onDone, onEnterAcc
   const [askHint, setAskHint] = useState(''); // P1② 追问：点了回执里哪条追问，本轮口述＝对它的回答
   const [lockedAccountId, setLockedAccountId] = useState<string | null>(null); // fromScratch 首轮建客户后锁定，后续轮复用同一客户
   const fromScratch = !account; // Hub 入口：无 account，据口述自动新建客户
+  const focusPerson = account?.persons.find((person) => person.id === personId);
 
   // P1② 我还想追问：抽取落库后按最新缺口出 1-3 条具体追问（visit 货架问句），这轮提到的人优先——单向倾倒变两回合对话
   const asks = useMemo(() => {
@@ -75,8 +89,18 @@ export function IntelCapture({ account, opportunity, onClose, onDone, onEnterAcc
     try {
       const accId = account?.id ?? lockedAccountId ?? undefined; // fromScratch 多轮：首轮建的客户后续复用
       // 追问轮：把追问句拼进上文，LLM 才能消解「他挺支持的」这类对追问的指代式回答
-      const prior = [priorText, askHint && `[江湖追问] ${askHint}`].filter(Boolean).join('\n');
-      const r = await api.voiceExtract({ text: text.trim(), accountId: accId, opportunityId: scope === 'opp' ? opportunity?.id : undefined, priorText: prior || undefined }, newIdempotencyKey());
+      const prior = [
+        focusPerson && `[本次拜访对象] ${focusPerson.name}${focusPerson.title ? `（${focusPerson.title}）` : ''}`,
+        priorText,
+        askHint && `[江湖追问] ${askHint}`,
+      ].filter(Boolean).join('\n');
+      const r = await api.voiceExtract(buildVoiceExtractPayload({
+        text: text.trim(),
+        accountId: accId,
+        opportunityId: scope === 'opp' ? opportunity?.id : undefined,
+        personId,
+        priorText: prior || undefined,
+      }), newIdempotencyKey());
       setReceipt(r);
       if (!accId && r?.account?.id) setLockedAccountId(r.account.id); // 首轮从零建客户 → 锁定，「再补一句」补到同一客户
       setPriorText((prev) => (prev ? prev + '\n' : '') + text.trim()); // 累积上文供下一轮指代消解
@@ -142,6 +166,7 @@ export function IntelCapture({ account, opportunity, onClose, onDone, onEnterAcc
           <div className="intel-scope">
             <label className="chk-line"><input type="radio" checked={scope === 'opp'} onChange={() => setScope('opp')} />当前商机「{opportunity.name}」</label>
             <label className="chk-line"><input type="radio" checked={scope === 'acc'} onChange={() => setScope('acc')} />仅记到客户（不关联商机）</label>
+            {focusPerson && <div className="hint-text">本次拜访对象「{focusPerson.name}」</div>}
           </div>
         </div>
       )}

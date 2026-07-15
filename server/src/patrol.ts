@@ -3,6 +3,8 @@
 // 五规则互补于前端 GapCards(g64111 缺口)——这里只管「时间 / 覆盖」维度。
 // 严守铁律②：只产出草稿(进收件箱人审)，绝不直接改库。
 
+import { businessDayDistance, businessYmd } from './businessDate.js';
+
 const DAY = 24 * 60 * 60 * 1000;
 export const STALL_DAYS = 7; // 商机多久无新动作算停滞
 export const RECHECK_DAYS = 14; // 关键人支持度多久没新证据该复查
@@ -119,8 +121,8 @@ export function computeReminders(opp: PatrolOpp, now: Date): ReminderDraft[] {
 
   // P14 规则④：行动牌逾期——已上桌未完成，endDate 已过。每张牌一条，警戒等级按逾期天数分档
   for (const a of opp.overdueActions) {
-    const overdueDays = daysBetween(now, new Date(a.endDate + 'T00:00:00'));
-    if (overdueDays <= 0) continue; // 防御：入参已过滤，双保险
+    const overdueDays = businessDayDistance(businessYmd(now), a.endDate);
+    if (!Number.isFinite(overdueDays) || overdueDays <= 0) continue; // 防御：存量非法日期与未逾期均跳过
     const who = a.personName ? `【责任人 ${a.personName}】` : '（未指定责任人）';
     out.push({
       ...base, kind: 'action_overdue', entityId: a.actionId,

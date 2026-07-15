@@ -8,6 +8,7 @@ import { CloneOpportunitySchema, cloneOpportunityInTransaction } from '../opp.js
 import { acceptProposalInTransaction, rejectProposalInTransaction } from '../proposals.js';
 import { acceptRelationSuggestionInTransaction, materializePerson } from '../suggest.js';
 import { createPdeSnapshot } from '../pde/routes.js';
+import { businessYmd } from '../businessDate.js';
 import { ScopedNotFoundError } from './scopeGuards.js';
 import { runCommand } from './commandRunner.js';
 
@@ -166,7 +167,7 @@ export async function executeInboxBatch(
         await acceptRelationSuggestionInTransaction(db as any, ctx.tenantId, item.id, item.relOverride);
       }
     } else if (item.kind === 'evidence') {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = businessYmd();
       const evidence = await db.evidenceEvent.findFirst({ where: { id: item.id, tenantId: ctx.tenantId, status: 'pending_review' } });
       if (!evidence) throw new Error('证据不存在或已处理');
       const changed = await db.evidenceEvent.updateMany({ where: { id: item.id, tenantId: ctx.tenantId, status: 'pending_review' }, data: {

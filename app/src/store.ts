@@ -6,6 +6,7 @@ import type {
 } from './types';
 import type { Action } from '@jianghu/domain-contracts';
 import { seedAccount } from './data/seed';
+import { localYmd } from './lib/dateYmd';
 
 export type { Action } from '@jianghu/domain-contracts';
 
@@ -256,7 +257,7 @@ export function reducer(s: StoreState, action: StoreAction): StoreState {
         };
       });
     case 'TOGGLE_PLAN_ACTION':
-      return mapAcc(s, action.accId, (a) => ({ ...a, planActions: (a.planActions ?? []).map((p) => (p.id === action.actionId ? { ...p, done: action.done, doneAt: action.done ? (action.doneAt ?? new Date().toISOString().slice(0, 10)) : undefined } : p)) }));
+      return mapAcc(s, action.accId, (a) => ({ ...a, planActions: (a.planActions ?? []).map((p) => (p.id === action.actionId ? { ...p, done: action.done, doneAt: action.done ? (action.doneAt ?? localYmd(new Date())) : undefined } : p)) }));
     case 'ADD_MILESTONE': {
       const milestone: OppMilestone = { accountId: action.accId, opportunityId: action.oppId, ...action.milestone };
       return mapAcc(s, action.accId, (a) => ({ ...a, milestones: [...(a.milestones ?? []), milestone] }));

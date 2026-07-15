@@ -17,6 +17,12 @@ import { api, type PatrolInfo } from '../api';
 import { EnginePulse } from './EnginePulse';
 import { buildAiContext } from '../aiContext';
 import { ACT_LABEL } from '../lib/pdeUi';
+import {
+  actionCompletionBusinessDates,
+  addBusinessDaysYmd,
+  deliberationBusinessYmd,
+  isBusinessActionOverdue,
+} from '../lib/deliberationDates';
 
 // 741 四档语义色（同 types.ts 硬编码语义色惯例）
 const BAND_TONE: Record<Band741, string> = {
@@ -28,10 +34,8 @@ const BAND_TONE: Record<Band741, string> = {
 const GROUPS = ['6必清', '4优势', '1决胜'] as const;
 // E2 背离警示行用（自 EngineBar 迁入）：六档支持度的界面用语
 const SENT_TEXT: Record<Sentiment, string> = { star: '排他支持', plus: '支持', neutral: '中立', unknown: '未知', minus: '抗拒', x: '倒向对手' };
-const p2 = (n: number) => String(n).padStart(2, '0');
-const fmt = (d: Date) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
-const todayYmd = () => fmt(new Date());
-const addDaysYmd = (n: number, baseYmd?: string) => { const d = baseYmd ? new Date(baseYmd + 'T00:00:00') : new Date(); d.setDate(d.getDate() + n); return fmt(d); };
+const todayYmd = () => deliberationBusinessYmd();
+const addDaysYmd = (n: number, baseYmd = todayYmd()) => addBusinessDaysYmd(baseYmd, n);
 const mmdd = (ymd: string) => (ymd && ymd.length >= 10 ? `${ymd.slice(5, 7)}/${ymd.slice(8, 10)}` : '未定');
 
 interface FwdCand { gapItem: string; title: string; basis: string; }
@@ -402,13 +406,14 @@ export function DeliberationDock({
   };
   const saveAction = (actionId: string, andStage = false) => {
     if (!actDraft) return;
-    const d = actDraft; const today = todayYmd();
+    const d = actDraft;
+    const { doneAt, evidenceOccurredAt } = actionCompletionBusinessDates();
     const title = d.title.trim() || '新行动';
-    dispatch({ type: 'UPDATE_PLAN_ACTION', accId: account.id, actionId, patch: { title, startDate: d.startDate, endDate: d.startDate, personId: d.personId, target: d.target, resources: d.resources, cautions: d.cautions, props: d.props, done: d.done, doneAt: d.done ? today : undefined, ...(andStage ? { draft: false } : {}) } });
+    dispatch({ type: 'UPDATE_PLAN_ACTION', accId: account.id, actionId, patch: { title, startDate: d.startDate, endDate: d.startDate, personId: d.personId, target: d.target, resources: d.resources, cautions: d.cautions, props: d.props, done: d.done, doneAt: d.done ? doneAt : undefined, ...(andStage ? { draft: false } : {}) } });
     // 结果回填：完成且关联干系人、选了态度变化 → 录一条互动证据喂策略引擎 E2（守铁律②：人当场拍板，非机器自动改分）
     if (d.done && !d.wasDone && d.personId && (d.outcome === 'up' || d.outcome === 'down')) {
       const ev = newEvidence(account.id, opp.id, d.personId, d.outcome === 'up' ? 'positive_interaction' : 'negative_interaction', d.outcome === 'up' ? 1 : -1, 'mid');
-      ev.rawContent = `行动结果回填：${title}`; ev.occurredAt = today;
+      ev.rawContent = `行动结果回填：${title}`; ev.occurredAt = evidenceOccurredAt;
       dispatch({ type: 'ADD_EVIDENCE', accId: account.id, oppId: opp.id, evidence: ev });
     }
     setDrawer(null);
@@ -677,7 +682,7 @@ export function DeliberationDock({
               <div className="sb2-card sb2-empty-card" onClick={addAction}>还没有行动<br /><span>＋ 加一条，或在策略卡上「→ 派发」生成</span></div>
             )}
             {planActions.map((a) => {
-              const overdue = !a.done && (a.endDate || a.startDate) < todayYmd();
+              const overdue = isBusinessActionOverdue(a);
               const target = a.personId ? personById.get(a.personId) : null;
               const focused = !!selectedPersonId && a.personId === selectedPersonId;
               return (

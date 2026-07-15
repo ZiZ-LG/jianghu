@@ -1,7 +1,7 @@
 // 乐观锁（#3 多人协作冲突检测）前端契约单测：
 // ① injectBaseVersion 在 dispatch 前正确取出实体当前 version 作 baseVersion；
 // ② reducer 对 UPDATE_PERSON/OPP/EDGE 乐观自增 version，保持本地与服务端步调一致。
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { alignVersionAfterRetry, applyActionsSequentially, computeInverse, reducer, injectBaseVersion, invalidateHistory, transitionHistory, type Action, type StoreState } from './store';
 import type { Account } from './types';
 
@@ -271,6 +271,31 @@ function planActionReferenceState(): StoreState {
   ];
   return state;
 }
+
+describe('TOGGLE_PLAN_ACTION business date', () => {
+  it('uses the Beijing completion day, preserves an explicit date, and clears it when reopened', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-07-14T16:30:00Z'));
+      const completed = reducer(planActionReferenceState(), {
+        type: 'TOGGLE_PLAN_ACTION', accId: 'acc1', actionId: 'plan-delete', done: true,
+      });
+      expect(completed.accounts[0].planActions?.[0].doneAt).toBe('2026-07-15');
+
+      const explicit = reducer(planActionReferenceState(), {
+        type: 'TOGGLE_PLAN_ACTION', accId: 'acc1', actionId: 'plan-delete', done: true, doneAt: '2026-07-10',
+      });
+      expect(explicit.accounts[0].planActions?.[0].doneAt).toBe('2026-07-10');
+
+      const reopened = reducer(completed, {
+        type: 'TOGGLE_PLAN_ACTION', accId: 'acc1', actionId: 'plan-delete', done: false,
+      });
+      expect(reopened.accounts[0].planActions?.[0].doneAt).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
 describe('DELETE_PLAN_ACTION reverse references and undo', () => {
   const action: Action = { type: 'DELETE_PLAN_ACTION', accId: 'acc1', actionId: 'plan-delete' };

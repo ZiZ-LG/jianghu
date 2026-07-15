@@ -21,7 +21,14 @@ export class CommandRetryableError extends Error {
   constructor() { super('命令暂时无法完成，请使用相同 Idempotency-Key 重试'); }
 }
 
-type CommandInput = { kind: string; idempotencyKey: string; payload?: unknown; reservationToken?: string };
+type CommandInput = {
+  kind: string;
+  idempotencyKey: string;
+  payload?: unknown;
+  reservationToken?: string;
+  /** Caller opt-in: a scoped recheck miss cancels this exact running reservation instead of recording a business failure. */
+  discardReservationOnScopedError?: boolean;
+};
 const TRANSACTION_ATTEMPTS = 3;
 const LEASE_MS = 2 * 60_000;
 
@@ -169,6 +176,34 @@ export async function failReservedCommand(
   });
 }
 
+/**
+ * Delete only the caller's still-running reservation. Every ownership/hash/lease field is matched so this cannot
+ * remove another actor's command, a completed replay, or a newer lease that took over the same idempotency key.
+ */
+export async function cancelReservedCommand(
+  ctx: CommandContext,
+  input: CommandInput,
+  reservationToken: string,
+  db: PrismaClient = prisma,
+): Promise<boolean> {
+  const removed = await db.commandRun.deleteMany({
+    where: {
+      tenantId: ctx.tenantId,
+      actorId: ctx.actorId,
+      kind: input.kind,
+      idempotencyKey: input.idempotencyKey,
+      requestHash: requestHashOf(input.payload),
+      status: 'running',
+      leaseToken: reservationToken,
+    },
+  });
+  return removed.count === 1;
+}
+
+const isScopedNotFound = (error: unknown): boolean => (
+  Boolean(error && typeof error === 'object' && 'scopedNotFound' in error && error.scopedNotFound === true)
+);
+
 export async function runCommand<T>(
   ctx: CommandContext,
   input: CommandInput,
@@ -207,6 +242,10 @@ export async function runCommand<T>(
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5_000, timeout: 115_000 });
     } catch (error) {
       if (error instanceof CommandInProgressError || error instanceof IdempotencyConflictError) throw error;
+      if (input.discardReservationOnScopedError && input.reservationToken && isScopedNotFound(error)) {
+        await cancelReservedCommand(ctx, input, input.reservationToken, db);
+        throw error;
+      }
       if (prismaCode(error) === 'P2002') {
         const existing = await db.commandRun.findUnique({ where });
         if (existing && existing.requestHash !== requestHash) throw new IdempotencyConflictError();

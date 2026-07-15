@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { prisma } from './prisma.js';
+import { shiftBusinessYmd } from './businessDate.js';
 
 /** 为某租户创建一份演示数据（西部电力建设集团风光储项目）。每次调用用独立 id 前缀，避免冲突。 */
 export async function createDemoForTenant(tenantId: string): Promise<void> {
@@ -9,7 +10,7 @@ export async function createDemoForTenant(tenantId: string): Promise<void> {
   const oppId = id('opp');
   const S = (v: unknown) => JSON.stringify(v);
   const today = new Date();
-  const ymd = (off: number) => { const d = new Date(today); d.setDate(d.getDate() + off); return d.toISOString().slice(0, 10); };
+  const ymd = (off: number) => shiftBusinessYmd(today, off);
 
   await prisma.account.create({ data: { id: accId, tenantId, name: '西部电力建设集团（示例）', customerType: 4, unifiedCreditCode: '91510000XXXXXXXXXX' } });
 

@@ -10,10 +10,11 @@ import type { Action } from '../store';
 import { newPlanAction, newStrategyCard, newStrategyRisk } from '../store';
 import { buildAiContext } from '../aiContext';
 import { api, type AdvisorCand } from '../api';
+import { localYmd } from '../lib/dateYmd';
 
 type Msg = { role: 'user' | 'assistant'; text: string };
 type Cand = AdvisorCand & { accepted?: boolean };
-const todayYmd = () => new Date().toISOString().slice(0, 10);
+const todayYmd = () => localYmd(new Date());
 
 const welcome = (name: string): Msg => ({
   role: 'assistant',

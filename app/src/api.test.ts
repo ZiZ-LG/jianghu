@@ -8,9 +8,16 @@ const response = (status: number, body: unknown) => ({
 }) as Response;
 
 afterEach(() => {
+  api.setToken(null);
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
 
 describe('typed API failures', () => {
   it('preserves HTTP status/code and notifies the centralized 401 handler', async () => {
@@ -24,6 +31,129 @@ describe('typed API failures', () => {
       retryable: false,
     });
     expect(seen).toHaveLength(1);
+    unsubscribe();
+  });
+
+  it('does not broadcast a delayed user A 401 after token switches to user B', async () => {
+    const pendingResponse = deferred<Response>();
+    const fetchMock = vi.fn((_url: string, _init?: RequestInit) => pendingResponse.promise);
+    vi.stubGlobal('fetch', fetchMock);
+    api.setToken('token-a');
+    const seen: ApiError[] = [];
+    const unsubscribe = api.onUnauthorized((error) => {
+      seen.push(error);
+      api.setToken(null); // mirror App centralized logout cleanup
+    });
+    const pending = request('/api/me');
+    expect(((fetchMock.mock.calls[0][1] as RequestInit).headers as Headers).get('Authorization')).toBe('Bearer token-a');
+
+    api.setToken('token-b');
+    pendingResponse.resolve(response(401, { error: 'A expired' }));
+
+    await expect(pending).rejects.toMatchObject({ status: 401 });
+    expect(seen).toEqual([]);
+    expect(api.getToken()).toBe('token-b');
+    unsubscribe();
+  });
+
+  it('uses a bearer supplied through Headers without binding its 401 to the global session', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => response(401, { error: 'custom bearer denied' }));
+    vi.stubGlobal('fetch', fetchMock);
+    api.setToken('global-token');
+    const seen: ApiError[] = [];
+    const unsubscribe = api.onUnauthorized((error) => {
+      seen.push(error);
+      api.setToken(null);
+    });
+
+    await expect(request('/custom', {
+      headers: new Headers({ Authorization: 'Bearer custom-token' }),
+    })).rejects.toMatchObject({ status: 401 });
+
+    const headers = (fetchMock.mock.calls[0][1] as RequestInit).headers;
+    expect(headers).toBeInstanceOf(Headers);
+    expect((headers as Headers).get('authorization')).toBe('Bearer custom-token');
+    expect(seen).toEqual([]);
+    expect(api.getToken()).toBe('global-token');
+    unsubscribe();
+  });
+
+  it('lets lowercase authorization override the global token without merging identities', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => response(401, { error: 'explicit bearer denied' }));
+    vi.stubGlobal('fetch', fetchMock);
+    api.setToken('global-token');
+    const seen: ApiError[] = [];
+    const unsubscribe = api.onUnauthorized((error) => seen.push(error));
+
+    await expect(request('/custom', {
+      headers: { authorization: 'Bearer explicit-token' },
+    })).rejects.toMatchObject({ status: 401 });
+
+    const headers = (fetchMock.mock.calls[0][1] as RequestInit).headers;
+    expect(headers).toBeInstanceOf(Headers);
+    expect(Array.from((headers as Headers).entries()).filter(([name]) => name === 'authorization')).toEqual([
+      ['authorization', 'Bearer explicit-token'],
+    ]);
+    expect((headers as Headers).get('authorization')).not.toContain('global-token');
+    expect(seen).toEqual([]);
+    expect(api.getToken()).toBe('global-token');
+    unsubscribe();
+  });
+
+  it.each([
+    ['Basic credentials', new Headers({ Authorization: 'Basic dXNlcjpwYXNz' }), 'Basic dXNlcjpwYXNz'],
+    ['an empty authorization value', { authorization: '' }, ''],
+  ])('does not replace %s with the global bearer or broadcast its 401', async (_label, customHeaders, expected) => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => response(401, { error: 'explicit authorization denied' }));
+    vi.stubGlobal('fetch', fetchMock);
+    api.setToken('global-token');
+    const seen: ApiError[] = [];
+    const unsubscribe = api.onUnauthorized((error) => seen.push(error));
+
+    await expect(request('/custom', { headers: customHeaders })).rejects.toMatchObject({ status: 401 });
+
+    const headers = (fetchMock.mock.calls[0][1] as RequestInit).headers;
+    expect(headers).toBeInstanceOf(Headers);
+    expect((headers as Headers).get('authorization')).toBe(expected);
+    expect((headers as Headers).get('authorization')).not.toContain('global-token');
+    expect(seen).toEqual([]);
+    expect(api.getToken()).toBe('global-token');
+    unsubscribe();
+  });
+
+  it('broadcasts the current user B 401 exactly once and lets centralized cleanup run', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => response(401, { error: 'B expired' })));
+    api.setToken('token-b');
+    const seen: ApiError[] = [];
+    const unsubscribe = api.onUnauthorized((error) => {
+      seen.push(error);
+      api.setToken(null);
+    });
+
+    await expect(request('/api/me')).rejects.toMatchObject({ status: 401 });
+
+    expect(seen).toHaveLength(1);
+    expect(api.getToken()).toBeNull();
+    unsubscribe();
+  });
+
+  it('does not let a delayed anonymous 401 log out a session created while it was pending', async () => {
+    const pendingResponse = deferred<Response>();
+    vi.stubGlobal('fetch', vi.fn(() => pendingResponse.promise));
+    api.setToken(null);
+    const seen: ApiError[] = [];
+    const unsubscribe = api.onUnauthorized((error) => {
+      seen.push(error);
+      api.setToken(null);
+    });
+    const pending = request('/public');
+
+    api.setToken('token-b');
+    pendingResponse.resolve(response(401, { error: 'anonymous denied' }));
+
+    await expect(pending).rejects.toMatchObject({ status: 401 });
+    expect(seen).toEqual([]);
+    expect(api.getToken()).toBe('token-b');
     unsubscribe();
   });
 
@@ -77,8 +207,35 @@ describe('typed API failures', () => {
     }, 'stable-command-key')).resolves.toMatchObject({ opportunityId: 'opp-once', replayed: true });
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect((fetchMock.mock.calls[0][1] as RequestInit).headers).toMatchObject({ 'Idempotency-Key': 'stable-command-key' });
-    expect((fetchMock.mock.calls[1][1] as RequestInit).headers).toMatchObject({ 'Idempotency-Key': 'stable-command-key' });
+    expect(((fetchMock.mock.calls[0][1] as RequestInit).headers as Headers).get('Idempotency-Key')).toBe('stable-command-key');
+    expect(((fetchMock.mock.calls[1][1] as RequestInit).headers as Headers).get('Idempotency-Key')).toBe('stable-command-key');
+  });
+
+  it('sends the explicit voice capture person context unchanged', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => response(200, { visitNote: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await api.voiceExtract({
+      text: '虚构拜访记录', accountId: 'acc-test', opportunityId: 'opp-test', personId: 'person-test',
+    }, 'voice-context-key');
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(String((init as RequestInit).body))).toEqual({
+      text: '虚构拜访记录', accountId: 'acc-test', opportunityId: 'opp-test', personId: 'person-test',
+    });
+  });
+
+  it('keeps the inbox item key across commandReq automatic network retry', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError('network lost'))
+      .mockResolvedValueOnce(response(200, { items: [{ kind: 'proposal', id: 'proposal-1', status: 'accepted' }], replayed: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await api.inboxBatch({ items: [{ kind: 'proposal', id: 'proposal-1', decision: 'accept' }] }, 'stable-inbox-key');
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(((fetchMock.mock.calls[0][1] as RequestInit).headers as Headers).get('Idempotency-Key')).toBe('stable-inbox-key');
+    expect(((fetchMock.mock.calls[1][1] as RequestInit).headers as Headers).get('Idempotency-Key')).toBe('stable-inbox-key');
   });
 
   it('sends minimum repair commands to the dedicated audited endpoints', async () => {
@@ -114,7 +271,7 @@ describe('typed API failures', () => {
       { url: 'http://localhost:3001/api/repair/person-merge/preview?targetPersonId=person-target&sourcePersonId=person-source', method: 'GET', body: undefined },
       { url: 'http://localhost:3001/api/repair/person-merge', method: 'POST', body: JSON.stringify({ targetPersonId: 'person-target', sourcePersonId: 'person-source', roleConflictByOpportunity: { 'opp-1': 'keep_target' } }) },
     ]);
-    expect((fetchMock.mock.calls[5][1] as RequestInit).headers).toMatchObject({ 'Idempotency-Key': 'person-merge-key' });
+    expect(((fetchMock.mock.calls[5][1] as RequestInit).headers as Headers).get('Idempotency-Key')).toBe('person-merge-key');
   });
 
   it('creates MCP tokens through a server-owned preset without sending raw scopes', async () => {

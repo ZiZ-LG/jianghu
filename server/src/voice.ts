@@ -18,7 +18,14 @@ import { createFieldProposal } from './proposals.js';
 import { nextFreeSlot } from './layout.js';
 import { activePersonWhere } from './activePerson.js';
 import { canWriteFormal, hasExplicitTrustMetadata } from './ingestTrust.js';
+import { businessYmd } from './businessDate.js';
 import { failReservedCommand, reserveCommand, runCommand } from './mutation/commandRunner.js';
+import {
+  ScopedNotFoundError,
+  requireAccount,
+  requireOpportunity,
+  requirePerson,
+} from './mutation/scopeGuards.js';
 
 const applyIngestActionWithDb = async (ctx: CommandContext, input: unknown, db: DbClient): Promise<void> => {
   await applyAction(ctx, ActionSchema.parse(input), db);
@@ -164,6 +171,7 @@ export interface IngestInput {
   text: string;
   accountId?: string;
   opportunityId?: string;
+  personId?: string;
   priorText?: string;
   sourceVisitId?: string;
   source?: keyof typeof SRC; // 'voice'(默认·手动口述) | 'recording'(录音转写)
@@ -175,6 +183,25 @@ export class IngestCommandError extends Error {
   constructor(readonly result: Extract<IngestResult, { ok: false }>) {
     super(result.body?.error || '情报录入失败');
     this.name = 'IngestCommandError';
+  }
+}
+
+/** Validate explicit capture ownership without disclosing whether a referenced ID exists elsewhere. */
+export async function requireVoiceCaptureContext(
+  ctx: CommandContext,
+  input: IngestInput,
+  db: DbClient = prisma,
+): Promise<void> {
+  if (!input.accountId) {
+    if (input.opportunityId || input.personId) throw new ScopedNotFoundError();
+    return;
+  }
+  await requireAccount(db, ctx.tenantId, input.accountId);
+  if (input.opportunityId) {
+    await requireOpportunity(db, ctx.tenantId, input.accountId, input.opportunityId);
+  }
+  if (input.personId) {
+    await requirePerson(db, ctx.tenantId, input.accountId, input.personId);
   }
 }
 
@@ -237,7 +264,7 @@ export async function ingestVoiceText(
     ? await db.account.findFirst({ where: { id: input.accountId, tenantId }, include: { persons: { where: activePersonWhere }, opportunities: true } })
     : null;
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = businessYmd();
 
   let ex: Extracted;
   if (testOptions?.extracted !== undefined) {
@@ -521,7 +548,7 @@ export function voiceRoutes(app: FastifyInstance) {
     if (denyViewer(req, reply)) return; // viewer 只读，不可拍板/操作
     const key = req.headers['idempotency-key'];
     if (typeof key !== 'string' || key.trim().length < 8 || key.length > 200) return reply.code(400).send({ error: '缺少有效的 Idempotency-Key' });
-    const p = z.object({ text: z.string().min(1), accountId: z.string().optional(), opportunityId: z.string().optional(), priorText: z.string().optional(), sourceVisitId: z.string().optional() }).safeParse(req.body);
+    const p = z.object({ text: z.string().min(1), accountId: z.string().optional(), opportunityId: z.string().optional(), personId: z.string().optional(), priorText: z.string().optional(), sourceVisitId: z.string().optional() }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '请输入要录入的文字' });
     const ctx: CommandContext = {
       tenantId: req.user.tenantId,
@@ -534,6 +561,8 @@ export function voiceRoutes(app: FastifyInstance) {
     const commandInput = { kind: 'voice-ingest', idempotencyKey: key, payload: p.data } as const;
     let command: Awaited<ReturnType<typeof runCommand<Extract<IngestResult, { ok: true }>>>>;
     try {
+      // Preflight before reservation/model access prevents invalid cross-tree context from leaving command side effects.
+      await requireVoiceCaptureContext(ctx, p.data);
       const reservation = await reserveCommand<Extract<IngestResult, { ok: true }>>(ctx, commandInput);
       if (reservation.replayed) return { ...reservation.result.receipt, replayed: true };
       let prepared: PreparedVoiceIngest;
@@ -543,9 +572,19 @@ export function voiceRoutes(app: FastifyInstance) {
         await failReservedCommand(ctx, commandInput, reservation.reservationToken, error);
         throw error;
       }
-      command = await runCommand(ctx, { ...commandInput, reservationToken: reservation.reservationToken },
-        (tx) => executePreparedVoiceIngest(ctx, p.data, tx, prepared));
+      command = await runCommand(ctx, {
+        ...commandInput,
+        reservationToken: reservation.reservationToken,
+        discardReservationOnScopedError: true,
+      }, async (tx) => {
+        // Recheck inside the write transaction so a parent-tree change cannot race the preflight.
+        await requireVoiceCaptureContext(ctx, p.data, tx);
+        return executePreparedVoiceIngest(ctx, p.data, tx, prepared);
+      });
     } catch (error) {
+      if (error instanceof ScopedNotFoundError || (error as any)?.scopedNotFound === true) {
+        return reply.code(404).send({ error: '资源不存在' });
+      }
       if (error instanceof IngestCommandError) return reply.code(error.result.status).send(error.result.body);
       throw error;
     }

@@ -10,6 +10,12 @@ const storage = typeof localStorage !== 'undefined' && typeof localStorage.getIt
 let token: string | null = storage?.getItem(TOKEN_KEY) ?? null;
 const unauthorizedListeners = new Set<(error: ApiError) => void>();
 
+const bearerTokenFrom = (headers: Headers): string | null => {
+  const authorization = headers.get('Authorization');
+  const match = authorization?.match(/^\s*Bearer\s+(.+?)\s*$/i);
+  return match?.[1] ?? null;
+};
+
 export interface ApiErrorInit {
   status?: number;
   code?: string;
@@ -56,13 +62,12 @@ export async function request<T = unknown>(
   opts: RequestInit = {},
   requestOptions: { timeoutMs?: number } = {},
 ): Promise<T> {
-  const headers: Record<string, string> = {
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...((opts.headers as Record<string, string>) || {}),
-  };
+  const headers = new Headers(opts.headers);
+  if (!headers.has('Authorization') && token) headers.set('Authorization', `Bearer ${token}`);
   // 仅在确有请求体时声明 JSON content-type，否则 Fastify 会因空 body 报 400。
   // FormData（文件上传）例外：让浏览器自动带 multipart boundary，不能手动设。
-  if (opts.body && !(opts.body instanceof FormData)) headers['Content-Type'] = 'application/json';
+  if (opts.body && !(opts.body instanceof FormData)) headers.set('Content-Type', 'application/json');
+  const requestBearerToken = bearerTokenFrom(headers);
   const controller = new AbortController();
   let timedOut = false;
   const timeoutMs = requestOptions.timeoutMs ?? 30_000;
@@ -82,7 +87,9 @@ export async function request<T = unknown>(
         message: data.error || data.message || `请求失败（HTTP ${res.status}）`,
         retryable: res.status === 408 || res.status === 429 || res.status >= 500,
       });
-      if (res.status === 401) unauthorizedListeners.forEach((listener) => listener(error));
+      if (res.status === 401 && requestBearerToken === token) {
+        unauthorizedListeners.forEach((listener) => listener(error));
+      }
       throw error;
     }
     return data as T;
@@ -212,7 +219,7 @@ export const api = {
   getState: (): Promise<{ accounts: Account[] }> => req('/api/state'),
   mutate: (action: Action): Promise<{ ok: true }> => req('/api/mutate', { method: 'POST', body: JSON.stringify({ action: toWireAction(action) }) }),
   // 录入情报：口述文字 → 后端 LLM 抽取 + 双轨落库 → 回执
-  voiceExtract: (b: { text: string; accountId?: string; opportunityId?: string; priorText?: string; sourceVisitId?: string }, idempotencyKey: string): Promise<any> =>
+  voiceExtract: (b: { text: string; accountId?: string; opportunityId?: string; personId?: string; priorText?: string; sourceVisitId?: string }, idempotencyKey: string): Promise<any> =>
     commandReq('/api/voice/extract', { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(b) }, { timeoutMs: 120_000 }),
   // 新建商机：空白(personIds 空) 或 从 fromOppId 克隆选定人物(+角色，可选关系线)
   cloneOpportunity: (b: { accountId: string; name: string; fromOppId?: string; personIds: string[]; withEdges: boolean }): Promise<{ opportunityId: string; memberCount: number }> =>

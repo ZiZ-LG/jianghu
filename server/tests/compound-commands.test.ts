@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { CommandContext } from '@jianghu/domain-contracts';
 import { createTestContext, type TestContext } from './helpers/testApp.js';
 import {
+  cancelReservedCommand,
   CommandInProgressError,
   IdempotencyConflictError,
   readCommandReplay,
@@ -396,6 +397,36 @@ describe('atomic idempotent compound commands', () => {
       async () => ({ ok: true as const, receipt: { visitNote: true } }), test.prisma);
     expect(completed.replayed).toBe(false);
     await expect(reserveCommand(ctx, key, test.prisma)).resolves.toMatchObject({ replayed: true });
+  });
+
+  it('cancels only the exact running reservation and preserves other actors, newer leases, and completed commands', async () => {
+    const key = { kind: 'voice-ingest', idempotencyKey: 'scoped-cancel-safety-key', payload: { text: 'same' } };
+    const reservation = await reserveCommand(ctx, key, test.prisma);
+    if (reservation.replayed) throw new Error('expected a reservation');
+
+    await expect(cancelReservedCommand({ ...ctx, actorId: 'other-actor' }, key, reservation.reservationToken, test.prisma)).resolves.toBe(false);
+    await expect(cancelReservedCommand(ctx, { ...key, payload: { text: 'different' } }, reservation.reservationToken, test.prisma)).resolves.toBe(false);
+    await test.prisma.commandRun.updateMany({
+      where: { tenantId: ctx.tenantId, actorId: ctx.actorId, kind: key.kind, idempotencyKey: key.idempotencyKey },
+      data: { leaseToken: 'newer-lease-token' },
+    });
+    await expect(cancelReservedCommand(ctx, key, reservation.reservationToken, test.prisma)).resolves.toBe(false);
+    await test.prisma.commandRun.updateMany({
+      where: { tenantId: ctx.tenantId, actorId: ctx.actorId, kind: key.kind, idempotencyKey: key.idempotencyKey },
+      data: { status: 'completed', resultSummary: '{"ok":true}' },
+    });
+    await expect(cancelReservedCommand(ctx, key, 'newer-lease-token', test.prisma)).resolves.toBe(false);
+    await expect(test.prisma.commandRun.findFirstOrThrow({ where: {
+      tenantId: ctx.tenantId, actorId: ctx.actorId, kind: key.kind, idempotencyKey: key.idempotencyKey,
+    } })).resolves.toMatchObject({ status: 'completed', leaseToken: 'newer-lease-token' });
+
+    const exactKey = { kind: 'voice-ingest', idempotencyKey: 'scoped-cancel-exact-key', payload: { text: 'same' } };
+    const exact = await reserveCommand(ctx, exactKey, test.prisma);
+    if (exact.replayed) throw new Error('expected an exact reservation');
+    await expect(cancelReservedCommand(ctx, exactKey, exact.reservationToken, test.prisma)).resolves.toBe(true);
+    await expect(test.prisma.commandRun.count({ where: {
+      tenantId: ctx.tenantId, actorId: ctx.actorId, kind: exactKey.kind, idempotencyKey: exactKey.idempotencyKey,
+    } })).resolves.toBe(0);
   });
 
   it('recovers an abandoned external-command lease after expiry', async () => {

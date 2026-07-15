@@ -18,6 +18,7 @@ import { resolveScopedRelSuggestions } from './suggestionScope.js';
 import { createPdeSnapshot } from './pde/routes.js';
 import { activePersonWhere } from './activePerson.js';
 import type { DbClient } from './mutation/scopeGuards.js';
+import { businessYmd } from './businessDate.js';
 
 const pairKey = (a: string, b: string) => [a, b].sort().join('|');
 const LAYER_COLOR: Record<string, string> = { L1: '#2563eb', L2: '#9333ea', L3: '#16a34a', L4: '#ef4444' };
@@ -131,7 +132,7 @@ export async function materializePerson(
 
   const others = await tx.person.findMany({ where: { tenantId, accountId: candidate.accountId, isCompetitor: false, ...activePersonWhere }, select: { x: true, y: true } });
   const { x, y } = nextFreeSlot(others);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = businessYmd();
   const logs = [{ date: today, content: `📥 ${ORIGIN_LABEL[candidate.origin] || '外部导入'}（${candidate.evidence || '无备注'}）${candidate.sourceUrl ? ' · ' + candidate.sourceUrl : ''}`, visibility: 'team' }];
   const personId = 'p_' + randomUUID().slice(0, 12);
   await tx.person.create({ data: { id: personId, tenantId, accountId: candidate.accountId, name: candidate.name, title: candidate.title, orgLevel: candidate.orgLevel, isCompetitor: false, x, y, form: '{}', logs: JSON.stringify(logs) } });
@@ -517,7 +518,7 @@ export function suggestRoutes(app: FastifyInstance) {
     }).safeParse(req.body ?? {});
     if (!p.success) return reply.code(400).send({ error: '参数无效' });
     const tenantId = req.user.tenantId;
-    const today = new Date().toISOString().slice(0, 10);
+    const today = businessYmd();
     const reviewedBy = req.user.userId ?? '';
     if (p.data.action === 'approve') {
       try {

@@ -9,6 +9,7 @@ import { generateRelSuggestions } from './suggest.js';
 import { computeReminders, recordPatrol, type PatrolOpp, type PatrolRole, type PatrolAction } from './patrol.js';
 import type { DbClient } from './mutation/scopeGuards.js';
 import { activePersonWhere } from './activePerson.js';
+import { businessYmd } from './businessDate.js';
 
 // 江湖自算 · 轻量后台任务队列（DB-backed）。
 // 设计取舍（对齐架构纲领「加轻量 job 队列」）：单实例 setInterval 消费，原子 claim；
@@ -483,7 +484,7 @@ export async function runPatrol(): Promise<{ scanned: number; created: number; r
     }));
 
     // P14：预筛已上桌未完成、endDate 已过的行动牌（草稿=没上桌不算逾期）
-    const nowYmd = now.toISOString().slice(0, 10);
+    const nowYmd = businessYmd(now);
     const overdueRaw = await prisma.planAction.findMany({
       where: { opportunityId: opp.id, done: false, draft: false, endDate: { lt: nowYmd, not: '' } },
       select: { id: true, title: true, personId: true, endDate: true },

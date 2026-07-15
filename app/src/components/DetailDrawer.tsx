@@ -6,6 +6,7 @@ import {
 } from '../types';
 import { type Action, uid } from '../store';
 import type { MutationCoordinator } from '../lib/sync/mutationCoordinator';
+import { localYmd } from '../lib/dateYmd';
 import { SyncStatus } from './SyncStatus';
 
 const ROLES: Role[] = ['A', 'D', 'U', 'R', 'C'];
@@ -93,7 +94,7 @@ export function DetailDrawer({
   const addUCV = () => bis[0] && dispatch({ type: 'ADD_UCV', accId, oppId, ucv: { id: uid('ucv'), targetBiId: bis[0].id, description: '', competitorCannot: '', status: '建议' } });
   const addLog = () => {
     if (!logText.trim()) return;
-    const date = new Date().toISOString().slice(0, 10);
+    const date = localYmd(new Date());
     dispatch({ type: 'ADD_LOG', accId, personId: person.id, log: { date, content: logText.trim(), sensitive: logSensitive, visibility: logSensitive ? 'team' : 'org' } });
     setLogText(''); setLogSensitive(false);
   };

@@ -5,7 +5,7 @@ import {
   reducer, computeInverse, injectBaseVersion, alignVersionAfterRetry, invalidateHistory, transitionHistory,
   newAccount, newPerson, uid, type Action, type HistoryItem, type HistoryTransitionLock,
 } from './store';
-import { api, isConfirmedAuthFailure, newIdempotencyKey, type AuthResult, type Suggestion, type InboxRel, type InboxPerson, type InboxProposal, type InboxReminder, type InboxEvidence, type PatrolInfo } from './api';
+import { api, isConfirmedAuthFailure, newIdempotencyKey, type AuthResult, type Suggestion } from './api';
 import { scoreFromDomain } from './lib/g64111';
 import { usePersistentState, useTheme, useViewport } from './ui';
 import { Auth } from './components/Auth';
@@ -42,6 +42,17 @@ import { SyncStatus } from './components/SyncStatus';
 import { createCommitScheduler } from './lib/sync/commitScheduler';
 import { createMutationCoordinator, createMutationExecutionGate, entityKeyForAction } from './lib/sync/mutationCoordinator';
 import { RepairPanel, type RepairTarget } from './components/RepairPanel';
+import { localYmd } from './lib/dateYmd';
+import type { VisitCaptureContext } from './lib/momentFlowModel';
+import { clearStableBatchItemKey, runBatchWithProgress, stableBatchItemKey, type StableBatchKeyCache } from './lib/reviewBatch';
+import {
+  clearSessionUi,
+  commitSessionInbox,
+  createSessionInboxGuard,
+  emptyInbox,
+  type SessionInbox,
+  type SessionInboxTicket,
+} from './lib/sessionLifecycle';
 
 export default function App() {
   const [state, dispatch] = useReducer(reducer, { accounts: [] });
@@ -59,6 +70,8 @@ export default function App() {
   const historyLock = useRef<HistoryTransitionLock>({ busy: false });
   const historyRevision = useRef(0);
   const historyRecovery = useRef<'refreshed' | 'refresh-failed'>('refreshed');
+  const inboxBatchKeys = useRef<StableBatchKeyCache>(new Map());
+  const inboxSessionGuard = useRef(createSessionInboxGuard());
   stateRef.current = state;
   // viewer 角色 = 只读投影（契约 v1.0 §二-1）：编辑/录入控件一律不渲染（非置灰）；视图交互全保留
   const readonly = auth?.user.role === 'viewer';
@@ -73,6 +86,7 @@ export default function App() {
   const [personFormOpen, setPersonFormOpen] = useState(false);
   const [mdDocOpen, setMdDocOpen] = useState(false);
   const [intelOpen, setIntelOpen] = useState(false);
+  const [intelContext, setIntelContext] = useState<VisitCaptureContext | null>(null);
   const [newOppOpen, setNewOppOpen] = useState(false);
   const [teamOpen, setTeamOpen] = useState(false);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
@@ -80,10 +94,15 @@ export default function App() {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]); // 当前商机的关系候选 → 喂 Canvas 画灰虚线候选边；审核统一走收件箱
   // 审核收件箱（Hub 级聚合，全租户 pending 候选）
   const [inboxOpen, setInboxOpen] = useState(false);
-  const [inbox, setInbox] = useState<{ rels: InboxRel[]; persons: InboxPerson[]; proposals: InboxProposal[]; reminders: InboxReminder[]; evidences: InboxEvidence[]; total: number; patrol?: PatrolInfo | null }>({ rels: [], persons: [], proposals: [], reminders: [], evidences: [], total: 0 });
+  const [inbox, setInbox] = useState<SessionInbox>(emptyInbox);
+  const loadInbox = useCallback(async (ticket: SessionInboxTicket = inboxSessionGuard.current.capture()) => {
+    try {
+      await commitSessionInbox(inboxSessionGuard.current, ticket, api.inboxList(), api.getToken, setInbox);
+    } catch { /* 角标失败忽略；下次刷新重试 */ }
+  }, []);
   const [gapsOpen, setGapsOpen] = useState(false); // M3 缺口刷卡补分（enrichOpen 随重构删 EnrichPanel 移除）
   // P5 Hub 今日一屏：三源聚合「今日三件事」+ 客户卡「需要你」角标（纯前端零 schema）
-  const hubTodayYmd = new Date().toISOString().slice(0, 10);
+  const hubTodayYmd = localYmd(new Date());
   const hubToday = useMemo(() => computeToday(state.accounts, inbox.reminders, hubTodayYmd), [state.accounts, inbox.reminders, hubTodayYmd]);
   const hubNeedsYou = useMemo(() => needsYouByAccount(state.accounts, inbox, hubTodayYmd), [state.accounts, inbox, hubTodayYmd]);
   const [selfComputeBusy, setSelfComputeBusy] = useState(false); // 江湖自算·补全干系人 进行中
@@ -141,7 +160,15 @@ export default function App() {
   }, []);
 
   const restoreSession = useCallback(async () => {
-    if (!api.getToken()) { setBooting(false); return; }
+    const token = api.getToken();
+    if (!token) {
+      inboxSessionGuard.current.begin(null);
+      setInbox(emptyInbox);
+      setBooting(false);
+      return;
+    }
+    const inboxTicket = inboxSessionGuard.current.begin(token);
+    setInbox(emptyInbox);
     setBooting(true);
     setSyncErr('');
     try {
@@ -149,36 +176,46 @@ export default function App() {
       const st = await api.getState();
       stateRef.current = st;
       dispatch({ type: 'HYDRATE', accounts: st.accounts });
-      setAuth({ token: api.getToken()!, user: me.user, tenant: me.tenant });
+      setAuth({ token, user: me.user, tenant: me.tenant });
       applyRoute(st.accounts);
-      if (me.user.role !== 'viewer') api.inboxList().then(setInbox).catch(() => { /* 收件箱角标，失败忽略 */ });
+      if (me.user.role !== 'viewer') void loadInbox(inboxTicket);
     } catch (error) {
       if (isConfirmedAuthFailure(error)) {
         api.setToken(null);
+        inboxSessionGuard.current.begin(null);
+        setInbox(emptyInbox);
         setAuth(null);
       } else {
         setSyncErr('暂时无法连接云端，已保留登录状态，请稍后重试。');
       }
     } finally { setBooting(false); }
-  }, [applyRoute]);
+  }, [applyRoute, loadInbox]);
   // 启动：有 token 则恢复会话 + 拉取云端数据
   useEffect(() => { void restoreSession(); }, [restoreSession]);
 
   const onAuthed = async (res: AuthResult) => {
+    const inboxTicket = inboxSessionGuard.current.begin(res.token);
+    setInbox(emptyInbox);
     const st = await api.getState();
     stateRef.current = st;
     dispatch({ type: 'HYDRATE', accounts: st.accounts });
     setAuth(res);
     applyRoute(st.accounts);
-    if (res.user.role !== 'viewer') api.inboxList().then(setInbox).catch(() => { /* 收件箱角标 */ });
+    if (res.user.role !== 'viewer') void loadInbox(inboxTicket);
   };
   const logout = useCallback(() => {
     coordinatorResetRef.current();
     schedulerResetRef.current();
-    api.setToken(null); setAuth(null); setAccId(null); setSelectedId(null);
+    const clearedUi = clearSessionUi(inboxBatchKeys.current);
+    inboxSessionGuard.current.begin(null);
+    setIntelOpen(clearedUi.intelOpen);
+    setIntelContext(clearedUi.intelContext);
+    setInboxOpen(clearedUi.inboxOpen);
+    setInbox(clearedUi.inbox);
+    api.setToken(null); setAuth(null); setAccId(null); setOppId(null); setSelectedId(null);
     stateRef.current = { accounts: [] };
     dispatch({ type: 'HYDRATE', accounts: [] });
-    setSyncErr('');
+    setSyncErr(clearedUi.syncErr);
     window.history.replaceState(null, '', '/'); // 登出清 URL，避免登录页残留目标路径造成误解（重新登录会重新解析）
   }, []);
   useEffect(() => api.onUnauthorized(() => logout()), [logout]);
@@ -447,7 +484,7 @@ export default function App() {
     if (!account || !opp) return;
     const a = (account.planActions ?? []).find((x) => x.id === actionId);
     if (!a) return;
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localYmd(new Date());
     try {
       await api.actionFeedback({ accountId: account.id, opportunityId: opp.id, actionId, outcome, occurredAt: today }, newIdempotencyKey());
       await refreshState();
@@ -522,34 +559,34 @@ export default function App() {
   };
 
   // ── 审核收件箱（Hub 级）：复用既有候选采纳/驳回链路；采纳会改对应客户的树 → getState 重拉整树保证跨客户一致 ──
-  const loadInbox = async () => { try { setInbox(await api.inboxList()); } catch { /* 角标失败忽略 */ } };
   const refreshAfterAccept = async () => {
     try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); } catch { /* 重拉失败下次同步 */ }
     if (opp) { try { setSuggestions((await api.suggestList(opp.id)).suggestions); } catch { /* 下次同步 */ } } // 采纳/忽略关系候选后刷新画布灰虚线候选边
     await loadInbox();
   };
-  const inboxAcceptRel = async (id: string, override?: { layer?: string; label?: string }) => { try { await api.suggestAccept(id, override); await refreshAfterAccept(); } catch (e: any) { setSyncErr('采纳失败：' + e.message); } };
-  const inboxRejectRel = async (id: string) => { try { await api.suggestReject(id); await loadInbox(); } catch (e: any) { setSyncErr('忽略失败：' + e.message); } };
-  const inboxAcceptPerson = async (id: string, override?: { name?: string; title?: string }) => { try { await api.personSuggestAccept(id, override); await refreshAfterAccept(); } catch (e: any) { setSyncErr('采纳失败：' + e.message); } };
-  const inboxRejectPerson = async (id: string) => { try { await api.personSuggestReject(id); await loadInbox(); } catch (e: any) { setSyncErr('忽略失败：' + e.message); } };
-  const inboxAcceptProposal = async (id: string, overrideValue?: string) => { try { await api.proposalAccept(id, overrideValue); await refreshAfterAccept(); } catch (e: any) { setSyncErr('采纳失败：' + e.message); } };
-  const inboxRejectProposal = async (id: string) => { try { await api.proposalReject(id); await loadInbox(); } catch (e: any) { setSyncErr('忽略失败：' + e.message); } };
-  const inboxDismissReminder = async (id: string) => { try { await api.reminderDismiss(id); await loadInbox(); } catch (e: any) { setSyncErr('忽略失败：' + e.message); } };
+  const inboxAcceptRel = async (id: string, override?: { layer?: string; label?: string }) => { try { await api.suggestAccept(id, override); await refreshAfterAccept(); } catch (e: any) { setSyncErr('采纳失败：' + e.message); throw e; } };
+  const inboxRejectRel = async (id: string) => { try { await api.suggestReject(id); await loadInbox(); } catch (e: any) { setSyncErr('忽略失败：' + e.message); throw e; } };
+  const inboxAcceptPerson = async (id: string, override?: { name?: string; title?: string }) => { try { await api.personSuggestAccept(id, override); await refreshAfterAccept(); } catch (e: any) { setSyncErr('采纳失败：' + e.message); throw e; } };
+  const inboxRejectPerson = async (id: string) => { try { await api.personSuggestReject(id); await loadInbox(); } catch (e: any) { setSyncErr('忽略失败：' + e.message); throw e; } };
+  const inboxAcceptProposal = async (id: string, overrideValue?: string) => { try { await api.proposalAccept(id, overrideValue); await refreshAfterAccept(); } catch (e: any) { setSyncErr('采纳失败：' + e.message); throw e; } };
+  const inboxRejectProposal = async (id: string) => { try { await api.proposalReject(id); await loadInbox(); } catch (e: any) { setSyncErr('忽略失败：' + e.message); throw e; } };
+  const inboxDismissReminder = async (id: string) => { try { await api.reminderDismiss(id); await loadInbox(); } catch (e: any) { setSyncErr('忽略失败：' + e.message); throw e; } };
   // M3 证据审核：批准=进 E2 燃料池（重拉整树让背离黄条/立场条立即重算）；拒绝只刷收件箱
   const inboxReviewEvidence = async (id: string, action: 'approve' | 'reject', direction?: -1 | 0 | 1) => {
     try {
       await api.evidenceReview(id, action, direction !== undefined ? { direction } : undefined);
       if (action === 'approve') await refreshAfterAccept(); else await loadInbox();
-    } catch (e: any) { setSyncErr('审核失败：' + e.message); }
+    } catch (e: any) { setSyncErr('审核失败：' + e.message); throw e; }
   };
-  const inboxBatch = async (items: InboxBatchItem[]) => {
-    try {
-      await api.inboxBatch({ items }, newIdempotencyKey());
-      await refreshAfterAccept();
-    } catch (e: any) {
-      setSyncErr('批量审核失败：' + e.message);
-      throw e;
-    }
+  const inboxBatch = async (items: InboxBatchItem[], onProgress: Parameters<typeof runBatchWithProgress<InboxBatchItem>>[2]) => {
+    const result = await runBatchWithProgress(items, async (item) => {
+      const key = stableBatchItemKey(inboxBatchKeys.current, item, newIdempotencyKey);
+      await api.inboxBatch({ items: [item] }, key);
+      clearStableBatchItemKey(inboxBatchKeys.current, item);
+    }, onProgress);
+    if (result.successes.length > 0) await refreshAfterAccept();
+    if (result.failures.length > 0) setSyncErr(`批量审核部分失败：${result.failures.length}/${result.total} 项，请查看失败项后重试。`);
+    return result;
   };
 
   if (booting) return <div className="boot">加载中…</div>;
@@ -565,6 +602,10 @@ export default function App() {
   // ── Hub / 手机竖屏时刻流（场景 A：竖屏默认=时刻流，横屏提示只在进作战室后）──
   const phonePortrait = isMobile && !isLandscape;
   if (!account) {
+    const captureAccount = intelContext ? state.accounts.find((item) => item.id === intelContext.accId) : undefined;
+    const captureOpportunity = captureAccount && intelContext
+      ? captureAccount.opportunities.find((item) => item.id === intelContext.oppId)
+      : undefined;
     return (
       <>
         {phonePortrait && !forceDesktop ? (
@@ -572,7 +613,7 @@ export default function App() {
             accounts={state.accounts} inbox={inbox} userName={auth.user.name}
             readonly={readonly}
             theme={theme} onToggleTheme={toggleTheme}
-            onOpenIntel={() => setIntelOpen(true)}
+            onOpenIntel={(context) => { setIntelContext(context ?? null); setIntelOpen(true); }}
             onEnterAccount={(aId, oId) => { const a = state.accounts.find((x) => x.id === aId); setAccId(aId); setOppId(oId ?? a?.opportunities[0]?.id ?? null); setSelectedId(null); }}
             onExitToDesktop={() => setForceDesktop(true)}
             onLogout={logout}
@@ -580,6 +621,7 @@ export default function App() {
             onAcceptPerson={inboxAcceptPerson} onRejectPerson={inboxRejectPerson}
             onAcceptRel={inboxAcceptRel} onRejectRel={inboxRejectRel}
             onDismissReminder={inboxDismissReminder}
+            onReviewEvidence={inboxReviewEvidence}
           />
         ) : (
         <CustomerHub
@@ -594,7 +636,7 @@ export default function App() {
           onOpenTeam={() => setTeamOpen(true)} onLogout={logout} onOpenAiSettings={() => setAiSettingsOpen(true)} onOpenWecom={() => setWecomSettingsOpen(true)}
           theme={theme} onToggleTheme={toggleTheme} onOpenHelp={() => setHelpOpen(true)}
           onOpenMcpAccess={() => setMcpAccessOpen(true)}
-          onOpenIntel={() => setIntelOpen(true)}
+          onOpenIntel={() => { setIntelContext(null); setIntelOpen(true); }}
           onIntelDone={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); await loadInbox(); } catch { /* 静默：保存已成功 */ } }}
           onOpenInbox={() => setInboxOpen(true)} inboxCount={inbox.total} patrol={inbox.patrol}
         />
@@ -605,10 +647,13 @@ export default function App() {
         {inboxOpen && !readonly && <InboxPanel rels={inbox.rels} persons={inbox.persons} proposals={inbox.proposals} accounts={state.accounts} onAccept={inboxAcceptRel} onReject={inboxRejectRel} onAcceptPerson={inboxAcceptPerson} onRejectPerson={inboxRejectPerson} onAcceptProposal={inboxAcceptProposal} onRejectProposal={inboxRejectProposal} reminders={inbox.reminders} onDismissReminder={inboxDismissReminder} evidences={inbox.evidences} onReviewEvidence={inboxReviewEvidence} onBatch={inboxBatch} onClose={() => setInboxOpen(false)} />}
         {intelOpen && !readonly && (
           <IntelCapture
-            onClose={() => setIntelOpen(false)}
+            account={captureAccount}
+            opportunity={captureOpportunity}
+            personId={intelContext?.personId}
+            onClose={() => { setIntelOpen(false); setIntelContext(null); }}
             onDone={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); } catch { /* 静默：保存已成功，仅刷新失败 */ } }}
             onEnterAccount={async (id) => {
-              setIntelOpen(false);
+              setIntelOpen(false); setIntelContext(null);
               try {
                 const st = await api.getState();
                 dispatch({ type: 'HYDRATE', accounts: st.accounts });

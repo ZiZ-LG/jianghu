@@ -7,6 +7,7 @@ import { requireScopedRow, type DbClient } from './mutation/scopeGuards.js';
 import { isTrustedHumanAssertion, normalizeActionTrust } from './ingestTrust.js';
 import { activePersonWhere } from './activePerson.js';
 import { pickKeyInfluencerKeeper } from './g64111.js';
+import { businessYmd } from './businessDate.js';
 
 export type { DbClient } from './mutation/scopeGuards.js';
 
@@ -581,7 +582,7 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
     case 'TOGGLE_PLAN_ACTION':
       await db.planAction.updateMany({
         where: { id: action.actionId, tenantId, accountId: action.accId },
-        data: { done: !!action.done, doneAt: action.done ? (action.doneAt ?? new Date().toISOString().slice(0, 10)) : null },
+        data: { done: !!action.done, doneAt: action.done ? (action.doneAt ?? businessYmd()) : null },
       });
       return;
 

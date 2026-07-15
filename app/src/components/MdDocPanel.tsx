@@ -9,10 +9,11 @@ import { Modal } from './Modal';
 import { MdDocView } from './MdDocView';
 import { api } from '../api';
 import { ACT_LABEL } from '../lib/pdeUi';
+import { localYmd } from '../lib/dateYmd';
 
 type DocSel = { kind: 'customer' } | { kind: 'opp'; id: string } | { kind: 'visit'; id: string };
 const keyOf = (s: DocSel) => (s.kind === 'customer' ? 'customer' : `${s.kind}:${s.id}`);
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => localYmd(new Date());
 const bumpVersion = (log: VersionLogEntry[]) =>
   log.length ? `v${(parseFloat(log[log.length - 1].version.replace(/^v/, '')) + 0.1).toFixed(1)}` : 'v1.0';
 
