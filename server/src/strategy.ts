@@ -2,9 +2,15 @@
 // 只返回候选数据，绝不写库——前端本地暂存，人审采纳后才 dispatch 落库（守硬规则②）。
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { prisma } from './prisma.js';
 import { denyViewer } from './scope.js';
-import { loadAiConfig, callLLM } from './ai.js';
+import {
+  AiContextNotFoundError,
+  AiContextOptionsSchema,
+  buildServerAiContext,
+  contextManifestToken,
+  loadAiConfig,
+  callLLM,
+} from './ai.js';
 import { ITEM_LABEL, ITEM_MAX, type ItemKey } from './g64111.js';
 
 interface StrategyCand { gapItem: string; title: string; basis: string; }
@@ -240,23 +246,54 @@ async function llmMilestoneActions(cfg: any, ctx: any, ms: { title: string; date
 }
 
 export function strategyRoutes(app: FastifyInstance) {
+  const buildContext = (req: any, opportunityId: string, options: { includeRawLogs: boolean; includeForm: boolean }) =>
+    buildServerAiContext({
+      tenantId: req.user.tenantId,
+      principal: { tenantId: req.user.tenantId, userId: req.user.userId, role: req.user.role },
+      opportunityId,
+      options,
+    });
+  const tokenFor = (
+    req: any,
+    manifest: Parameters<typeof contextManifestToken>[0],
+    opportunityId: string,
+    options: { includeRawLogs: boolean; includeForm: boolean },
+  ) => contextManifestToken(manifest, {
+    tenantId: req.user.tenantId,
+    actorUserId: req.user.userId,
+    opportunityId,
+    options,
+  });
+
   app.post('/api/strategy/suggest', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (denyViewer(req, reply)) return; // viewer 只读，不可操作
-    const p = z.object({ opportunityId: z.string(), mode: z.enum(['forward', 'backward']), context: z.any() }).safeParse(req.body);
+    const p = z.object({
+      opportunityId: z.string(),
+      mode: z.enum(['forward', 'backward']),
+      options: AiContextOptionsSchema,
+      manifestToken: z.string().length(64),
+      context: z.unknown().optional(), // legacy payload is intentionally ignored
+    }).strict().safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '参数无效' });
     const tenantId = req.user.tenantId;
-    const opp = await prisma.opportunity.findFirst({ where: { id: p.data.opportunityId, tenantId }, select: { id: true } });
-    if (!opp) return reply.code(404).send({ error: '商机不存在' });
+    let built: Awaited<ReturnType<typeof buildServerAiContext>>;
+    try { built = await buildContext(req, p.data.opportunityId, p.data.options); }
+    catch (error) {
+      if (error instanceof AiContextNotFoundError) return reply.code(404).send({ error: '商机不存在' });
+      throw error;
+    }
+    if (tokenFor(req, built.manifest, p.data.opportunityId, p.data.options) !== p.data.manifestToken) return reply.code(409).send({ error: '数据范围已变化，请重新确认后再试' });
     const cfg = await loadAiConfig(tenantId);
     if (!cfg) return reply.code(400).send({ error: '请先在「AI 模型」里配置模型（或选择内置演示模式）', needConfig: true });
 
-    const { mode, context } = p.data;
+    const { mode } = p.data;
+    const { context, manifest } = built;
     const useMock = cfg.provider === 'mock' || !cfg.baseUrl || !cfg.model;
     try {
       const candidates = mode === 'forward'
         ? (useMock ? mockForward(context) : await llmForward(cfg, context))
         : (useMock ? mockBackward(context) : await llmBackward(cfg, context));
-      return { mode, candidates, provider: useMock ? 'mock' : cfg.model };
+      return { mode, candidates, provider: useMock ? 'mock' : cfg.model, manifest };
     } catch (e: any) {
       return reply.code(400).send({ error: e?.message || 'AI 推演失败，请检查模型配置' });
     }
@@ -267,22 +304,33 @@ export function strategyRoutes(app: FastifyInstance) {
     if (denyViewer(req, reply)) return; // viewer 只读，不可操作
     const p = z.object({
       opportunityId: z.string(),
-      focus: z.object({ name: z.string().min(1), title: z.string().optional() }),
-      context: z.any(),
-      note: z.string().optional(),
-    }).safeParse(req.body);
+      focusPersonId: z.string().min(1),
+      options: AiContextOptionsSchema,
+      manifestToken: z.string().length(64),
+      context: z.unknown().optional(),
+      note: z.string().trim().max(2_000).optional(),
+    }).strict().safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '参数无效' });
     const tenantId = req.user.tenantId;
-    const opp = await prisma.opportunity.findFirst({ where: { id: p.data.opportunityId, tenantId }, select: { id: true } });
-    if (!opp) return reply.code(404).send({ error: '商机不存在' });
+    let built: Awaited<ReturnType<typeof buildServerAiContext>>;
+    try { built = await buildContext(req, p.data.opportunityId, p.data.options); }
+    catch (error) {
+      if (error instanceof AiContextNotFoundError) return reply.code(404).send({ error: '商机不存在' });
+      throw error;
+    }
+    if (tokenFor(req, built.manifest, p.data.opportunityId, p.data.options) !== p.data.manifestToken) return reply.code(409).send({ error: '数据范围已变化，请重新确认后再试' });
+    const focusPerson = built.context.people.find((person: any) => person.id === p.data.focusPersonId);
+    if (!focusPerson) return reply.code(404).send({ error: '干系人不存在' });
     const cfg = await loadAiConfig(tenantId);
     if (!cfg) return reply.code(400).send({ error: '请先在「AI 模型」里配置模型（或选择内置演示模式）', needConfig: true });
 
-    const { focus, context, note = '' } = p.data;
+    const focus = { name: focusPerson.name, title: focusPerson.title };
+    const { context, manifest } = built;
+    const { note = '' } = p.data;
     const useMock = cfg.provider === 'mock' || !cfg.baseUrl || !cfg.model;
     try {
       const candidates = useMock ? mockAdvisorCands(context, focus) : await llmAdvisorCands(cfg, context, focus, note);
-      return { candidates, provider: useMock ? 'mock' : cfg.model };
+      return { candidates, provider: useMock ? 'mock' : cfg.model, manifest };
     } catch (e: any) {
       return reply.code(400).send({ error: e?.message || 'AI 出牌失败，请检查模型配置' });
     }
@@ -293,24 +341,40 @@ export function strategyRoutes(app: FastifyInstance) {
     if (denyViewer(req, reply)) return; // viewer 只读，不可操作
     const p = z.object({
       opportunityId: z.string(),
-      card: z.object({ title: z.string().optional(), basis: z.string().optional(), gapItem: z.string().optional() }),
-      person: z.object({ name: z.string().min(1), title: z.string().optional() }).optional(),
-      context: z.any(),
-    }).safeParse(req.body);
+      card: z.object({
+        title: z.string().max(200).optional(),
+        basis: z.string().max(1_000).optional(),
+        gapItem: z.string().max(20).optional(),
+      }).strict(),
+      personId: z.string().min(1).optional(),
+      options: AiContextOptionsSchema,
+      manifestToken: z.string().length(64),
+      context: z.unknown().optional(),
+    }).strict().safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '参数无效' });
     const tenantId = req.user.tenantId;
-    const opp = await prisma.opportunity.findFirst({ where: { id: p.data.opportunityId, tenantId }, select: { id: true } });
-    if (!opp) return reply.code(404).send({ error: '商机不存在' });
+    let built: Awaited<ReturnType<typeof buildServerAiContext>>;
+    try { built = await buildContext(req, p.data.opportunityId, p.data.options); }
+    catch (error) {
+      if (error instanceof AiContextNotFoundError) return reply.code(404).send({ error: '商机不存在' });
+      throw error;
+    }
+    if (tokenFor(req, built.manifest, p.data.opportunityId, p.data.options) !== p.data.manifestToken) return reply.code(409).send({ error: '数据范围已变化，请重新确认后再试' });
+    const person = p.data.personId
+      ? built.context.people.find((candidate: any) => candidate.id === p.data.personId)
+      : undefined;
+    if (p.data.personId && !person) return reply.code(404).send({ error: '干系人不存在' });
     const cfg = await loadAiConfig(tenantId);
     if (!cfg) return reply.code(400).send({ error: '请先在「AI 模型」里配置模型（或选择内置演示模式）', needConfig: true });
 
-    const { card, person, context } = p.data;
+    const { card } = p.data;
+    const { context, manifest } = built;
     const useMock = cfg.provider === 'mock' || !cfg.baseUrl || !cfg.model;
     try {
       const prefill = useMock
         ? mockPrefill(context, card, person)
         : (await llmPrefill(cfg, context, card, person)) ?? mockPrefill(context, card, person);
-      return { prefill, provider: useMock ? 'mock' : cfg.model };
+      return { prefill, provider: useMock ? 'mock' : cfg.model, manifest };
     } catch (e: any) {
       return reply.code(400).send({ error: e?.message || 'AI 预填失败，请检查模型配置' });
     }
@@ -321,23 +385,31 @@ export function strategyRoutes(app: FastifyInstance) {
     if (denyViewer(req, reply)) return; // viewer 只读，不可操作
     const p = z.object({
       opportunityId: z.string(),
-      milestone: z.object({ title: z.string().min(1), date: z.string().optional() }),
-      context: z.any(),
-      existingTitles: z.array(z.string()).optional(),
-    }).safeParse(req.body);
+      milestone: z.object({ title: z.string().min(1).max(200), date: z.string().max(32).optional() }).strict(),
+      options: AiContextOptionsSchema,
+      manifestToken: z.string().length(64),
+      context: z.unknown().optional(),
+      existingTitles: z.array(z.string().max(200)).max(200).optional(),
+    }).strict().safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '参数无效' });
     const tenantId = req.user.tenantId;
-    const opp = await prisma.opportunity.findFirst({ where: { id: p.data.opportunityId, tenantId }, select: { id: true } });
-    if (!opp) return reply.code(404).send({ error: '商机不存在' });
+    let built: Awaited<ReturnType<typeof buildServerAiContext>>;
+    try { built = await buildContext(req, p.data.opportunityId, p.data.options); }
+    catch (error) {
+      if (error instanceof AiContextNotFoundError) return reply.code(404).send({ error: '商机不存在' });
+      throw error;
+    }
+    if (tokenFor(req, built.manifest, p.data.opportunityId, p.data.options) !== p.data.manifestToken) return reply.code(409).send({ error: '数据范围已变化，请重新确认后再试' });
     const cfg = await loadAiConfig(tenantId);
     if (!cfg) return reply.code(400).send({ error: '请先在「AI 模型」里配置模型（或选择内置演示模式）', needConfig: true });
 
-    const { milestone, context, existingTitles = [] } = p.data;
+    const { milestone, existingTitles = [] } = p.data;
+    const { context, manifest } = built;
     const useMock = cfg.provider === 'mock' || !cfg.baseUrl || !cfg.model;
     try {
       let candidates = useMock ? mockMilestoneActions(milestone, existingTitles) : await llmMilestoneActions(cfg, context, milestone, existingTitles);
       if (!candidates.length) candidates = mockMilestoneActions(milestone, existingTitles); // LLM 空产出回落 mock
-      return { candidates, provider: useMock ? 'mock' : cfg.model };
+      return { candidates, provider: useMock ? 'mock' : cfg.model, manifest };
     } catch (e: any) {
       return reply.code(400).send({ error: e?.message || 'AI 排行动失败，请检查模型配置' });
     }

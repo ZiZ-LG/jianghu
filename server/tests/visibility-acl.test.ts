@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { backfillAccountOwners } from '../scripts/backfill-account-owners.js';
 import { createTestContext, type TestContext } from './helpers/testApp.js';
+import { buildServerAiContext, contextManifestToken } from '../src/ai.js';
 
 function auth(token: string) { return { authorization: `Bearer ${token}` }; }
 
@@ -180,6 +181,236 @@ describe('INT-107 stable ownership and sensitive read ACL', () => {
       expect((await context.app.inject({ method: 'POST', url: '/api/proposals/cp-log-legacy/accept', headers: auth(member.token) })).statusCode).toBe(200);
       const afterLegacy = JSON.parse((await context.prisma.person.findUniqueOrThrow({ where: { id: 'p-log-proposal' } })).logs);
       expect(afterLegacy[0]).toMatchObject({ content: 'legacy append', createdBy: member.user.id });
+    } finally { await context.cleanup(); }
+  });
+});
+
+describe('INT-403 server-owned AI context boundary', () => {
+  it('binds equal-shaped manifests to tenant, actor, opportunity and normalized options', () => {
+    const manifest = {
+      entities: { accounts: 1, opportunities: 1, people: 2, relationships: 1, burningIssues: 0, ucvs: 0, interactionLogs: 0 },
+      fieldCategories: ['account-summary'], excludedSensitiveCategories: ['raw-logs', 'form'],
+    };
+    const binding = {
+      tenantId: 'tenant-a', actorUserId: 'actor-a', opportunityId: 'opp-a',
+      options: { includeRawLogs: false, includeForm: false },
+    };
+    const token = contextManifestToken(manifest, binding);
+
+    expect(contextManifestToken(manifest, binding)).toBe(token);
+    expect(contextManifestToken(manifest, { ...binding, tenantId: 'tenant-b' })).not.toBe(token);
+    expect(contextManifestToken(manifest, { ...binding, actorUserId: 'actor-b' })).not.toBe(token);
+    expect(contextManifestToken(manifest, { ...binding, opportunityId: 'opp-b' })).not.toBe(token);
+    expect(contextManifestToken(manifest, { ...binding, options: { includeRawLogs: true, includeForm: false } })).not.toBe(token);
+    const defaultBinding = { tenantId: binding.tenantId, actorUserId: binding.actorUserId, opportunityId: binding.opportunityId };
+    expect(contextManifestToken(manifest, defaultBinding)).toBe(token);
+  });
+
+  it('excludes memberScoped outsiders, private BI, self logs and other-opportunity data', async () => {
+    const context = await createTestContext();
+    try {
+      await context.prisma.account.create({ data: {
+        id: 'ai-acc', tenantId: context.tenant.id, name: 'AI Account', customerType: 1,
+      } });
+      await context.prisma.person.createMany({ data: [
+        {
+          id: 'ai-current-person', tenantId: context.tenant.id, accountId: 'ai-acc', name: 'CURRENT-PERSON', title: 'Current',
+          form: JSON.stringify({ family: 'FORM-SECRET', family7: { '籍贯': '秘密' } }),
+          logs: JSON.stringify([
+            { date: '2026-07-15', content: 'SELF-LOG-SECRET', visibility: 'self', createdBy: context.owner.id },
+            { date: '2026-07-15', content: 'ORG-LOG-ALLOWED', visibility: 'org', createdBy: context.owner.id },
+          ]),
+        },
+        { id: 'ai-other-person', tenantId: context.tenant.id, accountId: 'ai-acc', name: 'OTHER-OPP-PERSON', title: 'Other' },
+      ] });
+      await context.prisma.opportunity.createMany({ data: [
+        { id: 'ai-current-opp', tenantId: context.tenant.id, accountId: 'ai-acc', name: 'Current', customerType: 1, pipelineStage: '线索', engageStage: '需求调研立项', memberScoped: true },
+        { id: 'ai-other-opp', tenantId: context.tenant.id, accountId: 'ai-acc', name: 'Other', customerType: 1, pipelineStage: '线索', engageStage: '需求调研立项', memberScoped: true },
+      ] });
+      await context.prisma.opportunityMember.createMany({ data: [
+        { tenantId: context.tenant.id, opportunityId: 'ai-current-opp', personId: 'ai-current-person' },
+        { tenantId: context.tenant.id, opportunityId: 'ai-other-opp', personId: 'ai-other-person' },
+      ] });
+      await context.prisma.oppRole.createMany({ data: [
+        { tenantId: context.tenant.id, opportunityId: 'ai-current-opp', personId: 'ai-current-person', role: 'D', sentiment: 'plus', confidence: '明确' },
+        { tenantId: context.tenant.id, opportunityId: 'ai-other-opp', personId: 'ai-other-person', role: 'A', sentiment: 'star', confidence: '明确' },
+      ] });
+      await context.prisma.burningIssue.createMany({ data: [
+        { id: 'ai-private-bi', tenantId: context.tenant.id, opportunityId: 'ai-current-opp', personId: 'ai-current-person', description: 'PRIVATE-BI-SECRET', category: 'private', isPrivate: true, confidence: '明确' },
+        { id: 'ai-public-bi', tenantId: context.tenant.id, opportunityId: 'ai-current-opp', personId: 'ai-current-person', description: 'PUBLIC-BI-ALLOWED', category: 'public', isPrivate: false, confidence: '明确' },
+      ] });
+
+      const built = await buildServerAiContext({
+        tenantId: context.tenant.id,
+        principal: { tenantId: context.tenant.id, userId: context.owner.id, role: 'owner' },
+        opportunityId: 'ai-current-opp',
+        options: { includeRawLogs: true, includeForm: true },
+      });
+      const serialized = JSON.stringify(built.context);
+
+      expect(built.context.people.map((person: { id: string }) => person.id)).toEqual(['ai-current-person']);
+      expect(serialized).toContain('ORG-LOG-ALLOWED');
+      expect(serialized).toContain('FORM-SECRET');
+      expect(serialized).toContain('PUBLIC-BI-ALLOWED');
+      expect(serialized).not.toContain('SELF-LOG-SECRET');
+      expect(serialized).not.toContain('PRIVATE-BI-SECRET');
+      expect(serialized).not.toContain('OTHER-OPP-PERSON');
+      expect(built.manifest.excludedSensitiveCategories).toEqual(expect.arrayContaining(['private-bi', 'self-logs', 'outside-opportunity']));
+      expect(JSON.stringify(built.manifest)).not.toContain('ALLOWED');
+    } finally { await context.cleanup(); }
+  });
+
+  it('ignores client-authored context and returns an authoritative manifest from the real simulate route', async () => {
+    const context = await createTestContext();
+    try {
+      await context.prisma.account.create({ data: { id: 'ai-route-acc', tenantId: context.tenant.id, name: 'SERVER-ACCOUNT', customerType: 1 } });
+      await context.prisma.person.createMany({ data: [
+        { id: 'ai-route-person', tenantId: context.tenant.id, accountId: 'ai-route-acc', name: 'SERVER-PERSON', title: 'D' },
+        { id: 'ai-route-outsider', tenantId: context.tenant.id, accountId: 'ai-route-acc', name: 'OUTSIDE-FOCUS-SECRET', title: 'Other' },
+      ] });
+      await context.prisma.opportunity.create({ data: { id: 'ai-route-opp', tenantId: context.tenant.id, accountId: 'ai-route-acc', name: 'SERVER-OPP', customerType: 1, pipelineStage: '线索', engageStage: '需求调研立项', memberScoped: true } });
+      await context.prisma.opportunityMember.create({ data: { tenantId: context.tenant.id, opportunityId: 'ai-route-opp', personId: 'ai-route-person' } });
+      await context.prisma.oppRole.create({ data: { tenantId: context.tenant.id, opportunityId: 'ai-route-opp', personId: 'ai-route-person', role: 'D', sentiment: 'plus', confidence: '明确' } });
+      await context.prisma.aiConfig.create({ data: { tenantId: context.tenant.id, provider: 'mock', baseUrl: '', model: '', apiKeyEnc: '' } });
+
+      const preflight = await context.app.inject({
+        method: 'POST', url: '/api/ai/context-manifest', headers: auth(context.token),
+        payload: { opportunityId: 'ai-route-opp', options: { includeRawLogs: false, includeForm: false } },
+      });
+      expect(preflight.statusCode).toBe(200);
+      expect(preflight.json().manifest).toEqual(expect.objectContaining({ entities: expect.objectContaining({ people: 1 }) }));
+      expect(preflight.json().manifestToken).toMatch(/^[a-f0-9]{64}$/);
+      expect(preflight.body).not.toContain('SERVER-PERSON');
+
+      const member = await addUser(context, 'member', 'Second actor');
+      const memberPreflight = await context.app.inject({
+        method: 'POST', url: '/api/ai/context-manifest', headers: auth(member.token),
+        payload: { opportunityId: 'ai-route-opp', options: { includeRawLogs: false, includeForm: false } },
+      });
+      expect(memberPreflight.statusCode).toBe(200);
+      expect(memberPreflight.json().manifest).toEqual(preflight.json().manifest);
+      expect(memberPreflight.json().manifestToken).not.toBe(preflight.json().manifestToken);
+      const replayedActorToken = await context.app.inject({
+        method: 'POST', url: '/api/ai/simulate', headers: auth(member.token),
+        payload: {
+          opportunityId: 'ai-route-opp', focusPersonId: 'ai-route-person', hypothesis: '测试',
+          options: { includeRawLogs: false, includeForm: false }, manifestToken: preflight.json().manifestToken,
+        },
+      });
+      expect(replayedActorToken.statusCode).toBe(409);
+      expect(replayedActorToken.body).not.toContain('SERVER-PERSON');
+
+      const response = await context.app.inject({
+        method: 'POST', url: '/api/ai/simulate', headers: auth(context.token),
+        payload: {
+          opportunityId: 'ai-route-opp', focusPersonId: 'ai-route-person', hypothesis: '测试', options: { includeRawLogs: false, includeForm: false },
+          manifestToken: preflight.json().manifestToken,
+          context: { account: { name: 'CLIENT-FORGED-SECRET' }, people: [{ name: 'CLIENT-FORGED-PERSON' }] },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.body).toContain('SERVER-PERSON');
+      expect(response.body).not.toContain('CLIENT-FORGED');
+      expect(response.json().manifest).toMatchObject({
+        entities: { accounts: 1, opportunities: 1, people: 1 },
+        excludedSensitiveCategories: expect.arrayContaining(['raw-logs', 'form']),
+      });
+
+      const outsideFocus = await context.app.inject({
+        method: 'POST', url: '/api/ai/simulate', headers: auth(context.token),
+        payload: {
+          opportunityId: 'ai-route-opp', focusPersonId: 'ai-route-outsider', hypothesis: '测试',
+          options: { includeRawLogs: false, includeForm: false },
+          manifestToken: preflight.json().manifestToken,
+        },
+      });
+      expect(outsideFocus.statusCode).toBe(404);
+      expect(outsideFocus.body).not.toContain('OUTSIDE-FOCUS-SECRET');
+
+      await context.prisma.opportunityMember.create({ data: {
+        tenantId: context.tenant.id, opportunityId: 'ai-route-opp', personId: 'ai-route-outsider',
+      } });
+      const stalePreview = await context.app.inject({
+        method: 'POST', url: '/api/ai/simulate', headers: auth(context.token),
+        payload: {
+          opportunityId: 'ai-route-opp', focusPersonId: 'ai-route-person', hypothesis: '测试',
+          options: { includeRawLogs: false, includeForm: false }, manifestToken: preflight.json().manifestToken,
+        },
+      });
+      expect(stalePreview.statusCode).toBe(409);
+      expect(stalePreview.body).not.toContain('OUTSIDE-FOCUS-SECRET');
+    } finally { await context.cleanup(); }
+  });
+
+  it('rebuilds context and returns a manifest across all strategy model entry points', async () => {
+    const context = await createTestContext();
+    try {
+      await context.prisma.account.create({ data: { id: 'ai-strategy-acc', tenantId: context.tenant.id, name: 'Strategy', customerType: 1 } });
+      await context.prisma.person.create({ data: { id: 'ai-strategy-person', tenantId: context.tenant.id, accountId: 'ai-strategy-acc', name: 'REAL-FOCUS', title: 'D' } });
+      await context.prisma.opportunity.create({ data: { id: 'ai-strategy-opp', tenantId: context.tenant.id, accountId: 'ai-strategy-acc', name: 'Strategy Opp', customerType: 1, pipelineStage: '线索', engageStage: '需求调研立项' } });
+      await context.prisma.oppRole.create({ data: { tenantId: context.tenant.id, opportunityId: 'ai-strategy-opp', personId: 'ai-strategy-person', role: 'D', sentiment: 'plus', confidence: '明确' } });
+      await context.prisma.aiConfig.create({ data: { tenantId: context.tenant.id, provider: 'mock', baseUrl: '', model: '', apiKeyEnc: '' } });
+      const options = { includeRawLogs: false, includeForm: false };
+      const preflight = await context.app.inject({
+        method: 'POST', url: '/api/ai/context-manifest', headers: auth(context.token),
+        payload: { opportunityId: 'ai-strategy-opp', options },
+      });
+      expect(preflight.statusCode).toBe(200);
+      const manifestToken = preflight.json().manifestToken as string;
+      const cases = [
+        { url: '/api/strategy/suggest', payload: { opportunityId: 'ai-strategy-opp', mode: 'forward', options, manifestToken, context: { people: [{ name: 'FORGED' }] } } },
+        { url: '/api/strategy/actions', payload: { opportunityId: 'ai-strategy-opp', focusPersonId: 'ai-strategy-person', options, manifestToken, context: { people: [{ name: 'FORGED' }] } } },
+        { url: '/api/strategy/prefill', payload: { opportunityId: 'ai-strategy-opp', card: { title: '策略' }, personId: 'ai-strategy-person', options, manifestToken, context: { people: [{ name: 'FORGED' }] } } },
+        { url: '/api/strategy/milestone-actions', payload: { opportunityId: 'ai-strategy-opp', milestone: { title: '签约' }, options, manifestToken, context: { people: [{ name: 'FORGED' }] }, existingTitles: [] } },
+      ];
+      for (const testCase of cases) {
+        const response = await context.app.inject({ method: 'POST', url: testCase.url, headers: auth(context.token), payload: testCase.payload });
+        expect(response.statusCode, `${testCase.url}: ${response.body}`).toBe(200);
+        expect(response.json().manifest).toMatchObject({ entities: { accounts: 1, opportunities: 1, people: 1 } });
+        expect(response.body).not.toContain('FORGED');
+      }
+    } finally { await context.cleanup(); }
+  });
+
+  it('fails closed for foreign-tenant opportunities and viewers across preflight and model routes', async () => {
+    const context = await createTestContext();
+    try {
+      const foreignTenant = await context.prisma.tenant.create({ data: { id: `foreign-ai-${randomUUID()}`, name: 'Foreign AI' } });
+      await context.prisma.account.create({ data: { id: 'foreign-ai-acc', tenantId: foreignTenant.id, name: 'FOREIGN-ACCOUNT-SECRET', customerType: 1 } });
+      await context.prisma.person.create({ data: { id: 'foreign-ai-person', tenantId: foreignTenant.id, accountId: 'foreign-ai-acc', name: 'FOREIGN-PERSON-SECRET', title: 'D' } });
+      await context.prisma.opportunity.create({ data: {
+        id: 'foreign-ai-opp', tenantId: foreignTenant.id, accountId: 'foreign-ai-acc', name: 'FOREIGN-OPP-SECRET',
+        customerType: 1, pipelineStage: '线索', engageStage: '需求调研立项',
+      } });
+
+      await context.prisma.account.create({ data: { id: 'viewer-ai-acc', tenantId: context.tenant.id, name: 'Viewer account', customerType: 1 } });
+      await context.prisma.person.create({ data: { id: 'viewer-ai-person', tenantId: context.tenant.id, accountId: 'viewer-ai-acc', name: 'Viewer person', title: 'D' } });
+      await context.prisma.opportunity.create({ data: {
+        id: 'viewer-ai-opp', tenantId: context.tenant.id, accountId: 'viewer-ai-acc', name: 'Viewer opp',
+        customerType: 1, pipelineStage: '线索', engageStage: '需求调研立项',
+      } });
+      const viewer = await addUser(context, 'viewer', 'AI viewer');
+      const options = { includeRawLogs: false, includeForm: false };
+      const token = '0'.repeat(64);
+      const routeCases = (opportunityId: string) => [
+        { url: '/api/ai/context-manifest', payload: { opportunityId, options } },
+        { url: '/api/ai/simulate', payload: { opportunityId, focusPersonId: 'foreign-ai-person', hypothesis: '测试', options, manifestToken: token } },
+        { url: '/api/strategy/suggest', payload: { opportunityId, mode: 'forward', options, manifestToken: token } },
+        { url: '/api/strategy/actions', payload: { opportunityId, focusPersonId: 'foreign-ai-person', options, manifestToken: token } },
+        { url: '/api/strategy/prefill', payload: { opportunityId, card: { title: '策略' }, options, manifestToken: token } },
+        { url: '/api/strategy/milestone-actions', payload: { opportunityId, milestone: { title: '签约' }, options, manifestToken: token, existingTitles: [] } },
+      ];
+
+      for (const testCase of routeCases('foreign-ai-opp')) {
+        const response = await context.app.inject({ method: 'POST', url: testCase.url, headers: auth(context.token), payload: testCase.payload });
+        expect(response.statusCode, `${testCase.url}: ${response.body}`).toBe(404);
+        expect(response.body).not.toContain('FOREIGN-');
+      }
+      for (const testCase of routeCases('viewer-ai-opp')) {
+        const response = await context.app.inject({ method: 'POST', url: testCase.url, headers: auth(viewer.token), payload: testCase.payload });
+        expect(response.statusCode, `${testCase.url}: ${response.body}`).toBe(403);
+      }
     } finally { await context.cleanup(); }
   });
 });

@@ -5,6 +5,254 @@ import { prisma } from './prisma.js';
 import { denyViewer } from './scope.js';
 import { deploymentOutboundPolicy, fetchOutbound } from './security/outboundUrl.js';
 import type { DbClient } from './mutation/scopeGuards.js';
+import { visiblePersonLogs, type ReadPrincipal } from './visibility.js';
+import { pickKeyInfluencerKeeper, scoreFromState, type Confidence, type Role, type Sentiment } from './g64111.js';
+
+export interface AiContextOptions {
+  includeRawLogs: boolean;
+  includeForm: boolean;
+}
+
+export interface ContextManifest {
+  entities: {
+    accounts: number;
+    opportunities: number;
+    people: number;
+    relationships: number;
+    burningIssues: number;
+    ucvs: number;
+    interactionLogs: number;
+  };
+  fieldCategories: string[];
+  excludedSensitiveCategories: string[];
+}
+
+export const AiContextOptionsSchema = z.object({
+  includeRawLogs: z.boolean().default(false),
+  includeForm: z.boolean().default(false),
+}).strict().default({ includeRawLogs: false, includeForm: false });
+
+const roleValues = new Set<Role>(['A', 'D', 'U', 'R', 'C']);
+const sentimentValues = new Set<Sentiment>(['star', 'plus', 'neutral', 'unknown', 'minus', 'x']);
+const confidenceValues = new Set<Confidence>(['共识', '明确', '推理', '不清']);
+const jsonObject = (raw: string): Record<string, unknown> => {
+  try {
+    const value: unknown = JSON.parse(raw || '{}');
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  } catch { return {}; }
+};
+const formFieldNames = ['family', 'occupation', 'recreation', 'moneyMotivation'] as const;
+const sanitizeForm = (raw: string): Record<string, unknown> => {
+  const parsed = jsonObject(raw);
+  const form: Record<string, unknown> = {};
+  for (const key of formFieldNames) if (typeof parsed[key] === 'string') form[key] = parsed[key];
+  const family7 = parsed.family7;
+  if (family7 && typeof family7 === 'object' && !Array.isArray(family7)) {
+    form.family7 = Object.fromEntries(Object.entries(family7).filter(([, value]) => typeof value === 'string'));
+  }
+  return form;
+};
+
+export class AiContextNotFoundError extends Error {}
+export interface ContextManifestBinding {
+  tenantId: string;
+  actorUserId: string;
+  opportunityId: string;
+  options?: Partial<AiContextOptions>;
+}
+
+const stableSerialize = (value: unknown): string => {
+  if (Array.isArray(value)) return `[${value.map(stableSerialize).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${stableSerialize(entry)}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+};
+
+export const contextManifestToken = (manifest: ContextManifest, binding: ContextManifestBinding): string => {
+  const options = AiContextOptionsSchema.parse(binding.options ?? {});
+  const payload = {
+    version: 1,
+    tenantId: binding.tenantId,
+    actorUserId: binding.actorUserId,
+    opportunityId: binding.opportunityId,
+    options,
+    manifest,
+  };
+  return crypto.createHash('sha256').update(stableSerialize(payload)).digest('hex');
+};
+
+export async function buildServerAiContext(input: {
+  tenantId: string;
+  principal: ReadPrincipal;
+  opportunityId: string;
+  options?: Partial<AiContextOptions>;
+}): Promise<{ context: any; manifest: ContextManifest }> {
+  const options = AiContextOptionsSchema.parse(input.options ?? {});
+  if (input.principal.tenantId !== input.tenantId) throw new AiContextNotFoundError('商机不存在');
+  const opportunity = await prisma.opportunity.findFirst({
+    where: { id: input.opportunityId, tenantId: input.tenantId, archivedAt: null, account: { tenantId: input.tenantId, archivedAt: null } },
+    include: {
+      account: {
+        include: {
+          persons: { where: { tenantId: input.tenantId, archivedAt: null } },
+          edges: { where: { tenantId: input.tenantId, opportunityId: null } },
+        },
+      },
+      roles: { where: { tenantId: input.tenantId } },
+      edges: { where: { tenantId: input.tenantId } },
+      bis: { where: { tenantId: input.tenantId } },
+      ucvs: { where: { tenantId: input.tenantId } },
+      members: { where: { tenantId: input.tenantId } },
+    },
+  });
+  if (!opportunity) throw new AiContextNotFoundError('商机不存在');
+  if (input.principal.role === 'viewer' && opportunity.account.primaryOwnerUserId !== input.principal.userId) {
+    throw new AiContextNotFoundError('商机不存在');
+  }
+
+  const memberIds = new Set(opportunity.members.map((member) => member.personId));
+  const peopleRows = opportunity.account.persons.filter((person) => !opportunity.memberScoped || memberIds.has(person.id));
+  const allowedPersonIds = new Set(peopleRows.map((person) => person.id));
+  const roles = opportunity.roles
+    .filter((role) => allowedPersonIds.has(role.personId)
+      && roleValues.has(role.role as Role)
+      && sentimentValues.has(role.sentiment as Sentiment)
+      && confidenceValues.has(role.confidence as Confidence))
+    .map((role) => ({
+      personId: role.personId,
+      role: role.role as Role,
+      sentiment: role.sentiment as Sentiment,
+      confidence: role.confidence as Confidence,
+      isKeyInfluencer: role.isKeyInfluencer,
+      procurementType: role.procurementType as any,
+      procurementStatus: role.procurementStatus as any,
+    }));
+  const roleByPerson = new Map(roles.map((role) => [role.personId, role]));
+  const dRoles = roles.filter((role) => role.role === 'D');
+  const primaryD = dRoles.find((role) => role.personId === opportunity.primaryDPersonId) ?? dRoles[0];
+  const keyInfluencer = pickKeyInfluencerKeeper(roles);
+
+  const people = peopleRows.map((person) => {
+    const role = roleByPerson.get(person.id);
+    return {
+      id: person.id,
+      name: person.name,
+      title: person.title,
+      isCompetitor: person.isCompetitor,
+      role: role?.role ?? null,
+      sentiment: role?.sentiment ?? null,
+      confidence: role?.confidence ?? null,
+      isPrimaryD: !!primaryD && person.id === primaryD.personId,
+      isKeyInfluencer: !!keyInfluencer && person.id === keyInfluencer.personId,
+      ...(options.includeForm ? { form: sanitizeForm(person.form) } : {}),
+    };
+  });
+  const nameById = new Map(peopleRows.map((person) => [person.id, person.name]));
+  const relationships = [...opportunity.account.edges, ...opportunity.edges]
+    .filter((edge) => allowedPersonIds.has(edge.source) && allowedPersonIds.has(edge.target))
+    .slice(0, 40)
+    .map((edge) => ({
+      fromId: edge.source,
+      toId: edge.target,
+      from: nameById.get(edge.source) ?? edge.source,
+      to: nameById.get(edge.target) ?? edge.target,
+      layer: edge.layer,
+      label: edge.label,
+    }));
+  // External model contexts never receive private BI, even when the actor may view it in-app.
+  const visibleBis = opportunity.bis.filter((bi) => !bi.isPrivate && allowedPersonIds.has(bi.personId));
+  const biById = new Map(visibleBis.map((bi) => [bi.id, bi]));
+  const bis = visibleBis.map((bi) => ({
+    personId: bi.personId,
+    person: nameById.get(bi.personId) ?? bi.personId,
+    category: bi.category,
+    description: bi.description,
+  }));
+  const ucvs = opportunity.ucvs.filter((ucv) => biById.has(ucv.targetBiId)).map((ucv) => {
+    const bi = biById.get(ucv.targetBiId)!;
+    return {
+      person: nameById.get(bi.personId) ?? bi.personId,
+      bi: `${bi.category}·${bi.description}`,
+      description: ucv.description,
+      competitorCannot: ucv.competitorCannot,
+      status: ucv.status,
+    };
+  });
+  const keyIds = new Set(roles
+    .filter((role) => role.role === 'A' || role.role === 'D' || role.personId === keyInfluencer?.personId)
+    .map((role) => role.personId));
+  const recentInteractions: Array<{ person: string; date: string; content: string }> = [];
+  if (options.includeRawLogs) {
+    for (const person of peopleRows) {
+      if (!keyIds.has(person.id)) continue;
+      const logs = visiblePersonLogs(person.logs, input.principal)
+        .filter((log) => log.visibility !== 'self')
+        .filter((log): log is typeof log & { date: string; content: string } => typeof log.date === 'string' && typeof log.content === 'string')
+        .slice(0, 2);
+      for (const log of logs) recentInteractions.push({ person: person.name, date: log.date, content: log.content });
+      if (recentInteractions.length >= 30) break;
+    }
+  }
+
+  const scoringAccount = {
+    persons: peopleRows.map((person) => ({ id: person.id, form: options.includeForm ? sanitizeForm(person.form) : {} })),
+  };
+  const scoringOpportunity = {
+    primaryDPersonId: opportunity.primaryDPersonId,
+    engageStage: opportunity.engageStage,
+    c3Items: jsonObject(opportunity.c3Items),
+    c5Items: jsonObject(opportunity.c5Items),
+    roles,
+    bis: visibleBis.map((bi) => ({ id: bi.id, personId: bi.personId, confidence: bi.confidence as Confidence })),
+    ucvs: opportunity.ucvs
+      .filter((ucv) => biById.has(ucv.targetBiId))
+      .map((ucv) => ({ targetBiId: ucv.targetBiId, status: ucv.status as '建议' | '获认可' | '已解决' })),
+  };
+  const breakdown = scoreFromState(scoringAccount, scoringOpportunity);
+  const context = {
+    account: { name: opportunity.account.name, customerType: opportunity.account.customerType },
+    opportunity: {
+      name: opportunity.name,
+      pipelineStage: opportunity.pipelineStage,
+      engageStage: opportunity.engageStage,
+      singleSalesGoal: opportunity.singleSalesGoal,
+      expectedSignDate: opportunity.expectedSignDate || null,
+    },
+    winTendency: { percent: breakdown.percent, total: breakdown.total, band: breakdown.band, items: breakdown.items },
+    people,
+    relationships,
+    bis,
+    ucvs,
+    recentInteractions,
+  };
+  const manifest: ContextManifest = {
+    entities: {
+      accounts: 1,
+      opportunities: 1,
+      people: people.length,
+      relationships: relationships.length,
+      burningIssues: bis.length,
+      ucvs: ucvs.length,
+      interactionLogs: recentInteractions.length,
+    },
+    fieldCategories: [
+      'account-summary', 'opportunity-summary', 'g64111-score', 'roles-and-sentiment',
+      'relationship-metadata', 'business-issues-and-value',
+      ...(options.includeForm ? ['form'] : []),
+      ...(options.includeRawLogs ? ['raw-logs'] : []),
+    ],
+    excludedSensitiveCategories: [
+      'private-bi', 'self-logs', 'outside-opportunity',
+      ...(!options.includeRawLogs ? ['raw-logs'] : []),
+      ...(!options.includeForm ? ['form'] : []),
+    ],
+  };
+  return { context, manifest };
+}
 
 // ── 加密（AES-256-GCM）：用用户自己的 Key，服务端只加密代管 ──
 function encryptionKey(): Buffer {
@@ -102,6 +350,11 @@ export async function callLLM(cfg: { baseUrl: string; model: string; apiKey: str
 
 export function aiRoutes(app: FastifyInstance) {
   const canManage = (req: any) => ['owner', 'admin'].includes(req.user.role);
+  const principalOf = (req: any): ReadPrincipal => ({
+    tenantId: req.user.tenantId,
+    userId: req.user.userId,
+    role: req.user.role,
+  });
 
   app.get('/api/ai/config', { preHandler: [app.authenticate] }, async (req) => {
     const c = await prisma.aiConfig.findUnique({ where: { tenantId: req.user.tenantId } });
@@ -143,23 +396,84 @@ export function aiRoutes(app: FastifyInstance) {
     }
   });
 
+  // Authoritative preflight: lets the user inspect counts/categories before any model call.
+  app.post('/api/ai/context-manifest', { preHandler: [app.authenticate] }, async (req, reply) => {
+    if (denyViewer(req, reply)) return;
+    const parsed = z.object({
+      opportunityId: z.string().min(1),
+      options: AiContextOptionsSchema,
+    }).strict().safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: '上下文范围参数无效' });
+    try {
+      const built = await buildServerAiContext({
+        tenantId: req.user.tenantId,
+        principal: principalOf(req),
+        opportunityId: parsed.data.opportunityId,
+        options: parsed.data.options,
+      });
+      return {
+        manifest: built.manifest,
+        manifestToken: contextManifestToken(built.manifest, {
+          tenantId: req.user.tenantId,
+          actorUserId: req.user.userId,
+          opportunityId: parsed.data.opportunityId,
+          options: parsed.data.options,
+        }),
+      };
+    } catch (error) {
+      if (error instanceof AiContextNotFoundError) return reply.code(404).send({ error: '商机不存在' });
+      throw error;
+    }
+  });
+
   app.post('/api/ai/simulate', { preHandler: [app.authenticate] }, async (req, reply) => {
     if (denyViewer(req, reply)) return; // viewer 只读，不可操作
-    const p = z.object({ context: z.any(), hypothesis: z.string().min(1) }).safeParse(req.body);
+    const p = z.object({
+      opportunityId: z.string().min(1),
+      focusPersonId: z.string().min(1),
+      hypothesis: z.string().trim().min(1).max(2_000),
+      options: AiContextOptionsSchema,
+      manifestToken: z.string().length(64),
+      // Legacy clients may still send this field; it is deliberately ignored and never forwarded.
+      context: z.unknown().optional(),
+    }).strict().safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '请输入假设策略' });
+    let built: Awaited<ReturnType<typeof buildServerAiContext>>;
+    try {
+      built = await buildServerAiContext({
+        tenantId: req.user.tenantId,
+        principal: principalOf(req),
+        opportunityId: p.data.opportunityId,
+        options: p.data.options,
+      });
+    } catch (error) {
+      if (error instanceof AiContextNotFoundError) return reply.code(404).send({ error: '商机不存在' });
+      throw error;
+    }
+    if (contextManifestToken(built.manifest, {
+      tenantId: req.user.tenantId,
+      actorUserId: req.user.userId,
+      opportunityId: p.data.opportunityId,
+      options: p.data.options,
+    }) !== p.data.manifestToken) {
+      return reply.code(409).send({ error: '数据范围已变化，请重新确认后再试' });
+    }
+    const focusPerson = built.context.people.find((person: any) => person.id === p.data.focusPersonId);
+    if (!focusPerson) return reply.code(404).send({ error: '干系人不存在' });
+    const scopedHypothesis = `围绕干系人「${focusPerson.name}」：${p.data.hypothesis}`;
     const c = await prisma.aiConfig.findUnique({ where: { tenantId: req.user.tenantId } });
     if (!c) return reply.code(400).send({ error: '请先在「AI 模型」里配置模型（或选择内置演示模式）', needConfig: true });
 
     if (c.provider === 'mock') {
-      return { analysis: mockAnalysis(p.data.context, p.data.hypothesis), provider: 'mock' };
+      return { analysis: mockAnalysis(built.context, scopedHypothesis), provider: 'mock', manifest: built.manifest };
     }
     if (!c.baseUrl || !c.model) return reply.code(400).send({ error: '模型配置不完整', needConfig: true });
     try {
       const analysis = await callLLM(
         { baseUrl: c.baseUrl, model: c.model, apiKey: dec(c.apiKeyEnc) },
-        SYSTEM_PROMPT, buildUserPrompt(p.data.context, p.data.hypothesis),
+        SYSTEM_PROMPT, buildUserPrompt(built.context, scopedHypothesis),
       );
-      return { analysis, provider: c.model };
+      return { analysis, provider: c.model, manifest: built.manifest };
     } catch (e: any) {
       return reply.code(400).send({ error: e?.message || '推演失败，请检查模型配置' });
     }

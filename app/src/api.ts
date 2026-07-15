@@ -1,5 +1,6 @@
 import type { Action } from './store';
 import type { Account, PipelineStage } from './types';
+import type { AiContextOptions, ContextManifest } from './aiContext';
 import { toWireAction } from './wireAction';
 
 // 生产构建把 VITE_API_URL 设为空串 "" → 走同源相对路径 /api（由 Nginx 反代到后端）。
@@ -281,20 +282,22 @@ export const api = {
   pdeWhatIf: (oppId: string, overrides: { personId: string; sentiment?: string; confidence?: string }[]): Promise<{ base: any; hypo: any; dPwin: number; stakeholders: { id: string; name: string; sentiment: string; confidence: string }[]; potSource: string; confidenceFlag: string }> =>
     req(`/api/pde/${oppId}/what-if`, { method: 'POST', body: JSON.stringify({ overrides }) }),
   aiTest: (): Promise<{ ok: boolean; message?: string }> => req('/api/ai/test', { method: 'POST' }),
-  aiSimulate: (context: any, hypothesis: string): Promise<{ analysis: string; provider: string }> =>
-    req('/api/ai/simulate', { method: 'POST', body: JSON.stringify({ context, hypothesis }) }),
+  aiContextManifest: (opportunityId: string, options: AiContextOptions): Promise<{ manifest: ContextManifest; manifestToken: string }> =>
+    req('/api/ai/context-manifest', { method: 'POST', body: JSON.stringify({ opportunityId, options }) }),
+  aiSimulate: (opportunityId: string, focusPersonId: string, hypothesis: string, options: AiContextOptions, manifestToken: string): Promise<{ analysis: string; provider: string; manifest: ContextManifest }> =>
+    req('/api/ai/simulate', { method: 'POST', body: JSON.stringify({ opportunityId, focusPersonId, hypothesis, options, manifestToken }) }),
   // 策略沙盘 AI 顺推(策略卡候选)/倒推(里程碑候选)——只返回候选，前端暂存 + 人审采纳后才落库
-  strategySuggest: (opportunityId: string, mode: 'forward' | 'backward', context: any): Promise<{ mode: string; candidates: any[]; provider: string }> =>
-    req('/api/strategy/suggest', { method: 'POST', body: JSON.stringify({ opportunityId, mode, context }) }),
+  strategySuggest: (opportunityId: string, mode: 'forward' | 'backward', options: AiContextOptions, manifestToken: string): Promise<{ mode: string; candidates: any[]; provider: string; manifest: ContextManifest }> =>
+    req('/api/strategy/suggest', { method: 'POST', body: JSON.stringify({ opportunityId, mode, options, manifestToken }) }),
   // 参谋出牌（P2④b）：右栏焦点人 → AI 产行动牌候选（六要素之 目的/资源/注意）。只返回候选，人审采纳才 dispatch ADD_PLAN_ACTION 落画布。
-  advisorActions: (opportunityId: string, focus: { name: string; title?: string }, context: any, note?: string): Promise<{ candidates: AdvisorCand[]; provider: string }> =>
-    req('/api/strategy/actions', { method: 'POST', body: JSON.stringify({ opportunityId, focus, context, note }) }),
+  advisorActions: (opportunityId: string, focusPersonId: string, options: AiContextOptions, manifestToken: string, note?: string): Promise<{ candidates: AdvisorCand[]; provider: string; manifest: ContextManifest }> =>
+    req('/api/strategy/actions', { method: 'POST', body: JSON.stringify({ opportunityId, focusPersonId, options, manifestToken, note }) }),
   // 派发预填（第3刀）：策略卡→行动牌四要素初稿 {target,resources,cautions,props}。只返回初稿，前端落草稿(origin=ai)开抽屉人微调。
-  strategyPrefill: (opportunityId: string, card: { title?: string; basis?: string; gapItem?: string }, person: { name: string; title?: string } | undefined, context: any): Promise<{ prefill: { target: string; resources: string; cautions: string; props: string }; provider: string }> =>
-    req('/api/strategy/prefill', { method: 'POST', body: JSON.stringify({ opportunityId, card, person, context }) }),
+  strategyPrefill: (opportunityId: string, card: { title?: string; basis?: string; gapItem?: string }, personId: string | undefined, options: AiContextOptions, manifestToken: string): Promise<{ prefill: { target: string; resources: string; cautions: string; props: string }; provider: string; manifest: ContextManifest }> =>
+    req('/api/strategy/prefill', { method: 'POST', body: JSON.stringify({ opportunityId, card, personId, options, manifestToken }) }),
   // P6 里程碑「→ 排行动」：为达成里程碑拆 2-3 个行动候选（只返回候选，前端落 draft 草稿人审）
-  milestoneActions: (opportunityId: string, milestone: { title: string; date?: string }, context: any, existingTitles: string[]): Promise<{ candidates: { title: string; target: string; cautions: string }[]; provider: string }> =>
-    req('/api/strategy/milestone-actions', { method: 'POST', body: JSON.stringify({ opportunityId, milestone, context, existingTitles }) }),
+  milestoneActions: (opportunityId: string, milestone: { title: string; date?: string }, options: AiContextOptions, manifestToken: string, existingTitles: string[]): Promise<{ candidates: { title: string; target: string; cautions: string }[]; provider: string; manifest: ContextManifest }> =>
+    req('/api/strategy/milestone-actions', { method: 'POST', body: JSON.stringify({ opportunityId, milestone, options, manifestToken, existingTitles }) }),
   // P8 参谋会话历史（商机×焦点人 分桶）：读回放 / 追加一问一答 / 清空
   advisorHistory: (opportunityId: string, personId: string): Promise<{ messages: { id: string; role: 'user' | 'assistant'; text: string; createdAt: string }[] }> =>
     req(`/api/advisor/messages?opportunityId=${encodeURIComponent(opportunityId)}&personId=${encodeURIComponent(personId)}`),

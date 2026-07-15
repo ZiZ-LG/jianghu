@@ -8,17 +8,33 @@ import type { Account, Opportunity, Person } from '../types';
 import type { ScoreBreakdown } from '../lib/g64111';
 import type { Action } from '../store';
 import { newPlanAction, newStrategyCard, newStrategyRisk } from '../store';
-import { buildAiContext } from '../aiContext';
+import {
+  aiRequestScopeKey,
+  buildAdvisorContinuationNote,
+  createAiRequestScope,
+  DEFAULT_AI_CONTEXT_OPTIONS,
+  isAiRequestScopeCurrent,
+  type AiContextOptions,
+  type AiRequestScope,
+  type ContextManifest,
+} from '../aiContext';
 import { api, type AdvisorCand } from '../api';
 import { localYmd } from '../lib/dateYmd';
+import { AiContextDisclosure } from './AiContextDisclosure';
 
-type Msg = { role: 'user' | 'assistant'; text: string };
+type Msg = {
+  role: 'user' | 'assistant';
+  text: string;
+  contextManifestToken?: string;
+  contextScopeKey?: string;
+  contextOptions?: AiContextOptions;
+};
 type Cand = AdvisorCand & { accepted?: boolean };
 const todayYmd = () => localYmd(new Date());
 
 const welcome = (name: string): Msg => ({
   role: 'assistant',
-  text: `对着「${name}」问我——怎么打、倒戈风险、下一步。我带整张图的上下文（角色/态度/关系/趋赢力/燃点）帮你深想；想落地就点「🎯 出候选」，我给出可采纳的 🃏行动牌 / 📌策略卡 / ⚠️风险。这里只想不落库——要录情报、改图，去坞底「💬 和地图对话」。`,
+  text: `对着「${name}」问我——怎么打、倒戈风险、下一步。我只使用服务端核对后的当前商机范围；想落地就点「🎯 出候选」，我给出可采纳的 🃏行动牌 / 📌策略卡 / ⚠️风险。这里只想不落库——要录情报、改图，去坞底「💬 和地图对话」。`,
 });
 
 export function AdvisorPanel({ account, opp, breakdown, person, dispatch }: {
@@ -29,9 +45,40 @@ export function AdvisorPanel({ account, opp, breakdown, person, dispatch }: {
   const [busy, setBusy] = useState(false);
   const [cardBusy, setCardBusy] = useState(false);
   const [cands, setCands] = useState<Cand[]>([]);
+  const [contextOptions, setContextOptions] = useState<AiContextOptions>(DEFAULT_AI_CONTEXT_OPTIONS);
+  const [contextManifest, setContextManifest] = useState<ContextManifest | null>(null);
+  const [contextManifestToken, setContextManifestToken] = useState('');
+  const [contextManifestError, setContextManifestError] = useState('');
+  const [contextManifestLoading, setContextManifestLoading] = useState(false);
+  const [contextManifestRevision, setContextManifestRevision] = useState(0);
   const [savedIdx, setSavedIdx] = useState<Set<number>>(new Set()); // P8 已挂到动态的消息下标（会话级标记）
   const listRef = useRef<HTMLDivElement>(null);
+  const candidateScopeRef = useRef<AiRequestScope | null>(null);
+  const currentRequestScopeRef = useRef<AiRequestScope | null>(null);
+  const renderRequestScope = createAiRequestScope({
+    accountId: account.id,
+    opportunityId: opp.id,
+    personId: person.id,
+    manifestToken: contextManifestToken,
+    options: contextOptions,
+    generation: 0,
+  });
+  if (!currentRequestScopeRef.current
+    || aiRequestScopeKey(currentRequestScopeRef.current) !== aiRequestScopeKey(renderRequestScope)) {
+    renderRequestScope.generation = (currentRequestScopeRef.current?.generation ?? 0) + 1;
+    currentRequestScopeRef.current = renderRequestScope;
+  }
+  const requestIsCurrent = (requestScope: AiRequestScope) =>
+    !!currentRequestScopeRef.current && isAiRequestScopeCurrent(requestScope, currentRequestScopeRef.current);
+  const visibleCands = candidateScopeRef.current && requestIsCurrent(candidateScopeRef.current) ? cands : [];
   useEffect(() => { const el = listRef.current; if (el) el.scrollTop = el.scrollHeight; }, [msgs, cands, busy, cardBusy]);
+
+  useEffect(() => {
+    setBusy(false);
+    setCardBusy(false);
+    setCands([]);
+    candidateScopeRef.current = null;
+  }, [account.id, opp.id, person.id, contextManifestToken, contextOptions.includeRawLogs, contextOptions.includeForm]);
 
   // P8 会话历史落库：切 商机/焦点人 → 拉回放重置对话流（原阅后即焚+切人不重置的旧欢迎语一并修掉）
   useEffect(() => {
@@ -42,6 +89,23 @@ export function AdvisorPanel({ account, opp, breakdown, person, dispatch }: {
       .catch(() => { /* 历史拉取失败不影响对话 */ });
     return () => { alive = false; };
   }, [opp.id, person.id, person.name]);
+
+  useEffect(() => {
+    let alive = true;
+    setContextManifest(null);
+    setContextManifestToken('');
+    setContextManifestError('');
+    setContextManifestLoading(true);
+    api.aiContextManifest(opp.id, contextOptions)
+      .then((result) => { if (alive) { setContextManifest(result.manifest); setContextManifestToken(result.manifestToken); } })
+      .catch((error: any) => { if (alive) setContextManifestError(error?.message || '无法确认数据范围'); })
+      .finally(() => { if (alive) setContextManifestLoading(false); });
+    return () => { alive = false; };
+  }, [opp.id, contextOptions, contextManifestRevision]);
+  const contextReady = !!contextManifest && !!contextManifestToken && !contextManifestLoading;
+  const refreshContextManifestAfterScopeChange = (error: any) => {
+    if (error?.status === 409) setContextManifestRevision((revision) => revision + 1);
+  };
 
   // P8 沉淀①：把一条参谋分析挂到焦点人动态（ADD_LOG 走现有云同步；动态 tab 立刻可见）
   const saveToLog = (i: number) => {
@@ -55,8 +119,15 @@ export function AdvisorPanel({ account, opp, breakdown, person, dispatch }: {
   // P8 沉淀②：清空该 商机×人 的会话历史
   const clearHistory = async () => {
     if (!confirm(`清空与「${person.name}」的参谋对话历史？（已挂到动态的笔记不受影响）`)) return;
-    try { await api.advisorClear(opp.id, person.id); setMsgs([welcome(person.name)]); setCands([]); setSavedIdx(new Set()); }
-    catch (e: any) { setMsgs((m) => [...m, { role: 'assistant', text: '清空失败：' + (e?.message || '未知') }]); }
+    const requestScope = currentRequestScopeRef.current!;
+    try {
+      await api.advisorClear(requestScope.opportunityId, requestScope.personId!);
+      if (!requestIsCurrent(requestScope)) return;
+      setMsgs([welcome(person.name)]); setCands([]); setSavedIdx(new Set()); candidateScopeRef.current = null;
+    } catch (e: any) {
+      if (!requestIsCurrent(requestScope)) return;
+      setMsgs((m) => [...m, { role: 'assistant', text: '清空失败：' + (e?.message || '未知') }]);
+    }
   };
 
   // P1① VoI 问题清单（pdeIntel·确定性引擎，不吃 AI Key）：商机级一次拉取，切人只重过滤不重拉；
@@ -74,41 +145,62 @@ export function AdvisorPanel({ account, opp, breakdown, person, dispatch }: {
 
   const ask = async (q: string) => {
     const text = q.trim();
-    if (!text || busy) return;
+    if (!text || busy || !contextReady) return;
+    const requestScope = currentRequestScopeRef.current!;
     setMsgs((m) => [...m, { role: 'user', text }]); setInput(''); setBusy(true);
     try {
-      // 焦点：把"用户此刻盯着谁"明确标进上下文
-      const ctx = { ...buildAiContext(account, opp, breakdown), focus: { name: person.name, title: person.title } };
-      const r = await api.aiSimulate(ctx, `围绕干系人「${person.name}」：${text}`);
-      setMsgs((m) => [...m, { role: 'assistant', text: r.analysis }]);
-      void api.advisorAppend(opp.id, person.id, [{ role: 'user', text }, { role: 'assistant', text: r.analysis }]).catch(() => { /* P8 落历史失败不阻塞对话 */ });
+      const r = await api.aiSimulate(
+        requestScope.opportunityId, requestScope.personId!, text, requestScope.options, requestScope.manifestToken,
+      );
+      if (!requestIsCurrent(requestScope)) return;
+      setMsgs((m) => requestIsCurrent(requestScope) ? [...m, {
+        role: 'assistant', text: r.analysis,
+        contextManifestToken: requestScope.manifestToken,
+        contextScopeKey: aiRequestScopeKey(requestScope),
+        contextOptions: requestScope.options,
+      }] : m);
+      if (!requestIsCurrent(requestScope)) return;
+      void api.advisorAppend(requestScope.opportunityId, requestScope.personId!, [{ role: 'user', text }, { role: 'assistant', text: r.analysis }])
+        .catch(() => { /* P8 落历史失败不阻塞对话 */ });
     } catch (e: any) {
-      setMsgs((m) => [...m, { role: 'assistant', text: '推演失败：' + (e?.message || '未知') + '（若未配模型，去「🧠 AI 模型」填一个自己的 Key；也可先看演示分析）' }]);
-    } finally { setBusy(false); }
+      if (!requestIsCurrent(requestScope)) return;
+      refreshContextManifestAfterScopeChange(e);
+      setMsgs((m) => requestIsCurrent(requestScope)
+        ? [...m, { role: 'assistant', text: '推演失败：' + (e?.message || '未知') + '（若未配模型，去「🧠 AI 模型」填一个自己的 Key；也可先看演示分析）' }]
+        : m);
+    } finally { if (requestIsCurrent(requestScope)) setBusy(false); }
   };
 
   // 出候选：承接最近一问一答，产三类候选（本地暂存，采纳才落）
   const makeCards = async () => {
-    if (cardBusy || busy) return;
+    if (cardBusy || busy || !contextReady) return;
+    const requestScope = currentRequestScopeRef.current!;
     setCardBusy(true);
     try {
-      const ctx = { ...buildAiContext(account, opp, breakdown), focus: { name: person.name, title: person.title } };
-      const lastUser = [...msgs].reverse().find((m) => m.role === 'user')?.text || '';
-      const asst = msgs.filter((m) => m.role === 'assistant');
-      const lastAna = asst.length > 1 ? asst[asst.length - 1].text : ''; // 跳过欢迎语
-      const note = [lastUser && `我刚问：${lastUser}`, lastAna && `你的分析要点：${lastAna.slice(0, 240)}`].filter(Boolean).join('\n');
-      const r = await api.advisorActions(opp.id, { name: person.name, title: person.title }, ctx, note);
+      const note = buildAdvisorContinuationNote(msgs, requestScope);
+      const r = await api.advisorActions(
+        requestScope.opportunityId, requestScope.personId!, requestScope.options, requestScope.manifestToken, note,
+      );
+      if (!requestIsCurrent(requestScope)) return;
       const list: Cand[] = (r.candidates || []).map((c) => ({ ...c }));
-      setCands(list);
-      if (!list.length) setMsgs((m) => [...m, { role: 'assistant', text: '这一手我暂时没抽出可落地的候选——把目标聊具体些，或多问两句，我再出。' }]);
+      candidateScopeRef.current = requestScope;
+      setCands(() => requestIsCurrent(requestScope) ? list : []);
+      if (!list.length) setMsgs((m) => requestIsCurrent(requestScope)
+        ? [...m, { role: 'assistant', text: '这一手我暂时没抽出可落地的候选——把目标聊具体些，或多问两句，我再出。' }]
+        : m);
     } catch (e: any) {
-      setMsgs((m) => [...m, { role: 'assistant', text: '出候选失败：' + (e?.message || '未知') + '（若未配模型，去「🧠 AI 模型」填一个自己的 Key，或用内置演示模式）' }]);
-    } finally { setCardBusy(false); }
+      if (!requestIsCurrent(requestScope)) return;
+      refreshContextManifestAfterScopeChange(e);
+      setMsgs((m) => requestIsCurrent(requestScope)
+        ? [...m, { role: 'assistant', text: '出候选失败：' + (e?.message || '未知') + '（若未配模型，去「🧠 AI 模型」填一个自己的 Key，或用内置演示模式）' }]
+        : m);
+    } finally { if (requestIsCurrent(requestScope)) setCardBusy(false); }
   };
 
   // 采纳：按类型落不同库（行动牌→PlanAction 挂焦点人 / 策略卡→StrategyCard / 风险→StrategyRisk），全带 origin=ai
   const acceptCard = (i: number) => {
-    const c = cands[i]; if (!c || c.accepted) return;
+    if (!candidateScopeRef.current || !requestIsCurrent(candidateScopeRef.current)) { setCands([]); candidateScopeRef.current = null; return; }
+    const c = visibleCands[i]; if (!c || c.accepted) return;
     if (c.kind === 'action') {
       const pa = newPlanAction(account.id, opp.id, todayYmd());
       pa.title = c.title; pa.target = c.purpose; pa.resources = c.resources; pa.cautions = c.cautions;
@@ -145,9 +237,16 @@ export function AdvisorPanel({ account, opp, breakdown, person, dispatch }: {
     <div className="chat-panel" style={{ height: '100%' }}>
       <div className="chat-head">
         <span className="chat-title">🧭 参谋 · 对着「{person.name}」深想</span>
-        <span className="chat-hint">带全图上下文 · 会话已留档</span>
+        <span className="chat-hint">当前商机最小范围 · 会话已留档</span>
         <button className="adv-clear" onClick={clearHistory} title={`清空与「${person.name}」的参谋对话历史（已挂到动态的笔记不受影响）`}>🧹</button>
       </div>
+      <AiContextDisclosure
+        manifest={contextManifest}
+        options={contextOptions}
+        onChange={setContextOptions}
+        loading={contextManifestLoading}
+        error={contextManifestError}
+      />
       {voiAsks.length > 0 && (
         <div className="adv-asks">
           <div className="adv-asks-head">❓ 下次见他，先问这 {voiAsks.length} 件事<span>按情报价值 · 引擎测算</span></div>
@@ -155,17 +254,17 @@ export function AdvisorPanel({ account, opp, breakdown, person, dispatch }: {
             <div className="adv-ask" key={i}>
               <span className="adv-ask-q">{i + 1}. {q.question}</span>
               {q.voi != null && <b className="adv-ask-voi">≈值 {Math.round(q.voi)} 万</b>}
-              <button className="adv-ask-how" disabled={busy}
+              <button className="adv-ask-how" disabled={busy || !contextReady}
                 onClick={() => ask(`下次拜访我想摸清：「${q.question}」——给我 2~3 句自然的开口话术，别太露痕迹。`)}>怎么问</button>
             </div>
           ))}
         </div>
       )}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '8px 12px', borderBottom: '1px solid var(--line)' }}>
-        {quick.map((q) => <button key={q} className="btn ghost xs" onClick={() => ask(q)} disabled={busy}>{q}</button>)}
+        {quick.map((q) => <button key={q} className="btn ghost xs" onClick={() => ask(q)} disabled={busy || !contextReady}>{q}</button>)}
       </div>
       <div className="adv-cardbar">
-        <button className="btn primary xs" disabled={cardBusy || busy} onClick={makeCards}>{cardBusy ? '结合对话出候选中…' : '🎯 出候选'}</button>
+        <button className="btn primary xs" disabled={cardBusy || busy || !contextReady} onClick={makeCards}>{cardBusy ? '结合对话出候选中…' : '🎯 出候选'}</button>
         <span className="adv-cardbar-hint">AI 产 行动牌 / 策略卡 / 风险 · 采纳挂「{person.name}」</span>
       </div>
       <div className="chat-list" ref={listRef}>
@@ -182,7 +281,7 @@ export function AdvisorPanel({ account, opp, breakdown, person, dispatch }: {
         ))}
         {busy && <div className="chat-bub assistant chat-typing">结合整张图思考中…</div>}
         {cardBusy && <div className="chat-bub assistant chat-typing">正在拟 行动 / 策略 / 风险 候选…</div>}
-        {cands.map((c, i) => {
+        {visibleCands.map((c, i) => {
           const meta = META[c.kind];
           return (
             <div className={`adv-cand adv-cand-${c.kind}`} key={i}>
@@ -217,7 +316,7 @@ export function AdvisorPanel({ account, opp, breakdown, person, dispatch }: {
       <div className="chat-input">
         <textarea rows={1} value={input} placeholder={`问参谋关于「${person.name}」…（只想不落库 · Enter 发送）`}
           onChange={(e) => setInput(e.target.value)} onKeyDown={onKey} disabled={busy} />
-        <button className="chat-send" onClick={() => ask(input)} disabled={busy || !input.trim()} title="发送" aria-label="发送">➤</button>
+        <button className="chat-send" onClick={() => ask(input)} disabled={busy || !input.trim() || !contextReady} title="发送" aria-label="发送">➤</button>
       </div>
     </div>
   );

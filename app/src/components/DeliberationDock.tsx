@@ -15,8 +15,21 @@ import { ChatPanel } from './ChatPanel';
 import { usePersistentState } from '../ui';
 import { api, type PatrolInfo } from '../api';
 import { EnginePulse } from './EnginePulse';
-import { buildAiContext } from '../aiContext';
+import {
+  aiOperationIdentityKey,
+  aiRequestScopeKey,
+  createAiOperationIdentity,
+  createAiRequestScope,
+  DEFAULT_AI_CONTEXT_OPTIONS,
+  isAiOperationCurrent,
+  isAiRequestScopeCurrent,
+  type AiContextOptions,
+  type AiOperationIdentity,
+  type AiRequestScope,
+  type ContextManifest,
+} from '../aiContext';
 import { ACT_LABEL } from '../lib/pdeUi';
+import { AiContextDisclosure } from './AiContextDisclosure';
 import {
   actionCompletionBusinessDates,
   addBusinessDaysYmd,
@@ -45,6 +58,9 @@ type DockHeight = 'collapsed' | 'half' | 'full';
 // 第3刀：AI 可预填的行动四要素（title/personId 由策略卡携带，不在此列）
 type AiFieldKey = 'target' | 'resources' | 'cautions' | 'props';
 type Prefill = Record<AiFieldKey, string>;
+type PrefillResult = { current: true; prefill: Prefill | null } | { current: false };
+type ActionDraft = { title: string; startDate: string; personId?: string; target: string; resources: string; cautions: string; props: string; done: boolean; wasDone: boolean; outcome?: 'up' | 'flat' | 'down' };
+type OperationRevision = { baseKey: string; nonce: number };
 
 // M5 · 列④引擎候选（action-ranking ΔEV 排序，裁决A IntelAndActionPanel 下半落坞）
 interface EngineAction { actionKey: string; title: string; personId: string; personName: string; d_pwin: number; gross: number | null; cost: number; dEV: number | null; ratio: number | null; gist: string; scriptRef: string; }
@@ -89,6 +105,53 @@ export function DeliberationDock({
   const personById = new Map(account.persons.map((p) => [p.id, p]));
   const [height, setHeight] = usePersistentState<DockHeight>('jianghu.dockHeight', 'half');
   const [chatOpen, setChatOpen] = usePersistentState('jianghu.dockChatOpen', false); // 第7刀：对话默认单行，点开才展开
+  const [contextOptions, setContextOptions] = useState<AiContextOptions>(DEFAULT_AI_CONTEXT_OPTIONS);
+  const [contextManifest, setContextManifest] = useState<ContextManifest | null>(null);
+  const [contextManifestToken, setContextManifestToken] = useState('');
+  const [contextManifestError, setContextManifestError] = useState('');
+  const [contextManifestLoading, setContextManifestLoading] = useState(false);
+  const [contextManifestRevision, setContextManifestRevision] = useState(0);
+  const currentAiRequestScopeRef = useRef<AiRequestScope | null>(null);
+  const cardOperationRevisionsRef = useRef(new Map<string, OperationRevision>());
+  const milestoneOperationRevisionsRef = useRef(new Map<string, OperationRevision>());
+  const currentDrawerOperationRef = useRef<AiOperationIdentity | null>(null);
+  const drawerOperationBaseKeyRef = useRef('__closed__');
+  const drawerOperationNonceRef = useRef(0);
+  const drawerRef = useRef<DrawerState>(null);
+  const actDraftRef = useRef<ActionDraft | null>(null);
+  const actDraftActionIdRef = useRef<string | null>(null);
+  const prefillBusyOperationRef = useRef<AiOperationIdentity | null>(null);
+  const msBusyOperationRef = useRef<AiOperationIdentity | null>(null);
+  const renderAiRequestScope = createAiRequestScope({
+    accountId: account.id,
+    opportunityId: opp.id,
+    manifestToken: contextManifestToken,
+    options: contextOptions,
+    generation: 0,
+  });
+  if (!currentAiRequestScopeRef.current
+    || aiRequestScopeKey(currentAiRequestScopeRef.current) !== aiRequestScopeKey(renderAiRequestScope)) {
+    renderAiRequestScope.generation = (currentAiRequestScopeRef.current?.generation ?? 0) + 1;
+    currentAiRequestScopeRef.current = renderAiRequestScope;
+  }
+  const requestIsCurrent = (requestScope: AiRequestScope) =>
+    !!currentAiRequestScopeRef.current && isAiRequestScopeCurrent(requestScope, currentAiRequestScopeRef.current);
+  useEffect(() => {
+    let alive = true;
+    setContextManifest(null);
+    setContextManifestToken('');
+    setContextManifestError('');
+    setContextManifestLoading(true);
+    api.aiContextManifest(opp.id, contextOptions)
+      .then((result) => { if (alive) { setContextManifest(result.manifest); setContextManifestToken(result.manifestToken); } })
+      .catch((error: any) => { if (alive) setContextManifestError(error?.message || '无法确认数据范围'); })
+      .finally(() => { if (alive) setContextManifestLoading(false); });
+    return () => { alive = false; };
+  }, [opp.id, contextOptions, contextManifestRevision]);
+  const contextReady = !!contextManifest && !!contextManifestToken && !contextManifestLoading;
+  const refreshContextManifestAfterScopeChange = (error: any) => {
+    if (error?.status === 409) setContextManifestRevision((revision) => revision + 1);
+  };
 
   // 第8刀：四动作徽章收编左栏（坞头药丸/徽章退役——坞全宽后列①在左栏正下方，局势信息一处不重复）。
   // pdeFull 仍由 App 下发（引擎详解抽屉/gate 红条用）；左栏徽章点击经 openEngineSignal 开抽屉。
@@ -129,6 +192,74 @@ export function DeliberationDock({
   const risks = (account.strategyRisks ?? []).filter((r) => r.opportunityId === opp.id && r.status !== 'dismissed' && r.kind === 'risk');
   const milestones = (account.milestones ?? []).filter((m) => m.opportunityId === opp.id);
   const planActions = (account.planActions ?? []).filter((a) => a.opportunityId === opp.id);
+  const cardsRef = useRef(cards);
+  const milestonesRef = useRef(milestones);
+  cardsRef.current = cards;
+  milestonesRef.current = milestones;
+
+  const cardOperationBase = (card: StrategyCard) => createAiOperationIdentity({
+    kind: 'card-dispatch', targetId: card.id, personId: card.personId,
+    inputs: [card.title, card.basis, card.gapItem, card.status], nonce: 0,
+  });
+  const milestoneOperationBase = (milestone: (typeof milestones)[number]) => createAiOperationIdentity({
+    kind: 'milestone-plan', targetId: milestone.id,
+    inputs: [milestone.title, milestone.startDate, milestone.endDate], nonce: 0,
+  });
+  const liveCardIds = new Set(cards.map((card) => card.id));
+  for (const card of cards) {
+    const baseKey = aiOperationIdentityKey(cardOperationBase(card));
+    const previous = cardOperationRevisionsRef.current.get(card.id);
+    if (!previous || previous.baseKey !== baseKey) {
+      cardOperationRevisionsRef.current.set(card.id, { baseKey, nonce: (previous?.nonce ?? 0) + 1 });
+    }
+  }
+  for (const [cardId, revision] of cardOperationRevisionsRef.current) {
+    if (!liveCardIds.has(cardId) && revision.baseKey !== '__missing__') {
+      cardOperationRevisionsRef.current.set(cardId, { baseKey: '__missing__', nonce: revision.nonce + 1 });
+    }
+  }
+  const liveMilestoneIds = new Set(milestones.map((milestone) => milestone.id));
+  for (const milestone of milestones) {
+    const baseKey = aiOperationIdentityKey(milestoneOperationBase(milestone));
+    const previous = milestoneOperationRevisionsRef.current.get(milestone.id);
+    if (!previous || previous.baseKey !== baseKey) {
+      milestoneOperationRevisionsRef.current.set(milestone.id, { baseKey, nonce: (previous?.nonce ?? 0) + 1 });
+    }
+  }
+  for (const [milestoneId, revision] of milestoneOperationRevisionsRef.current) {
+    if (!liveMilestoneIds.has(milestoneId) && revision.baseKey !== '__missing__') {
+      milestoneOperationRevisionsRef.current.set(milestoneId, { baseKey: '__missing__', nonce: revision.nonce + 1 });
+    }
+  }
+  const currentCardOperation = (cardId: string): AiOperationIdentity | null => {
+    const card = cardsRef.current.find((candidate) => candidate.id === cardId && candidate.status !== 'dismissed');
+    const revision = cardOperationRevisionsRef.current.get(cardId);
+    if (!card || !revision || revision.baseKey !== aiOperationIdentityKey(cardOperationBase(card))) return null;
+    return { ...cardOperationBase(card), nonce: revision.nonce };
+  };
+  const currentMilestoneOperation = (milestoneId: string): AiOperationIdentity | null => {
+    const milestone = milestonesRef.current.find((candidate) => candidate.id === milestoneId);
+    const revision = milestoneOperationRevisionsRef.current.get(milestoneId);
+    if (!milestone || !revision || revision.baseKey !== aiOperationIdentityKey(milestoneOperationBase(milestone))) return null;
+    return { ...milestoneOperationBase(milestone), nonce: revision.nonce };
+  };
+  const currentDrawerOperation = (): AiOperationIdentity | null => currentDrawerOperationRef.current;
+  const operationIsCurrent = (requestOperation: AiOperationIdentity): boolean => {
+    const current = requestOperation.kind === 'card-dispatch'
+      ? currentCardOperation(requestOperation.targetId)
+      : requestOperation.kind === 'milestone-plan'
+        ? currentMilestoneOperation(requestOperation.targetId)
+        : currentDrawerOperation();
+    return isAiOperationCurrent(requestOperation, current);
+  };
+  const invalidateCardOperation = (cardId: string) => {
+    const previous = cardOperationRevisionsRef.current.get(cardId);
+    cardOperationRevisionsRef.current.set(cardId, { baseKey: '__invalidated__', nonce: (previous?.nonce ?? 0) + 1 });
+  };
+  const invalidateMilestoneOperation = (milestoneId: string) => {
+    const previous = milestoneOperationRevisionsRef.current.get(milestoneId);
+    milestoneOperationRevisionsRef.current.set(milestoneId, { baseKey: '__invalidated__', nonce: (previous?.nonce ?? 0) + 1 });
+  };
 
   // 缺口是否已有策略卡覆盖（列① ✓ 标记）
   const coveredGaps = new Set(cards.map((c) => c.gapItem).filter(Boolean));
@@ -143,38 +274,63 @@ export function DeliberationDock({
     dispatch({ type: 'ADD_STRATEGY_CARD', accId: account.id, oppId: opp.id, card });
     setDrawer({ kind: 'card', id: card.id });
   };
-  const updateCard = (cardId: string, patch: Partial<StrategyCard>) =>
+  const updateCard = (cardId: string, patch: Partial<StrategyCard>) => {
+    invalidateCardOperation(cardId);
     dispatch({ type: 'UPDATE_STRATEGY_CARD', accId: account.id, cardId, patch });
-  const deleteCard = (cardId: string) => { dispatch({ type: 'DELETE_STRATEGY_CARD', accId: account.id, cardId }); setDrawer(null); };
+  };
+  const deleteCard = (cardId: string) => { invalidateCardOperation(cardId); dispatch({ type: 'DELETE_STRATEGY_CARD', accId: account.id, cardId }); setDrawer(null); };
 
   // ── 派发：策略卡 → 行动牌（第3刀：AI 预填四要素初稿 → 落草稿 origin=ai → 开抽屉人微调，人保存才定稿守铁律②）──
   // aiMark = 字段来源前端态（🤖AI建议/✍️手改，不落库）；prefillBusy = 预填中的 cardId 或 'drawer'（抽屉内补全）
   const [aiMark, setAiMark] = useState<{ actionId: string; fields: Partial<Record<AiFieldKey, 'ai' | 'edited'>> } | null>(null);
   const [prefillBusy, setPrefillBusy] = useState<string | null>(null);
-  const fetchPrefill = async (card: { title?: string; basis?: string; gapItem?: string }, personId?: string): Promise<Prefill | null> => {
+  const fetchPrefill = async (
+    card: { title?: string; basis?: string; gapItem?: string },
+    personId: string | undefined,
+    requestScope: AiRequestScope,
+  ): Promise<PrefillResult> => {
+    if (!contextReady || !requestIsCurrent(requestScope)) return { current: false };
     try {
-      const target = personId ? personById.get(personId) : null;
-      const ctx = buildAiContext(account, opp, breakdown);
-      const r = await api.strategyPrefill(opp.id, card, target ? { name: target.name, title: target.title } : undefined, ctx);
-      return r.prefill;
-    } catch { return null; } // 预填失败降级：无初稿开抽屉手填（不阻塞派发）
+      const r = await api.strategyPrefill(
+        requestScope.opportunityId, card, personId, requestScope.options, requestScope.manifestToken,
+      );
+      if (!requestIsCurrent(requestScope)) return { current: false };
+      return { current: true, prefill: r.prefill };
+    } catch (error: any) {
+      if (!requestIsCurrent(requestScope)) return { current: false };
+      refreshContextManifestAfterScopeChange(error);
+      return error?.status === 409 ? { current: false } : { current: true, prefill: null };
+    } // 普通预填失败降级：无初稿开抽屉手填；409 必须重新核对范围
   };
   const dispatchToPlanner = async (card: StrategyCard) => {
-    if (prefillBusy) return;
+    if (prefillBusy || !contextReady) return;
+    const requestScope = currentAiRequestScopeRef.current!;
+    const requestOperation = currentCardOperation(card.id);
+    if (!requestOperation) return;
+    const requestCard = cardsRef.current.find((candidate) => candidate.id === card.id)!;
+    prefillBusyOperationRef.current = requestOperation;
     setPrefillBusy(card.id);
-    const pf = await fetchPrefill({ title: card.title, basis: card.basis, gapItem: card.gapItem }, card.personId);
+    const result = await fetchPrefill(
+      { title: requestCard.title, basis: requestCard.basis, gapItem: requestCard.gapItem },
+      requestCard.personId, requestScope,
+    );
+    if (!result.current || !requestIsCurrent(requestScope) || !operationIsCurrent(requestOperation)) return;
+    const currentCard = cardsRef.current.find((candidate) => candidate.id === requestOperation.targetId && candidate.status !== 'dismissed');
+    if (!currentCard) return;
+    if (isAiOperationCurrent(requestOperation, prefillBusyOperationRef.current)) prefillBusyOperationRef.current = null;
     setPrefillBusy(null);
+    const pf = result.prefill;
     const d0 = todayYmd();
-    const pa = newPlanAction(account.id, opp.id, d0, d0, 'am');
-    pa.title = card.title;
-    pa.gapItem = card.gapItem || '';
-    if (card.personId) pa.personId = card.personId;
-    if (card.basis) pa.scene = card.basis;
+    const pa = newPlanAction(requestScope.accountId, requestScope.opportunityId, d0, d0, 'am');
+    pa.title = currentCard.title;
+    pa.gapItem = currentCard.gapItem || '';
+    if (currentCard.personId) pa.personId = currentCard.personId;
+    if (currentCard.basis) pa.scene = currentCard.basis;
     pa.origin = 'ai';
     pa.draft = true; // 第4刀：派发产物=坞内草稿，人微调后「→ 上桌」才挂画布
     if (pf) { pa.target = pf.target; pa.resources = pf.resources; pa.cautions = pf.cautions; pa.props = pf.props; }
-    dispatch({ type: 'ADD_PLAN_ACTION', accId: account.id, oppId: opp.id, planAction: pa });
-    updateCard(card.id, { dispatchedActionIds: [...(card.dispatchedActionIds ?? []), pa.id] });
+    dispatch({ type: 'ADD_PLAN_ACTION', accId: requestScope.accountId, oppId: requestScope.opportunityId, planAction: pa });
+    updateCard(currentCard.id, { dispatchedActionIds: [...(currentCard.dispatchedActionIds ?? []), pa.id] });
     const fields: Partial<Record<AiFieldKey, 'ai'>> = {};
     (['target', 'resources', 'cautions', 'props'] as AiFieldKey[]).forEach((k) => { if (pf?.[k]) fields[k] = 'ai'; });
     setAiMark(pf ? { actionId: pa.id, fields } : null);
@@ -188,38 +344,59 @@ export function DeliberationDock({
     dispatch({ type: 'ADD_MILESTONE', accId: account.id, oppId: opp.id, milestone: ms });
     setDrawer({ kind: 'milestone', id: ms.id });
   };
-  const updateMilestone = (milestoneId: string, patch: { title?: string; startDate?: string; endDate?: string }) =>
+  const updateMilestone = (milestoneId: string, patch: { title?: string; startDate?: string; endDate?: string }) => {
+    invalidateMilestoneOperation(milestoneId);
     dispatch({ type: 'UPDATE_MILESTONE', accId: account.id, milestoneId, patch });
-  const deleteMilestone = (milestoneId: string) => { dispatch({ type: 'DELETE_MILESTONE', accId: account.id, milestoneId }); setDrawer(null); };
+  };
+  const deleteMilestone = (milestoneId: string) => { invalidateMilestoneOperation(milestoneId); dispatch({ type: 'DELETE_MILESTONE', accId: account.id, milestoneId }); setDrawer(null); };
 
   // ── P6 里程碑「→ 排行动」（列③→④焊缝）：AI 拆 2-3 个行动候选 → 各落一张 draft 草稿（origin=ai）进列④人审，
   // endDate 锚定里程碑日（最晚完成）、startDate=里程碑前一周（不早于今天）。msArranged=会话级「✓ 已排 N」反馈。──
   const [msBusy, setMsBusy] = useState<string | null>(null);
   const [msArranged, setMsArranged] = useState<Record<string, number>>({});
   const planFromMilestone = async (ms: { id: string; title: string; startDate?: string }) => {
-    if (msBusy) return;
+    if (msBusy || !contextReady) return;
+    const requestScope = currentAiRequestScopeRef.current!;
+    const requestOperation = currentMilestoneOperation(ms.id);
+    if (!requestOperation) return;
+    const requestMilestone = milestonesRef.current.find((candidate) => candidate.id === ms.id)!;
+    msBusyOperationRef.current = requestOperation;
     setMsBusy(ms.id);
     try {
-      const ctx = buildAiContext(account, opp, breakdown);
       const existing = planActions.map((a) => a.title).filter(Boolean);
-      const r = await api.milestoneActions(opp.id, { title: ms.title, date: ms.startDate || undefined }, ctx, existing);
+      const r = await api.milestoneActions(
+        requestScope.opportunityId, { title: requestMilestone.title, date: requestMilestone.startDate || undefined },
+        requestScope.options, requestScope.manifestToken, existing,
+      );
+      if (!requestIsCurrent(requestScope) || !operationIsCurrent(requestOperation)) return;
+      const currentMilestone = milestonesRef.current.find((candidate) => candidate.id === requestOperation.targetId);
+      if (!currentMilestone) return;
       const today = todayYmd();
-      const msDate = ms.startDate && ms.startDate >= today ? ms.startDate : today; // 里程碑已过/未定 → 锚今天
+      const msDate = currentMilestone.startDate && currentMilestone.startDate >= today ? currentMilestone.startDate : today; // 里程碑已过/未定 → 锚今天
       const start = addDaysYmd(-7, msDate) >= today ? addDaysYmd(-7, msDate) : today;
       let n = 0;
       for (const c of (r.candidates || []).slice(0, 3)) {
-        const pa = newPlanAction(account.id, opp.id, start, msDate, 'am');
+        const pa = newPlanAction(requestScope.accountId, requestScope.opportunityId, start, msDate, 'am');
         pa.title = c.title; pa.target = c.target; pa.cautions = c.cautions;
-        pa.scene = `为达成里程碑「${ms.title}」${ms.startDate ? `（最晚 ${ms.startDate}）` : ''}`;
+        pa.scene = `为达成里程碑「${currentMilestone.title}」${currentMilestone.startDate ? `（最晚 ${currentMilestone.startDate}）` : ''}`;
         pa.origin = 'ai'; pa.draft = true;
-        dispatch({ type: 'ADD_PLAN_ACTION', accId: account.id, oppId: opp.id, planAction: pa });
+        dispatch({ type: 'ADD_PLAN_ACTION', accId: requestScope.accountId, oppId: requestScope.opportunityId, planAction: pa });
         n++;
       }
-      if (n > 0) setMsArranged((m) => ({ ...m, [ms.id]: (m[ms.id] ?? 0) + n }));
-      else setAiErr(`「${ms.title}」的标准动作已在行动列，没有新的可排`); // existingTitles 防重后空产出
+      if (n > 0) setMsArranged((m) => ({ ...m, [currentMilestone.id]: (m[currentMilestone.id] ?? 0) + n }));
+      else setAiErr(`「${currentMilestone.title}」的标准动作已在行动列，没有新的可排`); // existingTitles 防重后空产出
     } catch (e: any) {
+      if (!requestIsCurrent(requestScope) || !operationIsCurrent(requestOperation)) return;
+      refreshContextManifestAfterScopeChange(e);
       setAiErr(e?.message || '排行动失败');
-    } finally { setMsBusy(null); }
+    } finally {
+      if (requestIsCurrent(requestScope)
+        && operationIsCurrent(requestOperation)
+        && isAiOperationCurrent(requestOperation, msBusyOperationRef.current)) {
+        msBusyOperationRef.current = null;
+        setMsBusy(null);
+      }
+    }
   };
 
   // ── 人工雷红条（第6刀：风险砍容器降级坞头，行内＋加雷 ✕排雷；severity 留库不展示，无编辑=删了重记）──
@@ -240,31 +417,51 @@ export function DeliberationDock({
   const [aiErr, setAiErr] = useState('');
   const [fwdCands, setFwdCands] = useState<FwdCand[]>([]);
   const [bwdCands, setBwdCands] = useState<BwdCand[]>([]);
+  const fwdCandidateScopeRef = useRef<AiRequestScope | null>(null);
+  const bwdCandidateScopeRef = useRef<AiRequestScope | null>(null);
+  const visibleFwdCands = fwdCandidateScopeRef.current && requestIsCurrent(fwdCandidateScopeRef.current) ? fwdCands : [];
+  const visibleBwdCands = bwdCandidateScopeRef.current && requestIsCurrent(bwdCandidateScopeRef.current) ? bwdCands : [];
+
+  useEffect(() => {
+    setFwdCands([]); setBwdCands([]);
+    fwdCandidateScopeRef.current = null; bwdCandidateScopeRef.current = null;
+    prefillBusyOperationRef.current = null; msBusyOperationRef.current = null;
+    setAiBusy(null); setAiErr(''); setMsBusy(null); setMsArranged({}); setPrefillBusy(null);
+  }, [account.id, opp.id, contextManifestToken, contextOptions.includeRawLogs, contextOptions.includeForm]);
 
   const col2Ref = useRef<HTMLDivElement>(null); // P0：顺推出候选后滚回列②顶部（候选置顶渲染，保证在视野内）
   const runSuggest = async (mode: 'forward' | 'backward') => {
-    if (aiBusy) return;
+    if (aiBusy || !contextReady) return;
+    const requestScope = currentAiRequestScopeRef.current!;
     setAiBusy(mode); setAiErr('');
     try {
-      const ctx = { ...buildAiContext(account, opp, breakdown), existingCardTitles: cards.map((c) => c.title).filter(Boolean) };
-      const r = await api.strategySuggest(opp.id, mode, ctx);
+      const r = await api.strategySuggest(requestScope.opportunityId, mode, requestScope.options, requestScope.manifestToken);
+      if (!requestIsCurrent(requestScope)) return;
       if (mode === 'forward') {
-        setFwdCands(r.candidates || []);
-        requestAnimationFrame(() => { if (col2Ref.current) col2Ref.current.scrollTop = 0; });
-      } else setBwdCands(r.candidates || []);
+        fwdCandidateScopeRef.current = requestScope;
+        setFwdCands(() => requestIsCurrent(requestScope) ? (r.candidates || []) : []);
+        requestAnimationFrame(() => { if (requestIsCurrent(requestScope) && col2Ref.current) col2Ref.current.scrollTop = 0; });
+      } else {
+        bwdCandidateScopeRef.current = requestScope;
+        setBwdCands(() => requestIsCurrent(requestScope) ? (r.candidates || []) : []);
+      }
     } catch (e: any) {
+      if (!requestIsCurrent(requestScope)) return;
+      refreshContextManifestAfterScopeChange(e);
       setAiErr(e?.message || 'AI 推演失败');
-    } finally { setAiBusy(null); }
+    } finally { if (requestIsCurrent(requestScope)) setAiBusy(null); }
   };
   const acceptFwd = (i: number) => {
-    const c = fwdCands[i]; if (!c) return;
+    if (!fwdCandidateScopeRef.current || !requestIsCurrent(fwdCandidateScopeRef.current)) { setFwdCands([]); fwdCandidateScopeRef.current = null; return; }
+    const c = visibleFwdCands[i]; if (!c) return;
     const card = newStrategyCard(account.id, opp.id, c.gapItem || '');
     card.title = c.title; card.basis = c.basis; card.origin = 'ai'; card.orderIndex = cards.length;
     dispatch({ type: 'ADD_STRATEGY_CARD', accId: account.id, oppId: opp.id, card });
     setFwdCands((xs) => xs.filter((_, j) => j !== i));
   };
   const acceptBwd = (i: number) => {
-    const c = bwdCands[i]; if (!c) return;
+    if (!bwdCandidateScopeRef.current || !requestIsCurrent(bwdCandidateScopeRef.current)) { setBwdCands([]); bwdCandidateScopeRef.current = null; return; }
+    const c = visibleBwdCands[i]; if (!c) return;
     const ms = newMilestone(account.id, opp.id, addDaysYmd(c.offsetDays), 'am');
     ms.title = c.title;
     dispatch({ type: 'ADD_MILESTONE', accId: account.id, oppId: opp.id, milestone: ms });
@@ -272,7 +469,19 @@ export function DeliberationDock({
   };
 
   // ── 视图状态：详情抽屉 ──
-  const [drawer, setDrawer] = useState<DrawerState>(null);
+  const [drawer, setDrawerState] = useState<DrawerState>(null);
+  drawerRef.current = drawer;
+  const setDrawer = (next: DrawerState) => {
+    const previousKey = JSON.stringify(drawerRef.current);
+    const nextKey = JSON.stringify(next);
+    if (previousKey !== nextKey) {
+      drawerOperationNonceRef.current += 1;
+      drawerOperationBaseKeyRef.current = '__invalidated__';
+      currentDrawerOperationRef.current = null;
+    }
+    drawerRef.current = next;
+    setDrawerState(next);
+  };
   useEffect(() => {
     // Esc 关抽屉前先 blur：抽屉字段走 defaultValue+onBlur 保存，直接卸载会丢正在输入的值（P4③ 空卡治理会误删刚起名的卡）
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { (document.activeElement as HTMLElement | null)?.blur?.(); setDrawer(null); } };
@@ -347,11 +556,23 @@ export function DeliberationDock({
   };
 
   // ── 行动清单（PlanAction，承接 DealPlanner 网格退役；勾完成→结果回填录证据，闭合执行→证据→局势飞轮）──
-  const [actDraft, setActDraft] = useState<{ title: string; startDate: string; personId?: string; target: string; resources: string; cautions: string; props: string; done: boolean; wasDone: boolean; outcome?: 'up' | 'flat' | 'down' } | null>(null);
+  const [actDraft, setActDraftState] = useState<ActionDraft | null>(null);
+  actDraftRef.current = actDraft;
+  const setActDraft = (next: ActionDraft | null) => {
+    actDraftRef.current = next;
+    setActDraftState(next);
+  };
+  const editActDraft = (next: ActionDraft) => {
+    drawerOperationNonceRef.current += 1;
+    drawerOperationBaseKeyRef.current = '__invalidated__';
+    currentDrawerOperationRef.current = null;
+    setActDraft(next);
+  };
   useEffect(() => {
     if (drawer?.kind === 'action') {
       const a = (account.planActions ?? []).find((x) => x.id === drawer.id);
       if (a) {
+        actDraftActionIdRef.current = drawer.id;
         setActDraft({ title: a.title || '', startDate: a.startDate || todayYmd(), personId: a.personId, target: a.target || '', resources: a.resources || '', cautions: a.cautions || '', props: a.props || '', done: !!a.done, wasDone: !!a.done });
         // 来源标记按库值校准：补全后未保存就关抽屉的字段（库里为空）清掉标记，避免重开误标 🤖
         setAiMark((m) => {
@@ -361,10 +582,48 @@ export function DeliberationDock({
           return { ...m, fields };
         });
       }
-    } else setActDraft(null);
+    } else { actDraftActionIdRef.current = null; setActDraft(null); }
     // 仅在切换抽屉对象时初始化草稿；编辑中不因 store 更新而重置（避免清掉未保存输入）
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drawer]);
+  const drawerPlanAction = drawer?.kind === 'action'
+    ? planActions.find((candidate) => candidate.id === drawer.id)
+    : undefined;
+  const drawerOperationBase = drawer?.kind === 'action'
+    && actDraft
+    && actDraftActionIdRef.current === drawer.id
+    && drawerPlanAction
+    ? createAiOperationIdentity({
+      kind: 'drawer-prefill', targetId: drawer.id, personId: actDraft.personId,
+      inputs: [
+        actDraft.title, actDraft.startDate, actDraft.target, actDraft.resources, actDraft.cautions, actDraft.props,
+        actDraft.done, actDraft.outcome, drawerPlanAction.scene, drawerPlanAction.gapItem,
+      ],
+      nonce: 0,
+    })
+    : null;
+  if (!drawerOperationBase) {
+    currentDrawerOperationRef.current = null;
+  } else {
+    const baseKey = aiOperationIdentityKey(drawerOperationBase);
+    if (drawerOperationBaseKeyRef.current !== baseKey) {
+      drawerOperationNonceRef.current += 1;
+      drawerOperationBaseKeyRef.current = baseKey;
+    }
+    currentDrawerOperationRef.current = { ...drawerOperationBase, nonce: drawerOperationNonceRef.current };
+  }
+  useEffect(() => {
+    const prefillOperation = prefillBusyOperationRef.current;
+    if (prefillOperation && !operationIsCurrent(prefillOperation)) {
+      prefillBusyOperationRef.current = null;
+      setPrefillBusy(null);
+    }
+    const milestoneOperation = msBusyOperationRef.current;
+    if (milestoneOperation && !operationIsCurrent(milestoneOperation)) {
+      msBusyOperationRef.current = null;
+      setMsBusy(null);
+    }
+  });
   // 点画布行动牌 → 展开坞 + 打开该行动编辑抽屉
   useEffect(() => {
     if (openActionId) { setHeight('half'); setDrawer({ kind: 'action', id: openActionId }); onActionOpened?.(); }
@@ -421,14 +680,28 @@ export function DeliberationDock({
 
   // ── 第3刀：抽屉内「✨ 让引擎补全」——只补空白要素不覆盖已填（human-wins）；字段来源徽章 helpers ──
   const runDrawerPrefill = async () => {
-    if (prefillBusy || !actDraft || drawer?.kind !== 'action') return;
-    const actionId = drawer.id;
+    if (prefillBusy || !actDraft || drawer?.kind !== 'action' || !contextReady) return;
+    const requestScope = currentAiRequestScopeRef.current!;
+    const requestOperation = currentDrawerOperation();
+    if (!requestOperation) return;
+    const actionId = requestOperation.targetId;
+    const requestDraft = actDraftRef.current!;
+    const requestAction = planActions.find((candidate) => candidate.id === actionId);
+    if (!requestAction) return;
+    prefillBusyOperationRef.current = requestOperation;
     setPrefillBusy('drawer');
-    const a = (account.planActions ?? []).find((x) => x.id === actionId);
-    const pf = await fetchPrefill({ title: actDraft.title, basis: a?.scene, gapItem: a?.gapItem }, actDraft.personId);
+    const result = await fetchPrefill(
+      { title: requestDraft.title, basis: requestAction.scene, gapItem: requestAction.gapItem },
+      requestDraft.personId, requestScope,
+    );
+    if (!result.current || !requestIsCurrent(requestScope) || !operationIsCurrent(requestOperation)) return;
+    const currentDraft = actDraftRef.current;
+    if (!currentDraft || drawerRef.current?.kind !== 'action' || drawerRef.current.id !== actionId) return;
+    if (isAiOperationCurrent(requestOperation, prefillBusyOperationRef.current)) prefillBusyOperationRef.current = null;
     setPrefillBusy(null);
+    const pf = result.prefill;
     if (!pf) return;
-    const next = { ...actDraft };
+    const next = { ...currentDraft };
     const fill: Partial<Record<AiFieldKey, 'ai'>> = {};
     (['target', 'resources', 'cautions', 'props'] as AiFieldKey[]).forEach((k) => {
       if (!next[k].trim() && pf[k]) { next[k] = pf[k]; fill[k] = 'ai'; }
@@ -447,7 +720,7 @@ export function DeliberationDock({
   // 里程碑泳道条目：正式里程碑 + 倒推候选按日期混排（候选虚位出现在它将落的位置上）
   const laneMs: ({ t: 'ms'; date: string; m: (typeof milestones)[number] } | { t: 'cand'; date: string; c: BwdCand; i: number })[] = [
     ...milestones.map((m) => ({ t: 'ms' as const, date: m.startDate || '9999-99-99', m })),
-    ...bwdCands.map((c, i) => ({ t: 'cand' as const, date: addDaysYmd(c.offsetDays), c, i })),
+    ...visibleBwdCands.map((c, i) => ({ t: 'cand' as const, date: addDaysYmd(c.offsetDays), c, i })),
   ].sort((a, b) => a.date.localeCompare(b.date));
 
   const drawerCard = drawer?.kind === 'card' ? cards.find((c) => c.id === drawer.id) : null;
@@ -507,6 +780,15 @@ export function DeliberationDock({
       ))}
       {height !== 'collapsed' && (
         <div className="dock-scroll">
+          <div onClick={(event) => event.stopPropagation()}>
+            <AiContextDisclosure
+              manifest={contextManifest}
+              options={contextOptions}
+              onChange={setContextOptions}
+              loading={contextManifestLoading}
+              error={contextManifestError}
+            />
+          </div>
           {/* ── 第2刀：横向推导流水线 局势 → 策略 → 倒排 → 行动（列间箭头显因果；第6刀后旁支全退，雷在坞头红条）
                第9刀：抽屉打开时 drawer-open 让位——四列 minmax 下限触发横滚，被盖住的列可拖出来看 ── */}
           <div className={`sb2-cols${drawer ? ' drawer-open' : ''}`} onClick={(e) => e.stopPropagation()}>
@@ -547,11 +829,11 @@ export function DeliberationDock({
               <span className="sb2-lane-acts" onClick={(e) => e.stopPropagation()}>
                 {aiErr && <span className="sb2-ai-err">{aiErr}</span>}
                 <button className="btn ghost xs" onClick={() => addCard()}>＋</button>
-                <button className="btn ghost xs" disabled={aiBusy === 'forward'} onClick={() => runSuggest('forward')}>{aiBusy === 'forward' ? '推演中…' : '✨ 顺推'}</button>
+                <button className="btn ghost xs" disabled={aiBusy === 'forward' || !contextReady} onClick={() => runSuggest('forward')}>{aiBusy === 'forward' ? '推演中…' : '✨ 顺推'}</button>
               </span>
             </div>
             {/* AI 顺推候选虚位卡（P0：置顶渲染——此前排在存量卡之后，列内容一长就出生在视野外=「点了没反应」；对齐列④引擎荐置顶惯例） */}
-            {fwdCands.map((c, i) => (
+            {visibleFwdCands.map((c, i) => (
               <div key={`fc${i}`} className="sb2-card sb2-cand">
                 <div className="sb2-card-top">
                   {c.gapItem && <span className="sb2-chip">{ITEM_LABEL[c.gapItem as ItemKey] || c.gapItem}</span>}
@@ -579,7 +861,7 @@ export function DeliberationDock({
                       : <span className="sb2-chip sb2-chip-none">未挂缺口</span>}
                     {dispatched
                       ? <span className="sb2-dispatched">✓ 已派发 {card.dispatchedActionIds!.length}</span>
-                      : <button className="sb2-send" disabled={!card.title || !!prefillBusy} title={card.title ? '生成行动（AI 预填四要素初稿，可微调）' : '先填打法标题'}
+                      : <button className="sb2-send" disabled={!card.title || !!prefillBusy || !contextReady} title={card.title ? '生成行动（AI 预填四要素初稿，可微调）' : '先填打法标题'}
                           onClick={(e) => { e.stopPropagation(); dispatchToPlanner(card); }}>{prefillBusy === card.id ? '预填中…' : '→ 派发'}</button>}
                   </div>
                   <div className="sb2-card-title">{card.title || <span className="sb2-dim">（未命名打法 · 点击编辑）</span>}</div>
@@ -591,7 +873,7 @@ export function DeliberationDock({
               );
             })}
 
-            {cards.length === 0 && fwdCands.length === 0 && (
+            {cards.length === 0 && visibleFwdCands.length === 0 && (
               <div className="sb2-card sb2-empty-card" onClick={() => addCard()}>还没有策略卡<br /><span>从现状锚缺口点「＋」，或「✨ 顺推」</span></div>
             )}
           </div>
@@ -604,7 +886,7 @@ export function DeliberationDock({
               <span>③ 倒排 · 里程碑</span>
               <span className="sb2-lane-acts" onClick={(e) => e.stopPropagation()}>
                 <button className="btn ghost xs" onClick={addMilestone}>＋</button>
-                <button className="btn ghost xs" disabled={aiBusy === 'backward' || !opp.expectedSignDate} title={opp.expectedSignDate ? '' : '先在终局锚设置预计签约日'}
+                <button className="btn ghost xs" disabled={aiBusy === 'backward' || !opp.expectedSignDate || !contextReady} title={opp.expectedSignDate ? '' : '先在终局锚设置预计签约日'}
                   onClick={() => runSuggest('backward')}>{aiBusy === 'backward' ? '推演中…' : '✨ 倒推'}</button>
               </span>
             </div>
@@ -622,7 +904,7 @@ export function DeliberationDock({
                 <div className="sb2-card-top" style={{ marginTop: 4 }}>
                   {msArranged[item.m.id]
                     ? <span className="sb2-dispatched">✓ 已排 {msArranged[item.m.id]} 张草稿（列④微调后上桌）</span>
-                    : <button className="sb2-send" disabled={!item.m.title || !!msBusy} title={item.m.title ? 'AI 拆解达成该里程碑的 2-3 个行动，落草稿到行动列人审' : '先给里程碑起名'}
+                    : <button className="sb2-send" disabled={!item.m.title || !!msBusy || !contextReady} title={item.m.title ? 'AI 拆解达成该里程碑的 2-3 个行动，落草稿到行动列人审' : '先给里程碑起名'}
                         onClick={(e) => { e.stopPropagation(); planFromMilestone(item.m); }}>{msBusy === item.m.id ? '拆解中…' : '→ 排行动'}</button>}
                 </div>
               </div>
@@ -769,7 +1051,7 @@ export function DeliberationDock({
                 <div className="sb2-drawer-acts">
                   {(drawerCard.dispatchedActionIds?.length ?? 0) > 0
                     ? <span className="sb2-dispatched">✓ 已派发 {drawerCard.dispatchedActionIds!.length} 个行动（见行动计划）</span>
-                    : <button className="btn primary sm" disabled={!drawerCard.title || !!prefillBusy} onClick={() => dispatchToPlanner(drawerCard)}>{prefillBusy === drawerCard.id ? '✨ 预填中…' : '📤 送行动策划'}</button>}
+                    : <button className="btn primary sm" disabled={!drawerCard.title || !!prefillBusy || !contextReady} onClick={() => dispatchToPlanner(drawerCard)}>{prefillBusy === drawerCard.id ? '✨ 预填中…' : '📤 送行动策划'}</button>}
                 </div>
                 {drawerCard.origin === 'ai' && <div className="sb2-origin">来源：AI 顺推（人审采纳）</div>}
                 <button className="sb2-drawer-del" onClick={() => deleteCard(drawerCard.id)}>🗑 删除该策略卡</button>
@@ -823,41 +1105,41 @@ export function DeliberationDock({
               </div>
               <div className="sb2-drawer-body">
                 <label className="sb-field"><span>行动标题</span>
-                  <input value={actDraft.title} placeholder="如：拜访钱大钧 · 摸招标参数" onChange={(e) => setActDraft({ ...actDraft, title: e.target.value })} />
+                  <input value={actDraft.title} placeholder="如：拜访钱大钧 · 摸招标参数" onChange={(e) => editActDraft({ ...actDraft, title: e.target.value })} />
                 </label>
                 <label className="sb-field"><span>日期</span>
-                  <input type="date" value={actDraft.startDate} onChange={(e) => setActDraft({ ...actDraft, startDate: e.target.value })} />
+                  <input type="date" value={actDraft.startDate} onChange={(e) => editActDraft({ ...actDraft, startDate: e.target.value })} />
                 </label>
                 <label className="sb-field"><span>目标干系人</span>
-                  <select value={actDraft.personId || ''} onChange={(e) => setActDraft({ ...actDraft, personId: e.target.value || undefined })}>
+                  <select value={actDraft.personId || ''} onChange={(e) => editActDraft({ ...actDraft, personId: e.target.value || undefined })}>
                     <option value="">（可选 · 关联后可回填态度）</option>
                     {account.persons.map((p) => <option key={p.id} value={p.id}>{p.name}{p.title ? ` · ${p.title}` : ''}</option>)}
                   </select>
                 </label>
                 <div className="sb2-prefill-row">
-                  <button className="btn ghost xs" disabled={!!prefillBusy} onClick={runDrawerPrefill}>{prefillBusy === 'drawer' ? '✨ 补全中…' : '✨ 让引擎补全'}</button>
+                  <button className="btn ghost xs" disabled={!!prefillBusy || !contextReady} onClick={runDrawerPrefill}>{prefillBusy === 'drawer' ? '✨ 补全中…' : '✨ 让引擎补全'}</button>
                   <span className="sb2-prefill-hint">只补空白要素，不覆盖已填</span>
                 </div>
                 <label className="sb-field"><span>目的{srcBadge('target')}</span>
-                  <input value={actDraft.target} placeholder="这一手要达成什么" onChange={(e) => { markEdited('target'); setActDraft({ ...actDraft, target: e.target.value }); }} />
+                  <input value={actDraft.target} placeholder="这一手要达成什么" onChange={(e) => { markEdited('target'); editActDraft({ ...actDraft, target: e.target.value }); }} />
                 </label>
                 <label className="sb-field"><span>所需资源{srcBadge('resources')}</span>
-                  <input value={actDraft.resources} placeholder="人 / 预算 / 内部支持…" onChange={(e) => { markEdited('resources'); setActDraft({ ...actDraft, resources: e.target.value }); }} />
+                  <input value={actDraft.resources} placeholder="人 / 预算 / 内部支持…" onChange={(e) => { markEdited('resources'); editActDraft({ ...actDraft, resources: e.target.value }); }} />
                 </label>
                 <label className="sb-field"><span>注意要点{srcBadge('cautions')}</span>
-                  <input value={actDraft.cautions} placeholder="风险 / 红线 / 话术提示" onChange={(e) => { markEdited('cautions'); setActDraft({ ...actDraft, cautions: e.target.value }); }} />
+                  <input value={actDraft.cautions} placeholder="风险 / 红线 / 话术提示" onChange={(e) => { markEdited('cautions'); editActDraft({ ...actDraft, cautions: e.target.value }); }} />
                 </label>
                 <label className="sb-field"><span>道具{srcBadge('props')}</span>
-                  <input value={actDraft.props} placeholder="方案 / POC / 报告 / 会议大纲…（后续可交 WorkBuddy 生产）" onChange={(e) => { markEdited('props'); setActDraft({ ...actDraft, props: e.target.value }); }} />
+                  <input value={actDraft.props} placeholder="方案 / POC / 报告 / 会议大纲…（后续可交 WorkBuddy 生产）" onChange={(e) => { markEdited('props'); editActDraft({ ...actDraft, props: e.target.value }); }} />
                 </label>
-                <label className="dp-done"><input type="checkbox" checked={actDraft.done} onChange={(e) => setActDraft({ ...actDraft, done: e.target.checked })} /> 标记为已完成</label>
+                <label className="dp-done"><input type="checkbox" checked={actDraft.done} onChange={(e) => editActDraft({ ...actDraft, done: e.target.checked })} /> 标记为已完成</label>
                 {actDraft.done && !actDraft.wasDone && actDraft.personId && (
                   <div className="dp-outcome">
                     <span className="dp-outcome-q">这次接触后，{personById.get(actDraft.personId)?.name ?? '对方'}的态度：</span>
                     <div className="dp-pick">
-                      <button className={actDraft.outcome === 'up' ? 'on up' : ''} onClick={() => setActDraft({ ...actDraft, outcome: 'up' })}>↑ 更积极</button>
-                      <button className={actDraft.outcome === 'flat' ? 'on' : ''} onClick={() => setActDraft({ ...actDraft, outcome: 'flat' })}>— 没变化</button>
-                      <button className={actDraft.outcome === 'down' ? 'on down' : ''} onClick={() => setActDraft({ ...actDraft, outcome: 'down' })}>↓ 更消极</button>
+                      <button className={actDraft.outcome === 'up' ? 'on up' : ''} onClick={() => editActDraft({ ...actDraft, outcome: 'up' })}>↑ 更积极</button>
+                      <button className={actDraft.outcome === 'flat' ? 'on' : ''} onClick={() => editActDraft({ ...actDraft, outcome: 'flat' })}>— 没变化</button>
+                      <button className={actDraft.outcome === 'down' ? 'on down' : ''} onClick={() => editActDraft({ ...actDraft, outcome: 'down' })}>↓ 更消极</button>
                     </div>
                     {(actDraft.outcome === 'up' || actDraft.outcome === 'down') && <p className="dp-outcome-hint">将作为一条证据喂入策略引擎，更新局势分布</p>}
                   </div>
