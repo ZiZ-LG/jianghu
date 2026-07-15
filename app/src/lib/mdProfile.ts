@@ -2,7 +2,7 @@
 // 纯函数、无副作用：把 Account/Opportunity/VisitNote 按 v1.1 母版结构渲染成 .md 文本。
 // 与 docs/templates/ 的两份母版对齐。来源标记/版本日志为 .md 侧元数据（决策 b，系统不存）。
 // 字段级 HTML 注释 <!-- f:xxx --> 作为结构锚点，供块C「MD→系统」回写解析定位。
-import type { Account, Opportunity, VisitNote, Person, OppRole, AccountProfile } from '../types';
+import { c5WriteItems, type Account, type Opportunity, type VisitNote, type Person, type OppRole, type AccountProfile } from '../types';
 import {
   CUSTOMER_TYPE_LABEL, ROLE_LABEL, SENTIMENT_CHAR, FAMILY_7Q, C3_ITEMS, C5_ITEMS,
   PROCUREMENT_TYPE_LABEL, PROCUREMENT_STATUS_LABEL, CHANGE_MODES,
@@ -164,6 +164,7 @@ export function renderCustomerMd(account: Account, log: VersionLogEntry[] = []):
 
 export function renderOpportunityMd(account: Account, opp: Opportunity, log: VersionLogEntry[] = [], pde?: PdeBrief | null): string {
   const b = scoreFromDomain(account, opp);
+  const c5Items = c5WriteItems(opp.c5Items);
   const last = log[log.length - 1];
   const nameById = new Map(account.persons.map((p) => [p.id, p.name]));
   const changeModeLabel = CHANGE_MODES.find((c) => c.v === opp.changeMode)?.label ?? '⏳';
@@ -191,7 +192,7 @@ export function renderOpportunityMd(account: Account, opp: Opportunity, log: Ver
   L.push('## 二、招采事项（C5 + P2 招采关键人）', '');
   L.push('<!-- f:opp.c5 -->');
   L.push('| 招采要素 | 状态 |', '|----------|------|');
-  for (const k of C5_ITEMS) L.push(`| ${k} | ${mark(opp.c5Items?.[k])} |`);
+  for (const k of C5_ITEMS) L.push(`| ${k} | ${mark(c5Items[k])} |`);
   L.push('');
   const proc = opp.roles.filter((r) => r.procurementType);
   if (proc.length) {
@@ -376,7 +377,7 @@ export function parseOpportunityMd(md: string, opp: Opportunity): Partial<Opport
   const c3: Record<string, boolean> = { ...opp.c3Items };
   for (const k of C3_ITEMS) { const c = cell(md, k); if (c !== undefined) c3[k] = truthyMark(c); }
   patch.c3Items = c3;
-  const c5: Record<string, boolean> = { ...opp.c5Items };
+  const c5 = c5WriteItems(opp.c5Items);
   for (const k of C5_ITEMS) { const c = cell(md, k); if (c !== undefined) c5[k] = truthyMark(c); }
   patch.c5Items = c5;
   return patch;

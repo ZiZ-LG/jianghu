@@ -36,6 +36,24 @@ describe('WorkBuddy atomic sync bundle', () => {
     return JSON.parse(text) as Record<string, any>;
   };
 
+  it.each([
+    ['legacy-count', '竞标方家数'], ['legacy-owner', '甲方代表'], ['legacy-agent', '招标代理'], ['unknown', '未知事项'],
+  ])('rejects non-authoritative C5 write key %s before creating a SyncRun', async (key, invalidKey) => {
+    await expect(syncIntelBundle(ctx, {
+      idempotencyKey: `invalid-c5-${key}`,
+      bundle: {
+        account: { externalRef: `account-${key}`, name: '虚构客户', customerType: 1 },
+        opportunity: {
+          externalRef: `opportunity-${key}`, name: '虚构商机',
+          c5Items: { [invalidKey]: true },
+        },
+      },
+    }, test.prisma)).rejects.toThrow('Unrecognized key');
+
+    await expect(test.prisma.syncRun.count({ where: { tenantId: test.tenant.id } })).resolves.toBe(0);
+    await expect(test.prisma.opportunity.count({ where: { tenantId: test.tenant.id } })).resolves.toBe(0);
+  });
+
   it('publishes the atomic sync_intel_bundle tool', async () => {
     const response = await handleMcpBody(ctx, { jsonrpc: '2.0', id: 1, method: 'tools/list' });
     const tools = (response as { result: { tools: Array<{ name: string }> } }).result.tools;
@@ -149,7 +167,7 @@ describe('WorkBuddy atomic sync bundle', () => {
         name: 'upsert_opportunity', arguments: {
           accountExternalRef: 'legacy-account-ref', externalRef: 'legacy-opportunity-ref', name: '兼容商机',
           status: 'paused', changeMode: 'T', productSolution: '完整方案', expectedAmountW: 123,
-          c3Items: { 需求研究: true }, c5Items: { 采购策略: true },
+          c3Items: { 需求研究: true }, c5Items: { '竞标方名单/家数': true },
         },
       },
     }));

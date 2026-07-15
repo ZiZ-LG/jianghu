@@ -3,6 +3,7 @@ import { Prisma, type PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 import type { CommandContext } from '@jianghu/domain-contracts';
 import { prisma } from '../prisma.js';
+import { C5_ITEMS } from '../g64111.js';
 import type { DbClient } from '../mutate.js';
 import { createFieldProposal } from '../proposals.js';
 import { enqueueEnrichJob, enqueueProfileJob, enqueueSuggestJob } from '../jobs.js';
@@ -11,6 +12,9 @@ import { activePersonWhere } from '../activePerson.js';
 
 const OPAQUE_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:#/-]*$/;
 const OpaqueRefSchema = z.string().trim().min(1).max(80).regex(OPAQUE_REF_PATTERN, 'ref must be an opaque identifier without names or free text');
+const C5ItemsWriteSchema = z.object(Object.fromEntries(
+  C5_ITEMS.map((key) => [key, z.boolean().optional()]),
+)).strict();
 
 const AccountFactSchema = z.object({
   id: z.string().trim().min(1).max(80).optional(),
@@ -41,7 +45,7 @@ const OpportunityFactSchema = z.object({
   expectedSignDate: z.string().max(20).optional(),
   expectedAmountW: z.number().finite().optional(),
   c3Items: z.record(z.boolean()).optional(),
-  c5Items: z.record(z.boolean()).optional(),
+  c5Items: C5ItemsWriteSchema.optional(),
   meta: z.record(z.unknown()).refine((value) => !Object.prototype.hasOwnProperty.call(value, '_mcpOrigin'), {
     message: 'meta contains reserved key _mcpOrigin',
   }).optional(),

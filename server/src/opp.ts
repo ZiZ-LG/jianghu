@@ -10,6 +10,7 @@ import { denyViewer } from './scope.js';
 import type { DbClient } from './mutate.js';
 import { ScopedNotFoundError } from './mutation/scopeGuards.js';
 import { activePersonWhere } from './activePerson.js';
+import { pickKeyInfluencerKeeper } from './g64111.js';
 
 export const CloneOpportunitySchema = z.object({
   accountId: z.string().min(1),
@@ -43,9 +44,10 @@ export async function cloneOpportunityInTransaction(
     const source = await db.opportunity.findFirst({ where: { id: fromOppId, tenantId, accountId }, select: { id: true } });
     if (!source) throw new ScopedNotFoundError();
     const roles = await db.oppRole.findMany({ where: { tenantId, opportunityId: fromOppId, personId: { in: validIds } } });
+    const keyInfluencerKeeper = pickKeyInfluencerKeeper(roles);
     for (const r of roles) await db.oppRole.create({ data: {
       tenantId, opportunityId: oppId, personId: r.personId, role: r.role, sentiment: r.sentiment,
-      sentimentValue: r.sentimentValue, confidence: r.confidence, isKeyInfluencer: r.isKeyInfluencer,
+      sentimentValue: r.sentimentValue, confidence: r.confidence, isKeyInfluencer: r.personId === keyInfluencerKeeper?.personId,
       procurementType: r.procurementType, procurementStatus: r.procurementStatus,
     } });
     if (withEdges) {

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { createTestContext } from './helpers/testApp.js';
 
 async function seedMutationParents(context: Awaited<ReturnType<typeof createTestContext>>, suffix: string) {
@@ -22,6 +23,28 @@ async function seedMutationParents(context: Awaited<ReturnType<typeof createTest
 }
 
 describe('/api/mutate Action contract', () => {
+  it.each(['竞标方家数', '甲方代表', '招标代理', '未知事项'])('rejects non-authoritative C5 write key %s', async (invalidKey) => {
+    const context = await createTestContext();
+    try {
+      const { accountId, opportunityId } = await seedMutationParents(context, `invalid-c5-${invalidKey}`);
+      const response = await context.app.inject({
+        method: 'POST', url: '/api/mutate', headers: { authorization: `Bearer ${context.token}` },
+        payload: {
+          action: {
+            type: 'UPDATE_OPP', accId: accountId, oppId: opportunityId,
+            patch: { c5Items: { [invalidKey]: true } },
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(400);
+      await expect(context.prisma.opportunity.findUniqueOrThrow({ where: { id: opportunityId } }))
+        .resolves.toMatchObject({ c5Items: '{}' });
+    } finally {
+      await context.cleanup();
+    }
+  });
+
   it('rejects a legacy TB role without persisting it', async () => {
     const context = await createTestContext();
     try {
@@ -211,5 +234,16 @@ describe('/api/mutate Action contract', () => {
     } finally {
       await context.cleanup();
     }
+  });
+});
+
+describe('WorkBuddy integration documentation', () => {
+  it('does not publish the retired writable role sequence', () => {
+    const docs = [
+      '../../docs/集成-WorkBuddy销售包对接设计.md',
+      '../../docs/集成-M1实现清单.md',
+    ].map((path) => readFileSync(new URL(path, import.meta.url), 'utf8'));
+
+    expect(docs.join('\n')).not.toContain('A/D/U/TB/R');
   });
 });

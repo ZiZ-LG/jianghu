@@ -139,6 +139,7 @@ export function reducer(s: StoreState, action: StoreAction): StoreState {
             bis: o.bis.filter((b) => b.personId !== action.personId),
             ucvs: o.ucvs.filter((u) => !deadBis.includes(u.targetBiId)),
             memberIds: (o.memberIds ?? []).filter((id) => id !== action.personId),
+            primaryDPersonId: o.primaryDPersonId === action.personId ? null : o.primaryDPersonId,
           };
         }),
       }));
@@ -149,14 +150,29 @@ export function reducer(s: StoreState, action: StoreAction): StoreState {
 
     case 'SET_ROLE':
       return mapOpp(s, action.accId, action.oppId, (o) => {
-        const exists = o.roles.some((r) => r.personId === action.personId);
+        const existing = o.roles.find((role) => role.personId === action.personId);
+        const effectiveRole = action.patch.role ?? existing?.role ?? 'U';
+        const currentRoles = action.patch.isKeyInfluencer === true
+          ? o.roles.map((role) => ({ ...role, isKeyInfluencer: false }))
+          : o.roles;
+        const exists = currentRoles.some((r) => r.personId === action.personId);
         const roles = exists
-          ? o.roles.map((r) => (r.personId === action.personId ? { ...r, ...action.patch } : r))
-          : [...o.roles, { personId: action.personId, role: 'U', sentiment: 'unknown', confidence: '推理', ...action.patch } satisfies OppRole];
-        return { ...o, roles };
+          ? currentRoles.map((r) => (r.personId === action.personId ? { ...r, ...action.patch } : r))
+          : [...currentRoles, { personId: action.personId, role: 'U', sentiment: 'unknown', confidence: '推理', ...action.patch } satisfies OppRole];
+        return {
+          ...o,
+          roles,
+          primaryDPersonId: o.primaryDPersonId === action.personId && effectiveRole !== 'D'
+            ? null
+            : o.primaryDPersonId,
+        };
       });
     case 'REMOVE_ROLE':
-      return mapOpp(s, action.accId, action.oppId, (o) => ({ ...o, roles: o.roles.filter((r) => r.personId !== action.personId) }));
+      return mapOpp(s, action.accId, action.oppId, (o) => ({
+        ...o,
+        roles: o.roles.filter((r) => r.personId !== action.personId),
+        primaryDPersonId: o.primaryDPersonId === action.personId ? null : o.primaryDPersonId,
+      }));
 
     case 'ADD_OPP_MEMBER':
       return mapOpp(s, action.accId, action.oppId, (o) => ({ ...o, memberIds: (o.memberIds ?? []).includes(action.personId) ? o.memberIds : [...(o.memberIds ?? []), action.personId] }));
@@ -303,7 +319,7 @@ export function reducer(s: StoreState, action: StoreAction): StoreState {
 }
 
 // ── Undo/Redo：逆 action 计算（复用现有 mutate 链路；不可逆操作返回 null 不入历史）──
-// 级联删除(PERSON/OPP/ACCOUNT)、ADD_LOG、MEMBER、VISIT、HYDRATE/LOAD_DEMO/RESET 不纳入撤销。
+// 已禁用的 OPP/ACCOUNT 硬删除、ADD_LOG、VISIT、HYDRATE/LOAD_DEMO/RESET 不纳入撤销。
 export function computeInverse(a: Action, s: StoreState): Action[] | null {
   const acc = (id: string) => s.accounts.find((x) => x.id === id);
   const allEdges = (id: string) => { const A = acc(id); return A ? [...A.baseEdges, ...A.opportunities.flatMap((o) => o.edges)] : []; };
@@ -311,12 +327,41 @@ export function computeInverse(a: Action, s: StoreState): Action[] | null {
   switch (a.type) {
     case 'MOVE_PERSON': { const p = acc(a.accId)?.persons.find((x) => x.id === a.personId); return p ? [{ type: 'MOVE_PERSON', accId: a.accId, personId: a.personId, x: p.x, y: p.y }] : null; }
     case 'ADD_PERSON': return [{ type: 'DELETE_PERSON', accId: a.accId, personId: a.person.id }];
+    case 'DELETE_PERSON': return null;
     case 'UPDATE_PERSON': { const p = acc(a.accId)?.persons.find((x) => x.id === a.personId); return p ? [{ type: 'UPDATE_PERSON', accId: a.accId, personId: a.personId, patch: pick(p, Object.keys(a.patch)) }] : null; }
     case 'ADD_EDGE': return a.oppId ? [{ type: 'DELETE_EDGE', accId: a.accId, oppId: a.oppId, edgeId: a.edge.id }] : null;
     case 'DELETE_EDGE': { const e = allEdges(a.accId).find((x) => x.id === a.edgeId); return e ? [{ type: 'ADD_EDGE', accId: a.accId, oppId: a.oppId, edge: e }] : null; }
     case 'UPDATE_EDGE': { const e = allEdges(a.accId).find((x) => x.id === a.edgeId); return e ? [{ type: 'UPDATE_EDGE', accId: a.accId, oppId: a.oppId, edgeId: a.edgeId, patch: pick(e, Object.keys(a.patch)) }] : null; }
-    case 'SET_ROLE': { const o = acc(a.accId)?.opportunities.find((x) => x.id === a.oppId); const old = o?.roles.find((r) => r.personId === a.personId); return old ? [{ type: 'SET_ROLE', accId: a.accId, oppId: a.oppId, personId: a.personId, patch: old }] : [{ type: 'REMOVE_ROLE', accId: a.accId, oppId: a.oppId, personId: a.personId }]; }
-    case 'REMOVE_ROLE': { const o = acc(a.accId)?.opportunities.find((x) => x.id === a.oppId); const old = o?.roles.find((r) => r.personId === a.personId); return old ? [{ type: 'SET_ROLE', accId: a.accId, oppId: a.oppId, personId: a.personId, patch: old }] : null; }
+    case 'SET_ROLE': {
+      const o = acc(a.accId)?.opportunities.find((x) => x.id === a.oppId);
+      if (!o) return null;
+      const old = o.roles.find((r) => r.personId === a.personId);
+      const restoreTarget: Action = old
+        ? { type: 'SET_ROLE', accId: a.accId, oppId: a.oppId, personId: a.personId, patch: old }
+        : { type: 'REMOVE_ROLE', accId: a.accId, oppId: a.oppId, personId: a.personId };
+      const restoreDisplacedP4: Action[] = a.patch.isKeyInfluencer === true
+        ? o.roles
+          .filter((role) => role.personId !== a.personId && role.isKeyInfluencer)
+          .map((role) => ({
+            type: 'SET_ROLE', accId: a.accId, oppId: a.oppId, personId: role.personId,
+            patch: { isKeyInfluencer: true },
+          }))
+        : [];
+      const restorePrimaryD: Action[] = o.primaryDPersonId === a.personId && a.patch.role !== undefined && a.patch.role !== 'D'
+        ? [{ type: 'UPDATE_OPP', accId: a.accId, oppId: a.oppId, patch: { primaryDPersonId: a.personId } }]
+        : [];
+      return [restoreTarget, ...restoreDisplacedP4, ...restorePrimaryD];
+    }
+    case 'REMOVE_ROLE': {
+      const o = acc(a.accId)?.opportunities.find((x) => x.id === a.oppId);
+      const old = o?.roles.find((r) => r.personId === a.personId);
+      if (!o || !old) return null;
+      const restoreRole: Action = { type: 'SET_ROLE', accId: a.accId, oppId: a.oppId, personId: a.personId, patch: old };
+      const restorePrimaryD: Action[] = o.primaryDPersonId === a.personId
+        ? [{ type: 'UPDATE_OPP', accId: a.accId, oppId: a.oppId, patch: { primaryDPersonId: a.personId } }]
+        : [];
+      return [restoreRole, ...restorePrimaryD];
+    }
     case 'UPDATE_OPP': { const o = acc(a.accId)?.opportunities.find((x) => x.id === a.oppId); return o ? [{ type: 'UPDATE_OPP', accId: a.accId, oppId: a.oppId, patch: pick(o, Object.keys(a.patch)) }] : null; }
     case 'UPDATE_ACCOUNT': { const A = acc(a.accId); return A ? [{ type: 'UPDATE_ACCOUNT', accId: a.accId, patch: pick(A, Object.keys(a.patch)) }] : null; }
     case 'ADD_BI': return [{ type: 'DELETE_BI', accId: a.accId, oppId: a.oppId, biId: a.bi.id }];

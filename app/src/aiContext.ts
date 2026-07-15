@@ -1,4 +1,4 @@
-import type { Account, Opportunity } from './types';
+import { pickKeyInfluencerKeeper, type Account, type Opportunity } from './types';
 import type { ScoreBreakdown } from './lib/g64111';
 
 // P13：AI 上下文补两维——
@@ -11,13 +11,18 @@ export function buildAiContext(account: Account, opp: Opportunity, breakdown: Sc
   const personById = new Map(account.persons.map((p) => [p.id, p]));
   const roleByPerson = new Map(opp.roles.map((r) => [r.personId, r]));
   const nameOf = (id: string) => personById.get(id)?.name ?? id;
+  const dRoles = opp.roles.filter((role) => role.role === 'D');
+  const primaryD = dRoles.find((role) => role.personId === opp.primaryDPersonId) ?? dRoles[0];
+  const keyInfluencer = pickKeyInfluencerKeeper(opp.roles);
 
   const people = account.persons.map((p) => {
     const r = roleByPerson.get(p.id);
     return {
       name: p.name, title: p.title, isCompetitor: !!p.isCompetitor,
       role: r?.role ?? null, sentiment: r?.sentiment ?? null,
-      confidence: r?.confidence ?? null, isKeyInfluencer: !!r?.isKeyInfluencer,
+      confidence: r?.confidence ?? null,
+      isPrimaryD: !!primaryD && r?.personId === primaryD.personId,
+      isKeyInfluencer: !!keyInfluencer && r?.personId === keyInfluencer.personId,
     };
   });
   const relationships = [...account.baseEdges, ...opp.edges].slice(0, 40)
@@ -30,7 +35,9 @@ export function buildAiContext(account: Account, opp: Opportunity, breakdown: Sc
     return { person: bi ? nameOf(bi.personId) : '?', bi: bi ? `${bi.category}·${bi.description}` : '?', description: u.description, competitorCannot: u.competitorCannot, status: u.status };
   });
   // 近期交往：关键人（A/D/关键影响人）优先各出 2 条最新 log，全局 30 条上限——够上下文用又不撑爆 payload
-  const keyIds = new Set(opp.roles.filter((r) => r.role === 'A' || r.role === 'D' || r.isKeyInfluencer).map((r) => r.personId));
+  const keyIds = new Set(opp.roles
+    .filter((role) => role.role === 'A' || role.role === 'D' || role.personId === keyInfluencer?.personId)
+    .map((role) => role.personId));
   const recentInteractions: { person: string; date: string; content: string }[] = [];
   for (const p of account.persons) {
     if (!keyIds.has(p.id)) continue;

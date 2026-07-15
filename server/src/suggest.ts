@@ -24,6 +24,7 @@ const LAYER_COLOR: Record<string, string> = { L1: '#2563eb', L2: '#9333ea', L3: 
 const parseForm = (s: string) => { try { return JSON.parse(s || '{}'); } catch { return {}; } };
 
 const ORIGIN_LABEL: Record<string, string> = { mcp: 'AI 调研·待核实', ai: 'AI 推测·待核实', qcc: '企查查导入' };
+const SuggestedRoleSchema = z.enum(['A', 'D', 'U', 'R', 'C']);
 
 class SuggestionConflictError extends Error {
   readonly suggestionConflict = true;
@@ -111,6 +112,10 @@ export async function materializePerson(
     return { personId: ps.resolvedPersonId, accountId: ps.accountId };
   }
   if (ps.status !== 'pending' || ps.resolvedPersonId) throw new SuggestionConflictError();
+  const suggestedRole = ps.suggestedRole ? SuggestedRoleSchema.safeParse(ps.suggestedRole) : null;
+  if (suggestedRole && !suggestedRole.success) {
+    throw new Error('候选建议角色已失效，请重新分类为 A/D/U/R/C 后再采纳');
+  }
 
   // 原子 claim 必须先于任何正式写入。事务失败会把临时 accepted 自动回滚为 pending，外部不可见半完成状态。
   const claim = await tx.personSuggestion.updateMany({
@@ -136,12 +141,12 @@ export async function materializePerson(
     if (mo?.memberScoped) await tx.opportunityMember.upsert({ where: { tenantId_opportunityId_personId: { tenantId, opportunityId: candidate.opportunityId, personId } }, create: { tenantId, opportunityId: candidate.opportunityId, personId }, update: {} });
   }
   // WorkBuddy 提议时带了建议角色 + 关联商机 → 采纳时一并落 OppRole（守"角色只对正式 Person"）
-  if (candidate.suggestedRole && candidate.opportunityId) {
+  if (suggestedRole?.success && candidate.opportunityId) {
     const opp = await tx.opportunity.findFirst({ where: { id: candidate.opportunityId, tenantId, accountId: candidate.accountId } });
     if (opp) {
       await tx.oppRole.upsert({
         where: { tenantId_opportunityId_personId: { tenantId, opportunityId: candidate.opportunityId, personId } },
-        create: { tenantId, opportunityId: candidate.opportunityId, personId, role: candidate.suggestedRole, sentiment: candidate.suggestedSentiment || 'unknown', confidence: '推理' },
+        create: { tenantId, opportunityId: candidate.opportunityId, personId, role: suggestedRole.data, sentiment: candidate.suggestedSentiment || 'unknown', confidence: '推理' },
         update: {},
       });
     }

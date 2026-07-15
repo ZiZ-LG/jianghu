@@ -16,9 +16,9 @@
         "c5Items": { "竞标方家数": true, "招标参数": true, "评标规则": true, "甲方代表": true, "招标代理": true },
         "roles": [
           { "personId": "a", "role": "A", "sentiment": "plus", "confidence": "明确" },
-          { "personId": "d", "role": "D", "sentiment": "plus", "confidence": "明确", "isKeyInfluencer": true, "procurementType": "purchasing", "procurementStatus": "collude" },
+          { "personId": "d", "role": "D", "sentiment": "plus", "confidence": "明确", "procurementType": "purchasing", "procurementStatus": "collude" },
           { "personId": "u", "role": "U", "sentiment": "plus", "confidence": "明确", "procurementType": "agency", "procurementStatus": "collude" },
-          { "personId": "r", "role": "R", "sentiment": "plus", "confidence": "明确", "procurementType": "ownerRep", "procurementStatus": "collude" },
+          { "personId": "r", "role": "R", "sentiment": "plus", "confidence": "明确", "isKeyInfluencer": true, "procurementType": "ownerRep", "procurementStatus": "collude" },
           { "personId": "c", "role": "C", "sentiment": "plus", "confidence": "明确" }
         ],
         "bis": [{ "id": "bi-d", "personId": "d", "confidence": "明确" }],
@@ -84,9 +84,9 @@
         "c5Items": {},
         "roles": [
           { "personId": "a", "role": "A", "sentiment": "neutral", "confidence": "不清" },
-          { "personId": "d", "role": "D", "sentiment": "plus", "confidence": "明确", "isKeyInfluencer": true, "procurementType": "purchasing", "procurementStatus": "none" },
+          { "personId": "d", "role": "D", "sentiment": "plus", "confidence": "明确", "procurementType": "purchasing", "procurementStatus": "none" },
           { "personId": "u", "role": "U", "sentiment": "neutral", "confidence": "推理", "procurementType": "agency", "procurementStatus": "none" },
-          { "personId": "r", "role": "R", "sentiment": "neutral", "confidence": "推理", "procurementType": "ownerRep", "procurementStatus": "none" },
+          { "personId": "r", "role": "R", "sentiment": "plus", "confidence": "推理", "isKeyInfluencer": true, "procurementType": "ownerRep", "procurementStatus": "none" },
           { "personId": "c", "role": "C", "sentiment": "neutral", "confidence": "推理" }
         ],
         "bis": [

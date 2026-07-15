@@ -2,7 +2,7 @@
 // 引擎分层（裁决C）：名义分由 g64111 算=沟通语言；本层只负责把它连同可信度元数据喂给 PDE 决策内核。
 import type { Cred, Deal, Mark, ScoreItem, Slot, Stage, Stakeholder, Volatility } from 'pde-kernel';
 import { prisma } from '../prisma.js';
-import { scoreFromState, type ItemKey } from '../g64111.js';
+import { pickKeyInfluencerKeeper, scoreFromState, type ItemKey } from '../g64111.js';
 import { aggregateApprovedEvidence, type ApprovedEvidenceAggregate } from './evidence.js';
 import type { DbClient } from '../mutation/scopeGuards.js';
 import type { ReadPrincipal } from '../visibility.js';
@@ -53,6 +53,7 @@ export async function assembleDeal(
   const personById = new Map(opp.account.persons.map((p) => [p.id, p]));
   const personName = new Map<string, string>();
   const stakeholders: Stakeholder[] = [];
+  const keyInfluencerKeeper = pickKeyInfluencerKeeper(opp.roles);
   const now = Date.now();
   for (const r of opp.roles) {
     const person = personById.get(r.personId);
@@ -60,7 +61,7 @@ export async function assembleDeal(
     personName.set(r.personId, person.name);
     const slots: Slot[] = [ROLE2SLOT[r.role] ?? 'MEMBER'];
     if (r.procurementType && PROC2SLOT[r.procurementType]) slots.push(PROC2SLOT[r.procurementType]!);
-    if (r.isKeyInfluencer) slots.push('KEY_INFLUENCER');
+    if (r.personId === keyInfluencerKeeper?.personId) slots.push('KEY_INFLUENCER');
     stakeholders.push({
       id: r.personId,
       slots: [...new Set(slots)],
@@ -90,6 +91,7 @@ export async function assembleDeal(
   const visibleBiIds = new Set(visibleBis.map((b) => b.id));
   const visibleUcvs = opp.ucvs.filter((u) => visibleBiIds.has(u.targetBiId));
   const opportunity = {
+    primaryDPersonId: opp.primaryDPersonId,
     engageStage: opp.engageStage,
     c3Items: J(opp.c3Items, {}), c5Items: J(opp.c5Items, {}),
     roles: opp.roles.map((r) => ({

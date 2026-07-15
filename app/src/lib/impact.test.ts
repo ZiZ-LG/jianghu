@@ -39,4 +39,34 @@ describe('impact · 提案影响预览（v2.0）', () => {
   it('无 opp 上下文返回 null', () => {
     expect(previewProposalImpact(acc, null, { entityKind: 'oppRole', entityId: 'x', field: 'sentiment', newValue: 'minus' })).toBeNull();
   });
+
+  it('预览选中新 P4 时先清除 personId 更小的旧 P4', () => {
+    const historical = structuredClone(opp);
+    historical.roles = [
+      { personId: 'sun', role: 'C', sentiment: 'star', confidence: '明确', isKeyInfluencer: true },
+      { personId: 'zheng', role: 'U', sentiment: 'neutral', confidence: '明确' },
+    ];
+    const expected = structuredClone(historical);
+    expected.roles[0].isKeyInfluencer = false;
+    expected.roles[1].isKeyInfluencer = true;
+
+    const result = previewProposalImpact(acc, historical, {
+      entityKind: 'oppRole', entityId: 'zheng', field: 'isKeyInfluencer', newValue: 'true',
+    });
+
+    expect(result).toEqual({
+      before: Math.round(scoreFromDomain(acc, historical).percent * 100),
+      after: Math.round(scoreFromDomain(acc, expected).percent * 100),
+    });
+    expect(result!.after).toBeLessThan(result!.before);
+  });
+
+  it.each(['A', 'D'] as const)('不为 %s 角色生成 P4 选中预览', (role) => {
+    const historical = structuredClone(opp);
+    historical.roles = [{ personId: 'zhao', role, sentiment: 'star', confidence: '明确' }];
+
+    expect(previewProposalImpact(acc, historical, {
+      entityKind: 'oppRole', entityId: 'zhao', field: 'isKeyInfluencer', newValue: 'true',
+    })).toBeNull();
+  });
 });

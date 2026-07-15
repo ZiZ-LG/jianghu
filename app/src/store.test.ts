@@ -117,6 +117,95 @@ describe('account-level edges', () => {
   });
 });
 
+describe('G64111 selection optimism', () => {
+  it('keeps only the newly selected P4 in local state', () => {
+    const state = baseState();
+    state.accounts[0].opportunities[0].roles = [
+      { personId: 'p1', role: 'U', sentiment: 'plus', confidence: '明确', isKeyInfluencer: true },
+      { personId: 'p2', role: 'R', sentiment: 'plus', confidence: '明确', isKeyInfluencer: false },
+    ];
+
+    const next = reducer(state, {
+      type: 'SET_ROLE', accId: 'acc1', oppId: 'opp1', personId: 'p2', patch: { isKeyInfluencer: true },
+    });
+
+    expect(next.accounts[0].opportunities[0].roles.filter((role) => role.isKeyInfluencer).map((role) => role.personId)).toEqual(['p2']);
+  });
+
+  it('restores the displaced P4 when selection is undone', () => {
+    const state = baseState();
+    state.accounts[0].opportunities[0].roles = [
+      { personId: 'p1', role: 'U', sentiment: 'plus', confidence: '明确', isKeyInfluencer: true },
+      { personId: 'p2', role: 'R', sentiment: 'plus', confidence: '明确', isKeyInfluencer: false },
+    ];
+    const action: Action = {
+      type: 'SET_ROLE', accId: 'acc1', oppId: 'opp1', personId: 'p2', patch: { isKeyInfluencer: true },
+    };
+
+    const inverse = computeInverse(action, state);
+    const selected = reducer(state, action);
+    const restored = inverse!.reduce((current, inverseAction) => reducer(current, inverseAction), selected);
+
+    expect(restored.accounts[0].opportunities[0].roles).toEqual(state.accounts[0].opportunities[0].roles);
+  });
+
+  it.each(['SET_ROLE', 'REMOVE_ROLE'] as const)('restores primary D when %s is undone', (type) => {
+    const state = baseState();
+    state.accounts[0].opportunities[0].primaryDPersonId = 'p1';
+    state.accounts[0].opportunities[0].roles = [
+      { personId: 'p1', role: 'D', sentiment: 'plus', confidence: '明确' },
+    ];
+    const action: Action = type === 'SET_ROLE'
+      ? { type, accId: 'acc1', oppId: 'opp1', personId: 'p1', patch: { role: 'R' } }
+      : { type, accId: 'acc1', oppId: 'opp1', personId: 'p1' };
+
+    const inverse = computeInverse(action, state);
+    const changed = reducer(state, action);
+    expect(changed.accounts[0].opportunities[0].primaryDPersonId).toBeNull();
+    const restored = inverse!.reduce((current, inverseAction) => reducer(current, inverseAction), changed);
+
+    expect(restored.accounts[0].opportunities[0].primaryDPersonId).toBe('p1');
+    expect(restored.accounts[0].opportunities[0].roles[0].role).toBe('D');
+  });
+
+  it('clears primary D on DELETE_PERSON but does not create a lossy inverse from the ACL-trimmed client snapshot', () => {
+    const state = baseState();
+    const opportunity = state.accounts[0].opportunities[0];
+    opportunity.primaryDPersonId = 'p1';
+    opportunity.roles = [{ personId: 'p1', role: 'D', sentiment: 'plus', confidence: '明确' }];
+    opportunity.bis = [{ id: 'bi-p1', personId: 'p1', description: '虚构问题', category: '业务', isPrivate: false, confidence: '明确' }];
+    opportunity.ucvs = [{ id: 'ucv-p1', targetBiId: 'bi-p1', description: '虚构价值', competitorCannot: '虚构差异', status: '建议' }];
+    opportunity.memberIds = ['p1'];
+    const action: Action = { type: 'DELETE_PERSON', accId: 'acc1', personId: 'p1' };
+
+    const inverse = computeInverse(action, state);
+    const deleted = reducer(state, action);
+    expect(deleted.accounts[0].opportunities[0].primaryDPersonId).toBeNull();
+    expect(deleted.accounts[0].persons).toHaveLength(0);
+    expect(inverse).toBeNull();
+  });
+
+  it('round-trips REMOVE_ROLE through undo and redo without losing primary D', () => {
+    const state = baseState();
+    state.accounts[0].opportunities[0].primaryDPersonId = 'p1';
+    state.accounts[0].opportunities[0].roles = [
+      { personId: 'p1', role: 'D', sentiment: 'star', confidence: '共识' },
+    ];
+    const before = structuredClone(state);
+    const action: Action = { type: 'REMOVE_ROLE', accId: 'acc1', oppId: 'opp1', personId: 'p1' };
+    const inverse = computeInverse(action, state)!;
+    const removed = reducer(state, action);
+    const restored = inverse.reduce((current, inverseAction) => reducer(current, inverseAction), removed);
+
+    expect(restored.accounts[0].opportunities[0]).toMatchObject({
+      primaryDPersonId: 'p1', roles: before.accounts[0].opportunities[0].roles,
+    });
+    expect(reducer(restored, action).accounts[0].opportunities[0]).toMatchObject({
+      primaryDPersonId: null, roles: [],
+    });
+  });
+});
+
 describe('INT-103 destructive action compatibility', () => {
   it('does not remove accounts or opportunities when a legacy DELETE action reaches the reducer', () => {
     const state = baseState();

@@ -302,6 +302,29 @@ export async function executePersonMerge(
     }
   }
 
+  const primaryDOpportunities = await tx.opportunity.findMany({
+    where: {
+      tenantId: ctx.tenantId,
+      accountId: account.id,
+      primaryDPersonId: { in: [source.id, target.id] },
+    },
+    select: { id: true },
+  });
+  if (primaryDOpportunities.length) {
+    const opportunityIds = primaryDOpportunities.map((opportunity) => opportunity.id);
+    const finalTargetDRoles = await tx.oppRole.findMany({
+      where: { tenantId: ctx.tenantId, opportunityId: { in: opportunityIds }, personId: target.id, role: 'D' },
+      select: { opportunityId: true },
+    });
+    const targetIsD = new Set(finalTargetDRoles.map((role) => role.opportunityId));
+    for (const opportunity of primaryDOpportunities) {
+      await tx.opportunity.updateMany({
+        where: { id: opportunity.id, tenantId: ctx.tenantId, accountId: account.id, primaryDPersonId: { in: [source.id, target.id] } },
+        data: { primaryDPersonId: targetIsD.has(opportunity.id) ? target.id : null },
+      });
+    }
+  }
+
   let deletedMembers = 0;
   let redirectedMembers = 0;
   const targetMemberOpps = new Set(members.filter((row) => row.personId === target.id).map((row) => row.opportunityId));

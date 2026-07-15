@@ -243,6 +243,7 @@ async function sentimentImpact(tenantId: string, oppId: string, personId: string
   const J = (s: string | null, d: any) => { try { return s ? JSON.parse(s) : d; } catch { return d; } };
   const account = { persons: opp.account.persons.map((p) => ({ id: p.id, form: J(p.form, {}) })) };
   const mk = (override?: string) => ({
+    primaryDPersonId: opp.primaryDPersonId,
     engageStage: opp.engageStage,
     c3Items: J(opp.c3Items, {}), c5Items: J(opp.c5Items, {}),
     roles: opp.roles.map((r) => ({

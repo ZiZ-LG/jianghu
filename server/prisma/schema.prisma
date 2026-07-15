@@ -154,6 +154,7 @@ model Opportunity {
   singleSalesGoal      String         @default("")
   customerBusinessGoal String?
   buyingMotivation     String?
+  primaryDPersonId     String?                            // 主拍板人 D；服务端校验同租户/客户/商机当前有效 D
   externalRef          String?                            // 销售包商机锚，跨系统幂等(WorkBuddy)
   status               String         @default("active")  // active/paused/won/lost
   productSolution      String         @default("")
@@ -282,7 +283,7 @@ model PersonSuggestion {
   status           String   @default("pending") // pending | accepted | rejected
   proposedBy       String   @default("") // 提议者 userId（审计）
   resolvedPersonId String?  // 采纳后指向真实 Person.id（保证级联采纳幂等、去重）
-  suggestedRole      String? // WorkBuddy 提议的 ADUR 角色 A/D/U/TB/R（采纳时落 OppRole，需配合 opportunityId）
+  suggestedRole      String? // WorkBuddy 提议的 ADURC 角色 A/D/U/R/C（采纳时落 OppRole，需配合 opportunityId）
   suggestedSentiment String? // 提议的支持度 star/plus/neutral/unknown/minus/x
   createdAt        DateTime @default(now())
 

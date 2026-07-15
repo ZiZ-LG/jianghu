@@ -46,6 +46,31 @@ describe('ActionSchema', () => {
     }).success).toBe(false);
   });
 
+  it('accepts only the five authoritative optional C5 write keys', () => {
+    const authoritative = {
+      '竞标方名单/家数': true,
+      '招标参数': false,
+      '评标规则': true,
+      '甲方项目代表': false,
+      '招标代理机构': true,
+    };
+    expect(ActionSchema.safeParse({
+      type: 'ADD_OPP', accId: 'a', opp: {
+        id: 'o', name: 'Opportunity', customerType: 1,
+        pipelineStage: '线索', engageStage: '需求调研立项', c5Items: authoritative,
+      },
+    }).success).toBe(true);
+    expect(ActionSchema.safeParse({
+      type: 'UPDATE_OPP', accId: 'a', oppId: 'o', patch: { c5Items: {} },
+    }).success).toBe(true);
+
+    for (const invalidKey of ['竞标方家数', '甲方代表', '招标代理', '未知事项']) {
+      expect(ActionSchema.safeParse({
+        type: 'UPDATE_OPP', accId: 'a', oppId: 'o', patch: { c5Items: { [invalidKey]: true } },
+      }).success, invalidKey).toBe(false);
+    }
+  });
+
   it('rejects machine-origin evidence forged as approved', () => {
     expect(ActionSchema.safeParse({
       type: 'ADD_EVIDENCE',

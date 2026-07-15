@@ -104,7 +104,18 @@ describe('MCP public JSON-RPC boundary', () => {
       additionalProperties: false,
     });
     expect(opportunity?.inputSchema.properties.c3Items).toMatchObject({ additionalProperties: { type: 'boolean' } });
-    expect(opportunity?.inputSchema.properties.c5Items).toMatchObject({ additionalProperties: { type: 'boolean' } });
+    expect(opportunity?.inputSchema.properties.c5Items).toEqual({
+      type: 'object',
+      description: expect.any(String),
+      properties: {
+        '竞标方名单/家数': { type: 'boolean' },
+        '招标参数': { type: 'boolean' },
+        '评标规则': { type: 'boolean' },
+        '甲方项目代表': { type: 'boolean' },
+        '招标代理机构': { type: 'boolean' },
+      },
+      additionalProperties: false,
+    });
   });
 
   it('upserts an account with a legacy profile through the real tools/call path', async () => {

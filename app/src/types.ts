@@ -1,6 +1,6 @@
 // 江湖 · 领域类型（对应 docs/产品设计方案.md §3 与 G64111-评分规格.md）
 import type { JsonValue } from '@jianghu/domain-contracts';
-import { C3_ITEMS, C5_ITEMS, FAMILY_7Q } from '@jianghu/g64111';
+import { C3_ITEMS, C5_ITEMS, FAMILY_7Q, canonicalC5Items } from '@jianghu/g64111';
 import type {
   Confidence,
   EngageStage,
@@ -10,8 +10,13 @@ import type {
   Sentiment,
 } from '@jianghu/g64111';
 
-export { C3_ITEMS, C5_ITEMS, FAMILY_7Q };
+export { C3_ITEMS, C5_ITEMS, FAMILY_7Q, pickKeyInfluencerKeeper, readC5Item } from '@jianghu/g64111';
 export type { Confidence, EngageStage, ProcurementStatus, ProcurementType, Role, Sentiment };
+
+export type C5ItemKey = (typeof C5_ITEMS)[number];
+export function c5WriteItems(items: Record<string, unknown>): Partial<Record<C5ItemKey, boolean>> {
+  return canonicalC5Items(items);
+}
 
 /** 角色：A批准人 / D拍板人 / U使用者 / R影响者·技术把关 / C教练（竞争对手不是角色） */
 
@@ -129,6 +134,7 @@ export interface Opportunity {
   singleSalesGoal: string;
   customerBusinessGoal?: string;
   buyingMotivation?: string;
+  primaryDPersonId?: string | null;            // 主拍板人 D；null/缺省为存量兼容待确认
   // ── WorkBuddy 集成扩展（销售包推送的商机业务字段）──
   externalRef?: string;                       // 销售包商机锚（幂等）
   status?: OpportunityStatus;                  // 生命周期状态
@@ -140,7 +146,7 @@ export interface Opportunity {
   expectedAmountW?: number;                    // 预计金额(万元)
   meta?: Record<string, JsonValue>;            // JSON 兜底(BANT 辅助等)
   c3Items: Record<string, boolean>; // C3 七项是否已掌握
-  c5Items: Record<string, boolean>; // C5 五项是否已掌握
+  c5Items: Partial<Record<C5ItemKey, boolean>>; // C5 权威五项是否已掌握
   roles: OppRole[];
   bis: BurningIssue[];
   ucvs: UCV[];
@@ -351,8 +357,8 @@ export const ROLE_COLOR: Record<Role, string> = {
   A: '#9333ea', // 紫 批准人
   D: '#dc2626', // 红 拍板人
   U: '#2563eb', // 蓝 使用者
-  R: '#0891b2', // 青 影响者·技术把关（承接原 TB 色）
-  C: '#16a34a', // 绿 教练（承接原 R 色）
+  R: '#0891b2', // 青 影响者·技术把关
+  C: '#16a34a', // 绿 教练
 };
 export const ROLE_LABEL: Record<Role, string> = {
   A: '批准人', D: '拍板人', U: '使用者', R: '影响者·技术把关', C: '教练',

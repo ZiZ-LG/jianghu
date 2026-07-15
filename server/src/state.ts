@@ -402,6 +402,9 @@ export async function assembleState(
         pipelineStage: o.pipelineStage, engageStage: o.engageStage, changeMode: o.changeMode ?? undefined,
         singleSalesGoal: o.singleSalesGoal, customerBusinessGoal: o.customerBusinessGoal ?? undefined,
         buyingMotivation: o.buyingMotivation ?? undefined,
+        primaryDPersonId: o.primaryDPersonId && o.roles.some((role) => role.personId === o.primaryDPersonId && role.role === 'D')
+          ? o.primaryDPersonId
+          : null,
         externalRef: o.externalRef ?? undefined, status: o.status,
         productSolution: o.productSolution, competitor: o.competitor, competitiveSituation: o.competitiveSituation,
         winProbability: o.winProbability, expectedSignDate: o.expectedSignDate, expectedAmountW: o.expectedAmountW,

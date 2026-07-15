@@ -43,12 +43,15 @@ function buildUserPrompt(ctx: any, hypothesis: string): string {
 }
 
 // ── 内置演示分析（无需 Key，用真实数据生成）──
-function mockAnalysis(ctx: any, hypothesis: string): string {
+export function mockAnalysis(ctx: any, hypothesis: string): string {
   const wt = ctx?.winTendency || {};
   const people: any[] = ctx?.people || [];
   const find = (r: string) => people.filter((p) => p.role === r);
-  const A = find('A')[0], D = find('D')[0];
-  const ki = people.find((p) => p.isKeyInfluencer);
+  const A = find('A')[0];
+  const dPeople = find('D');
+  const D = dPeople.find((person) => person.isPrimaryD === true) ?? dPeople[0];
+  const ki = people.find((person) => person.isKeyInfluencer === true
+    && (person.role === 'U' || person.role === 'R' || person.role === 'C'));
   const traitors = people.filter((p) => p.sentiment === 'x');
   const items = wt.items || {};
   const gaps = Object.entries(items)

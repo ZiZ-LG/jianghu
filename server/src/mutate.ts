@@ -6,6 +6,7 @@ import { requireActionScope } from './mutation/actionScope.js';
 import { requireScopedRow, type DbClient } from './mutation/scopeGuards.js';
 import { isTrustedHumanAssertion, normalizeActionTrust } from './ingestTrust.js';
 import { activePersonWhere } from './activePerson.js';
+import { pickKeyInfluencerKeeper } from './g64111.js';
 
 export type { DbClient } from './mutation/scopeGuards.js';
 
@@ -97,15 +98,14 @@ function prismaErrorCode(error: unknown): string | undefined {
   return typeof error.code === 'string' ? error.code : undefined;
 }
 
-async function runTopLevelTransaction(
+export async function runSerializableTransaction<T>(
   db: PrismaClient,
-  ctx: CommandContext,
-  action: Action,
-): Promise<PostCommitEffect> {
+  operation: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
   for (let attempt = 1; attempt <= MAX_SERIALIZABLE_ATTEMPTS; attempt += 1) {
     try {
       return await db.$transaction(
-        (tx) => applyActionInTransaction(ctx, action, tx),
+        operation,
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       );
     } catch (error) {
@@ -114,6 +114,14 @@ async function runTopLevelTransaction(
     }
   }
   throw new Error('unreachable serializable transaction retry state');
+}
+
+async function runTopLevelTransaction(
+  db: PrismaClient,
+  ctx: CommandContext,
+  action: Action,
+): Promise<PostCommitEffect> {
+  return runSerializableTransaction(db, (tx) => applyActionInTransaction(ctx, action, tx));
 }
 
 export async function runPostCommitEffect(effect: PostCommitEffect): Promise<void> {
@@ -213,6 +221,7 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
 
     case 'ADD_OPP': {
       const o = action.opp;
+      if (o.primaryDPersonId) throw new Error('primary D must be selected from an existing D role');
       await db.opportunity.create({ data: {
         id: o.id, tenantId, accountId: action.accId, name: o.name, customerType: o.customerType,
         pipelineStage: o.pipelineStage, engageStage: o.engageStage, changeMode: o.changeMode ?? null,
@@ -227,7 +236,20 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
       return;
     }
     case 'UPDATE_OPP': {
-      const d = pick(action.patch, ['name', 'pipelineStage', 'engageStage', 'changeMode', 'singleSalesGoal', 'customerBusinessGoal', 'buyingMotivation', 'externalRef', 'status', 'productSolution', 'competitor', 'competitiveSituation', 'winProbability', 'expectedSignDate', 'expectedAmountW']);
+      const d = pick(action.patch, ['name', 'pipelineStage', 'engageStage', 'changeMode', 'singleSalesGoal', 'customerBusinessGoal', 'buyingMotivation', 'primaryDPersonId', 'externalRef', 'status', 'productSolution', 'competitor', 'competitiveSituation', 'winProbability', 'expectedSignDate', 'expectedAmountW']);
+      if (action.patch.primaryDPersonId) {
+        const [person, dRole] = await Promise.all([
+          db.person.findFirst({
+            where: { id: action.patch.primaryDPersonId, tenantId, accountId: action.accId, ...activePersonWhere },
+            select: { id: true },
+          }),
+          db.oppRole.findFirst({
+            where: { tenantId, opportunityId: action.oppId, personId: action.patch.primaryDPersonId, role: 'D' },
+            select: { id: true },
+          }),
+        ]);
+        if (!person || !dRole) throw new Error('primary D must be a current D in opportunity');
+      }
       if (action.patch?.c3Items !== undefined) d.c3Items = S(action.patch.c3Items);
       if (action.patch?.c5Items !== undefined) d.c5Items = S(action.patch.c5Items);
       if (action.patch?.meta !== undefined) d.meta = S(action.patch.meta);
@@ -285,6 +307,10 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
       await db.uCV.deleteMany({ where: { tenantId, opportunityId: { in: opportunityIds }, targetBiId: { in: biIds } } });
       await db.burningIssue.deleteMany({ where: { personId: pid, tenantId, opportunityId: { in: opportunityIds } } });
       await db.oppRole.deleteMany({ where: { personId: pid, tenantId, opportunityId: { in: opportunityIds } } });
+      await db.opportunity.updateMany({
+        where: { tenantId, accountId: action.accId, id: { in: opportunityIds }, primaryDPersonId: pid },
+        data: { primaryDPersonId: null },
+      });
       await db.opportunityMember.deleteMany({ where: { personId: pid, tenantId, opportunityId: { in: opportunityIds } } });
       await db.edge.deleteMany({ where: { tenantId, accountId: action.accId, OR: [{ source: pid }, { target: pid }] } });
       await db.person.deleteMany({ where: { id: pid, tenantId, accountId: action.accId, ...activePersonWhere } });
@@ -303,6 +329,21 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
 
     case 'SET_ROLE': {
       const p = action.patch ?? {};
+      const existing = await db.oppRole.findUnique({
+        where: { tenantId_opportunityId_personId: { tenantId, opportunityId: action.oppId, personId: action.personId } },
+        select: { role: true, isKeyInfluencer: true },
+      });
+      const effectiveRole = p.role ?? existing?.role ?? 'U';
+      if (p.isKeyInfluencer === true && (effectiveRole === 'A' || effectiveRole === 'D')) {
+        throw new Error('P4 key influencer must be a non-A/D role');
+      }
+      const shouldClearOwnP4 = (effectiveRole === 'A' || effectiveRole === 'D') && existing?.isKeyInfluencer === true;
+      if (p.isKeyInfluencer === true) {
+        await db.oppRole.updateMany({
+          where: { tenantId, opportunityId: action.oppId, personId: { not: action.personId }, isKeyInfluencer: true },
+          data: { isKeyInfluencer: false },
+        });
+      }
       await db.oppRole.upsert({
         where: { tenantId_opportunityId_personId: { tenantId, opportunityId: action.oppId, personId: action.personId } },
         create: {
@@ -314,14 +355,43 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
         },
         update: {
           ...pick(p, ['role', 'sentiment', 'sentimentValue', 'confidence', 'isKeyInfluencer', 'procurementType', 'procurementStatus']),
+          ...(shouldClearOwnP4 ? { isKeyInfluencer: false } : {}),
           // 改了态度或可信度 = 一次新的立场评估 → 刷新衰减基准
           ...('sentiment' in p || 'confidence' in p ? { assessedAt: new Date() } : {}),
         },
       });
+      const selectedP4 = await db.oppRole.findMany({
+        where: { tenantId, opportunityId: action.oppId, isKeyInfluencer: true },
+        select: { personId: true, role: true, isKeyInfluencer: true },
+        orderBy: { personId: 'asc' },
+      });
+      const keeper = pickKeyInfluencerKeeper(selectedP4);
+      const clearPersonIds = selectedP4
+        .filter((role) => role.personId !== keeper?.personId)
+        .map((role) => role.personId);
+      if (clearPersonIds.length) {
+        await db.oppRole.updateMany({
+          where: {
+            tenantId, opportunityId: action.oppId,
+            personId: { in: clearPersonIds }, isKeyInfluencer: true,
+          },
+          data: { isKeyInfluencer: false },
+        });
+      }
+      if (effectiveRole !== 'D') {
+        await db.opportunity.updateMany({
+          where: { id: action.oppId, tenantId, accountId: action.accId, primaryDPersonId: action.personId },
+          data: { primaryDPersonId: null },
+        });
+      }
       return;
     }
     case 'REMOVE_ROLE':
       await db.oppRole.deleteMany({ where: { tenantId, opportunityId: action.oppId, personId: action.personId } });
+      await db.opportunity.updateMany({
+        where: { id: action.oppId, tenantId, accountId: action.accId, primaryDPersonId: action.personId },
+        data: { primaryDPersonId: null },
+      });
       return;
 
     case 'ADD_OPP_MEMBER':

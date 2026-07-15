@@ -23,14 +23,14 @@ const ITEM_BASIS: Record<ItemKey, { rule: string; raise: string }> = {
   C1: { rule: '组织图齐备（A/D/U/R/C 各角色已识别上图）+ 主拍板人 D 的 FORM 家庭 7 问（籍贯/年纪/生日/院校/配偶/子女/父母）填得越全分越高。', raise: '补齐缺失角色卡；在 D 的详情抽屉补 FORM 家庭信息。' },
   C2: { rule: '拍板人 D 的燃眉问题（BI）已明确识别并记录（置信度 ≥ 明确）。', raise: '在 D 的详情里补一条燃眉问题 BI，并标为已明确。' },
   C3: { rule: '立项 7 项材料齐备且排好优先序。', raise: '对照立项清单补齐材料并排序。' },
-  C4: { rule: '已准确判断并介入当前销售阶段。', raise: '确认商机当前阶段、对齐打法。' },
-  C5: { rule: '招采 5 要素（流程 / 时间 / 预算 / 评标办法 / 对手）摸清。', raise: '把招采 5 要素逐项摸清补录。' },
-  C6: { rule: '我方独特价值（UCV）被客户明确 / 书面认可。', raise: '推动 D 认可 UCV；先口头、后书面。' },
+  C4: { rule: '项目介入时机：需求调研立项 5 分，方案/可研 4 分，预算批复 3 分，招标论证 2 分，招采执行 1 分；不等同于商机管线阶段。', raise: '确认项目介入阶段，尽量在需求与方案阶段前置介入。' },
+  C5: { rule: '招采 5 项：竞标方名单/家数、招标参数、评标规则、甲方项目代表、招标代理机构。', raise: '按这 5 项逐项摸清并补录。' },
+  C6: { rule: 'D 的 BI 已落地解决得 5 分；建议方案并获客户认可得 3 分；其余 0 分。', raise: '围绕主 D 的 BI 推动建议获认可，再推动落地解决。' },
   P1: { rule: '多数关键人明确表态：☆/+ 计正、−/x 计负，总和封顶 ±5。', raise: '把中立 / 未知的关键人争取到明确支持。' },
-  P2: { rule: '招采关键人（采购 / 代理 / 甲方代表）倒向我方；全缺位则整体失血 −5。', raise: '锁定招采关键人，谈成密谋或至少口头支持。' },
-  P3: { rule: '与拍板人 D 的关系深度：密谋级最高 +20，倒戈最低 −20；多 D 取最低那位。', raise: '把与 D 的关系推进到密谋级。' },
-  P4: { rule: '已标记的关键影响人支持（仅第一个关键影响人计分 0–10）。', raise: '识别并争取关键影响人到明确支持。' },
-  '1K': { rule: '与批准人 A 的关系：密谋级最高 +20，倒戈 −20。', raise: '打通到 A 的通路，谈成密谋级共识。' },
+  P2: { rule: '三类招采关键人的私下共同策划/口头承诺分别计分；三类均未有效接触为 −5。', raise: '推进采购负责人、招标代理/集采、甲方项目代表的有效接触。' },
+  P3: { rule: '各拍板人 D 按支持度计分；多人 D 取下中位数（偶数取偏低者），区间 −20～+20。', raise: '优先改善低于多人 D 中位水平的关键关系。' },
+  P4: { rule: '全商机只锁定一位非 A/D 的关键影响人：☆ +10、+ +5，其余 0。', raise: '识别能影响 A/D 或推动定标的一位关键影响人，并争取明确支持。' },
+  '1K': { rule: '各批准人 A 按支持度计分；多人 A 取下中位数（偶数取偏低者），区间 −20～+20。', raise: '打通 A 的通路并提升低分批准人的支持。' },
 };
 
 function Item({ k, score, open, onToggle }: { k: ItemKey; score: number; open: boolean; onToggle: () => void }) {
@@ -106,6 +106,9 @@ export function Sidebar({ account, opp, breakdown, weighted = null, pde = null, 
         {!readonly && <button className="add-mini" onClick={onAddOpp} title="新建商机">＋</button>}
       </div>
       {opp && <div className="diag-fresh"><Freshness mark={(opp.meta as { _mcpOrigin?: McpOriginMark } | undefined)?._mcpOrigin} /></div>}
+      {opp && !opp.primaryDPersonId && opp.roles.some((role) => role.role === 'D') && (
+        <div className="empty-hint" style={{ margin: '0 10px 8px' }}>待确认主 D：当前 C1 FORM 按兼容顺序取首位 D。请打开一位 D 的档案设为主 D。</div>
+      )}
 
       <div className="diag-score">
         {breakdown ? (

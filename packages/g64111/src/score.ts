@@ -16,8 +16,47 @@ import type {
 } from './types.js';
 
 export const C3_ITEMS = ['立项原因', '项目名称', '项目预算', '实施计划', '资金来源', '项目排序', '采购方式'] as const;
-export const C5_ITEMS = ['竞标方家数', '招标参数', '评标规则', '甲方代表', '招标代理'] as const;
+export const C5_ITEMS = ['竞标方名单/家数', '招标参数', '评标规则', '甲方项目代表', '招标代理机构'] as const;
+export type C5ItemKey = (typeof C5_ITEMS)[number];
+const LEGACY_C5_ITEM: Partial<Record<(typeof C5_ITEMS)[number], string>> = {
+  '竞标方名单/家数': '竞标方家数',
+  '甲方项目代表': '甲方代表',
+  '招标代理机构': '招标代理',
+};
 export const FAMILY_7Q = ['籍贯', '年纪', '生日', '毕业院校', '配偶', '子女', '父母'] as const;
+
+export function readC5Item(
+  items: Record<string, unknown> | null | undefined,
+  key: C5ItemKey,
+): boolean | undefined {
+  if (typeof items?.[key] === 'boolean') return items[key] as boolean;
+  const legacyKey = LEGACY_C5_ITEM[key];
+  return legacyKey && typeof items?.[legacyKey] === 'boolean' ? items[legacyKey] as boolean : undefined;
+}
+
+export function canonicalC5Items(
+  items: Record<string, unknown> | null | undefined,
+): Partial<Record<C5ItemKey, boolean>> {
+  const canonical: Partial<Record<C5ItemKey, boolean>> = {};
+  for (const key of C5_ITEMS) {
+    const value = readC5Item(items, key);
+    if (value !== undefined) canonical[key] = value;
+  }
+  return canonical;
+}
+
+export function pickKeyInfluencerKeeper<T extends {
+  personId: string;
+  role: string;
+  isKeyInfluencer?: boolean;
+}>(roles: readonly T[]): T | undefined {
+  let keeper: T | undefined;
+  for (const role of roles) {
+    if (!role.isKeyInfluencer || (role.role !== 'U' && role.role !== 'R' && role.role !== 'C')) continue;
+    if (!keeper || role.personId < keeper.personId) keeper = role;
+  }
+  return keeper;
+}
 
 export const P3_1K_MAP: Record<Sentiment, number> = {
   star: 20,
@@ -232,7 +271,7 @@ export function buildScoringInput(account: ScoringAccount, opportunity: ScoringO
   ).size;
 
   const dRoles = roles.filter((role) => role.role === 'D');
-  const primaryD = dRoles[0];
+  const primaryD = dRoles.find((role) => role.personId === opportunity.primaryDPersonId) ?? dRoles[0];
   const dFamily = primaryD ? personById.get(primaryD.personId)?.form?.family7 ?? {} : {};
   const dFamily7Filled = FAMILY_7Q.filter((question) => isNonBlank(dFamily[question])).length;
 
@@ -279,14 +318,14 @@ export function buildScoringInput(account: ScoringAccount, opportunity: ScoringO
     dHasBI,
     c3KnownCount: C3_ITEMS.filter((item) => opportunity.c3Items?.[item] === true).length,
     engageStage: knownStage(opportunity.engageStage),
-    c5KnownCount: C5_ITEMS.filter((item) => opportunity.c5Items?.[item] === true).length,
+    c5KnownCount: C5_ITEMS.filter((item) => readC5Item(opportunity.c5Items, item) === true).length,
     ucvStatus,
     p1PlusCount,
     p1MinusCount,
     p2,
     dSentiments: dRoles.map((role) => role.sentiment),
     aSentiments: roles.filter((role) => role.role === 'A').map((role) => role.sentiment),
-    keyInfluencerSentiment: roles.find((role) => role.isKeyInfluencer)?.sentiment ?? null,
+    keyInfluencerSentiment: pickKeyInfluencerKeeper(roles)?.sentiment ?? null,
   };
 }
 
@@ -343,9 +382,9 @@ export function personContributions(
     addPotential(role.personId, 20);
   }
 
-  const keyInfluencer = roles.find((role) => role.isKeyInfluencer);
+  const keyInfluencer = pickKeyInfluencerKeeper(roles);
   for (const role of roles) {
-    if (!role.isKeyInfluencer) continue;
+    if (!role.isKeyInfluencer || (role.role !== 'U' && role.role !== 'R' && role.role !== 'C')) continue;
     if (role === keyInfluencer) {
       addPart(role.personId, 'P4', P4_MAP[role.sentiment] ?? 0);
       addPotential(role.personId, 10);

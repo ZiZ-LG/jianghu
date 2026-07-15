@@ -1,14 +1,12 @@
 import { useState, useEffect } from 'react';
 import type { Account } from '../types';
-import { CUSTOMER_TYPE_LABEL } from '../types';
+import { CUSTOMER_TYPE_LABEL, ROLE_LABEL } from '../types';
 import { Modal } from './Modal';
 import { CUSTOMER_SKELETONS, type SkeletonRole } from '../data/skeletons';
 
-const ROLE_LABEL: Record<string, string> = { A: '批准人', D: '拍板人', U: '使用者', TB: '技术选型', R: '影响者/教练' };
-
 /**
  * 新建商机弹窗：① 按客户类型生成决策链骨架(M2，默认) ② 空白白板 ③ 从已有商机克隆。
- * 骨架=按 customerType 预置 A/D/U/TB/R 占位节点(支持度未知)，建后双击改真名——把「对着白纸画组织图」变成「填空+删减」。
+ * 骨架=按 customerType 预置 A/D/U/R/C 占位节点(支持度未知)，建后双击改真名——把「对着白纸画组织图」变成「填空+删减」。
  * 人物客户级共享、角色/关系商机级独立（克隆=在新商机复制商机级数据，改新商机不影响源）。
  */
 export function NewOpportunityDialog({ account, onClose, onCreate }: {

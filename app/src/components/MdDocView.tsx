@@ -1,7 +1,7 @@
 // 作战档案 · 文档视图（路 A · 字段级内联编辑）：把客户/商机/拜访渲染成文档样式，
 // 可编辑字段原地 input/勾选、失焦即 dispatch 写回系统。打分与角色只读（在画布/抽屉改）。
 import { useEffect, useState } from 'react';
-import type { Account, Opportunity, VisitNote, AccountProfile, Note } from '../types';
+import { c5WriteItems, type Account, type Opportunity, type VisitNote, type AccountProfile, type Note } from '../types';
 import {
   CUSTOMER_TYPE_LABEL, ROLE_LABEL, SENTIMENT_CHAR, FAMILY_7Q, C3_ITEMS, C5_ITEMS,
 } from '../types';
@@ -155,7 +155,13 @@ function CustomerDoc({ account, dispatch, readonly = false }: { account: Account
 function OppDoc({ account, opp, dispatch, readonly = false }: { account: Account; opp: Opportunity; dispatch: (a: Action) => void; readonly?: boolean }) {
   const set = (patch: Partial<Opportunity>) => dispatch({ type: 'UPDATE_OPP', accId: account.id, oppId: opp.id, patch });
   const b = scoreFromDomain(account, opp);
-  const toggle = (which: 'c3Items' | 'c5Items', k: string) => set({ [which]: { ...opp[which], [k]: !opp[which][k] } } as Partial<Opportunity>);
+  const c5Items = c5WriteItems(opp.c5Items);
+  const toggle = (which: 'c3Items' | 'c5Items', k: string) => {
+    const current = which === 'c5Items'
+      ? c5Items as Record<string, boolean | undefined>
+      : opp.c3Items;
+    set({ [which]: { ...current, [k]: !current[k] } } as Partial<Opportunity>);
+  };
   const groups: [string, ItemKey[]][] = [['6必清', ['C1', 'C2', 'C3', 'C4', 'C5', 'C6']], ['4优势', ['P1', 'P2', 'P3', 'P4']], ['1决胜', ['1K']]];
 
   return (
@@ -178,7 +184,7 @@ function OppDoc({ account, opp, dispatch, readonly = false }: { account: Account
 
       <h2>二、招采事项（C5）</h2>
       <table className="mdv-table"><tbody>{C5_ITEMS.map((k) => (
-        <tr key={k}><th>{k}</th><td>{readonly ? <span>{opp.c5Items[k] ? '✓ 已掌握' : '待补充'}</span> : <label className="mdv-check"><input type="checkbox" checked={!!opp.c5Items[k]} onChange={() => toggle('c5Items', k)} /> {opp.c5Items[k] ? '已掌握' : '待补充'}</label>}</td></tr>
+        <tr key={k}><th>{k}</th><td>{readonly ? <span>{c5Items[k] ? '✓ 已掌握' : '待补充'}</span> : <label className="mdv-check"><input type="checkbox" checked={!!c5Items[k]} onChange={() => toggle('c5Items', k)} /> {c5Items[k] ? '已掌握' : '待补充'}</label>}</td></tr>
       ))}</tbody></table>
 
       <h2>三、G64111 趋赢力打分 <span className="mdv-ro">系统据角色/BI/招采实时算 · 只读</span></h2>

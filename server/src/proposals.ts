@@ -7,7 +7,7 @@ import { Prisma } from '@prisma/client';
 import { ActionSchema, ActorRoleSchema, type CommandContext } from '@jianghu/domain-contracts';
 import { prisma } from './prisma.js';
 import { denyViewer } from './scope.js';
-import { applyAction, runPostCommitEffect, type DbClient, type PostCommitEffect } from './mutate.js';
+import { applyAction, runPostCommitEffect, runSerializableTransaction, type DbClient, type PostCommitEffect } from './mutate.js';
 import { activePersonWhere } from './activePerson.js';
 
 /** 建字段更新提案（去重：同 实体+字段 已有 pending 则覆盖最新值，避免堆叠重复打扰）。供 voice/MCP 等机器写源调用。 */
@@ -178,7 +178,7 @@ export async function acceptProposalInTransaction(
 }
 
 export async function acceptProposal(ctx: CommandContext, id: string, overrideValue?: string): Promise<'ok' | 'already' | 'missing'> {
-  const outcome = await prisma.$transaction((tx: Prisma.TransactionClient) => acceptProposalInTransaction(ctx, id, overrideValue, tx));
+  const outcome = await runSerializableTransaction(prisma, (tx) => acceptProposalInTransaction(ctx, id, overrideValue, tx));
   if (outcome.result === 'ok') await runPostCommitEffect(outcome.effect);
   return outcome.result;
 }
@@ -201,7 +201,7 @@ export async function reviewProposalFromWecom(
   proposalId: string,
   decision: 'accept' | 'reject',
 ): Promise<'ok' | 'already' | 'missing' | 'unauthorized'> {
-  const outcome = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+  const outcome = await runSerializableTransaction(prisma, async (tx: Prisma.TransactionClient) => {
     const binds = await tx.weComUserBind.findMany({ where: { tenantId, wecomUserid }, take: 2 });
     if (binds.length !== 1) return { result: 'unauthorized' as const, effect: undefined };
     const actor = await tx.user.findFirst({ where: { id: binds[0].userId, tenantId }, select: { id: true, role: true } });
@@ -225,7 +225,7 @@ export async function reviewProposalFromWecom(
     const finalized = await tx.changeProposal.updateMany({ where: { id: cp.id, tenantId, status: 'applying' }, data: { status: 'accepted', dedupeKey: null } });
     if (finalized.count !== 1) throw new Error('proposal acceptance lost claim');
     return { result: 'ok' as const, effect };
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  });
   if (outcome.result === 'ok') await runPostCommitEffect(outcome.effect);
   return outcome.result;
 }

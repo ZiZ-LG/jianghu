@@ -120,6 +120,7 @@ export function FocusPanel({
             {readonly
               ? <ReadonlyProfile person={person} oppRole={oppRole} bis={bis} ucvs={ucvs} />
               : <DetailDrawer key={person.id} embedded accId={accId} oppId={oppId} person={person}
+                  primaryDPersonId={opp.primaryDPersonId}
                   oppRole={oppRole} bis={bis} ucvs={ucvs} dispatch={dispatch} draftDispatch={draftDispatch}
                   flushDraft={flushDraft} coordinator={coordinator} onViewCloud={onViewCloud ?? onRefresh} onClose={onClose}
                   repairRecords={repairRecords} onRepairRecord={onRepairRecord} />}

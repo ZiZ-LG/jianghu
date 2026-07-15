@@ -23,7 +23,7 @@ const opportunity: Opportunity = {
   expectedSignDate: '2026-09-01',
   expectedAmountW: 300,
   c3Items: { C3_1: true },
-  c5Items: { C5_1: true },
+  c5Items: { '竞标方名单/家数': true },
   roles: [],
   bis: [],
   ucvs: [],

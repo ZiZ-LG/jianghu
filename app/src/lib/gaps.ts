@@ -3,7 +3,7 @@
 // P1③ 问题化 framing：同一份缺口分两种货架——shelf='desk' 案头当场能勾（C3/C5 材料等），
 // shelf='visit' 需要见人才知道（态度/BI/FORM/UCV/招采关键人），配 ask=带去拜访的具体问句。
 import type { Account, Opportunity, ProcurementType } from './../types';
-import { C3_ITEMS, C5_ITEMS, ROLE_LABEL } from './../types';
+import { C3_ITEMS, C5_ITEMS, ROLE_LABEL, c5WriteItems, pickKeyInfluencerKeeper } from './../types';
 import { buildScoringInput, type ItemKey } from './g64111';
 
 export type GapAction =
@@ -30,7 +30,9 @@ export function computeGaps(account: Account, opp: Opportunity): Gap[] {
   const input = buildScoringInput(account, opp);
   const nameOf = (id: string) => account.persons.find((p) => p.id === id)?.name ?? '?';
   const gaps: Gap[] = [];
-  const D = opp.roles.find((r) => r.role === 'D');
+  const c5Items = c5WriteItems(opp.c5Items);
+  const dRoles = opp.roles.filter((role) => role.role === 'D');
+  const D = dRoles.find((role) => role.personId === opp.primaryDPersonId) ?? dRoles[0];
 
   // 态度未知 → 每人一张，点一下定调（A→1K、D→P3 分值最高排前，其余→P1）
   for (const r of opp.roles) {
@@ -53,7 +55,7 @@ export function computeGaps(account: Account, opp: Opportunity): Gap[] {
   // C4 介入阶段
   if (!opp.engageStage) gaps.push({ id: 'c4', item: 'C4', deficit: 5, title: '还没标记介入阶段', hint: '越早介入分越高', action: { kind: 'c4' }, shelf: 'desk' });
   // C5 招采事项
-  const missC5 = C5_ITEMS.filter((k) => !opp.c5Items[k]);
+  const missC5 = C5_ITEMS.filter((k) => !c5Items[k]);
   if (missC5.length) gaps.push({ id: 'c5', item: 'C5', deficit: Math.min(5, missC5.length), title: `招采事项缺 ${missC5.length} 项`, hint: '点亮你已掌握的', action: { kind: 'c5' }, shelf: 'desk' });
   // C6 UCV
   if (input.ucvStatus !== '已解决') gaps.push({ id: 'ucv', item: 'C6', deficit: input.ucvStatus === '获认可' ? 2 : 5, title: '独特价值（UCV）未落地', hint: '认可后在详情抽屉更新状态', action: { kind: 'guide', to: '详情抽屉' }, shelf: 'visit', personId: D?.personId, ask: `我们有什么对手给不了的价值？「${D ? nameOf(D.personId) : '拍板人'}」认不认？` });
@@ -61,7 +63,7 @@ export function computeGaps(account: Account, opp: Opportunity): Gap[] {
   const types: ProcurementType[] = ['purchasing', 'agency', 'ownerRep'];
   if (types.every((t) => input.p2[t] === 'none')) gaps.push({ id: 'p2', item: 'P2', deficit: 10, title: '招采关键人一个都没接触', hint: '问到后在详情抽屉设招采状态', action: { kind: 'guide', to: '详情抽屉' }, shelf: 'visit', ask: '这单的采购／招标代理／甲方代表分别是谁？接触上了吗？' });
   // P4 关键影响人
-  if (!opp.roles.some((r) => r.isKeyInfluencer)) gaps.push({ id: 'p4', item: 'P4', deficit: 5, title: '未锁定关键影响人', hint: '选一个能影响 A/D 的非 A/D 角色', action: { kind: 'key-influencer' }, shelf: 'desk' });
+  if (!pickKeyInfluencerKeeper(opp.roles)) gaps.push({ id: 'p4', item: 'P4', deficit: 5, title: '未锁定关键影响人', hint: '选一个能影响 A/D 的非 A/D 角色', action: { kind: 'key-influencer' }, shelf: 'desk' });
 
   return gaps.sort((a, b) => b.deficit - a.deficit);
 }

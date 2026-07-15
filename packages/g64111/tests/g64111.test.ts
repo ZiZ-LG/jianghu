@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  C5_ITEMS,
   DEFAULT_PROFILE,
   aggregateLow,
   band741,
+  buildScoringInput,
+  personContributions,
   scoreC1,
   scoreC3,
   scoreC5,
@@ -80,6 +83,13 @@ describe('C1（组织图 + D的FORM）', () => {
 });
 
 describe('C3/C5（少一项扣一分）', () => {
+  it('C5 键名逐项对齐权威规格', () => {
+    expect(C5_ITEMS).toEqual(['竞标方名单/家数', '招标参数', '评标规则', '甲方项目代表', '招标代理机构']);
+  });
+  it('存量 C5 旧键继续可评分，便于温和迁移', () => {
+    const input = buildScoringInput({}, { c5Items: { '竞标方家数': true } });
+    expect(input.c5KnownCount).toBe(1);
+  });
   it('C3 七项映射', () => {
     expect(scoreC3({ ...base, c3KnownCount: 7 })).toBe(5);
     expect(scoreC3({ ...base, c3KnownCount: 5 })).toBe(3);
@@ -89,6 +99,64 @@ describe('C3/C5（少一项扣一分）', () => {
     expect(scoreC5({ ...base, c5KnownCount: 5 })).toBe(5);
     expect(scoreC5({ ...base, c5KnownCount: 3 })).toBe(3);
     expect(scoreC5({ ...base, c5KnownCount: 0 })).toBe(0);
+  });
+});
+
+describe('主 D 与多人 D 聚合', () => {
+  it('主 D 决定 C1 FORM，P3 仍聚合全部 D 且偶数取下中位数', () => {
+    const input = buildScoringInput(
+      {
+        persons: [
+          { id: 'd-low', form: { family7: {} } },
+          { id: 'd-primary', form: { family7: Object.fromEntries(['籍贯', '年纪', '生日', '毕业院校', '配偶', '子女', '父母'].map((key) => [key, '已确认'])) } },
+        ],
+      },
+      {
+        primaryDPersonId: 'd-primary',
+        roles: [
+          { personId: 'd-low', role: 'D', sentiment: 'plus', confidence: '明确' },
+          { personId: 'd-primary', role: 'D', sentiment: 'star', confidence: '明确' },
+        ],
+      },
+    );
+
+    expect(input.dFamily7Filled).toBe(7);
+    expect(input.dSentiments).toEqual(['plus', 'star']);
+    expect(scoreOpportunity(input).items.P3).toBe(10);
+  });
+});
+
+describe('历史 P4 兼容清理', () => {
+  it('评分与人物贡献都忽略 A/D 上的非法 P4，只采用非 A/D 角色', () => {
+    const account = { persons: [{ id: 'a-illegal' }, { id: 'u-legal' }] };
+    const opportunity = {
+      roles: [
+        { personId: 'a-illegal', role: 'A' as const, sentiment: 'star' as const, confidence: '明确' as const, isKeyInfluencer: true },
+        { personId: 'u-legal', role: 'U' as const, sentiment: 'plus' as const, confidence: '明确' as const, isKeyInfluencer: true },
+      ],
+    };
+
+    const input = buildScoringInput(account, opportunity);
+    expect(input.keyInfluencerSentiment).toBe('plus');
+    expect(scoreOpportunity(input).items.P4).toBe(5);
+    const contributions = personContributions(account, opportunity);
+    expect(contributions.get('a-illegal')?.parts.some((part) => part.item === 'P4')).toBe(false);
+    expect(contributions.get('u-legal')?.parts).toContainEqual({ item: 'P4', value: 5 });
+  });
+
+  it('多个合法 P4 按 personId 稳定选择同一个 keeper，不受输入顺序影响', () => {
+    const roles = [
+      { personId: 'z-legal', role: 'R' as const, sentiment: 'star' as const, confidence: '明确' as const, isKeyInfluencer: true },
+      { personId: 'a-legal', role: 'C' as const, sentiment: 'plus' as const, confidence: '明确' as const, isKeyInfluencer: true },
+      { personId: '0-illegal', role: 'D' as const, sentiment: 'star' as const, confidence: '明确' as const, isKeyInfluencer: true },
+    ];
+
+    const input = buildScoringInput({ persons: [] }, { roles });
+    const contributions = personContributions({ persons: [] }, { roles });
+
+    expect(input.keyInfluencerSentiment).toBe('plus');
+    expect(contributions.get('a-legal')?.parts).toContainEqual({ item: 'P4', value: 5 });
+    expect(contributions.get('z-legal')?.parts).toContainEqual({ item: 'P4', value: 0, note: 'P4 已由他人占用' });
   });
 });
 

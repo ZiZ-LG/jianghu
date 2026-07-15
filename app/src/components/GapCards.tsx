@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import type { Account, Opportunity, Sentiment } from '../types';
-import { SENTIMENT_CHAR, SENTIMENT_LABEL, SENTIMENT_COLOR, ENGAGE_STAGES, C3_ITEMS, C5_ITEMS } from '../types';
+import { SENTIMENT_CHAR, SENTIMENT_LABEL, SENTIMENT_COLOR, ENGAGE_STAGES, C3_ITEMS, C5_ITEMS, c5WriteItems } from '../types';
 import type { Action } from '../store';
 import { Modal } from './Modal';
 import { computeGaps } from '../lib/gaps';
@@ -20,6 +20,7 @@ export function GapCards({ account, opp, dispatch, onClose }: {
   onClose: () => void;
 }) {
   const gaps = useMemo(() => computeGaps(account, opp), [account, opp]);
+  const c5Items = c5WriteItems(opp.c5Items);
   const influencerCandidates = opp.roles.filter((r) => r.role !== 'A' && r.role !== 'D');
   const nameOf = (id: string) => account.persons.find((p) => p.id === id)?.name ?? '?';
   const shelves = [
@@ -59,8 +60,8 @@ export function GapCards({ account, opp, dispatch, onClose }: {
                 {g.action.kind === 'c3' && C3_ITEMS.filter((k) => !opp.c3Items[k]).map((k) => (
                   <button key={k} className="gap-chip" onClick={() => dispatch({ type: 'UPDATE_OPP', accId: account.id, oppId: opp.id, patch: { c3Items: { ...opp.c3Items, [k]: true } } })}>＋ {k}</button>
                 ))}
-                {g.action.kind === 'c5' && C5_ITEMS.filter((k) => !opp.c5Items[k]).map((k) => (
-                  <button key={k} className="gap-chip" onClick={() => dispatch({ type: 'UPDATE_OPP', accId: account.id, oppId: opp.id, patch: { c5Items: { ...opp.c5Items, [k]: true } } })}>＋ {k}</button>
+                {g.action.kind === 'c5' && C5_ITEMS.filter((k) => !c5Items[k]).map((k) => (
+                  <button key={k} className="gap-chip" onClick={() => dispatch({ type: 'UPDATE_OPP', accId: account.id, oppId: opp.id, patch: { c5Items: { ...c5Items, [k]: true } } })}>＋ {k}</button>
                 ))}
                 {g.action.kind === 'c4' && ENGAGE_STAGES.map((s) => (
                   <button key={s} className="gap-chip" onClick={() => dispatch({ type: 'UPDATE_OPP', accId: account.id, oppId: opp.id, patch: { engageStage: s } })}>{s}</button>

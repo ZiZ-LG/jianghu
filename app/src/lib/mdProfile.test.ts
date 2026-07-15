@@ -108,6 +108,32 @@ describe('mdProfile · 往返保真（系统→MD→parse，块C 红线）', () 
     expect(patch.c5Items?.['评标规则']).toBe(false);  // seed=false
   });
 
+  it('reads legacy C5 aliases for rendering but emits only authoritative keys on write-back', () => {
+    const legacy = {
+      ...seedAccount.opportunities[0],
+      c5Items: { '竞标方家数': true, '甲方代表': true, '招标代理': false, '招标参数': true },
+    } as unknown as typeof seedAccount.opportunities[0];
+    const rendered = renderOpportunityMd(seedAccount, legacy, []);
+    expect(rendered).toContain('| 竞标方名单/家数 | ✅ 已掌握 |');
+    expect(rendered).toContain('| 甲方项目代表 | ✅ 已掌握 |');
+    const edited = rendered.replace('| 评标规则 | ⏳ 待补充 |', '| 评标规则 | ✅ 已掌握 |');
+    const patch = parseOpportunityMd(edited, legacy);
+
+    expect(Object.keys(patch.c5Items ?? {}).sort()).toEqual([
+      '竞标方名单/家数', '招标参数', '评标规则', '甲方项目代表', '招标代理机构',
+    ].sort());
+    expect(patch.c5Items).not.toHaveProperty('竞标方家数');
+    expect(patch.c5Items).not.toHaveProperty('甲方代表');
+    expect(patch.c5Items).not.toHaveProperty('招标代理');
+    expect(patch.c5Items).toMatchObject({
+      '竞标方名单/家数': true,
+      '招标参数': true,
+      '评标规则': true,
+      '甲方项目代表': true,
+      '招标代理机构': false,
+    });
+  });
+
   it('拜访 round-trip：主题 + 纪要正文', () => {
     const visit: VisitNote = { id: 'v', accountId: seedAccount.id, date: '2026-06-01', topic: '技术交流', summary: '就一体化平台达成共识，下一步排期 POC', participants: [] };
     const patch = parseVisitMd(renderVisitMd(seedAccount, visit));

@@ -15,7 +15,7 @@ import { z } from 'zod';
 import { ACCOUNT_PROFILE_FIELDS, ActionSchema, type CommandContext } from '@jianghu/domain-contracts';
 import { prisma } from './prisma.js';
 import { applyAction } from './mutate.js';
-import { scoreFromState, ITEM_LABEL, ITEM_MAX, type ItemKey } from './g64111.js';
+import { C5_ITEMS, scoreFromState, ITEM_LABEL, ITEM_MAX, type ItemKey } from './g64111.js';
 import { activePersonWhere } from './activePerson.js';
 import { createFieldProposal } from './proposals.js';
 import { enqueueEnrichJob, enqueueSuggestJob, enqueueProfileJob } from './jobs.js';
@@ -36,6 +36,9 @@ const PROTOCOL_VERSION = '2024-11-05';
 const SERVER_INFO = { name: 'jianghu', version: '0.1.0' };
 const ACCOUNT_PROFILE_TOOL_PROPERTIES = Object.fromEntries(
   ACCOUNT_PROFILE_FIELDS.map((field) => [field, { type: 'string' as const }]),
+);
+const C5_ITEM_TOOL_PROPERTIES = Object.fromEntries(
+  C5_ITEMS.map((field) => [field, { type: 'boolean' as const }]),
 );
 
 // ───────────────────────── JSON-RPC 类型 ─────────────────────────
@@ -117,7 +120,7 @@ const TOOL_SCHEMAS = [
                 customerBusinessGoal: { type: ['string', 'null'], maxLength: 500 }, buyingMotivation: { type: ['string', 'null'], maxLength: 500 },
                 expectedSignDate: { type: 'string', maxLength: 20 }, expectedAmountW: { type: 'number' },
                 c3Items: { type: 'object', additionalProperties: { type: 'boolean' } },
-                c5Items: { type: 'object', additionalProperties: { type: 'boolean' } },
+                c5Items: { type: 'object', properties: C5_ITEM_TOOL_PROPERTIES, additionalProperties: false },
                 meta: { type: 'object', not: { required: ['_mcpOrigin'] }, additionalProperties: true },
               }, required: ['externalRef', 'name'], additionalProperties: false,
             },
@@ -302,7 +305,7 @@ const TOOL_SCHEMAS = [
         expectedSignDate: { type: 'string', description: '预计签约日 YYYY-MM-DD' },
         expectedAmountW: { type: 'number', description: '预计金额(万元)' },
         c3Items: { type: 'object', description: 'C3 立项材料 7 项掌握情况(boolean map，键=中文项名)', additionalProperties: { type: 'boolean' } },
-        c5Items: { type: 'object', description: 'C5 招采事项 5 项掌握情况(boolean map)', additionalProperties: { type: 'boolean' } },
+        c5Items: { type: 'object', description: 'C5 招采事项 5 项掌握情况(boolean map)', properties: C5_ITEM_TOOL_PROPERTIES, additionalProperties: false },
         meta: { type: 'object', description: 'JSON 兜底(BANT 辅助分等)', additionalProperties: true },
       },
       additionalProperties: false,
@@ -333,7 +336,7 @@ const TOOL_SCHEMAS = [
   {
     name: 'set_opportunity_roles',
     description:
-      '【写·评分状态】为某商机批量设置 ADURC 决策链角色（A批准人/D拍板人/U使用者/R影响者·技术把关/C教练）。⚠️ 只能对【已存在的正式干系人】设角色——候选人物须先经 propose_person + 用户人审采纳（或用 propose_person 带 suggestedRole，采纳时自动落角色）。G64111 趋赢力由江湖引擎据此实时算，不接收/不存死分。商机定位：opportunityId，或 opportunityExternalRef + 父客户。',
+      '【写·评分状态】为某商机批量设置 ADURC 决策链角色（A批准人/D拍板人/U使用者/R影响者·技术把关/C教练）。P4 仅限非 A/D 且全商机单选，服务端设置新 P4 时自动解除旧 P4；主 D 必须由用户在江湖确认，MCP 不自动指定。⚠️ 只能对【已存在的正式干系人】设角色——候选人物须先经 propose_person + 用户人审采纳（或用 propose_person 带 suggestedRole，采纳时自动落角色）。G64111 趋赢力由江湖引擎据此实时算，不接收/不存死分。商机定位：opportunityId，或 opportunityExternalRef + 父客户。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -570,6 +573,9 @@ async function getAccountDetail(ctx: CommandContext, accountId: string) {
     opportunities: account.opportunities.map((o) => ({
       id: o.id,
       name: o.name,
+      primaryDPersonId: o.primaryDPersonId && o.roles.some((role) => role.personId === o.primaryDPersonId && role.role === 'D')
+        ? o.primaryDPersonId
+        : null,
       externalRef: o.externalRef ?? undefined, // 供 WorkBuddy 按 {customer_id}#opp 反查商机 id（propose_person 的 opportunityId）
       pipelineStage: o.pipelineStage,
       engageStage: o.engageStage,
@@ -600,6 +606,7 @@ async function getWinTendency(ctx: CommandContext, opportunityId: string) {
   const visibleBiIds = new Set(visibleBis.map((bi) => bi.id));
   const visibleUcvs = opp.ucvs.filter((ucv) => visibleBiIds.has(ucv.targetBiId));
   const opportunity = {
+    primaryDPersonId: opp.primaryDPersonId,
     engageStage: opp.engageStage,
     c3Items: J<Record<string, boolean>>(opp.c3Items, {}),
     c5Items: J<Record<string, boolean>>(opp.c5Items, {}),
@@ -1215,7 +1222,7 @@ async function appendVisitNote(ctx: CommandContext, args: Record<string, unknown
   return { id, accountId: account.id, opportunityId: opportunityId ?? undefined, created: true, origin: 'mcp', note: `已记录拜访（${date}·外部来源·待核）。` };
 }
 
-// ── 阶段1.5 评分状态工具：WorkBuddy 推 ADUR/BI/UCV，G64111 由引擎据此实时算（守硬规则⑥不存死分）──
+// ── 阶段1.5 评分状态工具：WorkBuddy 推 ADURC/BI/UCV，G64111 由引擎据此实时算（守硬规则⑥不存死分）──
 // 铁律：角色/BI/UCV 只能挂【正式 Person】；候选人物须先 propose_person → 人审采纳。
 
 /** 商机定位：opportunityId 直取，或 opportunityExternalRef + 父客户(accountId/accountExternalRef/unifiedCreditCode)。 */
@@ -1252,7 +1259,7 @@ const VALID_ROLE = ['A', 'D', 'U', 'R', 'C'];
 const VALID_SENT = ['star', 'plus', 'neutral', 'unknown', 'minus', 'x'];
 const VALID_CONF = ['共识', '明确', '推理', '不清'];
 
-/** set_opportunity_roles：批量设 ADUR 角色（只对正式 Person，候选跳过并回报）。 */
+/** set_opportunity_roles：批量设 ADURC 角色（只对正式 Person，候选跳过并回报）。 */
 async function setOpportunityRoles(ctx: CommandContext, args: Record<string, unknown>) {
   const { tenantId } = ctx;
   const opp = await resolveOppFromArgs(tenantId, args);
@@ -1272,6 +1279,10 @@ async function setOpportunityRoles(ctx: CommandContext, args: Record<string, unk
     if (person.isCompetitor) { skipped.push({ personId: person.id, reason: '竞争对手不分配角色' }); continue; }
     const role = VALID_ROLE.includes(str(r?.role)) ? str(r?.role) : undefined;
     if (!role) { skipped.push({ personId: person.id, reason: '缺少有效 role(A/D/U/R/C)' }); continue; }
+    if (r?.isKeyInfluencer === true && (role === 'A' || role === 'D')) {
+      skipped.push({ personId: person.id, reason: 'P4 关键影响人必须是非 A/D 角色' });
+      continue;
+    }
     const patch: Record<string, unknown> = { role };
     if (typeof r?.isKeyInfluencer === 'boolean') patch.isKeyInfluencer = r.isKeyInfluencer;
     if (['purchasing', 'agency', 'ownerRep'].includes(str(r?.procurementType))) patch.procurementType = str(r?.procurementType);

@@ -1,7 +1,7 @@
 // M2 骨架预填：按客户类型预置 A/D/U/R/C「典型决策链」占位，新建商机时一键摆上画布，
 // 把"对着白纸画组织图"变成"填空 + 删减"。岗位据 docs/G64111-评分规格.md §1 能源客户典型岗位，
 // 四类客户（v1.1）可按行动宝典③精修（纯数据，改这里即可，无需动逻辑）。
-// 角色为 v1.1 ADURC：R=影响者·技术/招采把关（承旧 TB），C=教练·内应（承旧 R）。
+// 角色为 v1.1 ADURC：R=影响者·技术/招采把关，C=教练·内应。
 import type { Role } from '../types';
 
 export interface SkeletonRole {
@@ -15,9 +15,9 @@ export const CUSTOMER_SKELETONS: Record<number, SkeletonRole[]> = {
   1: [ // ① 央企发电集团（五大六小）
     { role: 'A', title: '集团/二级单位分管副总', orgLevel: 1 },
     { role: 'D', title: '信息化部负责人', orgLevel: 2 },
-    { role: 'R', title: '招标采购中心', orgLevel: 3 },        // 招采/技术把关（旧 TB）
+    { role: 'R', title: '招标采购中心', orgLevel: 3 },
     { role: 'U', title: '项目部/场站成本岗', orgLevel: 3 },
-    { role: 'C', title: '信息化业务骨干', orgLevel: 3 },       // 内应教练（旧 R）
+    { role: 'C', title: '信息化业务骨干', orgLevel: 3 },
   ],
   2: [ // ② 地方能源国企
     { role: 'A', title: '公司主要领导/分管副总', orgLevel: 1 },

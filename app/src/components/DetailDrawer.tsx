@@ -12,10 +12,10 @@ const ROLES: Role[] = ['A', 'D', 'U', 'R', 'C'];
 const SENTIMENTS: Sentiment[] = ['star', 'plus', 'neutral', 'unknown', 'minus', 'x'];
 
 export function DetailDrawer({
-  accId, oppId, person, oppRole, bis, ucvs, dispatch, draftDispatch, flushDraft, coordinator, onViewCloud, onClose, embedded,
+  accId, oppId, primaryDPersonId, person, oppRole, bis, ucvs, dispatch, draftDispatch, flushDraft, coordinator, onViewCloud, onClose, embedded,
   repairRecords = [], onRepairRecord,
 }: {
-  accId: string; oppId: string;
+  accId: string; oppId: string; primaryDPersonId?: string | null;
   person: Person;
   oppRole?: OppRole;
   bis: BurningIssue[];
@@ -142,10 +142,23 @@ export function DetailDrawer({
                   </label>
                   <label><span style={{ display: 'block' }}>关键影响人(P4)</span>
                     <label className="chk-line" style={{ marginTop: 6 }}>
-                      <input type="checkbox" checked={!!oppRole.isKeyInfluencer} onChange={(e) => setRole({ isKeyInfluencer: e.target.checked })} />锁定
+                      <input type="checkbox" checked={!!oppRole.isKeyInfluencer}
+                        disabled={(oppRole.role === 'A' || oppRole.role === 'D') && !oppRole.isKeyInfluencer}
+                        onChange={(e) => setRole({ isKeyInfluencer: e.target.checked })} />锁定（全商机单选）
                     </label>
                   </label>
                 </div>
+                {oppRole.role === 'D' && (
+                  <div className="edit-row">
+                    <label><span style={{ display: 'block' }}>主拍板人 D（C1 FORM）</span>
+                      <label className="chk-line" style={{ marginTop: 6 }}>
+                        <input type="radio" name={`primary-d-${oppId}`} checked={primaryDPersonId === person.id}
+                          onChange={() => dispatch({ type: 'UPDATE_OPP', accId, oppId, patch: { primaryDPersonId: person.id } })} />设为主 D
+                      </label>
+                    </label>
+                    {!primaryDPersonId && <div className="empty-hint">尚未确认主 D；当前评分按存量兼容顺序取首位 D，请尽快确认。</div>}
+                  </div>
+                )}
                 <div className="edit-row">
                   <label><span>招采关键人类型</span>
                     <select value={oppRole.procurementType ?? ''} onChange={(e) => setRole({ procurementType: (e.target.value || undefined) as ProcurementType })}>

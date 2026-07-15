@@ -248,6 +248,13 @@ describe('INT-302 safe duplicate Person merge', () => {
     const context = await createTestContext();
     try {
       const tree = await seedMergeGraph(context, 'success');
+      await context.prisma.oppRole.updateMany({
+        where: { tenantId: context.tenant.id, opportunityId: tree.secondOpportunityId, personId: tree.sourcePersonId },
+        data: { role: 'D' },
+      });
+      await context.prisma.opportunity.update({
+        where: { id: tree.secondOpportunityId }, data: { primaryDPersonId: tree.sourcePersonId },
+      });
       const payload = {
         targetPersonId: tree.targetPersonId,
         sourcePersonId: tree.sourcePersonId,
@@ -277,8 +284,10 @@ describe('INT-302 safe duplicate Person merge', () => {
 
       await expect(context.prisma.oppRole.findMany({ where: { tenantId: context.tenant.id }, orderBy: { opportunityId: 'asc' } })).resolves.toEqual(expect.arrayContaining([
         expect.objectContaining({ opportunityId: tree.opportunityId, personId: tree.targetPersonId, role: 'U', sentiment: 'minus', procurementType: '公开招标' }),
-        expect.objectContaining({ opportunityId: tree.secondOpportunityId, personId: tree.targetPersonId, role: 'A' }),
+        expect.objectContaining({ opportunityId: tree.secondOpportunityId, personId: tree.targetPersonId, role: 'D' }),
       ]));
+      await expect(context.prisma.opportunity.findUniqueOrThrow({ where: { id: tree.secondOpportunityId } }))
+        .resolves.toMatchObject({ primaryDPersonId: tree.targetPersonId });
       expect(await context.prisma.oppRole.count({ where: { tenantId: context.tenant.id, personId: tree.sourcePersonId } })).toBe(0);
       expect(await context.prisma.opportunityMember.count({ where: { tenantId: context.tenant.id, personId: tree.sourcePersonId } })).toBe(0);
       expect(await context.prisma.opportunityMember.count({ where: { tenantId: context.tenant.id, personId: tree.targetPersonId } })).toBe(2);

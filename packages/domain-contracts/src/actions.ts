@@ -21,6 +21,17 @@ const jsonValue: z.ZodType<JsonValue> = z.lazy(() => z.union([
 const jsonRecord = z.record(z.string(), jsonValue);
 const booleanRecord = z.record(z.string(), z.boolean());
 
+export const C5_ITEM_KEYS = [
+  '竞标方名单/家数', '招标参数', '评标规则', '甲方项目代表', '招标代理机构',
+] as const;
+export const C5ItemsWriteSchema = z.object({
+  '竞标方名单/家数': z.boolean().optional(),
+  '招标参数': z.boolean().optional(),
+  '评标规则': z.boolean().optional(),
+  '甲方项目代表': z.boolean().optional(),
+  '招标代理机构': z.boolean().optional(),
+}).strict();
+
 export const ACCOUNT_PROFILE_FIELDS = [
   'business', 'group', 'bidding', 'risk', 'ourCooperation', 'salesNote', 'aiSuggestion',
 ] as const;
@@ -70,8 +81,9 @@ const opportunityInput = z.object({
   singleSalesGoal: z.string().optional(),
   customerBusinessGoal: z.string().optional(),
   buyingMotivation: z.string().optional(),
+  primaryDPersonId: id.nullable().optional(),
   c3Items: booleanRecord.optional(),
-  c5Items: booleanRecord.optional(),
+  c5Items: C5ItemsWriteSchema.optional(),
   externalRef: z.string().optional(),
   status: opportunityStatus.optional(),
   productSolution: z.string().optional(),
@@ -92,8 +104,9 @@ const opportunityPatch = z.object({
   singleSalesGoal: z.string().optional(),
   customerBusinessGoal: z.string().optional(),
   buyingMotivation: z.string().optional(),
+  primaryDPersonId: id.nullable().optional(),
   c3Items: booleanRecord.optional(),
-  c5Items: booleanRecord.optional(),
+  c5Items: C5ItemsWriteSchema.optional(),
   externalRef: z.string().optional(),
   status: opportunityStatus.optional(),
   productSolution: z.string().optional(),

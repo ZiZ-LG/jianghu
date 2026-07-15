@@ -52,7 +52,7 @@ export async function createDemoForTenant(tenantId: string): Promise<void> {
     singleSalesGoal: '中标西部基地一体化管控平台并建成局级样板', customerBusinessGoal: '多个新能源EPC项目降本增效 + 投标数字化加分',
     buyingMotivation: '集团数字化转型考核 + 多项目亏损预警倒逼',
     c3Items: S({ 立项原因: true, 项目名称: true, 项目预算: true, 实施计划: true, 资金来源: true, 项目排序: false, 采购方式: true }),
-    c5Items: S({ 竞标方家数: true, 招标参数: true, 评标规则: false, 甲方代表: true, 招标代理: false }),
+    c5Items: S({ '竞标方名单/家数': true, 招标参数: true, 评标规则: false, 甲方项目代表: true, 招标代理机构: false }),
     expectedSignDate: ymd(120), expectedAmountW: 2000,
   } });
 

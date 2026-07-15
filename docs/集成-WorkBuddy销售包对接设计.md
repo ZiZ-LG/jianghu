@@ -96,7 +96,7 @@ model VisitNote {
 
 | 工具 | 作用 | 人审顺序 |
 |---|---|---|
-| `set_opportunity_roles` | 设 ADUR 决策链：roles[{personId, role(A/D/U/TB/R), sentiment(star/plus/neutral/unknown/minus/x), isKeyInfluencer, procurementType/Status}] | 只能对**已存在正式 Person**；候选人物须先 `propose_person`→人审采纳，再设角色 |
+| `set_opportunity_roles` | 设 ADURC 决策链：roles[{personId, role(A/D/U/R/C), sentiment(star/plus/neutral/unknown/minus/x), isKeyInfluencer, procurementType/Status}]；R=影响者·技术把关，C=教练；P4 仅允许非 A/D 且同一商机单选 | 只能对**已存在正式 Person**；候选人物须先 `propose_person`→人审采纳，再设角色 |
 | `set_burning_issue` / `set_ucv` | 设 D 的燃眉之急(BI) / 我方 UCV | 同上 |
 | `propose_person`（扩展） | 增可选 `suggestedRole/suggestedSentiment`，采纳时一并落 OppRole | 候选人审 |
 
@@ -107,7 +107,7 @@ model VisitNote {
 江湖硬规则⑥：趋赢力分由引擎（`g64111.ts` / `scoreFromState`）从**结构化状态**算出，不存死分。销售包档案里 AI 直接打了 `qwl_*` 分——**不要把分推过来存**，否则与江湖引擎不一致。
 
 正确做法：WorkBuddy 同步**趋赢力的输入状态**，江湖自行算分：
-- 6 必清 → `c3Items`/`c5Items`（boolean map：某必清项是否齐）
+- 6 必清 → `c3Items`/`c5Items`（boolean map：某必清项是否齐）；C5 只写五个权威键：竞标方名单/家数、招标参数、评标规则、甲方项目代表、招标代理机构
 - 决策链支持度 → `set_opportunity_roles`（OppRole.role/sentiment）
 - BI/UCV → `set_burning_issue`/`set_ucv`
 
@@ -133,13 +133,13 @@ model VisitNote {
 | expected_signing_date / _amount_w | Opportunity.expectedSignDate/expectedAmountW | upsert_opportunity | 🟢 |
 | win_probability | Opportunity.winProbability | **不推**（销售在江湖填） | ✏️ |
 | qwl 必清项状态 | Opportunity.c3Items/c5Items | upsert_opportunity | 🟢 |
-| ADUR 决策链(A/D/U/TB/R + 支持度) | OppRole.role/sentiment | set_opportunity_roles | 🟢（人须先采纳） |
+| ADURC 决策链（A/D/U/R/C + 支持度；R=影响者·技术把关，C=教练；P4 非 A/D 且单选） | OppRole.role/sentiment | set_opportunity_roles | 🟢（人须先采纳） |
 | 干系人本人(姓名/职务/层级) | Person | propose_person | 🔴 候选 |
 | 关系连线 | Edge | propose_relationship | 🔴 候选 |
 | D 的 BI / 我方 UCV | BurningIssue / UCV | set_burning_issue/set_ucv | 🟢 |
 | 拜访记录 | VisitNote | append_visit_note | 🟢 |
 
-> 三类客户类型、ADUR 角色码、支持度符号（☆/+/=/?/-/x）、6 段商机阶段在两边**已经是同一套**，无需翻译层，仅做枚举值规整。
+> 三类客户类型、ADURC 角色码、支持度符号（☆/+/=/?/-/x）、6 段商机阶段在两边**已经是同一套**，无需翻译层，仅做枚举值规整。
 
 ---
 

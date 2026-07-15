@@ -51,6 +51,7 @@ export interface ScoringUcv {
 }
 
 export interface ScoringOpportunity {
+  primaryDPersonId?: string | null;
   engageStage?: EngageStage | string | null;
   c3Items?: Record<string, unknown>;
   c5Items?: Record<string, unknown>;
