@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, type AccessTokenInfo } from '../api';
+import { api, type AccessTokenInfo, type AccessTokenPreset } from '../api';
 import { Modal } from './Modal';
 
 // 推导 MCP 接入地址：生产同源走 origin/api/mcp；本地开发(5173)指向后端 3001。
@@ -44,6 +44,7 @@ export function McpAccess({ onClose }: { onClose: () => void }) {
   const url = mcpUrl();
   const [tokens, setTokens] = useState<AccessTokenInfo[]>([]);
   const [name, setName] = useState('');
+  const [preset, setPreset] = useState<AccessTokenPreset>('workbuddy_sync');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [fresh, setFresh] = useState<{ token: string; name: string } | null>(null); // 刚生成的一次性明文
@@ -59,7 +60,7 @@ export function McpAccess({ onClose }: { onClose: () => void }) {
   const create = async () => {
     setErr(''); setBusy(true);
     try {
-      const r = await api.accessTokenCreate(name.trim());
+      const r = await api.accessTokenCreate(name.trim(), preset);
       setFresh({ token: r.token, name: r.name || '（未命名）' });
       setName(''); load();
     } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
@@ -106,6 +107,22 @@ export function McpAccess({ onClose }: { onClose: () => void }) {
 
       {/* 生成新令牌 */}
       <div className="enrich-cfg" style={{ marginTop: 12 }}>
+        <div className="fld sm" style={{ marginBottom: 10 }}>
+          <span>最小权限预设</span>
+          <div style={{ display: 'grid', gap: 6 }}>
+            {([
+              ['workbuddy_sync', 'Workbuddy 同步', '同步客户/商机/拜访，并提交人物、关系和证据候选'],
+              ['readonly_analysis', '只读分析', '只能查看作战数据，不能写入或提交候选'],
+              ['research_proposal', '调研提案', '只读并提交人物、关系和证据候选，不能改正式业务数据'],
+            ] as const).map(([value, label, description]) => (
+              <label key={value} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', cursor: 'pointer' }}>
+                <input type="radio" name="mcp-token-preset" value={value} checked={preset === value}
+                  onChange={() => setPreset(value)} style={{ marginTop: 3 }} />
+                <span><strong>{label}</strong><br /><span style={{ color: 'var(--muted)', fontSize: 12 }}>{description}</span></span>
+              </label>
+            ))}
+          </div>
+        </div>
         <div className="fld-row" style={{ alignItems: 'flex-end' }}>
           <label className="fld sm" style={{ flex: 1, marginBottom: 0 }}><span>新令牌备注名（可选，便于辨认）</span>
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="如：我的 Workbuddy / 张三的 Claude"
@@ -126,7 +143,7 @@ export function McpAccess({ onClose }: { onClose: () => void }) {
             <div key={t.id} className="member-row">
               <div style={{ flex: 1 }}>
                 <div className="m-name">{t.name || '（未命名）'} <span style={{ color: 'var(--faint)', fontWeight: 400 }}>· …{t.lastFour}</span></div>
-                <div className="m-email">创建于 {new Date(t.createdAt).toLocaleDateString('zh-CN')} · {t.lastUsedAt ? `最近使用 ${new Date(t.lastUsedAt).toLocaleDateString('zh-CN')}` : '尚未使用'}</div>
+                <div className="m-email">{t.preset === 'workbuddy_sync' ? 'Workbuddy 同步' : t.preset === 'readonly_analysis' ? '只读分析' : t.preset === 'research_proposal' ? '调研提案' : '旧令牌（请重发）'} · 创建于 {new Date(t.createdAt).toLocaleDateString('zh-CN')} · {t.lastUsedAt ? `最近使用 ${new Date(t.lastUsedAt).toLocaleDateString('zh-CN')}` : '尚未使用'}</div>
               </div>
               <button className="btn ghost sm" onClick={() => revoke(t.id)}>吊销</button>
             </div>
@@ -135,7 +152,7 @@ export function McpAccess({ onClose }: { onClose: () => void }) {
       )}
 
       <div className="hint-text" style={{ marginTop: 14 }}>
-        🔒 令牌等同你的账号读写权限，请勿外泄。怀疑泄漏时在此「吊销」并重新生成即可。配置粘到 AI 助手后，直接对它说「看看我有哪些客户」试试。
+        🔒 请按用途选择最小权限。吊销、成员移除或角色降级会在下一次请求立即生效；升级前生成的旧令牌默认降为只读，需要按用途重新签发。怀疑泄漏时请立即吊销。配置粘到 AI 助手后，可先说「看看我有哪些客户」验证连接。
       </div>
     </Modal>
   );

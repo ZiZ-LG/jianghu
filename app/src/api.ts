@@ -374,12 +374,24 @@ export const api = {
     req('/api/qcc/company-data', { method: 'POST', body: JSON.stringify({ name }) }),
   // AI 助手接入令牌（长效，给外部 agent 连 MCP 用）
   accessTokenList: (): Promise<{ tokens: AccessTokenInfo[] }> => req('/api/access-tokens'),
-  accessTokenCreate: (name: string): Promise<{ id: string; name: string; token: string; lastFour: string }> =>
-    req('/api/access-tokens', { method: 'POST', body: JSON.stringify({ name }) }),
+  accessTokenCreate: (name: string, preset: AccessTokenPreset): Promise<AccessTokenCreateResult> =>
+    req('/api/access-tokens', { method: 'POST', body: JSON.stringify({ name, preset }) }),
   accessTokenRevoke: (id: string): Promise<{ ok: true }> => req(`/api/access-tokens/${id}`, { method: 'DELETE' }),
 };
 
-export interface AccessTokenInfo { id: string; name: string; lastFour: string; createdAt: string; lastUsedAt: string | null }
+export type AccessTokenPreset = 'workbuddy_sync' | 'readonly_analysis' | 'research_proposal';
+export type AccessScope = 'read' | 'human_command' | 'sync_business' | 'propose_people' | 'propose_relations' | 'submit_evidence';
+export interface AccessTokenInfo {
+  id: string;
+  name: string;
+  lastFour: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  preset: AccessTokenPreset | null;
+  scopes: AccessScope[];
+  tokenVersion: number;
+}
+export interface AccessTokenCreateResult extends Omit<AccessTokenInfo, 'createdAt' | 'lastUsedAt'> { token: string }
 
 export interface Shareholder { name: string; ratio: string; amount: string }
 export interface Investment { name: string; ratio: string; status: string; establishDate: string }

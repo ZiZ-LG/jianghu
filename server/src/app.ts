@@ -235,6 +235,7 @@ function registerRoutes(app: FastifyInstance): void {
       channel: 'mcp',
       requestId: req.id,
       assertionMode: 'machine_proposed',
+      scopes: req.user.scopes,
     }, req.body);
     if (out === null) return reply.code(204).send(); // 纯通知，无响应体
     return out;

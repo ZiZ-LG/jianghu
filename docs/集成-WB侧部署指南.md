@@ -24,7 +24,7 @@
 
 ## 二、配置（一次性，M-A 时已做的话跳过）
 
-1. **令牌**：江湖「🔌 接入 AI」生成 `jh_…`（本地联调我已帮你生成过一个，配在 mcp.json 即可）。
+1. **令牌**：江湖「🔌 接入 AI」选择用途预设并生成 `jh_…`。WorkBuddy 正式同步请选择 **Workbuddy 同步**；升级前生成的旧令牌会安全降为只读，需要重新签发。
 2. **`~/.workbuddy/mcp.json`** 加 `jianghu` server（本地联调 `url` 用 `http://localhost:3002/api/mcp`）：
    ```json
    { "mcpServers": { "jianghu": {
@@ -32,6 +32,16 @@
        "headers": { "Authorization": "Bearer jh_<你的令牌>" }, "timeout": 60000 } } }
    ```
 3. **部署两个 skill**（客户档案 + 拜访记录）到 WorkBuddy：文件装配则重铺 `~/.workbuddy/skills/` 后重启；GUI 建的则更新对应 Flow + SKILL 内容。**务必确认两个 SKILL 的 `allowed-tools` 都含 `mcp__jianghu__*`**。
+
+### 令牌最小权限预设
+
+| 预设 | 能力 | 适用场景 |
+|---|---|---|
+| **Workbuddy 同步** | 读取；同步客户/商机/拜访；提交人物、关系、证据候选 | 正式 WorkBuddy Flow |
+| **只读分析** | 仅读取 | 报表、分析、诊断连接 |
+| **调研提案** | 读取；提交人物、关系、证据候选；不能写正式业务数据 | 外部调研 Agent |
+
+外部令牌不包含人工命令权限，不能调用 `set_opportunity_roles`、`set_burning_issue` 或 `set_ucv`。令牌吊销、所属成员被移除、或角色被降为只读后，下一次请求立即按当前权限生效；无需等待令牌过期。请勿复用旧令牌规避预设。
 
 ---
 
@@ -84,6 +94,7 @@ npm run migrate:sync-anchor-report
 | 现象 | 排查 |
 |---|---|
 | `list_accounts` 调不通 | 令牌错；url 不对（本地 :3002）；江湖后端没起 |
+| 写工具提示令牌无权调用 | 检查令牌预设；旧令牌或降级成员仅能只读。按实际用途重新签发并替换本机配置后重试，业务重试继续复用原 `idempotencyKey` |
 | 新建客户/商机江湖没出现 | flow 没读到改后版本（重启 WorkBuddy/确认装配路径）；`allowed-tools` 缺 `mcp__jianghu__*` |
 | 干系人没进收件箱 | LLM 没抽出 `adurc_changes`；或 customer 还没 upsert_account（先有客户再有干系人） |
 | 支持度变更没进提案 | 该人还是候选（未采纳）→ 走的是候选不是 human-wins；先采纳为正式人 |

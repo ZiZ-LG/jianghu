@@ -116,4 +116,20 @@ describe('typed API failures', () => {
     ]);
     expect((fetchMock.mock.calls[5][1] as RequestInit).headers).toMatchObject({ 'Idempotency-Key': 'person-merge-key' });
   });
+
+  it('creates MCP tokens through a server-owned preset without sending raw scopes', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => response(200, {
+      id: 'at-test', name: 'Research', token: 'jh_one-time', lastFour: 'time',
+      preset: 'research_proposal', scopes: ['read', 'propose_people', 'propose_relations', 'submit_evidence'], tokenVersion: 1,
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await api.accessTokenCreate('Research', 'research_proposal');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://localhost:3001/api/access-tokens');
+    expect((init as RequestInit).method).toBe('POST');
+    expect(JSON.parse(String((init as RequestInit).body))).toEqual({ name: 'Research', preset: 'research_proposal' });
+  });
 });

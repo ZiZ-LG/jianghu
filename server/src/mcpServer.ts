@@ -21,6 +21,8 @@ import { createFieldProposal } from './proposals.js';
 import { enqueueEnrichJob, enqueueSuggestJob, enqueueProfileJob } from './jobs.js';
 import { resolveScopedRelSuggestions } from './suggestionScope.js';
 import { syncIntelBundle } from './mcp/syncBundle.js';
+import { ALL_ACCESS_SCOPES, scopesForCurrentRole, type AccessScope } from './accessToken.js';
+import { viewerAccountIds } from './scope.js';
 
 // 每租户 pending 候选容量上限（防外部 agent 刷爆）
 const MAX_PENDING_PERSON_SUGG = 200;
@@ -76,7 +78,7 @@ function toolError(message: string) {
 
 // ───────────────────────── 工具定义（tools/list 用） ─────────────────────────
 
-const TOOL_DEFS = [
+const TOOL_SCHEMAS = [
   {
     name: 'sync_intel_bundle',
     description: '【推荐·原子同步】一次同步客户、商机、拜访原文及人物/关系/证据候选；按 idempotencyKey 返回可重放 SyncReceipt。',
@@ -411,6 +413,65 @@ const TOOL_DEFS = [
   },
 ] as const;
 
+type ToolName = (typeof TOOL_SCHEMAS)[number]['name'];
+
+const TOOL_SCOPE_REQUIREMENTS: Readonly<Record<ToolName, readonly AccessScope[]>> = {
+  sync_intel_bundle: ['sync_business'],
+  list_accounts: ['read'],
+  get_account_detail: ['read'],
+  get_win_tendency: ['read'],
+  propose_person: ['propose_people'],
+  propose_relationship: ['propose_relations'],
+  list_pending: ['read'],
+  upsert_account: ['sync_business'],
+  upsert_opportunity: ['sync_business'],
+  append_visit_note: ['sync_business'],
+  set_opportunity_roles: ['human_command'],
+  set_burning_issue: ['human_command'],
+  set_ucv: ['human_command'],
+};
+
+// 权限声明随工具定义发布；tools/list 与 tools/call 共享同一份声明，避免漏加门禁。
+const TOOL_DEFS = TOOL_SCHEMAS.map((definition) => ({
+  ...definition,
+  requiredScopes: TOOL_SCOPE_REQUIREMENTS[definition.name],
+}));
+
+function contextScopes(ctx: CommandContext): readonly AccessScope[] {
+  if (ctx.scopes) {
+    const allowed = new Set<string>(ALL_ACCESS_SCOPES);
+    return ctx.scopes.filter((scope): scope is AccessScope => allowed.has(scope));
+  }
+  // 仅供进程内调用/旧单测兼容；HTTP 路径始终由 mcpAuthenticate 显式注入 scopes。
+  return ctx.actorRole === 'viewer' ? scopesForCurrentRole('viewer') : ALL_ACCESS_SCOPES;
+}
+
+function dynamicSyncScopes(args: Record<string, unknown>): AccessScope[] {
+  const bundle = args.bundle && typeof args.bundle === 'object' && !Array.isArray(args.bundle)
+    ? args.bundle as Record<string, unknown>
+    : {};
+  const required: AccessScope[] = [];
+  if (Array.isArray(bundle.people) && bundle.people.length > 0) required.push('propose_people');
+  if (Array.isArray(bundle.relations) && bundle.relations.length > 0) required.push('propose_relations');
+  if (Array.isArray(bundle.evidences) && bundle.evidences.length > 0) required.push('submit_evidence');
+  return required;
+}
+
+function requiredScopesForCall(name: string, args: Record<string, unknown>): readonly AccessScope[] | null {
+  const definition = TOOL_DEFS.find((tool) => tool.name === name);
+  if (!definition) return null;
+  return name === 'sync_intel_bundle'
+    ? [...definition.requiredScopes, ...dynamicSyncScopes(args)]
+    : definition.requiredScopes;
+}
+
+function canCallTool(ctx: CommandContext, name: string, args: Record<string, unknown>): boolean | null {
+  const required = requiredScopesForCall(name, args);
+  if (!required) return null;
+  const granted = new Set(contextScopes(ctx));
+  return required.every((scope) => granted.has(scope));
+}
+
 const CUSTOMER_TYPE_LABEL: Record<number, string> = {
   1: '央企发电集团（五大六小）',
   2: '地方能源国企',
@@ -432,9 +493,11 @@ const J = <T>(s: string | null | undefined, d: T): T => { try { return s ? (JSON
 // ───────────────────────── 工具实现（全部按 tenantId 隔离 · 只读） ─────────────────────────
 
 /** list_accounts：本租户客户清单 + 计数。 */
-async function listAccounts(tenantId: string) {
+async function listAccounts(ctx: CommandContext) {
+  const { tenantId } = ctx;
+  const readableIds = ctx.actorRole === 'viewer' ? await viewerAccountIds(tenantId, ctx.actorId) : null;
   const accounts = await prisma.account.findMany({
-    where: { tenantId },
+    where: { tenantId, ...(readableIds ? { id: { in: [...readableIds] } } : {}) },
     orderBy: { createdAt: 'asc' },
     include: { _count: { select: { persons: { where: activePersonWhere }, opportunities: true } } },
   });
@@ -453,7 +516,10 @@ async function listAccounts(tenantId: string) {
 }
 
 /** get_account_detail：某客户干系人 + 角色 + 关系概览（findFirst 双重锁定 tenantId）。 */
-async function getAccountDetail(tenantId: string, accountId: string) {
+async function getAccountDetail(ctx: CommandContext, accountId: string) {
+  const { tenantId } = ctx;
+  const readableIds = ctx.actorRole === 'viewer' ? await viewerAccountIds(tenantId, ctx.actorId) : null;
+  if (readableIds && !readableIds.has(accountId)) throw new Error('客户不存在或不属于当前工作区');
   const account = await prisma.account.findFirst({
     where: { id: accountId, tenantId },
     include: {
@@ -512,9 +578,11 @@ async function getAccountDetail(tenantId: string, accountId: string) {
 }
 
 /** get_win_tendency：某商机 G64111 评分（先按 tenantId 取商机及其父客户的人，再算分）。 */
-async function getWinTendency(tenantId: string, opportunityId: string) {
+async function getWinTendency(ctx: CommandContext, opportunityId: string) {
+  const { tenantId } = ctx;
+  const readableIds = ctx.actorRole === 'viewer' ? await viewerAccountIds(tenantId, ctx.actorId) : null;
   const opp = await prisma.opportunity.findFirst({
-    where: { id: opportunityId, tenantId },
+    where: { id: opportunityId, tenantId, ...(readableIds ? { accountId: { in: [...readableIds] } } : {}) },
     include: {
       roles: true,
       bis: true,
@@ -527,6 +595,10 @@ async function getWinTendency(tenantId: string, opportunityId: string) {
   const account = {
     persons: opp.account.persons.map((p) => ({ id: p.id, form: J<{ family7?: Record<string, string | undefined> }>(p.form, {}) })),
   };
+  // 与 state/PDE 的 viewer 字段 ACL 一致：私人 BI 及其依赖 UCV 不得通过精确分数侧信道泄漏。
+  const visibleBis = ctx.actorRole === 'viewer' ? opp.bis.filter((bi) => !bi.isPrivate) : opp.bis;
+  const visibleBiIds = new Set(visibleBis.map((bi) => bi.id));
+  const visibleUcvs = opp.ucvs.filter((ucv) => visibleBiIds.has(ucv.targetBiId));
   const opportunity = {
     engageStage: opp.engageStage,
     c3Items: J<Record<string, boolean>>(opp.c3Items, {}),
@@ -540,8 +612,8 @@ async function getWinTendency(tenantId: string, opportunityId: string) {
       procurementType: (r.procurementType ?? undefined) as any,
       procurementStatus: (r.procurementStatus ?? undefined) as any,
     })),
-    bis: opp.bis.map((b) => ({ id: b.id, personId: b.personId, confidence: b.confidence as any })),
-    ucvs: opp.ucvs.map((u) => ({ targetBiId: u.targetBiId, status: u.status as any })),
+    bis: visibleBis.map((b) => ({ id: b.id, personId: b.personId, confidence: b.confidence as any })),
+    ucvs: visibleUcvs.map((u) => ({ targetBiId: u.targetBiId, status: u.status as any })),
   };
 
   const s = scoreFromState(account, opportunity);
@@ -725,14 +797,20 @@ async function proposeRelationship(tenantId: string, _userId: string, args: Reco
 }
 
 /** list_pending：列本租户待人审候选（只读）。 */
-async function listPending(tenantId: string, accountId: string) {
+async function listPending(ctx: CommandContext, accountId: string) {
+  const { tenantId } = ctx;
+  const readableIds = ctx.actorRole === 'viewer' ? await viewerAccountIds(tenantId, ctx.actorId) : null;
+  if (accountId && readableIds && !readableIds.has(accountId)) throw new Error('客户不存在或不属于当前工作区');
+
   const personWhere: any = { tenantId, status: 'pending' };
   if (accountId) personWhere.accountId = accountId;
+  else if (readableIds) personWhere.accountId = { in: [...readableIds] };
   const persons = await prisma.personSuggestion.findMany({ where: personWhere, orderBy: { createdAt: 'desc' }, take: 100 });
 
   const relWhere: any = { tenantId, status: 'pending' };
-  if (accountId) {
-    const opps = await prisma.opportunity.findMany({ where: { tenantId, accountId }, select: { id: true } });
+  if (accountId || readableIds) {
+    const accountFilter = accountId ? { accountId } : { accountId: { in: [...readableIds!] } };
+    const opps = await prisma.opportunity.findMany({ where: { tenantId, ...accountFilter }, select: { id: true } });
     relWhere.opportunityId = { in: opps.map((o) => o.id) };
   }
   const rels = await prisma.relSuggestion.findMany({ where: relWhere, orderBy: { createdAt: 'desc' }, take: 100 });
@@ -1300,23 +1378,23 @@ async function callTool(ctx: CommandContext, name: string, args: Record<string, 
     case 'sync_intel_bundle':
       return syncIntelBundle(ctx, args);
     case 'list_accounts':
-      return listAccounts(tenantId);
+      return listAccounts(ctx);
     case 'get_account_detail': {
       const accountId = typeof args.accountId === 'string' ? args.accountId : '';
       if (!accountId) throw new Error('缺少参数 accountId');
-      return getAccountDetail(tenantId, accountId);
+      return getAccountDetail(ctx, accountId);
     }
     case 'get_win_tendency': {
       const opportunityId = typeof args.opportunityId === 'string' ? args.opportunityId : '';
       if (!opportunityId) throw new Error('缺少参数 opportunityId');
-      return getWinTendency(tenantId, opportunityId);
+      return getWinTendency(ctx, opportunityId);
     }
     case 'propose_person':
       return proposePerson(tenantId, userId, args);
     case 'propose_relationship':
       return proposeRelationship(tenantId, userId, args);
     case 'list_pending':
-      return listPending(tenantId, typeof args.accountId === 'string' ? args.accountId : '');
+      return listPending(ctx, typeof args.accountId === 'string' ? args.accountId : '');
     case 'upsert_account':
       return syncLegacyAccount(ctx, args);
     case 'upsert_opportunity':
@@ -1365,13 +1443,18 @@ export async function handleMcpMessage(ctx: CommandContext, msg: JsonRpcRequest)
         return ok(id, {});
 
       case 'tools/list':
-        return ok(id, { tools: TOOL_DEFS });
+        return ok(id, {
+          tools: TOOL_DEFS.filter((tool) => tool.requiredScopes.every((scope) => contextScopes(ctx).includes(scope))),
+        });
 
       case 'tools/call': {
         const params = ToolCallParamsSchema.safeParse(msg.params);
         if (!params.success) return err(id, -32602, '无效的 tool params');
         const { name, arguments: args = {} } = params.data;
         try {
+          if (canCallTool(ctx, name, args) === false) {
+            return ok(id, toolError('权限不足：该令牌无权调用此工具'));
+          }
           const result = await callTool(ctx, name, args);
           return ok(id, toolText(result));
         } catch (e: unknown) {
