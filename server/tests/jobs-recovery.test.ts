@@ -138,18 +138,20 @@ describe('background job lease and crash recovery', () => {
       id: 'job-recovery-opportunity', tenantId: test.tenant.id, accountId: 'job-recovery-account',
       name: '任务恢复商机', customerType: 2, pipelineStage: '线索', engageStage: '需求调研立项',
     } });
-    const first = await Promise.all([
-      enqueueEnrichJob(test.tenant.id, 'job-recovery-account', 'auto', test.prisma),
-      enqueueProfileJob(test.tenant.id, 'job-recovery-account', test.prisma),
-      enqueueSuggestJob(test.tenant.id, 'job-recovery-account', 'job-recovery-opportunity', test.prisma),
-      enqueuePullRecordingJob(test.tenant.id, 'mock-source', 'job-recovery-account', test.prisma),
-    ]);
-    const second = await Promise.all([
-      enqueueEnrichJob(test.tenant.id, 'job-recovery-account', 'web', test.prisma),
-      enqueueProfileJob(test.tenant.id, 'job-recovery-account', test.prisma),
-      enqueueSuggestJob(test.tenant.id, 'job-recovery-account', 'job-recovery-opportunity', test.prisma),
-      enqueuePullRecordingJob(test.tenant.id, 'mock-source', 'job-recovery-account', test.prisma),
-    ]);
+    // This case verifies cross-type key stability, not SQLite writer concurrency.
+    // Concurrent same/different-key behavior is covered by the adjacent contention tests.
+    const first = [
+      await enqueueEnrichJob(test.tenant.id, 'job-recovery-account', 'auto', test.prisma),
+      await enqueueProfileJob(test.tenant.id, 'job-recovery-account', test.prisma),
+      await enqueueSuggestJob(test.tenant.id, 'job-recovery-account', 'job-recovery-opportunity', test.prisma),
+      await enqueuePullRecordingJob(test.tenant.id, 'mock-source', 'job-recovery-account', test.prisma),
+    ];
+    const second = [
+      await enqueueEnrichJob(test.tenant.id, 'job-recovery-account', 'web', test.prisma),
+      await enqueueProfileJob(test.tenant.id, 'job-recovery-account', test.prisma),
+      await enqueueSuggestJob(test.tenant.id, 'job-recovery-account', 'job-recovery-opportunity', test.prisma),
+      await enqueuePullRecordingJob(test.tenant.id, 'mock-source', 'job-recovery-account', test.prisma),
+    ];
     expect(first.every((result) => result.enqueued)).toBe(true);
     expect(second.every((result) => !result.enqueued)).toBe(true);
     expect(new Set(first.map((result) => result.id)).size).toBe(4);
