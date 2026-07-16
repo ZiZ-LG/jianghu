@@ -34,7 +34,7 @@ export async function cloneOpportunityInTransaction(
     ? (await db.person.findMany({ where: { tenantId, accountId, id: { in: personIds }, ...activePersonWhere }, select: { id: true } })).map((x) => x.id)
     : [];
   const sel = new Set(validIds);
-  const oppId = 'opp_' + randomUUID().slice(0, 12);
+  const oppId = 'opp_' + randomUUID().replaceAll('-', '');
   await db.opportunity.create({ data: {
     id: oppId, tenantId, accountId, name: name.slice(0, 100), customerType: acc.customerType,
     pipelineStage: '线索', engageStage: '需求调研立项', memberScoped: true,
@@ -53,7 +53,7 @@ export async function cloneOpportunityInTransaction(
     if (withEdges) {
       const edges = await db.edge.findMany({ where: { tenantId, opportunityId: fromOppId } });
       for (const e of edges) if (sel.has(e.source) && sel.has(e.target)) await db.edge.create({ data: {
-        id: 'e_' + randomUUID().slice(0, 12), tenantId, accountId, opportunityId: oppId,
+        id: 'e_' + randomUUID().replaceAll('-', ''), tenantId, accountId, opportunityId: oppId,
         source: e.source, target: e.target, layer: e.layer, label: e.label, color: e.color,
         style: e.style, width: e.width, directed: e.directed, origin: e.origin, shape: e.shape, bend: e.bend,
       } });

@@ -278,7 +278,7 @@ export async function ingestVoiceText(
       if (skipVisitNote) return { ok: true, receipt: { needConfig: true, account: acc ? { id: acc.id, name: acc.name, status: 'matched' } : null, visitNote: false, note: `未配置 AI 模型，无法从这条${src.from}抽取结构化情报。请先在「🧠 AI 模型」里配置模型。` } };
       if (acc) {
         const oppId = input.opportunityId && acc.opportunities.some((o) => o.id === input.opportunityId) ? input.opportunityId : null;
-        const vid = 'visit_' + randomUUID().slice(0, 12);
+        const vid = 'visit_' + randomUUID().replaceAll('-', '');
         await applyIngestAction(rawCtx, { type: 'ADD_VISIT', accId: acc.id, visit: { id: vid, opportunityId: oppId ?? undefined, date: today, topic: src.topic, summary: text, origin: src.origin } }, db);
         return { ok: true, receipt: { needConfig: true, account: { id: acc.id, name: acc.name, status: 'matched' }, visitNote: true, note: `未配置 AI 模型，已先把${src.word}存为拜访纪要。配置模型后即可自动抽取客户/商机/干系人/关系。` } };
       }
@@ -302,7 +302,7 @@ export async function ingestVoiceText(
       // 即将新建客户 → 先查 tenant 内相似名（命中则回执提示疑似重复，不打断、仍新建）
       const others = await db.account.findMany({ where: { tenantId }, select: { name: true } });
       const sim = others.find((o) => isSimilarName(stripCompany(o.name), stripCompany(name)));
-      const id = 'acc_' + randomUUID().slice(0, 12);
+      const id = 'acc_' + randomUUID().replaceAll('-', '');
       const ct = [1, 2, 3].includes(N(ex.account.customerType) as number) ? (N(ex.account.customerType) as number) : 2;
       await applyIngestAction(structuredCtxFor(ex.account), { type: 'ADD_ACCOUNT', account: { id, name, customerType: ct, region: S(ex.account.region, 40) } }, db);
       acc = await db.account.findFirst({ where: { id, tenantId }, include: { persons: { where: activePersonWhere }, opportunities: true } });
@@ -322,7 +322,7 @@ export async function ingestVoiceText(
     opp = acc.opportunities.find((o) => o.name === oname) ?? null;
     if (!opp) {
       const simOpp = acc.opportunities.find((o) => isSimilarName(o.name, oname)); // 同客户内相似商机名
-      const id = 'opp_' + randomUUID().slice(0, 12);
+      const id = 'opp_' + randomUUID().replaceAll('-', '');
       const stage = PIPELINE.includes(S(ex.opportunity.pipelineStage)) ? S(ex.opportunity.pipelineStage) : '线索';
       await applyIngestAction(structuredCtxFor(ex.opportunity), { type: 'ADD_OPP', accId: acc.id, opp: { id, name: oname, customerType: acc.customerType, pipelineStage: stage, engageStage: '需求调研立项', competitor: S(ex.opportunity.competitor, 200) } }, db);
       opp = { id, name: oname } as any;
@@ -396,7 +396,7 @@ export async function ingestVoiceText(
     if (mayWriteFormal(per, 'person')) { // 仅认证 Web 人工明说可直落正式 Person
       // 同客户内相似名（如「李处」≈「李处长」，含本次已建）→ 回执提示疑似重复，不打断、仍新建
       const simName = [...formalId.keys()].find((k) => isSimilarName(k, name));
-      const pid = 'p_' + randomUUID().slice(0, 12);
+      const pid = 'p_' + randomUUID().replaceAll('-', '');
       const { x, y } = nextFreeSlot(occupied); occupied.push({ x, y });
       const logs = [{ date: today, content: `${src.emoji} ${src.word}：${S(per.evidence, 80) || name}`, visibility: 'team' }];
       const form = buildForm(per.form); // 家庭七问/职业/爱好/动机随抽随落
@@ -408,7 +408,7 @@ export async function ingestVoiceText(
       if (simName) receipt.dupWarnings.push({ kind: 'person', name, similarTo: simName });
       await setRoleIf(pid, per, name);
     } else { // AI 补充 → 候选 PersonSuggestion
-      const sid = 'ps_' + randomUUID().slice(0, 12);
+      const sid = 'ps_' + randomUUID().replaceAll('-', '');
       await db.personSuggestion.create({ data: { id: sid, tenantId, accountId: acc.id, opportunityId: opp?.id ?? null, name, title: S(per.title, 60), orgLevel: clampLevel(per.orgLevel), origin: src.origin, evidence: S(per.evidence, 500), confidence: N(per.confidence) ?? 0.5, status: 'pending', proposedBy: userId, suggestedRole: VALID_ROLE.includes(S(per.suggestedRole)) ? S(per.suggestedRole) : null, suggestedSentiment: VALID_SENT.includes(S(per.suggestedSentiment)) ? S(per.suggestedSentiment) : null } });
       suggId.set(name, sid);
       receipt.candidates.persons.push({ id: sid, name });
@@ -450,12 +450,12 @@ export async function ingestVoiceText(
     }
     const bothFormal = sEnd.kind === 'person' && tEnd.kind === 'person';
     if (bothFormal && mayWriteFormal(rel, 'edge')) { // 仅认证 Web 人工明说 + 两端正式 → 直落正式 Edge
-      const eid = 'e_' + randomUUID().slice(0, 12);
+      const eid = 'e_' + randomUUID().replaceAll('-', '');
       await applyIngestAction(structuredCtxFor(rel), { type: 'ADD_EDGE', accId: acc.id, oppId: opp?.id, edge: { id: eid, source: sEnd.id, target: tEnd.id, layer, label, origin: src.origin, style: 'solid', directed: false } }, db);
       receipt.edgesCreated.push({ source: sName, target: tName, label });
     } else { // 含候选端点 / inferred 关系 → 候选（须有商机，RelSuggestion 挂 opportunityId）
       if (!opp) { receipt.skipped.push({ rel: `${sName}→${tName}`, reason: '无商机上下文，候选关系跳过' }); continue; }
-      const rid = 'rs_' + randomUUID().slice(0, 12);
+      const rid = 'rs_' + randomUUID().replaceAll('-', '');
       await db.relSuggestion.create({ data: { id: rid, tenantId, opportunityId: opp.id, sourcePersonId: sEnd.id, sourceKind: sEnd.kind, targetPersonId: tEnd.id, targetKind: tEnd.kind, layer, label, confidence: N(rel.confidence) ?? 0.5, origin: src.origin, evidence: S(rel.evidence, 500), status: 'pending' } });
       receipt.candidates.relationships.push({ source: sName, target: tName, label });
     }
@@ -467,7 +467,7 @@ export async function ingestVoiceText(
     const personName = S(bi.person, 40);
     const pid = formalId.get(personName);
     if (pid && opp && mayWriteFormal(bi, 'bi') && S(bi.description)) {
-      const bid = 'bi_' + randomUUID().slice(0, 12);
+      const bid = 'bi_' + randomUUID().replaceAll('-', '');
       const category = S(bi.category, 40) || '其他';
       await applyIngestAction(structuredCtxFor(bi), { type: 'ADD_BI', accId: acc.id, oppId: opp.id, bi: { id: bid, personId: pid, description: S(bi.description, 500), category, isPrivate: true, confidence: '推理' } }, db);
       const arr = bisByPerson.get(personName) ?? []; arr.push({ biId: bid, category }); bisByPerson.set(personName, arr);
@@ -487,7 +487,7 @@ export async function ingestVoiceText(
       : null;
     if (!targetBiId) { receipt.skipped.push({ ucv: desc.slice(0, 24), reason: 'UCV 未匹配到对应 BI（需先明说该人的燃眉之急）' }); continue; }
     const status = VALID_UCV_STATUS.includes(S(u.status)) ? S(u.status) : '建议';
-    const uid = 'ucv_' + randomUUID().slice(0, 12);
+    const uid = 'ucv_' + randomUUID().replaceAll('-', '');
     await applyIngestAction(structuredCtxFor(u), { type: 'ADD_UCV', accId: acc.id, oppId: opp.id, ucv: { id: uid, targetBiId, description: desc, competitorCannot: S(u.competitorCannot, 500), status } }, db);
     receipt.ucvs.push({ person: personName, status });
   }
@@ -500,7 +500,7 @@ export async function ingestVoiceText(
       const sig = sigCatalog.get(S(evd.signalKey));
       if (!pid || !sig) continue; // 信号键不在库/人不是正式干系人 → 弃（宁缺勿滥，不造野信号）
       const dir = evd.direction === -1 || evd.direction === 1 || evd.direction === 0 ? evd.direction : sig.direction;
-      const eid = 'ev_' + randomUUID().slice(0, 12);
+      const eid = 'ev_' + randomUUID().replaceAll('-', '');
       await applyIngestAction(machineCtx, { type: 'ADD_EVIDENCE', accId: acc.id, oppId: opp.id, evidence: {
         id: eid, personId: pid,
         signalKey: sig.signalKey, direction: dir, tier: sig.tier, // tier 以信号库固有档位为准，不信 LLM
@@ -514,7 +514,7 @@ export async function ingestVoiceText(
   // ── 6) 拜访纪要存档（原文 → VisitNote）。从已有纪要抽取(skipVisitNote)时跳过，避免重复 ──
   const rawNote = S(ex.rawNote, 5000) || text;
   if (rawNote && !skipVisitNote) {
-    const vid = 'visit_' + randomUUID().slice(0, 12);
+    const vid = 'visit_' + randomUUID().replaceAll('-', '');
     await applyIngestAction(rawCtx, { type: 'ADD_VISIT', accId: acc.id, visit: { id: vid, opportunityId: opp?.id, date: today, topic: src.topic, summary: rawNote, origin: src.origin } }, db);
     receipt.visitNote = true;
   }

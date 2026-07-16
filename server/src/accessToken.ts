@@ -139,7 +139,7 @@ export function accessTokenRoutes(app: FastifyInstance) {
     if (count >= MAX_TOKENS_PER_USER) return reply.code(400).send({ error: `令牌数量已达上限（${MAX_TOKENS_PER_USER}），请先吊销不用的` });
 
     const plain = PREFIX + crypto.randomBytes(32).toString('hex');
-    const id = 'at_' + crypto.randomUUID().slice(0, 12);
+    const id = 'at_' + crypto.randomUUID().replaceAll('-', '');
     const scopes = ACCESS_TOKEN_PRESETS[p.data.preset];
     await prisma.accessToken.create({
       data: {

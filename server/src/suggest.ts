@@ -134,7 +134,7 @@ export async function materializePerson(
   const { x, y } = nextFreeSlot(others);
   const today = businessYmd();
   const logs = [{ date: today, content: `📥 ${ORIGIN_LABEL[candidate.origin] || '外部导入'}（${candidate.evidence || '无备注'}）${candidate.sourceUrl ? ' · ' + candidate.sourceUrl : ''}`, visibility: 'team' }];
-  const personId = 'p_' + randomUUID().slice(0, 12);
+  const personId = 'p_' + randomUUID().replaceAll('-', '');
   await tx.person.create({ data: { id: personId, tenantId, accountId: candidate.accountId, name: candidate.name, title: candidate.title, orgLevel: candidate.orgLevel, isCompetitor: false, x, y, form: '{}', logs: JSON.stringify(logs) } });
   // 候选挂在 memberScoped 商机 → 新建的人加入该商机成员（可见性）
   if (candidate.opportunityId) {
@@ -203,7 +203,7 @@ export async function acceptRelationSuggestionInTransaction(
   await requireEdgeEndpoints(tx, tenantId, opportunity.accountId, source, target);
   const layer = override.layer ?? suggestion.layer;
   const label = override.label ?? suggestion.label;
-  const edgeId = 'e_' + randomUUID().slice(0, 12);
+  const edgeId = 'e_' + randomUUID().replaceAll('-', '');
   const color = LAYER_COLOR[layer] || '#16a34a';
   await tx.edge.create({ data: {
     id: edgeId, tenantId, accountId: opportunity.accountId, opportunityId: suggestion.opportunityId,
@@ -331,7 +331,7 @@ export async function generateRelSuggestions(
     if (cfg) cands = cands.concat(cfg.provider === 'mock' || !cfg.baseUrl || !cfg.model ? mockLlmCandidates(g.persons, connected) : await llmCandidates(cfg, g.persons, g.edges, nameOf));
     const fresh = cands.filter((c) => { const k = pairKey(c.source, c.target); if (c.source === c.target || seen.has(k)) return false; seen.add(k); return true; });
     if (fresh.length) {
-      const write = (db: DbClient) => db.relSuggestion.createMany({ data: fresh.map((c) => ({ id: 'rs_' + randomUUID().slice(0, 12), tenantId, opportunityId, sourcePersonId: c.source, targetPersonId: c.target, layer: c.layer, label: c.label, confidence: c.confidence, origin: c.origin, evidence: c.evidence })) });
+      const write = (db: DbClient) => db.relSuggestion.createMany({ data: fresh.map((c) => ({ id: 'rs_' + randomUUID().replaceAll('-', ''), tenantId, opportunityId, sourcePersonId: c.source, targetPersonId: c.target, layer: c.layer, label: c.label, confidence: c.confidence, origin: c.origin, evidence: c.evidence })) });
       if (commitWrite) await commitWrite(write);
       else await write(prisma);
     }

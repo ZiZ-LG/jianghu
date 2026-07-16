@@ -87,7 +87,7 @@ export async function getCuratedSummary(tenantId: string, kind: EntityKind, enti
   await prisma.curatedSummary.upsert({
     where: { tenantId_entityKind_entityId: { tenantId, entityKind: kind, entityId } },
     update: { content, model: ai.model, basedOnAt: raw.latestAt, editedByHuman: false, aclVersion: 1 },
-    create: { id: 'cs_' + randomUUID().slice(0, 12), tenantId, entityKind: kind, entityId, content, model: ai.model, basedOnAt: raw.latestAt, aclVersion: 1 },
+    create: { id: 'cs_' + randomUUID().replaceAll('-', ''), tenantId, entityKind: kind, entityId, content, model: ai.model, basedOnAt: raw.latestAt, aclVersion: 1 },
   });
   return { content, status: 'generated', editedByHuman: false };
 }
@@ -126,7 +126,7 @@ export function curatedRoutes(app: FastifyInstance): void {
     await prisma.curatedSummary.upsert({
       where: { tenantId_entityKind_entityId: { tenantId: req.user.tenantId, entityKind: p.data.entityKind, entityId: p.data.entityId } },
       update: { content: p.data.content, editedByHuman: true, editedBy: req.user.userId || '' },
-      create: { id: 'cs_' + randomUUID().slice(0, 12), tenantId: req.user.tenantId, entityKind: p.data.entityKind, entityId: p.data.entityId, content: p.data.content, editedByHuman: true, editedBy: req.user.userId || '' },
+      create: { id: 'cs_' + randomUUID().replaceAll('-', ''), tenantId: req.user.tenantId, entityKind: p.data.entityKind, entityId: p.data.entityId, content: p.data.content, editedByHuman: true, editedBy: req.user.userId || '' },
     });
     return { ok: true };
   });

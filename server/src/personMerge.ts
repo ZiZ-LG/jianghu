@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { Prisma } from '@prisma/client';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { ActorRoleSchema, type CommandContext } from '@jianghu/domain-contracts';
 import { prisma } from './prisma.js';
@@ -474,7 +474,6 @@ export async function executePersonMerge(
   return receipt;
 }
 
-const hashKey = (raw: string) => createHash('sha256').update(raw).digest('hex');
 const commandContext = (req: any): CommandContext => ({
   tenantId: req.user.tenantId,
   actorId: req.user.userId,
@@ -523,7 +522,7 @@ export function personMergeRoutes(app: FastifyInstance): void {
     try {
       const command = await runCommand<PersonMergeReceipt>(
         commandContext(req),
-        { kind: 'person-merge', idempotencyKey: hashKey(key), payload: parsed.data },
+        { kind: 'person-merge', idempotencyKey: key, payload: parsed.data },
         (tx) => executePersonMerge(commandContext(req), parsed.data, tx),
         prisma,
       );

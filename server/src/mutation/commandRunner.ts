@@ -2,6 +2,7 @@ import { Prisma, type PrismaClient } from '@prisma/client';
 import { createHash, randomUUID } from 'node:crypto';
 import type { CommandContext } from '@jianghu/domain-contracts';
 import { prisma } from '../prisma.js';
+import { hashIdempotencyKey, storedIdempotencyKeyCandidates } from '../idempotency.js';
 
 export class CommandInProgressError extends Error {
   readonly commandInProgress = true;
@@ -73,9 +74,7 @@ export async function readCommandReplay<T>(
   input: CommandInput,
   db: PrismaClient = prisma,
 ): Promise<{ replayed: true; result: T } | undefined> {
-  const existing = await db.commandRun.findUnique({ where: { tenantId_actorId_kind_idempotencyKey: {
-    tenantId: ctx.tenantId, actorId: ctx.actorId, kind: input.kind, idempotencyKey: input.idempotencyKey,
-  } } });
+  const existing = await findExistingCommand(db, ctx, input);
   if (!existing) return undefined;
   if (existing.requestHash !== requestHashOf(input.payload)) throw new IdempotencyConflictError();
   if (existing.status === 'completed') return { replayed: true, result: parseStored<T>(existing.resultSummary) };
@@ -91,9 +90,42 @@ const whereFor = (ctx: CommandContext, input: CommandInput) => ({
     tenantId: ctx.tenantId,
     actorId: ctx.actorId,
     kind: input.kind,
-    idempotencyKey: input.idempotencyKey,
+    idempotencyKey: hashIdempotencyKey(input.idempotencyKey),
   },
 }) as const;
+
+type CommandRunReader = Pick<PrismaClient, 'commandRun'> | Pick<Prisma.TransactionClient, 'commandRun'>;
+
+const findExistingCommand = async (
+  db: CommandRunReader,
+  ctx: CommandContext,
+  input: CommandInput,
+) => {
+  const candidates = storedIdempotencyKeyCandidates(input.idempotencyKey);
+  const rows = await db.commandRun.findMany({
+    where: {
+      tenantId: ctx.tenantId,
+      actorId: ctx.actorId,
+      kind: input.kind,
+      idempotencyKey: { in: candidates },
+    },
+    orderBy: { createdAt: 'asc' },
+    take: 2,
+  });
+  if (rows.length > 1) throw new IdempotencyConflictError();
+  return rows[0];
+};
+
+const migrateLegacyKey = async (
+  db: Pick<Prisma.TransactionClient, 'commandRun'>,
+  existing: { id: string; idempotencyKey: string },
+  input: CommandInput,
+) => {
+  const hashed = hashIdempotencyKey(input.idempotencyKey);
+  if (existing.idempotencyKey !== hashed) {
+    await db.commandRun.update({ where: { id: existing.id }, data: { idempotencyKey: hashed } });
+  }
+};
 
 const prismaCode = (error: unknown): string | undefined => (
   error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : undefined
@@ -125,8 +157,9 @@ export async function reserveCommand<T>(
     const leaseExpiresAt = new Date(now.getTime() + LEASE_MS);
     try {
       return await db.$transaction(async (tx) => {
-        const existing = await tx.commandRun.findUnique({ where });
+        const existing = await findExistingCommand(tx, ctx, input);
         if (existing && existing.requestHash !== requestHash) throw new IdempotencyConflictError();
+        if (existing) await migrateLegacyKey(tx, existing, input);
         if (existing?.status === 'completed') return { replayed: true as const, result: parseStored<T>(existing.resultSummary) };
         if (existing?.status === 'running') {
           const activeUntil = existing.leaseExpiresAt ?? new Date(existing.updatedAt.getTime() + LEASE_MS);
@@ -139,7 +172,7 @@ export async function reserveCommand<T>(
         } else {
           await tx.commandRun.create({ data: {
             tenantId: ctx.tenantId, actorId: ctx.actorId, kind: input.kind,
-            idempotencyKey: input.idempotencyKey, requestHash, leaseToken: reservationToken, leaseExpiresAt,
+            idempotencyKey: hashIdempotencyKey(input.idempotencyKey), requestHash, leaseToken: reservationToken, leaseExpiresAt,
           } });
         }
         return { replayed: false as const, reservationToken };
@@ -147,7 +180,7 @@ export async function reserveCommand<T>(
     } catch (error) {
       if (error instanceof CommandInProgressError || error instanceof IdempotencyConflictError) throw error;
       if (prismaCode(error) === 'P2002') {
-        const existing = await db.commandRun.findUnique({ where });
+        const existing = await findExistingCommand(db, ctx, input);
         if (existing && existing.requestHash !== requestHash) throw new IdempotencyConflictError();
         if (existing?.status === 'completed') return { replayed: true, result: parseStored<T>(existing.resultSummary) };
         throw new CommandInProgressError();
@@ -169,7 +202,7 @@ export async function failReservedCommand(
   await db.commandRun.updateMany({
     where: {
       tenantId: ctx.tenantId, actorId: ctx.actorId, kind: input.kind,
-      idempotencyKey: input.idempotencyKey, requestHash: requestHashOf(input.payload),
+      idempotencyKey: { in: storedIdempotencyKeyCandidates(input.idempotencyKey) }, requestHash: requestHashOf(input.payload),
       status: 'running', leaseToken: reservationToken,
     },
     data: { status: 'failed', errorCode: errorCode(error), leaseToken: '', leaseExpiresAt: null },
@@ -191,7 +224,7 @@ export async function cancelReservedCommand(
       tenantId: ctx.tenantId,
       actorId: ctx.actorId,
       kind: input.kind,
-      idempotencyKey: input.idempotencyKey,
+      idempotencyKey: { in: storedIdempotencyKeyCandidates(input.idempotencyKey) },
       requestHash: requestHashOf(input.payload),
       status: 'running',
       leaseToken: reservationToken,
@@ -215,8 +248,9 @@ export async function runCommand<T>(
   for (let attempt = 1; attempt <= TRANSACTION_ATTEMPTS; attempt += 1) {
     try {
       return await db.$transaction(async (tx) => {
-      const existing = await tx.commandRun.findUnique({ where });
+      const existing = await findExistingCommand(tx, ctx, input);
       if (existing && existing.requestHash !== requestHash) throw new IdempotencyConflictError();
+      if (existing) await migrateLegacyKey(tx, existing, input);
       if (existing?.status === 'completed') {
         return { replayed: true, result: parseStored<T>(existing.resultSummary) };
       }
@@ -231,7 +265,7 @@ export async function runCommand<T>(
           tenantId: ctx.tenantId,
           actorId: ctx.actorId,
           kind: input.kind,
-          idempotencyKey: input.idempotencyKey,
+          idempotencyKey: hashIdempotencyKey(input.idempotencyKey),
           requestHash,
         } });
       }
@@ -247,14 +281,14 @@ export async function runCommand<T>(
         throw error;
       }
       if (prismaCode(error) === 'P2002') {
-        const existing = await db.commandRun.findUnique({ where });
+        const existing = await findExistingCommand(db, ctx, input);
         if (existing && existing.requestHash !== requestHash) throw new IdempotencyConflictError();
         if (existing?.status === 'completed') return { replayed: true, result: parseStored<T>(existing.resultSummary) };
         throw new CommandInProgressError();
       }
       if (isRetryableDatabaseError(error)) {
         try {
-          const existing = await db.commandRun.findUnique({ where });
+          const existing = await findExistingCommand(db, ctx, input);
           if (existing?.status === 'completed') return { replayed: true, result: parseStored<T>(existing.resultSummary) };
           if (existing?.status === 'running' && existing.leaseToken !== (input.reservationToken ?? '')) throw new CommandInProgressError();
         } catch (reconcileError) {
@@ -264,11 +298,11 @@ export async function runCommand<T>(
         throw new CommandRetryableError();
       }
       try {
-        const existing = await db.commandRun.findUnique({ where });
+        const existing = await findExistingCommand(db, ctx, input);
         if (!existing) {
           await db.commandRun.create({ data: {
             tenantId: ctx.tenantId, actorId: ctx.actorId, kind: input.kind,
-            idempotencyKey: input.idempotencyKey, requestHash, status: 'failed', errorCode: errorCode(error),
+            idempotencyKey: hashIdempotencyKey(input.idempotencyKey), requestHash, status: 'failed', errorCode: errorCode(error),
           } });
         } else if (existing.status !== 'completed' && input.reservationToken && existing.leaseToken === input.reservationToken) {
           await db.commandRun.update({ where: { id: existing.id }, data: {

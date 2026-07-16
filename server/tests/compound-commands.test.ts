@@ -15,6 +15,7 @@ import {
   executeOpportunitySkeleton,
 } from '../src/mutation/compoundCommands.js';
 import { IngestCommandError, ingestVoiceText } from '../src/voice.js';
+import { hashIdempotencyKey } from '../src/idempotency.js';
 
 describe('atomic idempotent compound commands', () => {
   let test: TestContext;
@@ -93,7 +94,7 @@ describe('atomic idempotent compound commands', () => {
     expect(await test.prisma.evidenceEvent.count({ where: { tenantId: test.tenant.id } })).toBe(0);
     expect(await test.prisma.auditEvent.count({ where: { tenantId: test.tenant.id } })).toBe(0);
     expect(await test.prisma.commandRun.findFirstOrThrow({ where: {
-      tenantId: test.tenant.id, idempotencyKey: 'feedback-audit-rollback-key',
+      tenantId: test.tenant.id, idempotencyKey: hashIdempotencyKey('feedback-audit-rollback-key'),
     } })).toMatchObject({ status: 'failed' });
   });
 
@@ -278,7 +279,9 @@ describe('atomic idempotent compound commands', () => {
     ]);
     expect(attempts.some((attempt) => attempt.status === 'fulfilled')).toBe(true);
     expect(await test.prisma.opportunity.count({ where: { tenantId: test.tenant.id, name: 'Concurrent Once' } })).toBe(1);
-    expect(await test.prisma.commandRun.count({ where: { tenantId: test.tenant.id, idempotencyKey: 'concurrent-stable-key' } })).toBe(1);
+    expect(await test.prisma.commandRun.count({ where: {
+      tenantId: test.tenant.id, idempotencyKey: hashIdempotencyKey('concurrent-stable-key'),
+    } })).toBe(1);
   });
 
   it('requires Idempotency-Key at the HTTP boundary and replays the same business action', async () => {
@@ -373,7 +376,9 @@ describe('atomic idempotent compound commands', () => {
     expect(replay.replayed).toBe(true);
     expect(replay.result.receipt.notes).toEqual([{ person: '[redacted]', content: '[redacted]' }]);
     expect(replay.result.receipt.note).toBe('[redacted]');
-    const stored = await test.prisma.commandRun.findFirstOrThrow({ where: { tenantId: test.tenant.id, idempotencyKey: key.idempotencyKey } });
+    const stored = await test.prisma.commandRun.findFirstOrThrow({ where: {
+      tenantId: test.tenant.id, idempotencyKey: hashIdempotencyKey(key.idempotencyKey),
+    } });
     expect(stored.resultSummary).not.toContain('客户原始敏感线索');
     expect(stored.resultSummary).not.toContain('原始口述正文');
     expect(stored.resultSummary).not.toContain('王总');
@@ -407,17 +412,17 @@ describe('atomic idempotent compound commands', () => {
     await expect(cancelReservedCommand({ ...ctx, actorId: 'other-actor' }, key, reservation.reservationToken, test.prisma)).resolves.toBe(false);
     await expect(cancelReservedCommand(ctx, { ...key, payload: { text: 'different' } }, reservation.reservationToken, test.prisma)).resolves.toBe(false);
     await test.prisma.commandRun.updateMany({
-      where: { tenantId: ctx.tenantId, actorId: ctx.actorId, kind: key.kind, idempotencyKey: key.idempotencyKey },
+      where: { tenantId: ctx.tenantId, actorId: ctx.actorId, kind: key.kind, idempotencyKey: hashIdempotencyKey(key.idempotencyKey) },
       data: { leaseToken: 'newer-lease-token' },
     });
     await expect(cancelReservedCommand(ctx, key, reservation.reservationToken, test.prisma)).resolves.toBe(false);
     await test.prisma.commandRun.updateMany({
-      where: { tenantId: ctx.tenantId, actorId: ctx.actorId, kind: key.kind, idempotencyKey: key.idempotencyKey },
+      where: { tenantId: ctx.tenantId, actorId: ctx.actorId, kind: key.kind, idempotencyKey: hashIdempotencyKey(key.idempotencyKey) },
       data: { status: 'completed', resultSummary: '{"ok":true}' },
     });
     await expect(cancelReservedCommand(ctx, key, 'newer-lease-token', test.prisma)).resolves.toBe(false);
     await expect(test.prisma.commandRun.findFirstOrThrow({ where: {
-      tenantId: ctx.tenantId, actorId: ctx.actorId, kind: key.kind, idempotencyKey: key.idempotencyKey,
+      tenantId: ctx.tenantId, actorId: ctx.actorId, kind: key.kind, idempotencyKey: hashIdempotencyKey(key.idempotencyKey),
     } })).resolves.toMatchObject({ status: 'completed', leaseToken: 'newer-lease-token' });
 
     const exactKey = { kind: 'voice-ingest', idempotencyKey: 'scoped-cancel-exact-key', payload: { text: 'same' } };
@@ -425,7 +430,7 @@ describe('atomic idempotent compound commands', () => {
     if (exact.replayed) throw new Error('expected an exact reservation');
     await expect(cancelReservedCommand(ctx, exactKey, exact.reservationToken, test.prisma)).resolves.toBe(true);
     await expect(test.prisma.commandRun.count({ where: {
-      tenantId: ctx.tenantId, actorId: ctx.actorId, kind: exactKey.kind, idempotencyKey: exactKey.idempotencyKey,
+      tenantId: ctx.tenantId, actorId: ctx.actorId, kind: exactKey.kind, idempotencyKey: hashIdempotencyKey(exactKey.idempotencyKey),
     } })).resolves.toBe(0);
   });
 
@@ -434,7 +439,7 @@ describe('atomic idempotent compound commands', () => {
     const first = await reserveCommand(ctx, key, test.prisma);
     expect(first.replayed).toBe(false);
     await test.prisma.commandRun.updateMany({
-      where: { tenantId: ctx.tenantId, idempotencyKey: key.idempotencyKey },
+      where: { tenantId: ctx.tenantId, idempotencyKey: hashIdempotencyKey(key.idempotencyKey) },
       data: { leaseExpiresAt: new Date(Date.now() - 1_000) },
     });
     const recovered = await reserveCommand(ctx, key, test.prisma);
@@ -479,12 +484,58 @@ describe('atomic idempotent compound commands', () => {
     await expect(runCommand(ctx, key, async () => {
       throw new IngestCommandError({ ok: false, status: 400, body: { error: 'temporary model failure' } });
     }, test.prisma)).rejects.toBeInstanceOf(IngestCommandError);
-    expect(await test.prisma.commandRun.findFirstOrThrow({ where: { tenantId: test.tenant.id, idempotencyKey: key.idempotencyKey } }))
+    expect(await test.prisma.commandRun.findFirstOrThrow({ where: {
+      tenantId: test.tenant.id, idempotencyKey: hashIdempotencyKey(key.idempotencyKey),
+    } }))
       .toMatchObject({ status: 'failed' });
 
     const retry = await runCommand(ctx, key, async () => ({ ok: true, receipt: { visitNote: true } }), test.prisma);
     expect(retry).toMatchObject({ replayed: false, result: { ok: true } });
-    expect(await test.prisma.commandRun.findFirstOrThrow({ where: { tenantId: test.tenant.id, idempotencyKey: key.idempotencyKey } }))
+    expect(await test.prisma.commandRun.findFirstOrThrow({ where: {
+      tenantId: test.tenant.id, idempotencyKey: hashIdempotencyKey(key.idempotencyKey),
+    } }))
       .toMatchObject({ status: 'completed' });
+  });
+
+  it('stores only digests and lazily migrates a legacy raw-key replay row', async () => {
+    const raw = 'legacy-command-key-never-persist-again';
+    const digest = hashIdempotencyKey(raw);
+    const first = await runCommand(ctx, { kind: 'opaque-key-check', idempotencyKey: raw },
+      async () => ({ ok: true }), test.prisma);
+    expect(first.replayed).toBe(false);
+    expect(await test.prisma.commandRun.count({ where: { tenantId: ctx.tenantId, idempotencyKey: raw } })).toBe(0);
+    expect(await test.prisma.commandRun.count({ where: { tenantId: ctx.tenantId, idempotencyKey: digest } })).toBe(1);
+
+    const legacyRaw = 'pre-int-502-command-key';
+    await test.prisma.commandRun.create({ data: {
+      tenantId: ctx.tenantId,
+      actorId: ctx.actorId,
+      kind: 'legacy-command',
+      idempotencyKey: legacyRaw,
+      requestHash: '74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b',
+      status: 'completed',
+      resultSummary: '{"ok":true}',
+    } });
+    const replay = await runCommand(ctx, { kind: 'legacy-command', idempotencyKey: legacyRaw },
+      async () => ({ ok: false }), test.prisma);
+    expect(replay).toEqual({ replayed: true, result: { ok: true } });
+    expect(await test.prisma.commandRun.count({ where: { tenantId: ctx.tenantId, idempotencyKey: legacyRaw } })).toBe(0);
+    expect(await test.prisma.commandRun.count({ where: {
+      tenantId: ctx.tenantId, idempotencyKey: hashIdempotencyKey(legacyRaw),
+    } })).toBe(1);
+  });
+
+  it('does not alias a 64-hex raw key to a prior command digest', async () => {
+    const firstRaw = 'ordinary-idempotency-key';
+    const hexRaw = hashIdempotencyKey(firstRaw);
+    const first = await runCommand(ctx, { kind: 'hex-key-alias-check', idempotencyKey: firstRaw },
+      async () => ({ command: 'first' }), test.prisma);
+    const second = await runCommand(ctx, { kind: 'hex-key-alias-check', idempotencyKey: hexRaw },
+      async () => ({ command: 'second' }), test.prisma);
+    expect(first.replayed).toBe(false);
+    expect(second).toEqual({ replayed: false, result: { command: 'second' } });
+    expect(await test.prisma.commandRun.count({ where: {
+      tenantId: ctx.tenantId, kind: 'hex-key-alias-check',
+    } })).toBe(2);
   });
 });

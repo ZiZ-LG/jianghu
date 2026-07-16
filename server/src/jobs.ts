@@ -71,7 +71,7 @@ async function enqueueUniqueJob(seed: JobSeed, db: DbClient): Promise<{ id: stri
 
   const activeCount = await db.enrichJob.count({ where: { tenantId: seed.tenantId, status: { in: ['pending', 'processing'] } } });
   if (activeCount >= MAX_ACTIVE_JOBS_PER_TENANT) throw new Error(`在途自算任务已达上限（${MAX_ACTIVE_JOBS_PER_TENANT}），请稍候`);
-  const id = 'job_' + randomUUID().slice(0, 12);
+  const id = 'job_' + randomUUID().replaceAll('-', '');
   const row = await db.enrichJob.upsert({
     where: { tenantId_dedupeKey: { tenantId: seed.tenantId, dedupeKey: seed.dedupeKey } },
     create: {
@@ -175,7 +175,7 @@ async function writeCandidates(
     }
     await db.personSuggestion.create({
       data: {
-        id: 'ps_' + randomUUID().slice(0, 12),
+        id: 'ps_' + randomUUID().replaceAll('-', ''),
         tenantId: job.tenantId, accountId: job.accountId,
         name, title: (p.title || '').trim(),
         orgLevel: 3,
@@ -233,7 +233,7 @@ async function runProfileJob(job: ClaimedJob): Promise<void> {
     } });
     if (current) return;
     await db.note.create({ data: {
-      id: 'note_' + randomUUID().slice(0, 12), tenantId: job.tenantId, accountId: acc.id,
+      id: 'note_' + randomUUID().replaceAll('-', ''), tenantId: job.tenantId, accountId: acc.id,
       content: `${PROFILE_NOTE_PREFIX}（来源：${r.source === 'qcc' ? '企查查工商数据' : 'AI 生成·未联网核实'}）\n${r.content}`,
       source: 'ai',
     } });
@@ -380,7 +380,7 @@ let workerTimer: NodeJS.Timeout | null = null;
 let ticking = false;
 
 /** 单次轮询：原子 claim 最旧一个 pending 任务并执行。串行（一次一个），避免并发抢同一任务。 */
-const WORKER_ID = `worker-${process.pid}-${randomUUID().slice(0, 8)}`;
+const WORKER_ID = `worker-${process.pid}-${randomUUID().replaceAll('-', '')}`;
 
 async function runJobWithHeartbeat(job: ClaimedJob): Promise<void> {
   let renewing = false;
@@ -504,7 +504,7 @@ export async function runPatrol(): Promise<{ scanned: number; created: number; r
     const b = bucket(opp.tenantId); b.scanned++;
     for (const d of drafts) {
       const existing = await prisma.reminder.findUnique({ where: { tenantId_dedupeKey: { tenantId: d.tenantId, dedupeKey: d.dedupeKey } } });
-      if (!existing) { await prisma.reminder.create({ data: { id: 'rem_' + randomUUID().slice(0, 12), ...d } }); created++; b.created++; }
+      if (!existing) { await prisma.reminder.create({ data: { id: 'rem_' + randomUUID().replaceAll('-', ''), ...d } }); created++; b.created++; }
       else if (existing.status === 'pending') { await prisma.reminder.update({ where: { id: existing.id }, data: { title: d.title, detail: d.detail, severity: d.severity } }); }
       // dismissed / done → 跳过，不复活
     }

@@ -64,7 +64,7 @@ export async function executeOpportunitySkeleton(
   fault(options, 1);
   const skeletonPersonIds: string[] = [];
   for (const role of input.skeleton) {
-    const personId = 'p_' + randomUUID().slice(0, 12);
+    const personId = 'p_' + randomUUID().replaceAll('-', '');
     await applyAction(ctx, {
       type: 'ADD_PERSON', accId: input.accountId,
       person: { id: personId, name: role.title, title: role.title, orgLevel: role.orgLevel, x: role.x, y: role.y },

@@ -7,6 +7,7 @@ import type {
 import type { Action } from '@jianghu/domain-contracts';
 import { seedAccount } from './data/seed';
 import { localYmd } from './lib/dateYmd';
+import { createOpaqueEntityId } from './lib/opaqueId';
 
 export type { Action } from '@jianghu/domain-contracts';
 
@@ -25,8 +26,7 @@ export function saveState(s: StoreState): void {
   try { localStorage.setItem(KEY, JSON.stringify(s)); } catch { /* ignore */ }
 }
 
-export const uid = (p = 'id'): string =>
-  `${p}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+export const uid = (p = 'id'): string => createOpaqueEntityId(p);
 
 // ── 工厂 ──
 export function newAccount(name: string, customerType: CustomerType): Account {

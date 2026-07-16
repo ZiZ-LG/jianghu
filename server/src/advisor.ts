@@ -52,7 +52,7 @@ export function advisorRoutes(app: FastifyInstance) {
       const e = p.data.entries[i];
       await prisma.advisorMsg.create({
         data: {
-          id: 'adv_' + randomUUID().slice(0, 12), tenantId, accountId: opp.accountId,
+          id: 'adv_' + randomUUID().replaceAll('-', ''), tenantId, accountId: opp.accountId,
           opportunityId: p.data.opportunityId, personId: p.data.personId,
           role: e.role, text: e.text, createdAt: new Date(now + i), // +i 保证同批次内顺序稳定
         },

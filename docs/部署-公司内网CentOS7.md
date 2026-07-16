@@ -123,7 +123,7 @@ bash scripts/backup-postgres.sh                        # 加密备份（建议 c
 
 ## 8. 版本更新（就地·日常）
 
-服务器上 `/data/jianghu/update.sh`（源已入库 = 仓库根 `deploy-company-update.sh`）：加密备份库（目录/保留天数由 `.env` 配置）→ `git pull`（main）→ `docker compose up -d --build` 滚动更新 → readiness 自检 → 清理悬空镜像。`pgdata` 不动。
+服务器上 `/data/jianghu/update.sh`（源已入库 = 仓库根 `deploy-company-update.sh`）：固定部署前 SHA、旧 server/web 镜像和认证加密备份到 `/data/jianghu-rollbacks/release-*` → `git pull`（main）→ `docker compose up -d --build` 滚动更新 → readiness 自检 → 清理悬空镜像。`pgdata` 不动；带 tag 的旧镜像和固定备份不受 prune/14 天轮转影响。
 
 ### 从 pre-INT501 版本首次升级（只做一次）
 
@@ -158,11 +158,36 @@ sudo chmod 700 /data/jianghu/update.sh
 sudo bash /data/jianghu/update.sh
 ```
 
+### 从已完成 INT-501 bootstrap 的版本首次升级到 INT-502 RC
+
+服务器上仍运行旧版 `update.sh` 时，先用已验证的 INT-501 脚本做一次认证备份；`git pull` 只更新工作树、不重建运行中的容器。随后安装新版更新/回滚脚本，再由新版 `update.sh` 在 schema 迁移和镜像重建前创建固定回滚点：
+
+```bash
+cd /data/jianghu
+sudo bash scripts/backup-postgres.sh
+git pull --ff-only
+sudo cp deploy-company-update.sh /data/jianghu/update.sh
+sudo chmod 700 /data/jianghu/update.sh \
+  deploy-company-rollback.sh scripts/create-release-rollback-point.sh
+sudo bash /data/jianghu/update.sh
+```
+
+这组命令只用于第一次进入 INT-502 RC；后续日常更新继续执行 `sudo bash /data/jianghu/update.sh`。
+
 任何一步失败都停止，不删除 `pgdata`，也不使用 `db push` 绕过。bootstrap 可安全重跑；日常更新脚本会在既有数据部署上强制检查 marker。
 
 ```bash
 cd /data/jianghu && sudo bash update.sh
 ```
+
+readiness 失败时脚本会打印本次回滚点。确认需要回滚后显式执行（命令会停写、恢复备份到新的隔离库、切回旧 SHA 对应的镜像，再跑 readiness；工作树保留当前 `main` 便于继续 fast-forward，失败后的数据库保留取证）：
+
+```bash
+cd /data/jianghu
+sudo bash deploy-company-rollback.sh /data/jianghu-rollbacks/release-TIMESTAMP-ID --confirm
+```
+
+正式发布前须在隔离 Compose project 完成一次同版本演练，并把回滚点、旧/新镜像 digest、恢复库、RTO/RPO 和 smoke 结果写入 `docs/内部版-发布验收记录.md`。
 
 > ⚠️ 拉的是 **main**；功能分支（如 `feat/*`）的改动必须先合 main，`update.sh` 才会部署到。
 > 已经完成上述 bootstrap 的新部署，之后更新 detached 脚本可用：`scp deploy-company-update.sh <用户>@10.0.171.152:/data/jianghu/update.sh`。

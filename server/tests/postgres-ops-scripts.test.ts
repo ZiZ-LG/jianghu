@@ -187,6 +187,24 @@ describe('PostgreSQL restore safety', () => {
 });
 
 describe('deployment safety helpers', () => {
+  it('captures immutable code, image and authenticated database rollback anchors', async () => {
+    const capture = await read('scripts/create-release-rollback-point.sh');
+    const rollback = await read('deploy-company-rollback.sh');
+    const update = await read('deploy-company-update.sh');
+    expect(capture).toContain('rollback_sha=');
+    expect(capture).toContain('server_image=');
+    expect(capture).toContain('web_image=');
+    expect(capture).toContain('database.backup');
+    expect(capture).toContain('scripts/backup-postgres.sh');
+    expect(rollback).toContain('--confirm');
+    expect(rollback).toContain('docker compose stop web server');
+    expect(rollback).toContain('scripts/restore-postgres.sh');
+    expect(rollback).not.toContain('git switch --detach');
+    expect(rollback).toContain('docker compose up -d --no-build db server web');
+    expect(update).toContain('scripts/create-release-rollback-point.sh');
+    expect(update).toContain('deploy-company-rollback.sh');
+  });
+
   it('uses bounded fail-closed readiness retries', async () => {
     const temp = await mkdtemp(join(tmpdir(), 'jianghu-curl-'));
     temporaryPaths.push(temp);

@@ -1,0 +1,16 @@
+{
+  "journeyB": {
+    "accountName": "脱敏北辰能源客户",
+    "wrongOpportunityName": "脱敏错误归属商机",
+    "correctOpportunityName": "脱敏储能集成商机",
+    "visitTopic": "脱敏拜访纪要",
+    "targetPersonName": "脱敏已核验联系人",
+    "duplicatePersonName": "脱敏重复联系人"
+  },
+  "journeyC": {
+    "accountName": "脱敏远山制造客户",
+    "opportunityName": "脱敏微网改造商机",
+    "concurrentNameA": "脱敏微网改造商机-A",
+    "concurrentNameB": "脱敏微网改造商机-B"
+  }
+}

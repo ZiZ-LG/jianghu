@@ -729,7 +729,7 @@ async function proposePerson(tenantId: string, userId: string, args: Record<stri
   // 提示：是否已有同名正式干系人（由人审决定合并，AI 不替判）
   const existingPerson = await prisma.person.findFirst({ where: { tenantId, accountId, name, ...activePersonWhere } });
 
-  const id = 'ps_' + randomUUID().slice(0, 12);
+  const id = 'ps_' + randomUUID().replaceAll('-', '');
   await prisma.personSuggestion.create({
     data: { id, tenantId, accountId, opportunityId, name, title, orgLevel, origin: 'mcp', evidence, sourceUrl, confidence, status: 'pending', proposedBy: userId, suggestedRole, suggestedSentiment },
   });
@@ -796,7 +796,7 @@ async function proposeRelationship(tenantId: string, _userId: string, args: Reco
     if (k === key) return { suggestionId: r.id, deduped: true, note: '该端点对已有 pending 候选关系，未重复创建。' };
   }
 
-  const id = 'rs_' + randomUUID().slice(0, 12);
+  const id = 'rs_' + randomUUID().replaceAll('-', '');
   await prisma.relSuggestion.create({
     data: { id, tenantId, opportunityId, sourcePersonId: source.id, sourceKind: source.kind, targetPersonId: target.id, targetKind: target.kind, layer, label, confidence, origin: 'mcp', evidence, status: 'pending' },
   });
@@ -883,7 +883,7 @@ async function upsertAccount(ctx: CommandContext, args: Record<string, unknown>)
 
   // 未命中 → CREATE（新建必须有 name）
   if (!name) throw new Error('未命中现有客户，新建需提供 name');
-  const id = 'acc_' + randomUUID().slice(0, 12);
+  const id = 'acc_' + randomUUID().replaceAll('-', '');
   await applyMcpAction(ctx, {
     type: 'ADD_ACCOUNT',
     account: {
@@ -1146,7 +1146,7 @@ async function upsertOpportunity(ctx: CommandContext, args: Record<string, unkno
   }
 
   if (!name) throw new Error('未命中现有商机，新建需提供 name');
-  const id = 'opp_' + randomUUID().slice(0, 12);
+  const id = 'opp_' + randomUUID().replaceAll('-', '');
   await applyMcpAction(ctx, {
     type: 'ADD_OPP', accId: account.id,
     opp: {
@@ -1213,7 +1213,7 @@ async function appendVisitNote(ctx: CommandContext, args: Record<string, unknown
     return { id: existing.id, accountId: account.id, opportunityId: opportunityId ?? existing.opportunityId ?? undefined, updated: true, origin: 'mcp', note: `已按 externalRef 命中拜访记录并更新（${date}·外部来源·待核）。` };
   }
 
-  const id = 'visit_' + randomUUID().slice(0, 12);
+  const id = 'visit_' + randomUUID().replaceAll('-', '');
   // P12：origin 从硬编码 'workbuddy' 改为 'mcp'——精确辨识外部 MCP 直写路径（前端 VisitTimeline/FocusPanel 已扩相应显示）
   await applyMcpAction(ctx, {
     type: 'ADD_VISIT', accId: account.id,
@@ -1342,7 +1342,7 @@ async function setBurningIssue(ctx: CommandContext, args: Record<string, unknown
     });
     return { id: existing.id, opportunityId: opp.id, personId: person.id, proposed, origin: 'workbuddy', note: `${proposed} 个 BI 字段变更转入收件箱待人审。` };
   }
-  const id = 'bi_' + randomUUID().slice(0, 12);
+  const id = 'bi_' + randomUUID().replaceAll('-', '');
   await applyMcpAction(ctx, { type: 'ADD_BI', accId: opp.accountId, oppId: opp.id, bi: { id, personId: person.id, description, category, isPrivate, confidence } });
   return { id, opportunityId: opp.id, personId: person.id, created: true, origin: 'workbuddy', note: `已记「${person.name}」的 BI（${category}）。` };
 }
@@ -1376,7 +1376,7 @@ async function setUcv(ctx: CommandContext, args: Record<string, unknown>) {
     });
     return { id: existing.id, opportunityId: opp.id, targetBiId, proposed, origin: 'workbuddy', note: `${proposed} 个 UCV 字段变更转入收件箱待人审。` };
   }
-  const id = 'ucv_' + randomUUID().slice(0, 12);
+  const id = 'ucv_' + randomUUID().replaceAll('-', '');
   await applyMcpAction(ctx, { type: 'ADD_UCV', accId: opp.accountId, oppId: opp.id, ucv: { id, targetBiId, description, competitorCannot, status } });
   return { id, opportunityId: opp.id, targetBiId, created: true, origin: 'workbuddy', note: '已记 UCV。' };
 }

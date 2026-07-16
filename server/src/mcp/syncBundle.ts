@@ -250,7 +250,7 @@ async function executeBundle(
       _mcpOrigin: { source: 'mcp', syncRunId, at: new Date().toISOString(), needsReview: true },
     };
     account = await db.account.create({ data: {
-      id: 'acc_' + randomUUID().slice(0, 12), tenantId: ctx.tenantId,
+      id: 'acc_' + randomUUID().replaceAll('-', ''), tenantId: ctx.tenantId,
       externalRef: accountFact.externalRef ?? null, unifiedCreditCode: accountFact.unifiedCreditCode ?? null,
       name: accountFact.name, customerType: accountFact.customerType ?? 1,
       region: accountFact.region ?? '', group: accountFact.group ?? '',
@@ -294,7 +294,7 @@ async function executeBundle(
     } } });
     if (!opportunity) {
       opportunity = await db.opportunity.create({ data: {
-        id: 'opp_' + randomUUID().slice(0, 12), tenantId: ctx.tenantId, accountId: account.id,
+        id: 'opp_' + randomUUID().replaceAll('-', ''), tenantId: ctx.tenantId, accountId: account.id,
         externalRef: fact.externalRef, name: fact.name, customerType: account.customerType,
         pipelineStage: fact.pipelineStage ?? '线索', engageStage: fact.engageStage ?? '需求调研立项',
         status: fact.status ?? 'active', changeMode: fact.changeMode ?? null,
@@ -371,7 +371,7 @@ async function executeBundle(
       receipt.updated.push(`visit:${fact.externalRef}`);
     } else {
       await db.visitNote.create({ data: {
-        id: 'visit_' + randomUUID().slice(0, 12), tenantId: ctx.tenantId, accountId: account.id,
+        id: 'visit_' + randomUUID().replaceAll('-', ''), tenantId: ctx.tenantId, accountId: account.id,
         opportunityId: visitOpportunityId, externalRef: fact.externalRef,
         date: fact.date, topic: fact.topic ?? '', summary: fact.summary,
         participants: JSON.stringify(fact.participants ?? []), origin: 'mcp', createdBy: ctx.actorId,
@@ -388,7 +388,7 @@ async function executeBundle(
     } });
     if (!row) {
       row = await db.personSuggestion.create({ data: {
-        id: 'ps_' + randomUUID().slice(0, 12), tenantId: ctx.tenantId, accountId: account.id,
+        id: 'ps_' + randomUUID().replaceAll('-', ''), tenantId: ctx.tenantId, accountId: account.id,
         opportunityId: opportunity?.id ?? null, name: candidate.name, title: candidate.title,
         orgLevel: candidate.orgLevel, evidence: candidate.evidence, confidence: candidate.confidence,
         origin: 'mcp', status: 'pending', proposedBy: ctx.actorId,
@@ -416,7 +416,7 @@ async function executeBundle(
       ],
     } });
     if (!existing) await db.relSuggestion.create({ data: {
-      id: 'rs_' + randomUUID().slice(0, 12), tenantId: ctx.tenantId, opportunityId: opportunity!.id,
+      id: 'rs_' + randomUUID().replaceAll('-', ''), tenantId: ctx.tenantId, opportunityId: opportunity!.id,
       sourceKind: 'suggestion', sourcePersonId, targetKind: 'suggestion', targetPersonId,
       layer: relation.layer, label: relation.label, evidence: relation.evidence,
       confidence: relation.confidence, origin: 'mcp', status: 'pending',
@@ -429,7 +429,7 @@ async function executeBundle(
     const person = await db.person.findFirst({ where: { id: evidence.personId, tenantId: ctx.tenantId, accountId: account.id, ...activePersonWhere } });
     if (!person) throw new Error(`evidence ${evidence.ref} person is outside the account`);
     await db.evidenceEvent.create({ data: {
-      id: 'ev_' + randomUUID().slice(0, 12), tenantId: ctx.tenantId, accountId: account.id,
+      id: 'ev_' + randomUUID().replaceAll('-', ''), tenantId: ctx.tenantId, accountId: account.id,
       opportunityId: opportunity!.id, personId: person.id, signalKey: evidence.signalKey,
       direction: evidence.direction, tier: evidence.tier, rawContent: evidence.rawContent,
       occurredAt: evidence.occurredAt, status: 'pending_review', origin: 'mcp', createdBy: ctx.actorId,

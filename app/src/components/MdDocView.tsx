@@ -6,7 +6,7 @@ import {
   CUSTOMER_TYPE_LABEL, ROLE_LABEL, SENTIMENT_CHAR, FAMILY_7Q, C3_ITEMS, C5_ITEMS,
 } from '../types';
 import { scoreFromDomain, BAND_LABEL, ITEM_MAX, type ItemKey } from '../lib/g64111';
-import type { Action } from '../store';
+import { uid, type Action } from '../store';
 import { CuratedSummary } from './CuratedSummary';
 import { api } from '../api';
 
@@ -44,8 +44,8 @@ export function NotesSection({ notes, onAdd, onDelete, ro }: { notes: Note[]; on
   );
 }
 
-/** 前端临时 id（不依赖 secure context，避开 crypto.randomUUID 在 http 主机名下失效） */
-const newId = (prefix: string) => `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+/** 前端临时 id 复用全局 128-bit CSPRNG 生成器；内网 HTTP 也可用 getRandomValues。 */
+const newId = uid;
 
 type DocSel = { kind: 'customer' } | { kind: 'opp'; id: string } | { kind: 'visit'; id: string };
 

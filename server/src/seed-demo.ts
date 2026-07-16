@@ -4,7 +4,7 @@ import { shiftBusinessYmd } from './businessDate.js';
 
 /** 为某租户创建一份演示数据（西部电力建设集团风光储项目）。每次调用用独立 id 前缀，避免冲突。 */
 export async function createDemoForTenant(tenantId: string): Promise<void> {
-  const rid = randomUUID().slice(0, 8);
+  const rid = randomUUID().replaceAll('-', '');
   const id = (k: string) => `${rid}_${k}`;
   const accId = id('acc');
   const oppId = id('opp');

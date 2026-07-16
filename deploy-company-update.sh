@@ -31,9 +31,13 @@ if [[ "$existing_db" == 1 ]]; then
   }
 fi
 
-echo "── 1/4 认证加密备份数据库 ──"
+rollback_point=''
+echo "── 1/4 创建认证备份和可执行回滚点 ──"
 if [[ "$existing_db" == 1 ]]; then
-  bash scripts/backup-postgres.sh
+  rollback_output=$(ROLLBACK_ROOT=/data/jianghu-rollbacks bash scripts/create-release-rollback-point.sh)
+  printf '%s\n' "$rollback_output"
+  rollback_point=$(printf '%s\n' "$rollback_output" | sed -n 's/^ROLLBACK_POINT=//p' | tail -n 1)
+  [[ -d "$rollback_point" ]] || { echo "回滚点创建失败，禁止部署。" >&2; exit 1; }
 else
   echo "first install: nothing to back up"
 fi
@@ -49,10 +53,12 @@ PORT=$(grep -E '^WEB_PORT=' .env | tail -n 1 | cut -d= -f2); PORT=${PORT:-80}
 wait_for_http_readiness "http://localhost:${PORT}/api/health/ready" 40 || {
   docker compose ps
   docker compose logs server | tail -40
+  [[ -z "$rollback_point" ]] || echo "回滚命令：bash deploy-company-rollback.sh '$rollback_point' --confirm"
   exit 1
 }
 docker compose ps
 health=$(curl --noproxy '*' --fail --silent --show-error --connect-timeout 3 --max-time 5 \
   "http://localhost:${PORT}/api/health/ready")
 echo "$health ✓ 已更新到：$(git log --oneline -1)"
+[[ -z "$rollback_point" ]] || echo "本次回滚点：$rollback_point"
 docker image prune -f >/dev/null

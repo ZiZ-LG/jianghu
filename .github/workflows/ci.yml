@@ -57,6 +57,23 @@ jobs:
           cache-dependency-path: server/package-lock.json
       - run: npm ci --install-links
       - run: npm run generate
+      - run: npm run schema:postgres:check
+      - run: npm run typecheck
+      - run: npm test
+
+  g64111:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/g64111
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/g64111/package-lock.json
+      - run: npm ci
       - run: npm run typecheck
       - run: npm test
 
@@ -75,3 +92,45 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+
+  dependency-audit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - app
+          - server
+          - packages/domain-contracts
+          - packages/g64111
+          - packages/pde-kernel
+    defaults:
+      run:
+        working-directory: ${{ matrix.package }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ${{ matrix.package }}/package-lock.json
+      - run: npm ci --install-links
+      - run: npm audit --audit-level=high
+      - run: npm audit --omit=dev --audit-level=high
+
+  production-images:
+    runs-on: ubuntu-latest
+    env:
+      POSTGRES_PASSWORD: ci-build-only
+      JWT_SECRET: ci-build-only
+      AI_KEY_SECRET: ci-build-only
+      OUTBOUND_ALLOWED_HOSTS: example.com
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose build server web
+
+  postgres-operations:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/test-postgres-ops-integration.sh

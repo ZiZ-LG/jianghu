@@ -43,7 +43,7 @@ export async function ensureIndustryPack(
   if (!pack) {
     pack = await db.industryPack.create({
       data: {
-        id: 'pack_' + randomUUID().slice(0, 12), tenantId, packKey: PACK_KEY, schemaVersion,
+        id: 'pack_' + randomUUID().replaceAll('-', ''), tenantId, packKey: PACK_KEY, schemaVersion,
         payload: JSON.stringify(seeds),
       },
     });
@@ -61,7 +61,7 @@ export async function ensureIndustryPack(
     await db.actionCatalog.upsert({
       where: { tenantId_packId_actionKey: { tenantId, packId: pack.id, actionKey: a.id } },
       create: {
-        id: 'ac_' + randomUUID().slice(0, 12), tenantId, packId: pack.id, actionKey: a.id,
+        id: 'ac_' + randomUUID().replaceAll('-', ''), tenantId, packId: pack.id, actionKey: a.id,
         category: a.category, title: a.title ?? '', effectJson: JSON.stringify(a.effect ?? {}),
         costTier: a.costTier ?? 'mid', costWan: tierWan[a.costTier] ?? tierWan.mid ?? 1.5,
         stageWindow: a.stageWindow ?? 'any', targetSlots: JSON.stringify(a.targetSlots ?? []),
@@ -75,7 +75,7 @@ export async function ensureIndustryPack(
     await db.signalCatalog.upsert({
       where: { tenantId_packId_signalKey: { tenantId, packId: pack.id, signalKey: s.key } },
       create: {
-        id: 'sig_' + randomUUID().slice(0, 12), tenantId, packId: pack.id, signalKey: s.key,
+        id: 'sig_' + randomUUID().replaceAll('-', ''), tenantId, packId: pack.id, signalKey: s.key,
         label: s.label ?? '', groupKey: s.group ?? '', direction: Number(s.direction ?? 1),
         tier: s.tier ?? 'mid', behavioral: !!s.behavioral,
       },

@@ -25,7 +25,7 @@ export async function createFieldProposal(tenantId: string, p: {
     await db.changeProposal.update({ where: { id: existing.id }, data: { opportunityId: p.opportunityId ?? null, oldValue: p.oldValue, newValue: p.newValue, evidence: p.evidence ?? '', confidence: p.confidence ?? 0.5, origin: p.origin ?? 'voice', proposedBy: p.proposedBy ?? '', dedupeKey } });
     return;
   }
-  const cpId = 'cp_' + randomUUID().slice(0, 12);
+  const cpId = 'cp_' + randomUUID().replaceAll('-', '');
   try {
     await db.changeProposal.create({ data: { id: cpId, tenantId, accountId: p.accountId, opportunityId: p.opportunityId ?? null, entityKind: p.entityKind, entityId: p.entityId, field: p.field, oldValue: p.oldValue, newValue: p.newValue, origin: p.origin ?? 'voice', evidence: p.evidence ?? '', confidence: p.confidence ?? 0.5, proposedBy: p.proposedBy ?? '', dedupeKey } });
   } catch (error) {

@@ -57,6 +57,31 @@ docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d
    INSERT INTO \"SyncRun\" (id,\"tenantId\",\"actorId\",\"idempotencyKey\",\"requestHash\",status,\"createdAt\",\"updatedAt\")
      VALUES ('ops-sync','ops-tenant','ops-actor','ops-key','ops-hash','completed',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);" >/dev/null
 
+# INT-502 mixed legacy migration: ordinary rows were raw, person-merge rows were already SHA-256.
+legacy_key='ops-legacy-command-key'
+legacy_hash=$(printf '%s' "$legacy_key" | openssl dgst -sha256 -r | awk '{print $1}')
+person_hash=$(printf '%s' 'ops-person-merge-key' | openssl dgst -sha256 -r | awk '{print $1}')
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
+  "INSERT INTO \"CommandRun\" (id,\"tenantId\",\"actorId\",kind,\"idempotencyKey\",\"requestHash\",status,\"createdAt\",\"updatedAt\")
+     VALUES ('ops-command-legacy','ops-tenant','ops-actor','action-feedback','$legacy_key','request-a','completed',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),
+            ('ops-command-person','ops-tenant','ops-actor','person-merge','$person_hash','request-b','completed',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);" >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+  < server/prisma/postgres/migrations/20260715010000_hash_command_run_idempotency_keys/migration.sql >/dev/null
+migrated_keys=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+  'SELECT "idempotencyKey" FROM "CommandRun" ORDER BY id' | tr -d '\r')
+[[ "$migrated_keys" == "$legacy_hash"$'\n'"$person_hash" ]]
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
+  "INSERT INTO \"CommandRun\" (id,\"tenantId\",\"actorId\",kind,\"idempotencyKey\",\"requestHash\",status,\"createdAt\",\"updatedAt\")
+     VALUES ('ops-command-invalid-person','ops-tenant','ops-actor','person-merge','raw-invalid-person-key','request-c','completed',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP);" >/dev/null
+if docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+    < server/prisma/postgres/migrations/20260715010000_hash_command_run_idempotency_keys/migration.sql >/dev/null 2>&1; then
+  echo "invalid legacy person-merge key unexpectedly migrated" >&2; exit 1
+fi
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
+  "DELETE FROM \"CommandRun\" WHERE id = 'ops-command-invalid-person';" >/dev/null
+echo "COMMAND_KEY_MIXED_MIGRATION_OK=1"
+
 # Exercise the one-time pre-INT501 bridge against the same isolated Compose project.
 bootstrap_root=$(mktemp -d "/tmp/jianghu-int501-bootstrap.${$}.XXXXXX")
 cp docker-compose.yml "$bootstrap_root/docker-compose.yml"

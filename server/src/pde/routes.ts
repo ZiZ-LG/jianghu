@@ -140,7 +140,7 @@ export async function createPdeSnapshot(
     if (!c) throw new Error('PDE opportunity unavailable');
     const snap = await db.eVSnapshot.create({
       data: {
-        id: 'evs_' + randomUUID().slice(0, 12), tenantId, opportunityId: oppId, trigger,
+        id: 'evs_' + randomUUID().replaceAll('-', ''), tenantId, opportunityId: oppId, trigger,
         inputsJson: JSON.stringify({
           deal: c.asm.deal,
           evidence: c.asm.evidence,

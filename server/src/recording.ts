@@ -90,7 +90,7 @@ async function saveTranscripts(
     }
     await db.transcript.create({
       data: {
-        id: 'tr_' + randomUUID().slice(0, 12),
+        id: 'tr_' + randomUUID().replaceAll('-', ''),
         tenantId,
         accountId: mount.accountId ?? null,
         opportunityId: mount.opportunityId ?? null,
@@ -179,7 +179,7 @@ async function saveCredential(tenantId: string, userId: string, source: string, 
   await prisma.recordingCredential.upsert({
     where: { tenantId_userId_source: { tenantId, userId, source } },
     update: data,
-    create: { id: 'rc_' + randomUUID().slice(0, 12), tenantId, userId, source, ...data },
+    create: { id: 'rc_' + randomUUID().replaceAll('-', ''), tenantId, userId, source, ...data },
   });
 }
 
@@ -504,7 +504,7 @@ export function recordingRoutes(app: FastifyInstance): void {
     await prisma.recordingCredential.upsert({
       where: { tenantId_userId_source: { tenantId: req.user.tenantId, userId: req.user.userId, source: 'getnote' } },
       update: { accessTokenEnc: enc(p.data.apiKey), meta, status: 'active' },
-      create: { id: 'rc_' + randomUUID().slice(0, 12), tenantId: req.user.tenantId, userId: req.user.userId, source: 'getnote', accessTokenEnc: enc(p.data.apiKey), meta },
+      create: { id: 'rc_' + randomUUID().replaceAll('-', ''), tenantId: req.user.tenantId, userId: req.user.userId, source: 'getnote', accessTokenEnc: enc(p.data.apiKey), meta },
     });
     return { ok: true };
   });

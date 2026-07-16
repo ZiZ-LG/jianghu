@@ -188,11 +188,11 @@ export async function syncFromAction(tenantId: string, userId: string, action: A
       await prisma.scheduleSync.update({ where: { id: map.id }, data: { status: 'synced', lastError: '' } });
     } else {
       const sid = await addSchedule(token, schedule);
-      await prisma.scheduleSync.upsert({ where: whereMap, create: { id: 'ss_' + randomUUID().slice(0, 12), tenantId, kind, refId, wecomScheduleId: sid, status: 'synced' }, update: { wecomScheduleId: sid, status: 'synced', lastError: '' } });
+      await prisma.scheduleSync.upsert({ where: whereMap, create: { id: 'ss_' + randomUUID().replaceAll('-', ''), tenantId, kind, refId, wecomScheduleId: sid, status: 'synced' }, update: { wecomScheduleId: sid, status: 'synced', lastError: '' } });
     }
   } catch (e: any) {
     const msg = String(e?.message || e).slice(0, 300);
-    await prisma.scheduleSync.upsert({ where: whereMap, create: { id: 'ss_' + randomUUID().slice(0, 12), tenantId, kind, refId, wecomScheduleId: '', status: 'failed', lastError: msg }, update: { status: 'failed', lastError: msg } });
+    await prisma.scheduleSync.upsert({ where: whereMap, create: { id: 'ss_' + randomUUID().replaceAll('-', ''), tenantId, kind, refId, wecomScheduleId: '', status: 'failed', lastError: msg }, update: { status: 'failed', lastError: msg } });
   }
 }
 
@@ -465,7 +465,7 @@ export function wecomRoutes(app: FastifyInstance) {
     try {
       await prisma.weComUserBind.upsert({
         where: { tenantId_userId: { tenantId: req.user.tenantId, userId: req.user.userId } },
-        create: { id: 'wb_' + randomUUID().slice(0, 12), tenantId: req.user.tenantId, userId: req.user.userId, wecomUserid },
+        create: { id: 'wb_' + randomUUID().replaceAll('-', ''), tenantId: req.user.tenantId, userId: req.user.userId, wecomUserid },
         update: { wecomUserid },
       });
     } catch (error: any) {
@@ -555,7 +555,7 @@ export function wecomRoutes(app: FastifyInstance) {
         if (claimed.count !== 1) return { status: 'consumed' as const };
         await tx.weComUserBind.upsert({
           where: { tenantId_userId: { tenantId: row.tenantId, userId: row.userId } },
-          create: { id: 'wb_' + randomUUID().slice(0, 12), tenantId: row.tenantId, userId: row.userId, wecomUserid: row.pendingWecomUserid },
+          create: { id: 'wb_' + randomUUID().replaceAll('-', ''), tenantId: row.tenantId, userId: row.userId, wecomUserid: row.pendingWecomUserid },
           update: { wecomUserid: row.pendingWecomUserid },
         });
         return { status: 'ok' as const, wecomUserid: row.pendingWecomUserid };

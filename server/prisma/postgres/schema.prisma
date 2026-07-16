@@ -133,12 +133,14 @@ model Person {
   archivedBy   String?
   archiveReason String @default("")
   mergedIntoPersonId String?
+  createdAt    DateTime @default(now()) // INT-502：正式人物创建基数，用于重复实体率受控观察
 
   @@unique([tenantId, id])
   @@index([accountId])
   @@index([tenantId, accountId])
   @@index([tenantId, accountId, archivedAt])
   @@index([tenantId, mergedIntoPersonId])
+  @@index([tenantId, createdAt])
 }
 
 model Opportunity {
