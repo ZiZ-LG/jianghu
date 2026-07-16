@@ -11,5 +11,12 @@ docs
 **/*.db-journal
 **/.env
 **/.env.*
+**/backups
+**/*.backup
+**/*.dump.enc
+**/*.auth.hmac
+**/*.payload.sha256
+**/.backup-work*
+**/.backup.lock
 .claude
 .DS_Store

@@ -10,6 +10,15 @@ build/
 *.db
 *.db-journal
 
+# PostgreSQL backup artifacts（始终放仓库外；这些规则是最后一道防误提交）
+backups/
+*.backup/
+*.dump.enc
+*.auth.hmac
+*.payload.sha256
+.backup-work*
+.backup.lock/
+
 # 日志
 *.log
 npm-debug.log*

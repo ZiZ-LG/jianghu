@@ -1,26 +1,58 @@
 #!/bin/bash
-# 公司内网服务器（jsf-zhul-a-private / 10.0.171.152，部署在 /data/jianghu）就地更新脚本。
-# 这是服务器上 /data/jianghu/update.sh 的仓库存档副本（防丢 + 可追溯）。
-#
-# 用法（在服务器上）：
-#   首次放置： scp deploy-company-update.sh <用户>@10.0.171.152:/data/jianghu/update.sh
-#   日常更新： cd /data/jianghu && sudo bash update.sh
-#
-# 做的事：备份数据库（保留最近 14 份）→ git pull（main）→ docker compose 重建滚动更新
-#         → 健康自检 → 清理悬空镜像。数据卷 pgdata 不动。
-# ⚠️ git pull 拉的是 main；功能分支（feat/*）的改动必须先合 main，本脚本才会部署到。
-# ⚠️ 红线：绝不 docker compose down -v（会删 pgdata 数据卷）。
-set -e
+# 公司内网服务器（/data/jianghu）就地更新。首次进入 INT-501 前必须先跑 bootstrap。
+set -Eeuo pipefail
 cd /data/jianghu
-echo "── 1/4 备份数据库 ──"
-docker exec jianghu-db-1 pg_dump -U jianghu jianghu > /data/jianghu-backups/backup-$(date +%F-%H%M).sql
-ls -t /data/jianghu-backups/*.sql | tail -n +15 | xargs -r rm -f
-echo "── 2/4 拉取最新版本 ──"
-git pull
+source scripts/lib/deploy-common.sh
+source scripts/lib/backup-crypto.sh
+source scripts/lib/bootstrap-marker.sh
+
+BOOTSTRAP_MARKER=/data/jianghu-backups/.int501-bootstrap-verified
+resolve_deployment_db_state || { echo "无法确认现有数据库状态，禁止部署。" >&2; exit 1; }
+existing_db=$DEPLOYMENT_HAS_EXISTING_DB
+
+env_value() {
+  local key=$1 line
+  line=$(grep -E "^${key}=" .env 2>/dev/null | tail -n 1 || true)
+  printf '%s' "${line#*=}"
+}
+
+if [[ "$existing_db" == 1 ]]; then
+  deployment_project=$(compose_project_name)
+  live_database=$(docker compose exec -T db sh -c 'printf "%s" "$POSTGRES_DB"')
+  live_password=$(docker compose exec -T db sh -c 'printf "%s" "$POSTGRES_PASSWORD"')
+  verify_bootstrap_marker "$BOOTSTRAP_MARKER" "$deployment_project" "$live_database" /data/jianghu-backups || {
+    echo "INT-501 bootstrap marker 无效，禁止 migration build。" >&2; exit 1
+  }
+  backup_master=$(env_value BACKUP_MASTER_SECRET)
+  validate_backup_master_secret "$backup_master" "$live_password"
+  derive_backup_keys "$backup_master"
+  verify_artifact_auth "$VERIFIED_BOOTSTRAP_BACKUP" || {
+    echo "bootstrap marker 引用的备份认证失败，禁止 migration build。" >&2; exit 1
+  }
+fi
+
+echo "── 1/4 认证加密备份数据库 ──"
+if [[ "$existing_db" == 1 ]]; then
+  bash scripts/backup-postgres.sh
+else
+  echo "first install: nothing to back up"
+fi
+
+echo "── 2/4 快进拉取最新版本 ──"
+git pull --ff-only
+
 echo "── 3/4 重建并滚动更新 ──"
 docker compose up -d --build
-echo "── 4/4 健康自检 ──"
-sleep 6
+
+echo "── 4/4 readiness 自检 ──"
+PORT=$(grep -E '^WEB_PORT=' .env | tail -n 1 | cut -d= -f2); PORT=${PORT:-80}
+wait_for_http_readiness "http://localhost:${PORT}/api/health/ready" 40 || {
+  docker compose ps
+  docker compose logs server | tail -40
+  exit 1
+}
 docker compose ps
-curl -s http://localhost/api/health && echo " ✓ 已更新到：$(git log --oneline -1)"
+health=$(curl --noproxy '*' --fail --silent --show-error --connect-timeout 3 --max-time 5 \
+  "http://localhost:${PORT}/api/health/ready")
+echo "$health ✓ 已更新到：$(git log --oneline -1)"
 docker image prune -f >/dev/null

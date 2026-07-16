@@ -26,7 +26,7 @@ cd /Volumes/PowerData/江湖APP   # 项目目录
 bash deploy-macmini.sh
 ```
 
-脚本会自动：生成 `.env`（随机密钥、完整应用模式）→ `docker compose up -d --build` → 健康自检 → 打印团队访问地址。
+脚本会自动：生成/保留 `.env`（含独立备份密钥）→ 若有现有数据库则先做加密备份（失败即停止）→ `docker compose up -d --build` → readiness 自检 → 打印团队访问地址。
 
 > 首次构建约 3–8 分钟（含 npm 安装、Vite 构建）。完成后三个容器（db / server / web）应为 Up。
 
@@ -92,17 +92,19 @@ cd /Volumes/PowerData/江湖APP
 docker compose ps
 docker compose logs -f server
 
-# 迭代更新（你改完代码后）
-git pull            # 如果代码在别处改的
-docker compose up -d --build
+# 迭代更新（推荐；脚本检测既有卷并先加密备份，成功后才 build/up）
+bash deploy-macmini.sh
 
 # 停止 / 重启
 docker compose stop
 docker compose start
 
-# 备份数据库（建议定期）
-docker compose exec db pg_dump -U jianghu jianghu > ~/jianghu-backup-$(date +%F).sql
+# 加密备份与隔离恢复演练
+bash scripts/backup-postgres.sh
+bash scripts/restore-postgres.sh "$HOME/JianghuBackups/<备份>.backup" --database jianghu_restore_drill
 ```
+
+详细的密钥保管、校验、`--replace` 和清理步骤见 [内部版-备份恢复手册.md](内部版-备份恢复手册.md)。禁止把明文 dump 留在磁盘，也禁止直接恢复覆盖生产数据库。
 
 > **数据安全**：Postgres 数据存在 Docker 具名卷 `pgdata`，`stop`/`restart`/重启 Mac 都不丢。只有显式 `docker compose down -v` 才会删卷——别加 `-v`。
 

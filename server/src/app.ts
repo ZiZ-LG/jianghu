@@ -75,8 +75,21 @@ const requireRole = (req: any, reply: any, roles: string[]): boolean => {
   return true;
 };
 
-function registerRoutes(app: FastifyInstance): void {
-  app.get('/api/health', async () => ({ ok: true }));
+type ReadinessProbe = () => Promise<void>;
+
+function registerRoutes(app: FastifyInstance, readinessProbe: ReadinessProbe): void {
+  app.get('/api/health/live', async () => ({ ok: true }));
+  const readinessHandler = async (_req: unknown, reply: { code: (status: number) => { send: (body: { ok: boolean }) => unknown } }) => {
+    try {
+      await readinessProbe();
+      return { ok: true };
+    } catch {
+      return reply.code(503).send({ ok: false });
+    }
+  };
+  app.get('/api/health/ready', readinessHandler);
+  // Backward-compatible endpoint used by existing deploy callers; semantically readiness.
+  app.get('/api/health', readinessHandler);
 
   authRoutes(app);
   aiRoutes(app);
@@ -328,13 +341,18 @@ function registerRoutes(app: FastifyInstance): void {
   });
 }
 
-export interface BuildAppOptions { logger?: boolean }
+export interface BuildAppOptions {
+  logger?: boolean;
+  readinessProbe?: ReadinessProbe;
+}
 
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
   // trustProxy：部署在 Nginx 反代之后，据此识别真实客户端 IP（限流/日志才准确）
   const logger = options.logger === true ? { level: 'warn' } : false;
   const app = Fastify({ logger, trustProxy: true });
   await registerSecurityPlugins(app);
-  registerRoutes(app);
+  registerRoutes(app, options.readinessProbe ?? (async () => {
+    await prisma.$queryRaw`SELECT 1`;
+  }));
   return app;
 }

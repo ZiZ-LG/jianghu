@@ -1,5 +1,9 @@
 name: jianghu
 
+x-backup-config:
+  directory: ${BACKUP_DIR:-/var/backups/jianghu}
+  retention-days: ${BACKUP_RETENTION_DAYS:-14}
+
 # 江湖 生产部署栈：Postgres + 后端(Fastify) + 前端(Nginx 托管 SPA 并反代 /api)
 # 用法：cp .env.production.example .env && 填好密钥 → docker compose up -d --build
 services:
@@ -57,7 +61,8 @@ services:
         VITE_POLICE_BEIAN_URL: ${VITE_POLICE_BEIAN_URL:-}
     restart: unless-stopped
     depends_on:
-      - server
+      server:
+        condition: service_healthy
     ports:
       - "${WEB_PORT:-80}:80"
 

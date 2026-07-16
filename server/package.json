@@ -17,6 +17,8 @@
     "migrate:account-owners": "tsx scripts/backfill-account-owners.ts",
     "migrate:wecom-bind-report": "tsx scripts/report-wecom-bind-conflicts.ts",
     "migrate:sync-anchor-report": "tsx scripts/report-sync-anchor-conflicts.ts",
+    "schema:postgres:render": "node scripts/render-postgres-schema.mjs",
+    "schema:postgres:check": "node scripts/render-postgres-schema.mjs --check",
     "generate": "prisma generate"
   },
   "dependencies": {

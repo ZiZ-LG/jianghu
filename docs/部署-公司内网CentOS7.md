@@ -117,24 +117,59 @@ sudo firewall-cmd --permanent --add-port=80/tcp && sudo firewall-cmd --reload
 
 ```bash
 docker compose logs -f server                       # 看后端日志
-docker exec jianghu-db-1 pg_dump -U jianghu jianghu > /data/backup-$(date +%F).sql   # 备份（建议 cron 每日）
+bash scripts/backup-postgres.sh                        # 加密备份（建议 cron 每日）
 # 红线：绝不执行 docker compose down -v（-v 会删 pgdata 数据卷）
 ```
 
 ## 8. 版本更新（就地·日常）
 
-服务器上 `/data/jianghu/update.sh`（源已入库 = 仓库根 `deploy-company-update.sh`）：备份库（保留 14 份，落 `/data/jianghu-backups/`）→ `git pull`（main）→ `docker compose up -d --build` 滚动更新 → 健康自检 → 清理悬空镜像。`pgdata` 不动。
+服务器上 `/data/jianghu/update.sh`（源已入库 = 仓库根 `deploy-company-update.sh`）：加密备份库（目录/保留天数由 `.env` 配置）→ `git pull`（main）→ `docker compose up -d --build` 滚动更新 → readiness 自检 → 清理悬空镜像。`pgdata` 不动。
+
+### 从 pre-INT501 版本首次升级（只做一次）
+
+旧 `/data/jianghu/update.sh` 和旧仓库还没有认证备份/恢复脚本，不能先 `git pull` 或 build。先在开发机把 bridge 与所需脚本按原目录打包并上传到服务器临时目录（bundle 内不得包含 `.env`）：
+
+```bash
+mkdir -p /tmp/int501-bundle/scripts/lib
+cp deploy-company-bootstrap-int501.sh /tmp/int501-bundle/
+cp scripts/backup-postgres.sh scripts/restore-postgres.sh /tmp/int501-bundle/scripts/
+cp scripts/lib/backup-crypto.sh scripts/lib/backup-lock.sh \
+  scripts/lib/deploy-common.sh scripts/lib/postgres-db-safety.sh \
+  scripts/lib/bootstrap-marker.sh /tmp/int501-bundle/scripts/lib/
+scp -r /tmp/int501-bundle <用户>@10.0.171.152:/tmp/
+```
+
+在服务器运行一次 bridge。它会为旧 `.env` 生成独立 64-hex master secret，向 `/data/jianghu-backups` 发布认证加密备份，真实恢复到随机 `jianghu_restore_bootstrap_*`，验证关键表，再删除隔离库；全部成功后才写 marker：
+
+```bash
+sudo bash /tmp/int501-bundle/deploy-company-bootstrap-int501.sh
+test -s /data/jianghu-backups/.int501-bootstrap-verified
+```
+
+marker 不是“文件存在即可”的开关：日常更新会严格校验格式、Compose project、运行中生产库名和所引用的同目录备份，并用当前独立 master secret 重新认证 metadata 与密文；任一不符都在 `git pull`/build 前停止。
+
+只有 marker 存在后，才允许拉取 INT-501 代码并替换 detached 更新脚本：
+
+```bash
+cd /data/jianghu
+git pull --ff-only
+sudo cp deploy-company-update.sh /data/jianghu/update.sh
+sudo chmod 700 /data/jianghu/update.sh
+sudo bash /data/jianghu/update.sh
+```
+
+任何一步失败都停止，不删除 `pgdata`，也不使用 `db push` 绕过。bootstrap 可安全重跑；日常更新脚本会在既有数据部署上强制检查 marker。
 
 ```bash
 cd /data/jianghu && sudo bash update.sh
 ```
 
 > ⚠️ 拉的是 **main**；功能分支（如 `feat/*`）的改动必须先合 main，`update.sh` 才会部署到。
-> 首次把脚本放上去：`scp deploy-company-update.sh <用户>@10.0.171.152:/data/jianghu/update.sh`。
+> 已经完成上述 bootstrap 的新部署，之后更新 detached 脚本可用：`scp deploy-company-update.sh <用户>@10.0.171.152:/data/jianghu/update.sh`。
 
 ## 已知注意项
 
-1. **schema 变更的版本更新**：server 容器 entrypoint 启动时自动 `prisma db push`；若某次更新含表结构收缩，push 会安全中止——参照 `docs/Mac mini 内网部署与团队访问.md` 的迁移经验处理，先备份再放行。
+1. **schema 变更的版本更新**：server 容器 entrypoint 启动时自动 `prisma migrate deploy`；历史 `db push` schema 只有与 baseline 完全一致才会被接管，任何差异都会失败关闭。先按 `docs/内部版-备份恢复手册.md` 完成加密备份和隔离恢复演练，不得用 `db push` 绕过。
 2. **CentOS 7 内核 3.10 较老**：Docker 24.x 运行正常，但 overlay2 在极老内核上偶有兼容问题——`docker info | grep Storage` 确认是 overlay2 即可。
 3. **公司代理**：若服务器走公司 HTTP 代理上外网，给 Docker 配代理（`/etc/systemd/system/docker.service.d/http-proxy.conf`）后路径 A 可用。
 4. 内网纯 HTTP 下浏览器剪贴板 API 受限（复制按钮自动回退手动复制，已兼容）；若公司有内部 HTTPS/证书体系可后续加。

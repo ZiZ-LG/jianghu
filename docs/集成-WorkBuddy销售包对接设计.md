@@ -76,7 +76,7 @@ model VisitNote {
   @@index([opportunityId])
 }
 ```
-> 改 schema 后按 CLAUDE.md：`npm run generate` → `npm run db:push` → **完全重启 node 进程**。
+> 本段是开发期施工说明：本地 SQLite 可 `npm run generate` → `npm run db:push` → 完全重启；生产 PostgreSQL 必须补版本化 migration 并由 `migrate deploy` 执行。
 
 ---
 
@@ -169,7 +169,7 @@ model VisitNote {
 
 ## 8. 设计点 —— 2026-06-05 全部拍板：**5 项全 Yes**
 
-> 另定：**内测数据不保留** → 本文档 §0/§1/§2/§7 中"保数据无损 / 加列迁移 / 上线前演练"相关约束**作废**；上线直接 `docker compose down -v` 重建库 + `db:push`。bug 走 A（内测冻结、只收反馈）。详见 `集成-M1实现清单.md` 决策快照。
+> 历史决策（2026-06-05，已被 INT-501 取代）：当时曾允许内测数据不保留。当前所有部署均视数据为须保留资产，生产禁止删卷重建和 `db push`；必须先做认证加密备份与隔离恢复，再执行版本化 `migrate deploy`。
 
 以下 5 项均已确认为「是」：
 

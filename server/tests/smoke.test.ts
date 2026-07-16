@@ -4,12 +4,49 @@ import { buildApp } from '../src/app.js';
 import { createTestContext } from './helpers/testApp.js';
 
 describe('buildApp', () => {
-  it('injects health without opening a port', async () => {
-    const app = await buildApp({ logger: false });
+  it('serves liveness without touching the database', async () => {
+    let readinessChecks = 0;
+    const app = await buildApp({
+      logger: false,
+      readinessProbe: async () => { readinessChecks += 1; },
+    });
     try {
-      const res = await app.inject({ method: 'GET', url: '/api/health' });
+      const res = await app.inject({ method: 'GET', url: '/api/health/live' });
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({ ok: true });
+      expect(readinessChecks).toBe(0);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it.each(['/api/health/ready', '/api/health'])('reports database readiness at %s', async (url) => {
+    let readinessChecks = 0;
+    const app = await buildApp({
+      logger: false,
+      readinessProbe: async () => { readinessChecks += 1; },
+    });
+    try {
+      const res = await app.inject({ method: 'GET', url });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ ok: true });
+      expect(readinessChecks).toBe(1);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it.each(['/api/health/ready', '/api/health'])('fails closed without leaking database errors at %s', async (url) => {
+    const app = await buildApp({
+      logger: false,
+      readinessProbe: async () => { throw new Error('postgresql://secret@db/internal'); },
+    });
+    try {
+      const res = await app.inject({ method: 'GET', url });
+      expect(res.statusCode).toBe(503);
+      expect(res.json()).toEqual({ ok: false });
+      expect(res.body).not.toContain('secret');
+      expect(res.body).not.toContain('postgresql');
     } finally {
       await app.close();
     }

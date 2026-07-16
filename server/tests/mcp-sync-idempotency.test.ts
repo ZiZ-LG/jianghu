@@ -563,9 +563,9 @@ describe('WorkBuddy atomic sync bundle', () => {
     await expect(findSyncAnchorConflicts(cleanInstall)).resolves.toEqual([]);
   });
 
-  it('runs the sync-anchor conflict report before production db push', async () => {
+  it('runs the sync-anchor conflict report before production migration deploy', async () => {
     const entrypoint = await readFile(new URL('../docker-entrypoint.sh', import.meta.url), 'utf8');
     expect(entrypoint.indexOf('migrate:sync-anchor-report')).toBeGreaterThan(-1);
-    expect(entrypoint.indexOf('migrate:sync-anchor-report')).toBeLessThan(entrypoint.indexOf('prisma db push'));
+    expect(entrypoint.indexOf('migrate:sync-anchor-report')).toBeLessThan(entrypoint.indexOf('prisma migrate deploy'));
   });
 });

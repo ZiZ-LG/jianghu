@@ -10,7 +10,7 @@
 
 - **前端 `app/`**：Vite + React + **TypeScript**（`.tsx` 组件 / `.ts` 逻辑）。乐观本地更新 + 云端同步。
 - **后端 `server/`**：Fastify + Prisma + JWT。多租户 SaaS，RBAC，免费多人协作（50 席）+ 自愿捐赠。
-- **数据库**：dev = SQLite（`server/prisma/dev.db`，零配置）；prod = Postgres（切 `schema.prisma` 的 `provider` + `DATABASE_URL`；Docker 镜像构建时自动 sed 切换）。
+- **数据库**：dev = SQLite（`server/prisma/dev.db`，零配置）；prod = Postgres（由 `schema:postgres:render` 确定性生成专用 schema，版本化 migration 经 `migrate deploy` 执行）。
 - 源码全是 TypeScript（仓库统计里的 `.js/.map` 来自 `node_modules`）。
 
 ## 仓库结构（monorepo）
@@ -90,7 +90,7 @@ cd packages/pde-kernel && npx tsc --noEmit && npm run test   # 内核类型 + go
 ## 在本仓库怎么干活
 
 - **小步**：一次一个功能/修复 → 跑通 → commit；别一次大改。
-- 改后端数据模型：先动 `schema.prisma` → `npm run generate` → `npm run db:push` → **完全重启 node 进程**（tsx watch 只热重载 `.ts`，不重载 `node_modules` 里生成的 `@prisma/client`，否则 `prisma.xxx` undefined）。
+- 改后端数据模型：先动 `schema.prisma` → 本地 SQLite 可用 `npm run generate && npm run db:push` → 为生产新增并验证版本化 migration、运行 `schema:postgres:check`；生产只能 `migrate deploy`，禁止 `db push`。生成客户端后须**完全重启 node 进程**。
 - **高风险区**（多租户 / 认证·RBAC / AI 写库 / 计费 / 数据契约 / 加密 Key）：动手前先用一两句说明影响，再改。
 - 主题/暗色：CSS 用语义变量（`--panel`/`--ink`/`--line`/`--hover` 等），暗色靠 `html[data-theme="dark"]` 覆盖块；**别硬编码颜色**，画布 SVG 也用 `var(--node-*)`。
 - 保持 **TS 严格类型**；引入新的重依赖前先问。

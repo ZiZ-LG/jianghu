@@ -2,6 +2,13 @@ node_modules
 npm-debug.log
 .env
 .env.*
+backups
+*.backup
+*.dump.enc
+*.auth.hmac
+*.payload.sha256
+.backup-work*
+.backup.lock
 prisma/dev.db
 prisma/dev.db-journal
 *.db
