@@ -162,7 +162,12 @@ export function CustomerHub({
             const mcpMark = (a.profile as any)?._mcpOrigin;
             const mcpNeedsReview = !!(mcpMark && mcpMark.needsReview);
             return (
-            <div key={a.id} className="acc-card" onClick={() => onOpen(a.id)}>
+            <div key={a.id} className="acc-card" role="button" tabIndex={0} aria-label={`打开客户 ${a.name}`} onClick={() => onOpen(a.id)}
+              onKeyDown={(event) => {
+                if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return;
+                event.preventDefault();
+                onOpen(a.id);
+              }}>
               <div className="acc-card-top">
                 <div className="acc-emoji">🏢</div>
                 {(needsYou?.get(a.id) ?? 0) > 0 && (

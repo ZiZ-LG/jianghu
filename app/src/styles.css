@@ -303,7 +303,7 @@ select { font-family: inherit; }
 
 /* ───────── Modal ───────── */
 .modal-overlay { position: fixed; inset: 0; background: rgba(15,23,42,.4); display: grid; place-items: center; z-index: 100; backdrop-filter: blur(2px); }
-.modal { background: #fff; border-radius: 14px; box-shadow: 0 24px 60px rgba(15,23,42,.25); max-height: 88vh; display: flex; flex-direction: column; }
+.modal { background: #fff; border-radius: 14px; box-shadow: 0 24px 60px rgba(15,23,42,.25); max-width: calc(100vw - 24px); max-height: 88vh; display: flex; flex-direction: column; }
 .modal-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--line); font-weight: 700; font-size: 15px; }
 .modal-body { padding: 18px 20px; overflow-y: auto; }
 .modal-foot { padding: 14px 20px; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; gap: 10px; }
@@ -402,15 +402,17 @@ select { font-family: inherit; }
 
 /* ───────── Auth ───────── */
 .boot { height: 100vh; display: grid; place-items: center; color: #94a3b8; font-size: 14px; }
-.auth-wrap { height: 100vh; display: grid; place-items: center; background: linear-gradient(135deg, #eef2f6 0%, #e0e7ff 100%); }
-.auth-card { width: 400px; background: #fff; border-radius: 16px; box-shadow: 0 20px 50px rgba(15,23,42,.15); padding: 28px; }
+.auth-wrap { height: 100vh; height: 100dvh; overflow-y: auto; display: grid; place-items: center; padding: 12px; background: linear-gradient(135deg, #eef2f6 0%, #e0e7ff 100%); }
+.auth-card { width: min(400px, 100%); background: #fff; border-radius: 16px; box-shadow: 0 20px 50px rgba(15,23,42,.15); padding: clamp(18px, 5vw, 28px); }
 .auth-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
 .auth-tabs { display: flex; gap: 4px; background: #f1f5f9; border-radius: 10px; padding: 4px; margin-bottom: 18px; }
 .auth-tabs button { flex: 1; padding: 8px; border-radius: 7px; font-size: 13px; font-weight: 600; color: #64748b; }
 .auth-tabs button.on { background: #fff; color: #0f172a; box-shadow: 0 1px 3px rgba(15,23,42,.1); }
 .auth-err { background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; font-size: 12px; padding: 8px 10px; border-radius: 8px; margin: 6px 0; }
 .auth-foot { text-align: center; font-size: 12px; color: var(--muted); margin-top: 14px; }
-.auth-foot a { color: #2563eb; cursor: pointer; font-weight: 600; margin-left: 4px; }
+.auth-link { color: var(--accent); cursor: pointer; font-weight: 600; margin-left: 4px; padding: 0; text-decoration: none; }
+.auth-link:hover, .auth-link:focus-visible { text-decoration: underline; }
+.auth-link.inline { margin: 0 2px; text-decoration: underline; }
 .method-toggle { display: flex; gap: 6px; margin-bottom: 14px; }
 .method-toggle button { flex: 1; padding: 7px; border-radius: 8px; font-size: 12px; font-weight: 600; color: #64748b; border: 1px solid var(--line); background: #fff; }
 .method-toggle button.on { background: #eff6ff; border-color: #bfdbfe; color: #1e40af; }
@@ -1179,7 +1181,6 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 /* ── 注册页「加入已有工作区」引导（防误开孤岛工作区）── */
 .auth-join { font-size: 12px; line-height: 1.7; color: var(--ink-2); background: var(--accent-soft); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; }
 .auth-join b { color: var(--ink); }
-.auth-join a { color: var(--accent); cursor: pointer; text-decoration: underline; margin: 0 2px; }
 
 /* ── 团队面板 · 行内重置密码 ── */
 .member-reset { display: flex; align-items: center; gap: 8px; padding: 6px 10px 8px 42px; }
@@ -1396,6 +1397,7 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 .wt-wrap { margin: 5px 0; border-radius: 7px; }
 .wt-wrap.open { background: var(--panel-2); }
 .wt-item { display: flex; flex-direction: column; gap: 4px; padding: 5px 6px; border-radius: 7px; cursor: pointer; }
+.wt-item { width: 100%; text-align: left; }
 .wt-row1 { display: flex; align-items: center; gap: 7px; }
 .wt-item:hover { background: var(--hover); }
 .wt-chev { font-size: 9px; color: var(--faint); width: 10px; flex-shrink: 0; text-align: center; }

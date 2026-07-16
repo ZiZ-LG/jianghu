@@ -83,11 +83,11 @@ export function MdDocPanel({ account, dispatch, onClose, readonly = false }: { a
   const navItem = (s: DocSel, label: string, sub?: string) => {
     const active = keyOf(s) === docKey;
     return (
-      <div key={keyOf(s)} className={`md-nav-item${active ? ' active' : ''}`} onClick={() => setSel(s)}
-        style={{ padding: '7px 10px', borderRadius: 6, cursor: 'pointer', background: active ? 'var(--hover)' : 'transparent', borderLeft: active ? '3px solid var(--accent)' : '3px solid transparent' }}>
+      <button type="button" key={keyOf(s)} className={`md-nav-item${active ? ' active' : ''}`} onClick={() => setSel(s)} aria-pressed={active}
+        style={{ width: '100%', padding: '7px 10px', borderRadius: 6, cursor: 'pointer', textAlign: 'left', background: active ? 'var(--hover)' : 'transparent', borderLeft: active ? '3px solid var(--accent)' : '3px solid transparent' }}>
         <div style={{ fontSize: 13, fontWeight: active ? 600 : 400 }}>{label}</div>
         {sub && <div style={{ fontSize: 11, opacity: 0.6 }}>{sub}</div>}
-      </div>
+      </button>
     );
   };
 

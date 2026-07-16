@@ -42,14 +42,14 @@ function Item({ k, score, open, onToggle }: { k: ItemKey; score: number; open: b
   const b = ITEM_BASIS[k];
   return (
     <div className={`wt-wrap${open ? ' open' : ''}`}>
-      <div className="wt-item" onClick={onToggle} title="展开打分依据 / 怎么提分">
+      <button type="button" className="wt-item" onClick={onToggle} title="展开打分依据 / 怎么提分" aria-expanded={open}>
         <div className="wt-row1">
           <span className="wt-chev">{open ? '▾' : '▸'}</span>
           <span className="wt-nm">{ITEM_LABEL[k]}</span>
           <span className="wt-sc">{disp}/{max}</span>
         </div>
         <span className="wt-bar"><i style={{ width: `${pct}%`, background: color }} /></span>
-      </div>
+      </button>
       {open && (
         <div className="wt-detail">
           <div className="wt-rule">{b.rule}</div>

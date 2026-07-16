@@ -37,6 +37,12 @@ import {
   isBusinessActionOverdue,
 } from '../lib/deliberationDates';
 
+function activateCardOnKey(event: React.KeyboardEvent<HTMLElement>, activate: () => void) {
+  if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return;
+  event.preventDefault();
+  activate();
+}
+
 // 741 四档语义色（同 types.ts 硬编码语义色惯例）
 const BAND_TONE: Record<Band741, string> = {
   ABSOLUTE_ADVANTAGE: '#16a34a',
@@ -854,7 +860,9 @@ export function DeliberationDock({
               const focused = !!selectedPersonId && card.personId === selectedPersonId;
               return (
                 <div key={card.id} className={`sb2-card sb2-strat${dispatched ? ' dispatched' : ''}${drawer?.kind === 'card' && drawer.id === card.id ? ' sel' : ''}${focused ? ' sb2-focus' : ''}`}
-                  onClick={() => { setDrawer({ kind: 'card', id: card.id }); if (card.personId) onSelectPerson?.(card.personId); }}>
+                  role="button" tabIndex={0} aria-label={`编辑策略卡 ${card.title || '未命名打法'}`}
+                  onClick={() => { setDrawer({ kind: 'card', id: card.id }); if (card.personId) onSelectPerson?.(card.personId); }}
+                  onKeyDown={(event) => activateCardOnKey(event, () => { setDrawer({ kind: 'card', id: card.id }); if (card.personId) onSelectPerson?.(card.personId); })}>
                   <div className="sb2-card-top">
                     {card.gapItem
                       ? <span className="sb2-chip">{ITEM_LABEL[card.gapItem as ItemKey] || card.gapItem}</span>
@@ -874,7 +882,7 @@ export function DeliberationDock({
             })}
 
             {cards.length === 0 && visibleFwdCands.length === 0 && (
-              <div className="sb2-card sb2-empty-card" onClick={() => addCard()}>还没有策略卡<br /><span>从现状锚缺口点「＋」，或「✨ 顺推」</span></div>
+              <button type="button" className="sb2-card sb2-empty-card" onClick={() => addCard()}>还没有策略卡<br /><span>从现状锚缺口点「＋」，或「✨ 顺推」</span></button>
             )}
           </div>
 
@@ -891,11 +899,13 @@ export function DeliberationDock({
               </span>
             </div>
             {laneMs.length === 0 && (
-              <div className="sb2-card sb2-empty-card" onClick={addMilestone}>从终局倒排关键节点<br /><span>开标 / 立项评审 / 签约…直接落行动计划时间轴</span></div>
+              <button type="button" className="sb2-card sb2-empty-card" onClick={addMilestone}>从终局倒排关键节点<br /><span>开标 / 立项评审 / 签约…直接落行动计划时间轴</span></button>
             )}
             {laneMs.map((item) => item.t === 'ms' ? (
               <div key={item.m.id} className={`sb2-card sb2-ms${drawer?.kind === 'milestone' && drawer.id === item.m.id ? ' sel' : ''}`}
-                onClick={() => setDrawer({ kind: 'milestone', id: item.m.id })}>
+                role="button" tabIndex={0} aria-label={`编辑里程碑 ${item.m.title || '未命名'}`}
+                onClick={() => setDrawer({ kind: 'milestone', id: item.m.id })}
+                onKeyDown={(event) => activateCardOnKey(event, () => setDrawer({ kind: 'milestone', id: item.m.id }))}>
                 <div className="sb2-card-top">
                   <span className="sb2-card-title">{item.m.title || <span className="sb2-dim">（未命名）</span>}</span>
                   <span className="sb2-ms-date">最晚 {mmdd(item.m.startDate || '')}</span>
@@ -923,7 +933,8 @@ export function DeliberationDock({
             ))}
 
             {/* 终局锚 */}
-            <div className={`sb2-card sb2-goal${drawer?.kind === 'goal' ? ' sel' : ''}`} onClick={() => setDrawer({ kind: 'goal' })}>
+            <div className={`sb2-card sb2-goal${drawer?.kind === 'goal' ? ' sel' : ''}`} role="button" tabIndex={0} aria-label="编辑终局锚"
+              onClick={() => setDrawer({ kind: 'goal' })} onKeyDown={(event) => activateCardOnKey(event, () => setDrawer({ kind: 'goal' }))}>
               <div className="sb2-anchor-tag">终局锚</div>
               <div className="sb2-goal-name">{opp.singleSalesGoal || <span className="sb2-dim">点击设定单一销售目标</span>}</div>
               {opp.expectedSignDate
@@ -961,7 +972,7 @@ export function DeliberationDock({
               </div>
             ))}
             {planActions.length === 0 && engCands.length === 0 && (
-              <div className="sb2-card sb2-empty-card" onClick={addAction}>还没有行动<br /><span>＋ 加一条，或在策略卡上「→ 派发」生成</span></div>
+              <button type="button" className="sb2-card sb2-empty-card" onClick={addAction}>还没有行动<br /><span>＋ 加一条，或在策略卡上「→ 派发」生成</span></button>
             )}
             {planActions.map((a) => {
               const overdue = isBusinessActionOverdue(a);
@@ -969,7 +980,9 @@ export function DeliberationDock({
               const focused = !!selectedPersonId && a.personId === selectedPersonId;
               return (
                 <div key={a.id} className={`sb2-card sb2-action${a.draft ? ' sb2-draft' : ''}${a.done ? ' done' : ''}${drawer?.kind === 'action' && drawer.id === a.id ? ' sel' : ''}${focused ? ' sb2-focus' : ''}`}
-                  onClick={() => { setDrawer({ kind: 'action', id: a.id }); if (a.personId) onSelectPerson?.(a.personId); }}>
+                  role="button" tabIndex={0} aria-label={`编辑行动 ${a.title || '未命名行动'}`}
+                  onClick={() => { setDrawer({ kind: 'action', id: a.id }); if (a.personId) onSelectPerson?.(a.personId); }}
+                  onKeyDown={(event) => activateCardOnKey(event, () => { setDrawer({ kind: 'action', id: a.id }); if (a.personId) onSelectPerson?.(a.personId); })}>
                   <div className="sb2-card-top">
                     {a.draft ? (
                       <>
