@@ -31,11 +31,30 @@ schema_matches() {
     --exit-code >/tmp/postgres-schema-drift.log 2>&1
 }
 
+refresh_applied_migrations() {
+  applied_migrations=$(npx tsx scripts/list-applied-postgres-migrations.ts)
+}
+
+migration_is_applied() {
+  printf '%s\n' "$applied_migrations" | grep -Fxq "$1"
+}
+
+resolve_missing_pre_bridge_migrations() {
+  refresh_applied_migrations
+  for migration in $PRE_BRIDGE_MIGRATIONS; do
+    if ! migration_is_applied "$migration"; then
+      npx prisma migrate resolve --applied "$migration" --schema "$SCHEMA"
+      refresh_applied_migrations
+    fi
+  done
+}
+
 state=$(wait_for_migration_state)
 case "$state" in
   untracked)
     if schema_matches "$SCHEMA"; then
       echo "[migration] 检测到与当前模型一致的未纳管 schema。"
+      npx tsx scripts/assert-untracked-command-runs-empty.ts
     elif schema_matches "$LEGACY_SCHEMA"; then
       echo "[migration] 检测到已批准的 2026-07-12 公司旧 schema。"
     else
@@ -43,11 +62,28 @@ case "$state" in
       cat /tmp/postgres-schema-drift.log >&2
       exit 1
     fi
-    for migration in $PRE_BRIDGE_MIGRATIONS; do
-      npx prisma migrate resolve --applied "$migration" --schema "$SCHEMA"
-    done
+    resolve_missing_pre_bridge_migrations
     ;;
-  empty|tracked) ;;
+  tracked)
+    # A kill between individual `migrate resolve` calls leaves migration history
+    # present while the business schema is still exactly legacy/current. Resume
+    # only that recognized adoption state; arbitrary tracked drift stays managed
+    # by normal Prisma failure semantics.
+    refresh_applied_migrations
+    if ! migration_is_applied 20260715030000_adopt_pre_int501_schema; then
+      if schema_matches "$LEGACY_SCHEMA"; then
+        echo "[migration] 继续中断的旧 schema 接管。"
+        resolve_missing_pre_bridge_migrations
+      elif schema_matches "$SCHEMA"; then
+        if ! migration_is_applied 20260715010000_hash_command_run_idempotency_keys; then
+          npx tsx scripts/assert-untracked-command-runs-empty.ts
+        fi
+        echo "[migration] 继续中断的当前 schema 接管。"
+        resolve_missing_pre_bridge_migrations
+      fi
+    fi
+    ;;
+  empty) ;;
   *) echo "[migration] 无法识别迁移状态：$state" >&2; exit 1 ;;
 esac
 

@@ -103,21 +103,9 @@ CREATE TABLE IF NOT EXISTS "WeComOAuthState" (
   CONSTRAINT "WeComOAuthState_pkey" PRIMARY KEY ("id")
 );
 
--- The earlier data-only migration cannot be replayed after a baseline resolve.
--- Normalize only still-raw ordinary keys, while preserving already-hashed keys.
-DO $$
-BEGIN
-  IF EXISTS (
-    SELECT 1 FROM "CommandRun"
-    WHERE "kind" = 'person-merge' AND "idempotencyKey" !~ '^[0-9a-f]{64}$'
-  ) THEN
-    RAISE EXCEPTION 'CommandRun contains an unexpected unhashed person-merge idempotency key';
-  END IF;
-END $$;
-
-UPDATE "CommandRun"
-SET "idempotencyKey" = encode(sha256(convert_to("idempotencyKey", 'UTF8')), 'hex')
-WHERE "kind" <> 'person-merge' AND "idempotencyKey" !~ '^[0-9a-f]{64}$';
+-- Legacy 41-table databases have no CommandRun rows. An untracked current
+-- schema is adopted only when CommandRun is empty, because a 64-hex stored
+-- value cannot be distinguished safely as a legacy raw key or a digest.
 
 CREATE INDEX IF NOT EXISTS "AuditEvent_tenantId_createdAt_idx" ON "AuditEvent"("tenantId", "createdAt");
 CREATE INDEX IF NOT EXISTS "AuditEvent_tenantId_entityKind_entityId_idx" ON "AuditEvent"("tenantId", "entityKind", "entityId");

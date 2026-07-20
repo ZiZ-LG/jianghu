@@ -812,4 +812,3 @@ model EVSnapshot {
 
   @@index([tenantId, opportunityId, createdAt])
 }
-

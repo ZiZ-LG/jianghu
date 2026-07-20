@@ -49,6 +49,11 @@ docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh ser
 legacy_table_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
   "SELECT count(*) FROM pg_catalog.pg_tables WHERE schemaname = 'public'" | tr -d '[:space:]')
 [[ "$legacy_table_count" == 41 ]]
+# Simulate a process kill after the first of the three adoption resolves. The
+# next server start must recognize and complete this partial history.
+docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint npx server \
+  prisma migrate resolve --applied 20260715000000_baseline \
+  --schema prisma/postgres/schema.prisma >/dev/null
 docker compose -p "$COMPOSE_PROJECT_NAME" up -d server >/dev/null
 for _ in $(seq 1 60); do
   [[ "$(docker inspect -f '{{.State.Health.Status}}' "${COMPOSE_PROJECT_NAME}-server-1" 2>/dev/null || true)" == healthy ]] && break
@@ -112,6 +117,9 @@ JWT_SECRET=$JWT_SECRET
 AI_KEY_SECRET=$AI_KEY_SECRET
 OUTBOUND_ALLOWED_HOSTS=$OUTBOUND_ALLOWED_HOSTS
 EOF
+git -C "$bootstrap_root" init -q
+git -C "$bootstrap_root" -c user.name=CI -c user.email=ci@example.invalid add .dockerignore docker-compose.yml server packages
+git -C "$bootstrap_root" -c user.name=CI -c user.email=ci@example.invalid commit -qm 'legacy bootstrap fixture'
 bootstrap_backups="$bootstrap_root/backups"
 if env -u BACKUP_MASTER_SECRET \
   JIANGHU_ROOT="$bootstrap_root" \
@@ -135,7 +143,7 @@ env -u BACKUP_MASTER_SECRET \
 [[ -s "$bootstrap_backups/verified" ]]
 bootstrap_master=$(grep '^BACKUP_MASTER_SECRET=' "$bootstrap_root/.env" | tail -n1 | cut -d= -f2)
 derive_backup_keys "$bootstrap_master"
-bootstrap_commit=$(git rev-parse HEAD)
+bootstrap_commit=$(git -C "$bootstrap_root" rev-parse HEAD)
 verify_bootstrap_marker "$bootstrap_backups/verified" "$COMPOSE_PROJECT_NAME" "$POSTGRES_DB" "$bootstrap_backups" "$bootstrap_commit"
 verify_artifact_auth "$VERIFIED_BOOTSTRAP_BACKUP"
 rm -rf "$bootstrap_root"

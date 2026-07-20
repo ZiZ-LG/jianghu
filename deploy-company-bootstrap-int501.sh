@@ -43,7 +43,7 @@ cd "$APP_DIR"
 db_user=$(docker compose exec -T db sh -c 'printf "%s" "$POSTGRES_USER"')
 production_database=$(docker compose exec -T db sh -c 'printf "%s" "$POSTGRES_DB"')
 deployment_project=$(compose_project_name)
-verified_commit=$(git -C "$BUNDLE_DIR" rev-parse HEAD)
+verified_commit=$(git -C "$APP_DIR" rev-parse HEAD)
 [[ "$verified_commit" =~ ^[0-9a-f]{40}$ ]] || { echo "could not bind bootstrap to a Git commit" >&2; exit 1; }
 schema_signature_sql=$(postgres_public_schema_signature_sql)
 

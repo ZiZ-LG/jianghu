@@ -15,6 +15,7 @@ env_value() {
   deployment_env_value .env "$1"
 }
 
+pre_pull_sha=$(git rev-parse HEAD)
 echo "── 1/6 快进拉取待部署版本 ──"
 git pull --ff-only
 current_commit=$(git rev-parse HEAD)
@@ -38,7 +39,8 @@ fi
 rollback_point=''
 echo "── 3/6 创建认证备份和可执行回滚点 ──"
 if [[ "$existing_db" == 1 ]]; then
-  rollback_output=$(ROLLBACK_ROOT=/data/jianghu-rollbacks bash scripts/create-release-rollback-point.sh)
+  rollback_output=$(ROLLBACK_ROOT=/data/jianghu-rollbacks ROLLBACK_SHA_OVERRIDE="$pre_pull_sha" \
+    bash scripts/create-release-rollback-point.sh)
   printf '%s\n' "$rollback_output"
   rollback_point=$(printf '%s\n' "$rollback_output" | sed -n 's/^ROLLBACK_POINT=//p' | tail -n 1)
   [[ -d "$rollback_point" ]] || { echo "回滚点创建失败，禁止部署。" >&2; exit 1; }

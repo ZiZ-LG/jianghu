@@ -322,6 +322,7 @@ describe('deployment safety helpers', () => {
     const rollback = await read('deploy-company-rollback.sh');
     const update = await read('deploy-company-update.sh');
     expect(capture).toContain('rollback_sha=');
+    expect(capture).toContain('ROLLBACK_SHA_OVERRIDE');
     expect(capture).toContain('server_image=');
     expect(capture).toContain('web_image=');
     expect(capture).toContain('database.backup');
@@ -332,6 +333,8 @@ describe('deployment safety helpers', () => {
     expect(rollback).not.toContain('git switch --detach');
     expect(rollback).toContain('docker compose up -d --no-build db server web');
     expect(update).toContain('scripts/create-release-rollback-point.sh');
+    expect(update).toContain('pre_pull_sha=$(git rev-parse HEAD)');
+    expect(update).toContain('ROLLBACK_SHA_OVERRIDE="$pre_pull_sha"');
     expect(update).toContain('deploy-company-rollback.sh');
   });
 

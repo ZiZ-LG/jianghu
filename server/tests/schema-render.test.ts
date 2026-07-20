@@ -67,12 +67,15 @@ describe('PostgreSQL schema delivery', () => {
     expect(deployScript).toContain('20260715000000_baseline');
     expect(deployScript).toContain('20260715010000_hash_command_run_idempotency_keys');
     expect(deployScript).toContain('20260715020000_add_person_created_at');
+    expect(deployScript).toContain('list-applied-postgres-migrations.ts');
+    expect(deployScript).toContain('resolve_missing_pre_bridge_migrations');
+    expect(deployScript).toContain('assert-untracked-command-runs-empty.ts');
     expect(deployScript).toContain('prisma migrate deploy --schema "$SCHEMA"');
     expect(legacySchema).toContain('model Tenant');
     expect(legacySchema).not.toContain('model SyncRun');
     expect(bridge).toContain('CREATE TABLE IF NOT EXISTS "SyncRun"');
     expect(bridge).toContain('ADD COLUMN IF NOT EXISTS');
-    expect(bridge).toContain('^[0-9a-f]{64}$');
+    expect(bridge).toContain('64-hex stored');
   });
 
   it('packages generated schema, migrations, and the Prisma CLI for empty-schema deploys', async () => {

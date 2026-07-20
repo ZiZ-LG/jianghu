@@ -12,7 +12,7 @@ git diff --quiet --ignore-submodules -- \
   && git diff --cached --quiet --ignore-submodules -- \
   || { echo "tracked deployment files are dirty; refusing rollback snapshot" >&2; exit 1; }
 
-sha=$(git rev-parse HEAD)
+sha=${ROLLBACK_SHA_OVERRIDE:-$(git rev-parse HEAD)}
 [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid deployment SHA" >&2; exit 1; }
 project=$(docker compose config 2>/dev/null | awk '$1 == "name:" { print $2; exit }')
 [[ "$project" =~ ^[A-Za-z0-9_.-]+$ ]] || { echo "invalid Compose project" >&2; exit 1; }
