@@ -52,7 +52,7 @@ describe('PostgreSQL schema delivery', () => {
     const deploy = deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"');
     expect(entrypoint).toContain('scripts/deploy-postgres-migrations.sh');
     expect(scan).toBeGreaterThan(-1);
-    expect(scan).toBeGreaterThan(deploy);
+    expect(scan).toBeLessThan(deploy);
     expect(entrypoint).not.toContain('prisma db push');
     expect(deployScript).not.toContain('prisma db push');
   });

@@ -22,6 +22,16 @@ source "$BUNDLE_DIR/scripts/lib/deploy-common.sh"
 source "$BUNDLE_DIR/scripts/lib/postgres-db-safety.sh"
 source "$BUNDLE_DIR/scripts/lib/bootstrap-marker.sh"
 
+git -C "$APP_DIR" diff --quiet --ignore-submodules -- \
+  && git -C "$APP_DIR" diff --cached --quiet --ignore-submodules -- \
+  || { echo "tracked deployment files are dirty; refusing bootstrap" >&2; exit 1; }
+# Untracked files inside a Docker build input can also change the preflighted
+# image without changing HEAD. The detached operator update.sh is at repo root,
+# so only build inputs need this additional check.
+[[ -z "$(git -C "$APP_DIR" status --porcelain --untracked-files=all -- app server packages)" ]] || {
+  echo "untracked Docker build inputs exist; refusing bootstrap" >&2; exit 1
+}
+
 # INT-106 made the outbound allowlist mandatory. Pre-INT501 deployments do not
 # have these keys, and Compose refuses even `exec` before the bridge can back up.
 deployment_ensure_env_default "$APP_DIR/.env" OUTBOUND_ALLOWED_HOSTS 'open.feishu.cn,agent.qcc.com,openapi.biji.com,qyapi.weixin.qq.com'

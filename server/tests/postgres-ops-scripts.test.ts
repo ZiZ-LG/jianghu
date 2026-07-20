@@ -334,7 +334,11 @@ describe('deployment safety helpers', () => {
     expect(rollback).toContain('docker compose up -d --no-build db server web');
     expect(update).toContain('scripts/create-release-rollback-point.sh');
     expect(update).toContain('pre_pull_sha=$(git rev-parse HEAD)');
-    expect(update).toContain('ROLLBACK_SHA_OVERRIDE="$pre_pull_sha"');
+    expect(update).toContain('RUNTIME_SHA_OVERRIDE');
+    expect(update).toContain('RUNTIME_REVISION_FILE');
+    expect(update).toContain('write_runtime_revision "$runtime_sha"');
+    expect(update).toContain('ROLLBACK_SHA_OVERRIDE="$runtime_sha"');
+    expect(update).toContain('write_runtime_revision "$current_commit"');
     expect(update).toContain('deploy-company-rollback.sh');
   });
 
@@ -464,6 +468,7 @@ exit 1
     expect(bootstrap).toContain('scripts/restore-postgres.sh');
     expect(bootstrap).toContain('scripts/deploy-postgres-migrations.sh');
     expect(bootstrap).toContain('docker compose build server');
+    expect(bootstrap).toContain('tracked deployment files are dirty; refusing bootstrap');
     expect(bootstrap.indexOf('restore-postgres.sh')).toBeLessThan(bootstrap.indexOf('write_bootstrap_marker'));
     expect(bootstrap.indexOf('deploy-postgres-migrations.sh')).toBeLessThan(bootstrap.indexOf('write_bootstrap_marker'));
     expect(companyDeploy).toContain('bootstrap-verified');
@@ -471,16 +476,20 @@ exit 1
     expect(companyDeploy).toContain('resolve_deployment_db_state');
     expect(companyDeploy).toContain('docker compose build server web');
     expect(companyDeploy).toContain('docker compose stop web server');
+    expect(companyDeploy).toContain('restart_stopped_services');
+    expect(companyDeploy).toContain("trap 'exit 143' TERM");
     expect(companyDeploy).toContain('--entrypoint ./scripts/deploy-postgres-migrations.sh server');
     expect(companyDeploy).toContain('docker compose start server web');
     expect(companyDeploy).toContain('docker compose up -d --no-build');
     expect(companyDeploy.indexOf('docker compose build server web')).toBeLessThan(companyDeploy.indexOf('docker compose stop web server'));
-    expect(companyDeploy.indexOf('deploy-postgres-migrations.sh')).toBeLessThan(companyDeploy.indexOf('docker compose up -d --no-build'));
+    expect(companyDeploy.indexOf('deploy-postgres-migrations.sh')).toBeLessThan(companyDeploy.lastIndexOf('docker compose up -d --no-build'));
     expect(await read('deploy-macmini.sh')).toContain('resolve_deployment_db_state');
     expect(companyDeploy.indexOf('git pull --ff-only')).toBeLessThan(companyDeploy.indexOf('verify_bootstrap_marker'));
     expect(companyDeploy).toContain('git rev-parse HEAD');
     expect(companyDeploy).toContain("expected_bootstrap_commit=''");
-    expect(companyDeploy).toContain('migration_history');
+    expect(companyDeploy).toContain('bridge_complete');
+    expect(companyDeploy).toContain('migration_name =');
+    expect(companyDeploy).toContain('20260715030000_adopt_pre_int501_schema');
   });
 
   it('migrates the pre-INT501 outbound allowlist before any Compose inspection', async () => {

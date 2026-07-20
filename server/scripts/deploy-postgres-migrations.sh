@@ -87,7 +87,10 @@ case "$state" in
   *) echo "[migration] 无法识别迁移状态：$state" >&2; exit 1 ;;
 esac
 
-echo "[migration] 部署版本化迁移…"
+echo "[migration] 在唯一索引迁移前执行同步锚冲突扫描…"
+npm run migrate:sync-anchor-report
+
+echo "[migration] 冲突扫描通过，部署版本化迁移…"
 npx prisma migrate deploy --schema "$SCHEMA"
 
 if ! schema_matches "$SCHEMA"; then
@@ -96,6 +99,4 @@ if ! schema_matches "$SCHEMA"; then
   exit 1
 fi
 
-echo "[migration] 执行同步锚冲突扫描…"
-npm run migrate:sync-anchor-report
 echo "[migration] 版本化迁移与冲突扫描通过。"

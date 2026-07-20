@@ -563,13 +563,13 @@ describe('WorkBuddy atomic sync bundle', () => {
     await expect(findSyncAnchorConflicts(cleanInstall)).resolves.toEqual([]);
   });
 
-  it('keeps legacy unique-index adoption transactional and scans conflicts before server start', async () => {
+  it('keeps legacy unique-index adoption transactional and scans conflicts before creating indexes', async () => {
     const deploy = await readFile(new URL('../scripts/deploy-postgres-migrations.sh', import.meta.url), 'utf8');
     const bridge = await readFile(new URL('../prisma/postgres/migrations/20260715030000_adopt_pre_int501_schema/migration.sql', import.meta.url), 'utf8');
     expect(bridge.trimStart().indexOf('BEGIN;')).toBeGreaterThan(-1);
     expect(bridge).toContain('CREATE UNIQUE INDEX IF NOT EXISTS "Account_tenantId_externalRef_key"');
     expect(bridge.trimEnd().endsWith('COMMIT;')).toBe(true);
     expect(deploy.indexOf('prisma migrate deploy')).toBeGreaterThan(-1);
-    expect(deploy.indexOf('migrate:sync-anchor-report')).toBeGreaterThan(deploy.indexOf('prisma migrate deploy'));
+    expect(deploy.indexOf('migrate:sync-anchor-report')).toBeLessThan(deploy.indexOf('prisma migrate deploy'));
   });
 });
