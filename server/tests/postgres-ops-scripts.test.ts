@@ -329,6 +329,9 @@ describe('deployment safety helpers', () => {
     expect(bootstrap).toContain('deployment_git_in_dir "$APP_DIR"');
     expect(drill).not.toContain('git -C');
     expect(drill).toContain('deployment_git_in_dir "$bootstrap_root"');
+    const deployCommonSource = drill.indexOf('source scripts/lib/deploy-common.sh');
+    expect(deployCommonSource).toBeGreaterThan(-1);
+    expect(deployCommonSource).toBeLessThan(drill.indexOf('deployment_git_in_dir "$bootstrap_root"'));
 
     const temp = await mkdtemp(join(tmpdir(), 'jianghu-git-legacy-'));
     temporaryPaths.push(temp);

@@ -6,6 +6,7 @@ cd "$ROOT_DIR"
 
 [[ -f scripts/lib/backup-crypto.sh ]] || { echo "missing backup crypto helper" >&2; exit 1; }
 source scripts/lib/backup-crypto.sh
+source scripts/lib/deploy-common.sh
 source scripts/lib/postgres-db-safety.sh
 source scripts/lib/bootstrap-marker.sh
 
