@@ -53,6 +53,8 @@ describe('PostgreSQL schema delivery', () => {
     expect(entrypoint).toContain('scripts/deploy-postgres-migrations.sh');
     expect(scan).toBeGreaterThan(-1);
     expect(scan).toBeLessThan(deploy);
+    expect(deployScript.indexOf('migrate:wecom-bind-report')).toBeLessThan(deploy);
+    expect(deployScript.indexOf('migrate:account-owners')).toBeGreaterThan(deploy);
     expect(entrypoint).not.toContain('prisma db push');
     expect(deployScript).not.toContain('prisma db push');
   });
@@ -68,6 +70,8 @@ describe('PostgreSQL schema delivery', () => {
     expect(deployScript).toContain('20260715010000_hash_command_run_idempotency_keys');
     expect(deployScript).toContain('20260715020000_add_person_created_at');
     expect(deployScript).toContain('list-applied-postgres-migrations.ts');
+    expect(deployScript).toContain('list-incomplete-postgres-migrations.ts');
+    expect(deployScript).toContain('migrate resolve --rolled-back "$BRIDGE_MIGRATION"');
     expect(deployScript).toContain('resolve_missing_pre_bridge_migrations');
     expect(deployScript).toContain('assert-untracked-command-runs-empty.ts');
     expect(deployScript).toContain('prisma migrate deploy --schema "$SCHEMA"');

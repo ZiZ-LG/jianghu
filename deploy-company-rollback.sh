@@ -15,6 +15,18 @@ source scripts/lib/deploy-common.sh
 source scripts/lib/backup-crypto.sh
 
 ROLLBACK_ROOT=${ROLLBACK_ROOT:-$(cd "$ROOT_DIR/.." && pwd)/jianghu-rollbacks}
+RUNTIME_REVISION_FILE=${RUNTIME_REVISION_FILE:-"$ROLLBACK_ROOT/.runtime-sha"}
+write_runtime_revision() {
+  local revision=$1 directory tmp
+  [[ "$revision" =~ ^[0-9a-f]{40}$ ]] || return 1
+  directory=$(dirname "$RUNTIME_REVISION_FILE")
+  mkdir -p "$directory"
+  chmod 700 "$directory"
+  tmp=$(mktemp "$directory/.runtime-sha.XXXXXX")
+  printf '%s\n' "$revision" > "$tmp"
+  chmod 600 "$tmp"
+  mv "$tmp" "$RUNTIME_REVISION_FILE"
+}
 point_real=$(cd "$POINT" 2>/dev/null && pwd) || { echo "rollback point not found" >&2; exit 1; }
 root_real=$(cd "$ROLLBACK_ROOT" 2>/dev/null && pwd) || { echo "rollback root not found" >&2; exit 1; }
 [[ "$point_real" == "$root_real"/release-* ]] || { echo "rollback point is outside the approved root" >&2; exit 1; }
@@ -58,5 +70,6 @@ docker tag "$web_image" "$web_tag"
 docker compose up -d --no-build db server web
 PORT=$(grep -E '^WEB_PORT=' .env | tail -n 1 | cut -d= -f2); PORT=${PORT:-80}
 wait_for_http_readiness "http://localhost:${PORT}/api/health/ready" 40
+write_runtime_revision "$sha"
 echo "Rollback complete: runtime_sha=$sha database=$target point=$point_real"
 echo "Working tree stays on the current main branch so the next forward-fix update can fast-forward normally."

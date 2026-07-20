@@ -332,6 +332,8 @@ describe('deployment safety helpers', () => {
     expect(rollback).toContain('scripts/restore-postgres.sh');
     expect(rollback).not.toContain('git switch --detach');
     expect(rollback).toContain('docker compose up -d --no-build db server web');
+    expect(rollback).toContain('RUNTIME_REVISION_FILE');
+    expect(rollback.indexOf('write_runtime_revision "$sha"')).toBeGreaterThan(rollback.indexOf('wait_for_http_readiness'));
     expect(update).toContain('scripts/create-release-rollback-point.sh');
     expect(update).toContain('pre_pull_sha=$(git rev-parse HEAD)');
     expect(update).toContain('RUNTIME_SHA_OVERRIDE');

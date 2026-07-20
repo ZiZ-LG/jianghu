@@ -56,7 +56,13 @@ export async function backfillAccountOwners(
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const failOnAmbiguous = process.argv.includes('--fail-on-ambiguous');
   backfillAccountOwners(prisma)
-    .then((report) => { process.stdout.write(`${JSON.stringify(report, null, 2)}\n`); })
+    .then((report) => {
+      process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+      const ambiguous = report.manualReview.filter((row) => row.reason === 'duplicate_name' || row.reason === 'invalid_existing_owner');
+      if (failOnAmbiguous && ambiguous.length) process.exitCode = 1;
+    })
+    .catch((error) => { console.error('[account-owner-backfill] database check failed', error); process.exitCode = 2; })
     .finally(() => prisma.$disconnect());
 }

@@ -102,6 +102,8 @@ describe('INT-107 WeCom authorization', () => {
         { id: 'b2', tenantId: 't', userId: 'u2', wecomUserid: 'dup', createdAt: new Date() },
       ] } } as any;
       expect(await reportWecomBindConflicts(fake)).toEqual([{ tenantId: 't', wecomUserid: 'dup', conflicts: [{ bindId: 'b1', userId: 'u1' }, { bindId: 'b2', userId: 'u2' }] }]);
+      const cleanInstall = { weComUserBind: { findMany: async () => Promise.reject(Object.assign(new Error('missing'), { code: 'P2021' })) } } as any;
+      expect(await reportWecomBindConflicts(cleanInstall)).toEqual([]);
     } finally { await context.cleanup(); }
   });
 

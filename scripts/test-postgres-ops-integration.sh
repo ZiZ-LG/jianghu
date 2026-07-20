@@ -54,6 +54,9 @@ legacy_table_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -
 docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint npx server \
   prisma migrate resolve --applied 20260715000000_baseline \
   --schema prisma/postgres/schema.prisma >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
+  "INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+   VALUES ('interrupted-bridge-fixture', repeat('0', 64), '20260715030000_adopt_pre_int501_schema', CURRENT_TIMESTAMP, 0);" >/dev/null
 docker compose -p "$COMPOSE_PROJECT_NAME" up -d server >/dev/null
 for _ in $(seq 1 60); do
   [[ "$(docker inspect -f '{{.State.Health.Status}}' "${COMPOSE_PROJECT_NAME}-server-1" 2>/dev/null || true)" == healthy ]] && break
@@ -63,6 +66,9 @@ done
 migration_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
   'SELECT count(*) FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL' | tr -d '[:space:]')
 [[ "$migration_count" == 4 ]]
+rolled_back_bridge_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+  "SELECT count(*) FROM \"_prisma_migrations\" WHERE migration_name = '20260715030000_adopt_pre_int501_schema' AND rolled_back_at IS NOT NULL" | tr -d '[:space:]')
+[[ "$rolled_back_bridge_count" == 1 ]]
 legacy_bridge_ready=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
   'SELECT (to_regclass('\''public."AuditEvent"'\'') IS NOT NULL
        AND to_regclass('\''public."CommandRun"'\'') IS NOT NULL
