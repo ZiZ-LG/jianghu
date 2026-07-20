@@ -34,3 +34,18 @@ postgres_require_verified_cleanup() {
   echo "CRITICAL: database cleanup could not be verified" >&2
   return 70
 }
+
+postgres_restore_readiness_sql() {
+  case "${1-}" in
+    current)
+      printf '%s' "SELECT (to_regclass('public.\"Tenant\"') IS NOT NULL AND to_regclass('public.\"CommandRun\"') IS NOT NULL AND to_regclass('public.\"EvidenceEvent\"') IS NOT NULL AND to_regclass('public._prisma_migrations') IS NOT NULL)::int"
+      ;;
+    pre-int501)
+      printf '%s' "SELECT (to_regclass('public.\"Tenant\"') IS NOT NULL AND to_regclass('public.\"SyncRun\"') IS NOT NULL)::int"
+      ;;
+    *)
+      echo "unsupported restore readiness profile: ${1-}" >&2
+      return 1
+      ;;
+  esac
+}

@@ -18,13 +18,16 @@ BACKUP=$1
 shift
 TARGET_DB=
 REPLACE=0
+READINESS_PROFILE=current
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --database) [[ $# -ge 2 ]] || usage; TARGET_DB=$2; shift 2 ;;
     --replace) REPLACE=1; shift ;;
+    --readiness-profile) [[ $# -ge 2 ]] || usage; READINESS_PROFILE=$2; shift 2 ;;
     *) usage ;;
   esac
 done
+READINESS_SQL=$(postgres_restore_readiness_sql "$READINESS_PROFILE")
 
 env_value() {
   local key=$1 fallback=${2-} line
@@ -124,7 +127,7 @@ backup_decrypt_payload "$BACKUP" \
       --exit-on-error --no-owner --no-privileges
 
 ready=$(docker compose exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$TARGET_DB" -tAc \
-  "SELECT (to_regclass('public.\"Tenant\"') IS NOT NULL AND to_regclass('public.\"CommandRun\"') IS NOT NULL AND to_regclass('public.\"EvidenceEvent\"') IS NOT NULL AND to_regclass('public._prisma_migrations') IS NOT NULL)::int" | tr -d '[:space:]')
+  "$READINESS_SQL" | tr -d '[:space:]')
 [[ "$ready" == 1 ]] || { echo "restored database failed required table readiness" >&2; exit 1; }
 
 completed=1

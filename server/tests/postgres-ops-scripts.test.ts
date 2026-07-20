@@ -258,6 +258,35 @@ describe('PostgreSQL restore safety', () => {
     expect(restore.indexOf('verify_artifact_auth')).toBeLessThan(restore.indexOf('CREATE DATABASE'));
   });
 
+  it('uses a pre-migration readiness profile only for the INT-501 bootstrap bridge', async () => {
+    const bootstrap = await read('deploy-company-bootstrap-int501.sh');
+    const restore = await read('scripts/restore-postgres.sh');
+    expect(bootstrap).toContain('--readiness-profile pre-int501');
+    expect(restore).toContain('READINESS_PROFILE=current');
+    expect(restore).toContain('postgres_restore_readiness_sql "$READINESS_PROFILE"');
+
+    const result = bash(`
+      set -euo pipefail
+      source scripts/lib/postgres-db-safety.sh
+      current=$(postgres_restore_readiness_sql current)
+      bridge=$(postgres_restore_readiness_sql pre-int501)
+      [[ "$current" == *'"Tenant"'* ]]
+      [[ "$current" == *'"CommandRun"'* ]]
+      [[ "$current" == *'"EvidenceEvent"'* ]]
+      [[ "$current" == *'_prisma_migrations'* ]]
+      [[ "$bridge" == *'"Tenant"'* ]]
+      [[ "$bridge" == *'"SyncRun"'* ]]
+      [[ "$bridge" != *'"CommandRun"'* ]]
+      [[ "$bridge" != *'_prisma_migrations'* ]]
+      set +e
+      postgres_restore_readiness_sql unknown >/dev/null
+      unknown_status=$?
+      set -e
+      test "$unknown_status" != 0
+    `);
+    expect(result.status, result.stderr).toBe(0);
+  });
+
   it('ships an executable isolated PostgreSQL failure drill', async () => {
     const drill = await read('scripts/test-postgres-ops-integration.sh');
     expect(drill).toContain('--replace');

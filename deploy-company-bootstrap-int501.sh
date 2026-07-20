@@ -97,7 +97,8 @@ bootstrap_cleanup() {
 
 target="jianghu_restore_bootstrap_$(date -u +%Y%m%d%H%M%S)_$(openssl rand -hex 4)"
 trap bootstrap_cleanup EXIT
-bash "$BUNDLE_DIR/scripts/restore-postgres.sh" "$backup" --database "$target"
+bash "$BUNDLE_DIR/scripts/restore-postgres.sh" "$backup" --database "$target" \
+  --readiness-profile pre-int501
 
 smoke=$(docker compose exec -T db psql -v ON_ERROR_STOP=1 -U "$db_user" -d "$target" -tAc \
   'SELECT (to_regclass('\''public."Tenant"'\'') IS NOT NULL AND to_regclass('\''public."SyncRun"'\'') IS NOT NULL)::int' | tr -d '[:space:]')
