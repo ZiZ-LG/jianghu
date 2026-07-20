@@ -49,3 +49,20 @@ postgres_restore_readiness_sql() {
       ;;
   esac
 }
+
+postgres_validate_restore_readiness_scope() {
+  local profile=$1 database=$2
+  case "$profile" in
+    current) return 0 ;;
+    pre-int501)
+      [[ "$database" =~ ^jianghu_restore_bootstrap_[A-Za-z0-9_]+$ ]] || {
+        echo "pre-int501 readiness is restricted to bootstrap restore databases" >&2
+        return 1
+      }
+      ;;
+    *)
+      echo "unsupported restore readiness profile: $profile" >&2
+      return 1
+      ;;
+  esac
+}

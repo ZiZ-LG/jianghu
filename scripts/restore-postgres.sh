@@ -51,6 +51,7 @@ case "$TARGET_DB" in postgres|template0|template1) echo "refusing system databas
   echo "isolated database must use the strict jianghu_restore_ prefix" >&2
   exit 1
 }
+postgres_validate_restore_readiness_scope "$READINESS_PROFILE" "$TARGET_DB"
 
 POSTGRES_USER=$(container_env POSTGRES_USER)
 PROTECTED_PRODUCTION_DB=$(container_env POSTGRES_DB)

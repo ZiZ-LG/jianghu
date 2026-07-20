@@ -263,6 +263,7 @@ describe('PostgreSQL restore safety', () => {
     const restore = await read('scripts/restore-postgres.sh');
     expect(bootstrap).toContain('--readiness-profile pre-int501');
     expect(restore).toContain('READINESS_PROFILE=current');
+    expect(restore).toContain('postgres_validate_restore_readiness_scope "$READINESS_PROFILE" "$TARGET_DB"');
     expect(restore).toContain('postgres_restore_readiness_sql "$READINESS_PROFILE"');
 
     const result = bash(`
@@ -278,6 +279,13 @@ describe('PostgreSQL restore safety', () => {
       [[ "$bridge" == *'"SyncRun"'* ]]
       [[ "$bridge" != *'"CommandRun"'* ]]
       [[ "$bridge" != *'_prisma_migrations'* ]]
+      postgres_validate_restore_readiness_scope current jianghu_restore_drill
+      postgres_validate_restore_readiness_scope pre-int501 jianghu_restore_bootstrap_20260720
+      set +e
+      postgres_validate_restore_readiness_scope pre-int501 jianghu_restore_drill
+      wrong_target_status=$?
+      set -e
+      test "$wrong_target_status" != 0
       set +e
       postgres_restore_readiness_sql unknown >/dev/null
       unknown_status=$?
