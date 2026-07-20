@@ -123,7 +123,7 @@ bash scripts/backup-postgres.sh                        # 加密备份（建议 c
 
 ## 8. 版本更新（就地·日常）
 
-服务器上 `/data/jianghu/update.sh`（源已入库 = 仓库根 `deploy-company-update.sh`）：记录 pull 前 SHA → `git pull`（main）→ 校验 bootstrap/认证备份 → 固定旧 server/web 镜像和数据库回滚点 → 构建候选镜像但不替换容器 → 停写并单独执行版本化 migration → 成功后才切换容器和执行 readiness。migration 失败会重启原 server/web；`pgdata` 不动，固定回滚点不受 prune/14 天轮转影响。
+服务器上 `/data/jianghu/update.sh`（源已入库 = 仓库根 `deploy-company-update.sh`）：持久化当前运行 SHA → `git pull`（main）→ 校验 bootstrap/认证备份 → 固定旧 server/web 镜像和数据库回滚点 → 构建候选镜像但不替换容器 → 停写并单独执行版本化 migration → 成功后才切换容器和执行 readiness。migration 失败或停服区间收到退出信号时会恢复 server/web；`pgdata` 不动，固定回滚点不受 prune/14 天轮转影响。
 
 ### 从 pre-INT501 版本首次升级（只做一次）
 
@@ -140,7 +140,7 @@ sudo bash deploy-company-bootstrap-int501.sh && \
   sudo bash /data/jianghu/update.sh
 ```
 
-bridge 会为旧 `.env` 生成独立 64-hex master secret，发布认证加密备份，恢复到随机 `jianghu_restore_bootstrap_*`，比较源/恢复表签名，再让候选镜像完成 migration、当前 schema 零漂移和严格 readiness；隔离库验证删除后才写 marker。marker 严格绑定 Compose project、生产库、认证备份和本次候选 commit。首次迁移完成后数据库已有 migration 历史，后续日常更新无需重跑 one-time bootstrap，但仍重验 marker 身份与认证备份。
+bridge 会先拒绝 tracked 修改和 Docker 构建输入中的未跟踪文件，再为旧 `.env` 生成独立 64-hex master secret，发布认证加密备份，恢复到随机 `jianghu_restore_bootstrap_*`，比较源/恢复表签名，再让候选镜像完成 migration、当前 schema 零漂移和严格 readiness；隔离库验证删除后才写 marker。marker 严格绑定 Compose project、生产库、认证备份和本次候选 commit。只有 bridge migration 已成功完成才解除 commit 绑定；仅出现部分 `_prisma_migrations` 记录时仍要求原候选 commit。后续日常更新仍重验 marker 身份与认证备份。
 
 如果误先运行了旧版 `update.sh`，并在 `OUTBOUND_ALLOWED_HOSTS is missing a value` 处停止：该失败发生在 Compose 构建和数据库迁移之前，旧容器继续运行。此时不要重跑旧脚本，也不要执行 `down -v`；先拉取包含环境迁移的 bridge，再完成一次 bootstrap 和新版脚本安装：
 
@@ -165,10 +165,12 @@ sudo bash deploy-company-bootstrap-int501.sh && \
   sudo install -m 0755 deploy-company-update.sh /data/jianghu/update.sh && \
   sudo test -s /data/jianghu-backups/.int501-bootstrap-verified && \
   echo "INT-501 marker OK" && \
-  sudo bash /data/jianghu/update.sh
+  sudo env RUNTIME_SHA_OVERRIDE=102988ad43907c5733bac0f5aacce69be395fede bash /data/jianghu/update.sh
 ```
 
-任何一步失败都停止，不删除 `pgdata`，也不使用 `db push` 绕过。首次 migration 前，更新脚本会强制检查 marker、认证备份和 marker 绑定的 Git commit；若 bootstrap 后又拉到了新 commit，必须在新 commit 上重跑 bootstrap。首次 migration 成功后，后续日常更新只重验 marker 身份与认证备份，不再要求 one-time marker 跟随每个新 commit。
+上面的 `RUNTIME_SHA_OVERRIDE` 仅用于本次已手工把工作树从 `102988a` 拉到后续 RC、但旧容器仍运行 `102988a` 的恢复场景；脚本会把它原子写入 `/data/jianghu-rollbacks/.runtime-sha`。部署成功后该文件自动更新为新 SHA，后续日常更新不再传 override。
+
+任何一步失败都停止，不删除 `pgdata`，也不使用 `db push` 绕过。首次 bridge migration 成功完成前，更新脚本会强制检查 marker、认证备份和 marker 绑定的 Git commit；若 bootstrap 后又拉到了新 commit，必须在新 commit 上重跑 bootstrap。仅创建了 migration history 但 bridge 未完成时不会放宽。bridge 成功后，后续日常更新只重验 marker 身份与认证备份，不再要求 one-time marker 跟随每个新 commit。
 
 ```bash
 cd /data/jianghu && sudo bash update.sh
