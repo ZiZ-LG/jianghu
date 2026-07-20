@@ -25,7 +25,12 @@ if [[ "$existing_db" == 1 ]]; then
   deployment_project=$(compose_project_name)
   live_database=$(docker compose exec -T db sh -c 'printf "%s" "$POSTGRES_DB"')
   live_password=$(docker compose exec -T db sh -c 'printf "%s" "$POSTGRES_PASSWORD"')
-  verify_bootstrap_marker "$BOOTSTRAP_MARKER" "$deployment_project" "$live_database" /data/jianghu-backups "$current_commit" || {
+  migration_history=$(docker compose exec -T db sh -c \
+    'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT to_regclass('\''public._prisma_migrations'\'') IS NOT NULL"' \
+    | tr -d '[:space:]')
+  expected_bootstrap_commit=''
+  [[ "$migration_history" == t ]] || expected_bootstrap_commit=$current_commit
+  verify_bootstrap_marker "$BOOTSTRAP_MARKER" "$deployment_project" "$live_database" /data/jianghu-backups "$expected_bootstrap_commit" || {
     echo "INT-501 bootstrap marker 无效，禁止 migration build。" >&2; exit 1
   }
   backup_master=$(env_value BACKUP_MASTER_SECRET)

@@ -447,6 +447,7 @@ exit 1
       test "$wrong_identity" != 0
       set +e; verify_bootstrap_marker "$marker" project-a jianghu "$root/backups" ffffffffffffffffffffffffffffffffffffffff; wrong_commit=$?; set -e
       test "$wrong_commit" != 0
+      verify_bootstrap_marker "$marker" project-a jianghu "$root/backups"
       rm -rf "$root/backups/jianghu-valid.backup"
       set +e; verify_bootstrap_marker "$marker" project-a jianghu "$root/backups" "$commit"; missing_backup=$?; set -e
       test "$missing_backup" != 0
@@ -478,6 +479,8 @@ exit 1
     expect(await read('deploy-macmini.sh')).toContain('resolve_deployment_db_state');
     expect(companyDeploy.indexOf('git pull --ff-only')).toBeLessThan(companyDeploy.indexOf('verify_bootstrap_marker'));
     expect(companyDeploy).toContain('git rev-parse HEAD');
+    expect(companyDeploy).toContain("expected_bootstrap_commit=''");
+    expect(companyDeploy).toContain('migration_history');
   });
 
   it('migrates the pre-INT501 outbound allowlist before any Compose inspection', async () => {

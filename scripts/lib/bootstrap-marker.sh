@@ -23,7 +23,7 @@ write_bootstrap_marker() {
 }
 
 verify_bootstrap_marker() {
-  local marker=$1 expected_project=$2 expected_database=$3 expected_backup_dir=$4 expected_commit=$5
+  local marker=$1 expected_project=$2 expected_database=$3 expected_backup_dir=$4 expected_commit=${5-}
   local line_count format project database commit backup_name verified_at backup_root
   VERIFIED_BOOTSTRAP_BACKUP=''
   [[ -s "$marker" ]] || { echo "bootstrap marker is missing or empty" >&2; return 1; }
@@ -39,7 +39,7 @@ verify_bootstrap_marker() {
   [[ "$project" == "$expected_project" && "$database" == "$expected_database" ]] || {
     echo "bootstrap marker deployment identity mismatch" >&2; return 1
   }
-  [[ "$commit" == "$expected_commit" ]] || {
+  [[ -z "$expected_commit" || "$commit" == "$expected_commit" ]] || {
     echo "bootstrap marker code revision mismatch" >&2; return 1
   }
   [[ "$verified_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || return 1
