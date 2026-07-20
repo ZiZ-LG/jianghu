@@ -22,6 +22,11 @@ source "$BUNDLE_DIR/scripts/lib/deploy-common.sh"
 source "$BUNDLE_DIR/scripts/lib/postgres-db-safety.sh"
 source "$BUNDLE_DIR/scripts/lib/bootstrap-marker.sh"
 
+# INT-106 made the outbound allowlist mandatory. Pre-INT501 deployments do not
+# have these keys, and Compose refuses even `exec` before the bridge can back up.
+deployment_ensure_env_default "$APP_DIR/.env" OUTBOUND_ALLOWED_HOSTS 'open.feishu.cn,agent.qcc.com,openapi.biji.com,qyapi.weixin.qq.com'
+deployment_ensure_env_default "$APP_DIR/.env" OUTBOUND_ALLOWED_PRIVATE_HOSTS ''
+
 mkdir -p "$BACKUP_DIR"
 chmod 700 "$BACKUP_DIR"
 if ! grep -q '^BACKUP_MASTER_SECRET=' "$APP_DIR/.env"; then

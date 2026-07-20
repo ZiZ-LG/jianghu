@@ -1,5 +1,27 @@
 #!/usr/bin/env bash
 
+deployment_env_value() {
+  local env_file=$1 key=$2 line
+  line=$(grep -E "^${key}=" "$env_file" 2>/dev/null | tail -n 1 || true)
+  printf '%s' "${line#*=}"
+}
+
+deployment_ensure_env_default() {
+  local env_file=$1 key=$2 value=$3
+  if ! grep -q "^${key}=" "$env_file" 2>/dev/null; then
+    printf '%s=%s\n' "$key" "$value" >> "$env_file"
+    echo "added $key to $env_file"
+  fi
+}
+
+deployment_require_env_value() {
+  local env_file=$1 key=$2
+  [[ -n "$(deployment_env_value "$env_file" "$key")" ]] || {
+    echo "$env_file 缺少 ${key}；请先按公司部署文档完成版本环境变量迁移，禁止部署。" >&2
+    return 1
+  }
+}
+
 wait_for_http_readiness() {
   local url=$1 attempts=${2:-40} i
   for i in $(seq 1 "$attempts"); do

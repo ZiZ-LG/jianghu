@@ -7,13 +7,12 @@ source scripts/lib/backup-crypto.sh
 source scripts/lib/bootstrap-marker.sh
 
 BOOTSTRAP_MARKER=/data/jianghu-backups/.int501-bootstrap-verified
+deployment_require_env_value .env OUTBOUND_ALLOWED_HOSTS
 resolve_deployment_db_state || { echo "无法确认现有数据库状态，禁止部署。" >&2; exit 1; }
 existing_db=$DEPLOYMENT_HAS_EXISTING_DB
 
 env_value() {
-  local key=$1 line
-  line=$(grep -E "^${key}=" .env 2>/dev/null | tail -n 1 || true)
-  printf '%s' "${line#*=}"
+  deployment_env_value .env "$1"
 }
 
 if [[ "$existing_db" == 1 ]]; then

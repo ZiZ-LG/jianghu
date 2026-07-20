@@ -333,6 +333,35 @@ exit 1
     expect(companyDeploy.indexOf('verify_bootstrap_marker')).toBeLessThan(companyDeploy.indexOf('git pull'));
     expect(companyDeploy.indexOf('verify_artifact_auth')).toBeLessThan(companyDeploy.indexOf('git pull'));
   });
+
+  it('migrates the pre-INT501 outbound allowlist before any Compose inspection', async () => {
+    const bootstrap = await read('deploy-company-bootstrap-int501.sh');
+    const companyDeploy = await read('deploy-company-update.sh');
+    expect(bootstrap).toContain('deployment_ensure_env_default "$APP_DIR/.env" OUTBOUND_ALLOWED_HOSTS');
+    expect(bootstrap).toContain('deployment_ensure_env_default "$APP_DIR/.env" OUTBOUND_ALLOWED_PRIVATE_HOSTS');
+    expect(bootstrap.indexOf('deployment_ensure_env_default "$APP_DIR/.env" OUTBOUND_ALLOWED_HOSTS'))
+      .toBeLessThan(bootstrap.indexOf('backup_output='));
+    expect(companyDeploy).toContain('deployment_require_env_value .env OUTBOUND_ALLOWED_HOSTS');
+    expect(companyDeploy.indexOf('deployment_require_env_value .env OUTBOUND_ALLOWED_HOSTS'))
+      .toBeLessThan(companyDeploy.indexOf('resolve_deployment_db_state'));
+
+    const result = bash(`
+      set -euo pipefail
+      source scripts/lib/deploy-common.sh
+      env_file=$(mktemp)
+      printf 'JWT_SECRET=already-present\n' > "$env_file"
+      deployment_ensure_env_default "$env_file" OUTBOUND_ALLOWED_HOSTS 'api.example.com'
+      deployment_ensure_env_default "$env_file" OUTBOUND_ALLOWED_HOSTS 'must-not-overwrite.example.com'
+      deployment_ensure_env_default "$env_file" OUTBOUND_ALLOWED_PRIVATE_HOSTS ''
+      test "$(deployment_env_value "$env_file" OUTBOUND_ALLOWED_HOSTS)" = api.example.com
+      test "$(grep -c '^OUTBOUND_ALLOWED_HOSTS=' "$env_file")" = 1
+      grep -q '^OUTBOUND_ALLOWED_PRIVATE_HOSTS=$' "$env_file"
+      deployment_require_env_value "$env_file" OUTBOUND_ALLOWED_HOSTS
+      ! deployment_require_env_value "$env_file" MISSING_REQUIRED_VALUE
+      rm -f "$env_file"
+    `);
+    expect(result.status, result.stderr).toBe(0);
+  });
 });
 
 describe('backup artifacts stay outside source and Docker contexts', () => {

@@ -174,6 +174,21 @@ sudo bash /data/jianghu/update.sh
 
 这组命令只用于第一次进入 INT-502 RC；后续日常更新继续执行 `sudo bash /data/jianghu/update.sh`。
 
+如果误先运行了旧版 `update.sh`，并在 `OUTBOUND_ALLOWED_HOSTS is missing a value` 处停止：该失败发生在 Compose 构建和数据库迁移之前，旧容器继续运行。此时不要重跑旧脚本，也不要执行 `down -v`；先拉取包含环境迁移的 bridge，再完成一次 bootstrap 和新版脚本安装：
+
+```bash
+cd /data/jianghu
+git pull --ff-only
+sudo bash deploy-company-bootstrap-int501.sh
+test -s /data/jianghu-backups/.int501-bootstrap-verified
+sudo cp deploy-company-update.sh /data/jianghu/update.sh
+sudo chmod 700 /data/jianghu/update.sh \
+  deploy-company-rollback.sh scripts/create-release-rollback-point.sh
+sudo bash /data/jianghu/update.sh
+```
+
+bridge 仅在旧 `.env` 缺少字段时补入默认公网白名单 `open.feishu.cn,agent.qcc.com,openapi.biji.com,qyapi.weixin.qq.com` 和空的内网白名单；不会覆盖已有部署值。自定义 AI / MCP 主机仍需运维显式加入白名单。
+
 任何一步失败都停止，不删除 `pgdata`，也不使用 `db push` 绕过。bootstrap 可安全重跑；日常更新脚本会在既有数据部署上强制检查 marker。
 
 ```bash
