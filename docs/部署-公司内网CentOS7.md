@@ -189,7 +189,7 @@ sudo bash /data/jianghu/update.sh
 
 bridge 仅在旧 `.env` 缺少字段时补入默认公网白名单 `open.feishu.cn,agent.qcc.com,openapi.biji.com,qyapi.weixin.qq.com` 和空的内网白名单；不会覆盖已有部署值。自定义 AI / MCP 主机仍需运维显式加入白名单。
 
-如果 bootstrap 输出 `unknown option '-pbkdf2'`，说明服务器仍是 CentOS 7/OpenSSL 1.0.2，失败发生在备份加密阶段，marker 不会写入，更新脚本也不会开始 migration build。拉取 RC3 后直接重跑 bootstrap；v3 备份格式不要求 `-pbkdf2`，无需升级系统 OpenSSL，也不要删除 `.env` 中已经生成的 `BACKUP_MASTER_SECRET`：
+如果 bootstrap 输出 `unknown option '-pbkdf2'`，说明服务器仍是 CentOS 7/OpenSSL 1.0.2，失败发生在备份加密阶段，marker 不会写入，更新脚本也不会开始 migration build。如果随后输出 `restored database failed required table readiness`，说明备份、解密和 `pg_restore` 已成功，但 RC3 错误地用迁移后 schema 检查 pre-INT501 数据库。拉取 RC4 后直接重跑 bootstrap；RC4 同时兼容 OpenSSL 1.0.2 和迁移前数据库，无需升级系统 OpenSSL，也不要删除 `.env` 中已经生成的 `BACKUP_MASTER_SECRET`：
 
 ```bash
 cd /data/jianghu
