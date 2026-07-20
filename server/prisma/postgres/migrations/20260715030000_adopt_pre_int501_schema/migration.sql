@@ -4,7 +4,7 @@
 -- committed legacy snapshot or the current datamodel.
 BEGIN;
 
-LOCK TABLE "AccessToken", "Account", "Person", "Opportunity", "ChangeProposal",
+LOCK TABLE "AccessToken", "Account", "User", "Person", "Opportunity", "ChangeProposal",
   "EnrichJob", "CuratedSummary", "EVSnapshot", "VisitNote", "WeComUserBind"
   IN SHARE ROW EXCLUSIVE MODE;
 
@@ -106,6 +106,47 @@ CREATE TABLE IF NOT EXISTS "WeComOAuthState" (
 -- Legacy 41-table databases have no CommandRun rows. An untracked current
 -- schema is adopted only when CommandRun is empty, because a 64-hex stored
 -- value cannot be distinguished safely as a legacy raw key or a digest.
+
+-- Stable owner IDs are an authorization boundary. Validate and backfill them
+-- inside this transaction so a failed mapping cannot be bypassed by the
+-- container restart policy after Prisma records the bridge as applied.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM "Account" AS account
+    WHERE account."primaryOwnerUserId" IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM "User" AS owner
+        WHERE owner."tenantId" = account."tenantId"
+          AND owner."id" = account."primaryOwnerUserId"
+      )
+  ) THEN
+    RAISE EXCEPTION 'account owner id is not tenant-local';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM "Account" AS account
+    JOIN "User" AS owner
+      ON owner."tenantId" = account."tenantId"
+     AND owner."name" = account."primaryOwner"
+    WHERE account."primaryOwnerUserId" IS NULL
+      AND account."primaryOwner" <> ''
+    GROUP BY account."tenantId", account."id"
+    HAVING COUNT(*) > 1
+  ) THEN
+    RAISE EXCEPTION 'account owner mapping is ambiguous';
+  END IF;
+END $$;
+
+UPDATE "Account" AS account
+SET "primaryOwnerUserId" = owner."id"
+FROM "User" AS owner
+WHERE account."primaryOwnerUserId" IS NULL
+  AND account."primaryOwner" <> ''
+  AND owner."tenantId" = account."tenantId"
+  AND owner."name" = account."primaryOwner";
 
 CREATE INDEX IF NOT EXISTS "AuditEvent_tenantId_createdAt_idx" ON "AuditEvent"("tenantId", "createdAt");
 CREATE INDEX IF NOT EXISTS "AuditEvent_tenantId_entityKind_entityId_idx" ON "AuditEvent"("tenantId", "entityKind", "entityId");

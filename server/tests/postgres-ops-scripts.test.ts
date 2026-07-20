@@ -313,6 +313,7 @@ describe('PostgreSQL restore safety', () => {
     expect(drill).toContain('bad_archive');
     expect(drill).toContain('assert_database_absent');
     expect(drill).toContain('CONCURRENT_BACKUPS=2');
+    expect(drill).toContain('LEGACY_ACCOUNT_OWNER_BACKFILL_OK=1');
   });
 });
 

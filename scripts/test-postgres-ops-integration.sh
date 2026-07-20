@@ -49,6 +49,10 @@ docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh ser
 legacy_table_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
   "SELECT count(*) FROM pg_catalog.pg_tables WHERE schemaname = 'public'" | tr -d '[:space:]')
 [[ "$legacy_table_count" == 41 ]]
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
+  "INSERT INTO \"Tenant\" (id,name) VALUES ('legacy-owner-tenant','Legacy Owner Tenant');
+   INSERT INTO \"User\" (id,\"tenantId\",email,\"passwordHash\",name) VALUES ('legacy-owner-user','legacy-owner-tenant','legacy-owner@example.test','unused','Legacy Owner');
+   INSERT INTO \"Account\" (id,\"tenantId\",name,\"customerType\",\"primaryOwner\") VALUES ('legacy-owner-account','legacy-owner-tenant','Legacy Account',1,'Legacy Owner');" >/dev/null
 # Simulate a process kill after the first of the three adoption resolves. The
 # next server start must recognize and complete this partial history.
 docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint npx server \
@@ -75,7 +79,39 @@ legacy_bridge_ready=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql 
        AND to_regclass('\''public."SyncRun"'\'') IS NOT NULL
        AND to_regclass('\''public."WeComOAuthState"'\'') IS NOT NULL)::int' | tr -d '[:space:]')
 [[ "$legacy_bridge_ready" == 1 ]]
+legacy_owner_id=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+  "SELECT \"primaryOwnerUserId\" FROM \"Account\" WHERE id = 'legacy-owner-account'" | tr -d '[:space:]')
+[[ "$legacy_owner_id" == legacy-owner-user ]]
+echo "LEGACY_ACCOUNT_OWNER_BACKFILL_OK=1"
 echo "LEGACY_SCHEMA_MIGRATION_PREFLIGHT_OK=1"
+
+# A duplicate tenant-local owner name must roll the bridge transaction back.
+# After data repair, the same database must resume and complete safely.
+ambiguous_db=jianghu_owner_ambiguous
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$ambiguous_db"
+POSTGRES_DB="$ambiguous_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npx prisma db push --schema prisma/postgres/legacy/20260712_pre_int501.prisma --skip-generate' >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$ambiguous_db" -c \
+  "INSERT INTO \"Tenant\" (id,name) VALUES ('ambiguous-tenant','Ambiguous Tenant');
+   INSERT INTO \"User\" (id,\"tenantId\",email,\"passwordHash\",name) VALUES
+     ('ambiguous-user-a','ambiguous-tenant','ambiguous-a@example.test','unused','Duplicate Owner'),
+     ('ambiguous-user-b','ambiguous-tenant','ambiguous-b@example.test','unused','Duplicate Owner');
+   INSERT INTO \"Account\" (id,\"tenantId\",name,\"customerType\",\"primaryOwner\") VALUES ('ambiguous-account','ambiguous-tenant','Ambiguous Account',1,'Duplicate Owner');" >/dev/null
+if POSTGRES_DB="$ambiguous_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "ambiguous legacy owner unexpectedly migrated" >&2; exit 1
+fi
+owner_column_after_failure=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$ambiguous_db" -tAc \
+  "SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'Account' AND column_name = 'primaryOwnerUserId'" | tr -d '[:space:]')
+[[ "$owner_column_after_failure" == 0 ]]
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$ambiguous_db" -c \
+  "DELETE FROM \"User\" WHERE id = 'ambiguous-user-b';" >/dev/null
+POSTGRES_DB="$ambiguous_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+ambiguous_owner_id=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$ambiguous_db" -tAc \
+  "SELECT \"primaryOwnerUserId\" FROM \"Account\" WHERE id = 'ambiguous-account'" | tr -d '[:space:]')
+[[ "$ambiguous_owner_id" == ambiguous-user-a ]]
+echo "AMBIGUOUS_OWNER_TRANSACTION_RETRY_OK=1"
 docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
   "INSERT INTO \"Tenant\" (id,name) VALUES ('ops-tenant','Ops Tenant');
    INSERT INTO \"Account\" (id,\"tenantId\",name,\"customerType\") VALUES ('ops-account','ops-tenant','WorkBuddy Customer',1);

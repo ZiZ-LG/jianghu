@@ -54,11 +54,7 @@ describe('PostgreSQL schema delivery', () => {
     expect(scan).toBeGreaterThan(-1);
     expect(scan).toBeLessThan(deploy);
     expect(deployScript.indexOf('migrate:wecom-bind-report')).toBeLessThan(deploy);
-    expect(deployScript.indexOf('migrate:account-owners')).toBeGreaterThan(deploy);
-    expect(deployScript).toContain('legacy_adoption=0');
-    expect(deployScript).toContain('if [ "$legacy_adoption" = 1 ]');
-    expect(deployScript.indexOf('if [ "$legacy_adoption" = 1 ]'))
-      .toBeLessThan(deployScript.indexOf('migrate:account-owners'));
+    expect(deployScript).not.toContain('migrate:account-owners');
     expect(entrypoint).not.toContain('prisma db push');
     expect(deployScript).not.toContain('prisma db push');
   });
@@ -84,6 +80,9 @@ describe('PostgreSQL schema delivery', () => {
     expect(bridge).toContain('CREATE TABLE IF NOT EXISTS "SyncRun"');
     expect(bridge).toContain('ADD COLUMN IF NOT EXISTS');
     expect(bridge).toContain('64-hex stored');
+    expect(bridge).toContain('account owner mapping is ambiguous');
+    expect(bridge).toContain('account owner id is not tenant-local');
+    expect(bridge).toContain('UPDATE "Account" AS account');
   });
 
   it('packages generated schema, migrations, and the Prisma CLI for empty-schema deploys', async () => {
