@@ -563,9 +563,13 @@ describe('WorkBuddy atomic sync bundle', () => {
     await expect(findSyncAnchorConflicts(cleanInstall)).resolves.toEqual([]);
   });
 
-  it('runs the sync-anchor conflict report before production migration deploy', async () => {
-    const entrypoint = await readFile(new URL('../docker-entrypoint.sh', import.meta.url), 'utf8');
-    expect(entrypoint.indexOf('migrate:sync-anchor-report')).toBeGreaterThan(-1);
-    expect(entrypoint.indexOf('migrate:sync-anchor-report')).toBeLessThan(entrypoint.indexOf('prisma migrate deploy'));
+  it('keeps legacy unique-index adoption transactional and scans conflicts before server start', async () => {
+    const deploy = await readFile(new URL('../scripts/deploy-postgres-migrations.sh', import.meta.url), 'utf8');
+    const bridge = await readFile(new URL('../prisma/postgres/migrations/20260715030000_adopt_pre_int501_schema/migration.sql', import.meta.url), 'utf8');
+    expect(bridge.trimStart().indexOf('BEGIN;')).toBeGreaterThan(-1);
+    expect(bridge).toContain('CREATE UNIQUE INDEX IF NOT EXISTS "Account_tenantId_externalRef_key"');
+    expect(bridge.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(deploy.indexOf('prisma migrate deploy')).toBeGreaterThan(-1);
+    expect(deploy.indexOf('migrate:sync-anchor-report')).toBeGreaterThan(deploy.indexOf('prisma migrate deploy'));
   });
 });
