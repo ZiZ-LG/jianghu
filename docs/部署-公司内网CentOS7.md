@@ -170,13 +170,13 @@ sudo bash deploy-company-bootstrap-int501.sh && \
 
 上面的 `RUNTIME_SHA_OVERRIDE` 仅用于本次已手工把工作树从 `102988a` 拉到后续 RC、但旧容器仍运行 `102988a` 的恢复场景；脚本会把它原子写入 `/data/jianghu-rollbacks/.runtime-sha`。部署成功后该文件自动更新为新 SHA，后续日常更新不再传 override。
 
-任何一步失败都停止，不删除 `pgdata`，也不使用 `db push` 绕过。首次 bridge migration 成功完成前，更新脚本会强制检查 marker、认证备份和 marker 绑定的 Git commit；若 bootstrap 后又拉到了新 commit，必须在新 commit 上重跑 bootstrap。仅创建了 migration history 但 bridge 未完成时不会放宽。bridge 成功后，后续日常更新只重验 marker 身份与认证备份，不再要求 one-time marker 跟随每个新 commit。
+任何一步失败都停止，不删除 `pgdata`，也不使用 `db push` 绕过。首次 bridge migration 成功完成前，更新脚本会强制检查 marker、认证备份和 marker 绑定的 Git commit；若 bootstrap 后又拉到了新 commit，必须在新 commit 上重跑 bootstrap。仅创建 migration history 或留下未完成 bridge 记录时不会放宽；事务回滚且 schema 仍精确匹配批准模型时，脚本会把该 bridge 记录安全登记为 rolled back 后重放。唯一索引前会检查同步锚和企微绑定冲突，迁移后只自动回填租户内唯一同名的负责人稳定 ID，重名/无效稳定 ID 会失败关闭并输出人工清单。bridge 成功后，后续日常更新只重验 marker 身份与认证备份，不再要求 one-time marker 跟随每个新 commit。
 
 ```bash
 cd /data/jianghu && sudo bash update.sh
 ```
 
-readiness 失败时脚本会打印本次回滚点。确认需要回滚后显式执行（命令会停写、恢复备份到新的隔离库、切回旧 SHA 对应的镜像，再跑 readiness；工作树保留当前 `main` 便于继续 fast-forward，失败后的数据库保留取证）：
+readiness 失败时脚本会打印本次回滚点。确认需要回滚后显式执行（命令会停写、恢复备份到新的隔离库、切回旧 SHA 对应的镜像，再跑 readiness，并把 `.runtime-sha` 同步恢复为 manifest 中的运行 SHA；工作树保留当前 `main` 便于继续 fast-forward，失败后的数据库保留取证）：
 
 ```bash
 cd /data/jianghu
