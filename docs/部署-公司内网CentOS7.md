@@ -123,7 +123,7 @@ bash scripts/backup-postgres.sh                        # 加密备份（建议 c
 
 ## 8. 版本更新（就地·日常）
 
-服务器上 `/data/jianghu/update.sh`（源已入库 = 仓库根 `deploy-company-update.sh`）：持久化当前运行 SHA → `git pull`（main）→ 校验 bootstrap/认证备份 → 固定旧 server/web 镜像和数据库回滚点 → 构建候选镜像但不替换容器 → 停写并单独执行版本化 migration → 成功后才切换容器和执行 readiness。migration 失败或停服区间收到退出信号时会恢复 server/web；`pgdata` 不动，固定回滚点不受 prune/14 天轮转影响。
+服务器上 `/data/jianghu/update.sh`（源已入库 = 仓库根 `deploy-company-update.sh`）：持久化当前运行 SHA → `git pull`（main）→ 校验 bootstrap/认证备份 → 固定旧 server/web 镜像和数据库回滚点 → 构建候选镜像但不替换容器 → 停写并单独执行版本化 migration → 成功后才切换容器和执行 readiness。migration 失败或停服区间收到退出信号时，history 未改变则恢复原 server/web，history 已改变或无法确认则自动执行认证回滚；`pgdata` 不动，固定回滚点不受 prune/14 天轮转影响。
 
 ### 从 pre-INT501 版本首次升级（只做一次）
 
@@ -170,7 +170,7 @@ sudo bash deploy-company-bootstrap-int501.sh && \
 
 上面的 `RUNTIME_SHA_OVERRIDE` 仅用于本次已手工把工作树从 `102988a` 拉到后续 RC、但旧容器仍运行 `102988a` 的恢复场景；脚本会把它原子写入 `/data/jianghu-rollbacks/.runtime-sha`。部署成功后该文件自动更新为新 SHA，后续日常更新不再传 override。
 
-任何一步失败都停止，不删除 `pgdata`，也不使用 `db push` 绕过。首次 bridge migration 成功完成前，更新脚本会强制检查 marker、认证备份和 marker 绑定的 Git commit；若 bootstrap 后又拉到了新 commit，必须在新 commit 上重跑 bootstrap。仅创建 migration history 或留下未完成 bridge 记录时不会放宽；事务回滚且 schema 仍精确匹配批准模型时，脚本会把该 bridge 记录安全登记为 rolled back 后重放。唯一索引前会检查同步锚和企微绑定冲突，迁移后只自动回填租户内唯一同名的负责人稳定 ID，重名/无效稳定 ID 会失败关闭并输出人工清单。bridge 成功后，后续日常更新只重验 marker 身份与认证备份，不再要求 one-time marker 跟随每个新 commit。
+任何一步失败都停止，不删除 `pgdata`，也不使用 `db push` 绕过。首次 bridge migration 成功完成前，更新脚本会强制检查 marker、认证备份和 marker 绑定的 Git commit；若 bootstrap 后又拉到了新 commit，必须在新 commit 上重跑 bootstrap。仅创建 migration history 或留下未完成 bridge 记录时不会放宽；事务回滚且 schema 仍精确匹配批准模型时，脚本会把该 bridge 记录安全登记为 rolled back 后重放。唯一索引前会检查同步锚和企微绑定冲突；bridge 事务内只自动回填租户内唯一同名的负责人稳定 ID，重名/无效稳定 ID 会让整个 bridge 回滚并失败关闭。bridge 成功后，后续日常更新只重验 marker 身份与认证备份，不再要求 one-time marker 跟随每个新 commit。
 
 ```bash
 cd /data/jianghu && sudo bash update.sh
