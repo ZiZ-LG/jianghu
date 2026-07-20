@@ -43,12 +43,28 @@ assert_database_absent() {
 }
 
 docker compose -p "$COMPOSE_PROJECT_NAME" build server >/dev/null
-docker compose -p "$COMPOSE_PROJECT_NAME" up -d db server >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" up -d db >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npx prisma db push --schema prisma/postgres/legacy/20260712_pre_int501.prisma --skip-generate' >/dev/null
+legacy_table_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+  "SELECT count(*) FROM pg_catalog.pg_tables WHERE schemaname = 'public'" | tr -d '[:space:]')
+[[ "$legacy_table_count" == 41 ]]
+docker compose -p "$COMPOSE_PROJECT_NAME" up -d server >/dev/null
 for _ in $(seq 1 60); do
   [[ "$(docker inspect -f '{{.State.Health.Status}}' "${COMPOSE_PROJECT_NAME}-server-1" 2>/dev/null || true)" == healthy ]] && break
   sleep 1
 done
 [[ "$(docker inspect -f '{{.State.Health.Status}}' "${COMPOSE_PROJECT_NAME}-server-1")" == healthy ]]
+migration_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+  'SELECT count(*) FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL' | tr -d '[:space:]')
+[[ "$migration_count" == 4 ]]
+legacy_bridge_ready=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+  'SELECT (to_regclass('\''public."AuditEvent"'\'') IS NOT NULL
+       AND to_regclass('\''public."CommandRun"'\'') IS NOT NULL
+       AND to_regclass('\''public."SyncRun"'\'') IS NOT NULL
+       AND to_regclass('\''public."WeComOAuthState"'\'') IS NOT NULL)::int' | tr -d '[:space:]')
+[[ "$legacy_bridge_ready" == 1 ]]
+echo "LEGACY_SCHEMA_MIGRATION_PREFLIGHT_OK=1"
 docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
   "INSERT INTO \"Tenant\" (id,name) VALUES ('ops-tenant','Ops Tenant');
    INSERT INTO \"Account\" (id,\"tenantId\",name,\"customerType\") VALUES ('ops-account','ops-tenant','WorkBuddy Customer',1);
@@ -85,6 +101,9 @@ echo "COMMAND_KEY_MIXED_MIGRATION_OK=1"
 # Exercise the one-time pre-INT501 bridge against the same isolated Compose project.
 bootstrap_root=$(mktemp -d "/tmp/jianghu-int501-bootstrap.${$}.XXXXXX")
 cp docker-compose.yml "$bootstrap_root/docker-compose.yml"
+cp .dockerignore "$bootstrap_root/.dockerignore"
+tar -cf - --exclude='node_modules' --exclude='dist' --exclude='*.db' server packages \
+  | tar -xf - -C "$bootstrap_root"
 cat > "$bootstrap_root/.env" <<EOF
 POSTGRES_USER=$POSTGRES_USER
 POSTGRES_PASSWORD=$POSTGRES_PASSWORD
@@ -116,7 +135,8 @@ env -u BACKUP_MASTER_SECRET \
 [[ -s "$bootstrap_backups/verified" ]]
 bootstrap_master=$(grep '^BACKUP_MASTER_SECRET=' "$bootstrap_root/.env" | tail -n1 | cut -d= -f2)
 derive_backup_keys "$bootstrap_master"
-verify_bootstrap_marker "$bootstrap_backups/verified" "$COMPOSE_PROJECT_NAME" "$POSTGRES_DB" "$bootstrap_backups"
+bootstrap_commit=$(git rev-parse HEAD)
+verify_bootstrap_marker "$bootstrap_backups/verified" "$COMPOSE_PROJECT_NAME" "$POSTGRES_DB" "$bootstrap_backups" "$bootstrap_commit"
 verify_artifact_auth "$VERIFIED_BOOTSTRAP_BACKUP"
 rm -rf "$bootstrap_root"
 echo "PRE_INT501_BOOTSTRAP_OK=1"

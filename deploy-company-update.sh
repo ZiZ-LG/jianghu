@@ -15,11 +15,16 @@ env_value() {
   deployment_env_value .env "$1"
 }
 
+echo "── 1/6 快进拉取待部署版本 ──"
+git pull --ff-only
+current_commit=$(git rev-parse HEAD)
+
+echo "── 2/6 验证 bootstrap、代码绑定与备份认证 ──"
 if [[ "$existing_db" == 1 ]]; then
   deployment_project=$(compose_project_name)
   live_database=$(docker compose exec -T db sh -c 'printf "%s" "$POSTGRES_DB"')
   live_password=$(docker compose exec -T db sh -c 'printf "%s" "$POSTGRES_PASSWORD"')
-  verify_bootstrap_marker "$BOOTSTRAP_MARKER" "$deployment_project" "$live_database" /data/jianghu-backups || {
+  verify_bootstrap_marker "$BOOTSTRAP_MARKER" "$deployment_project" "$live_database" /data/jianghu-backups "$current_commit" || {
     echo "INT-501 bootstrap marker 无效，禁止 migration build。" >&2; exit 1
   }
   backup_master=$(env_value BACKUP_MASTER_SECRET)
@@ -31,7 +36,7 @@ if [[ "$existing_db" == 1 ]]; then
 fi
 
 rollback_point=''
-echo "── 1/4 创建认证备份和可执行回滚点 ──"
+echo "── 3/6 创建认证备份和可执行回滚点 ──"
 if [[ "$existing_db" == 1 ]]; then
   rollback_output=$(ROLLBACK_ROOT=/data/jianghu-rollbacks bash scripts/create-release-rollback-point.sh)
   printf '%s\n' "$rollback_output"
@@ -41,13 +46,22 @@ else
   echo "first install: nothing to back up"
 fi
 
-echo "── 2/4 快进拉取最新版本 ──"
-git pull --ff-only
+echo "── 4/6 构建候选镜像（不替换运行中容器） ──"
+docker compose build server web
 
-echo "── 3/4 重建并滚动更新 ──"
-docker compose up -d --build
+echo "── 5/6 停写、部署 migration，再切换候选容器 ──"
+if [[ "$existing_db" == 1 ]]; then
+  docker compose stop web server
+  if ! docker compose run --rm --no-deps --entrypoint ./scripts/deploy-postgres-migrations.sh server; then
+    echo "生产 migration 失败；数据库事务已失败关闭，重启原 server/web 容器。" >&2
+    docker compose start server web
+    [[ -z "$rollback_point" ]] || echo "回滚命令：bash deploy-company-rollback.sh '$rollback_point' --confirm" >&2
+    exit 1
+  fi
+fi
+docker compose up -d --no-build
 
-echo "── 4/4 readiness 自检 ──"
+echo "── 6/6 readiness 自检 ──"
 PORT=$(grep -E '^WEB_PORT=' .env | tail -n 1 | cut -d= -f2); PORT=${PORT:-80}
 wait_for_http_readiness "http://localhost:${PORT}/api/health/ready" 40 || {
   docker compose ps

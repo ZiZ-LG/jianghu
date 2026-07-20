@@ -435,14 +435,17 @@ exit 1
       root=$(mktemp -d)
       mkdir "$root/backups" "$root/backups/jianghu-valid.backup"
       marker="$root/backups/verified"
-      write_bootstrap_marker "$marker" project-a jianghu "$root/backups/jianghu-valid.backup"
-      verify_bootstrap_marker "$marker" project-a jianghu "$root/backups"
+      commit=0123456789abcdef0123456789abcdef01234567
+      write_bootstrap_marker "$marker" project-a jianghu "$root/backups/jianghu-valid.backup" "$commit"
+      verify_bootstrap_marker "$marker" project-a jianghu "$root/backups" "$commit"
       test "$VERIFIED_BOOTSTRAP_BACKUP" = "$root/backups/jianghu-valid.backup"
       test -z "$(find "$root/backups" -maxdepth 1 -name '.bootstrap-marker.*' -print)"
-      set +e; verify_bootstrap_marker "$marker" project-b jianghu "$root/backups"; wrong_identity=$?; set -e
+      set +e; verify_bootstrap_marker "$marker" project-b jianghu "$root/backups" "$commit"; wrong_identity=$?; set -e
       test "$wrong_identity" != 0
+      set +e; verify_bootstrap_marker "$marker" project-a jianghu "$root/backups" ffffffffffffffffffffffffffffffffffffffff; wrong_commit=$?; set -e
+      test "$wrong_commit" != 0
       rm -rf "$root/backups/jianghu-valid.backup"
-      set +e; verify_bootstrap_marker "$marker" project-a jianghu "$root/backups"; missing_backup=$?; set -e
+      set +e; verify_bootstrap_marker "$marker" project-a jianghu "$root/backups" "$commit"; missing_backup=$?; set -e
       test "$missing_backup" != 0
       rm -rf "$root"
     `);
@@ -455,13 +458,23 @@ exit 1
     expect(bootstrap).toContain('bootstrap-verified');
     expect(bootstrap).toContain('scripts/backup-postgres.sh');
     expect(bootstrap).toContain('scripts/restore-postgres.sh');
+    expect(bootstrap).toContain('scripts/deploy-postgres-migrations.sh');
+    expect(bootstrap).toContain('docker compose build server');
     expect(bootstrap.indexOf('restore-postgres.sh')).toBeLessThan(bootstrap.indexOf('write_bootstrap_marker'));
+    expect(bootstrap.indexOf('deploy-postgres-migrations.sh')).toBeLessThan(bootstrap.indexOf('write_bootstrap_marker'));
     expect(companyDeploy).toContain('bootstrap-verified');
     expect(companyDeploy).toContain('wait_for_http_readiness');
     expect(companyDeploy).toContain('resolve_deployment_db_state');
+    expect(companyDeploy).toContain('docker compose build server web');
+    expect(companyDeploy).toContain('docker compose stop web server');
+    expect(companyDeploy).toContain('--entrypoint ./scripts/deploy-postgres-migrations.sh server');
+    expect(companyDeploy).toContain('docker compose start server web');
+    expect(companyDeploy).toContain('docker compose up -d --no-build');
+    expect(companyDeploy.indexOf('docker compose build server web')).toBeLessThan(companyDeploy.indexOf('docker compose stop web server'));
+    expect(companyDeploy.indexOf('deploy-postgres-migrations.sh')).toBeLessThan(companyDeploy.indexOf('docker compose up -d --no-build'));
     expect(await read('deploy-macmini.sh')).toContain('resolve_deployment_db_state');
-    expect(companyDeploy.indexOf('verify_bootstrap_marker')).toBeLessThan(companyDeploy.indexOf('git pull'));
-    expect(companyDeploy.indexOf('verify_artifact_auth')).toBeLessThan(companyDeploy.indexOf('git pull'));
+    expect(companyDeploy.indexOf('git pull --ff-only')).toBeLessThan(companyDeploy.indexOf('verify_bootstrap_marker'));
+    expect(companyDeploy).toContain('git rev-parse HEAD');
   });
 
   it('migrates the pre-INT501 outbound allowlist before any Compose inspection', async () => {

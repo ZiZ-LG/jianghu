@@ -23,7 +23,7 @@ COPY server .
 # 4) PostgreSQL schema/migrations are generated and drift-checked in source control.
 RUN node scripts/render-postgres-schema.mjs --check \
   && npx prisma generate --schema prisma/postgres/schema.prisma \
-  && chmod +x docker-entrypoint.sh
+  && chmod +x docker-entrypoint.sh scripts/deploy-postgres-migrations.sh
 
 ENV NODE_ENV=production
 ENV PORT=3001

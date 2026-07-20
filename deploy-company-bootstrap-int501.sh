@@ -1,6 +1,6 @@
 #!/bin/bash
 # One-time bridge for a pre-INT501 /data/jianghu deployment.
-# Run this uploaded bundle BEFORE git pull/build introduces migrate deploy.
+# Run from the checked-out release candidate before the detached update script.
 set -Eeuo pipefail
 umask 077
 
@@ -43,6 +43,8 @@ cd "$APP_DIR"
 db_user=$(docker compose exec -T db sh -c 'printf "%s" "$POSTGRES_USER"')
 production_database=$(docker compose exec -T db sh -c 'printf "%s" "$POSTGRES_DB"')
 deployment_project=$(compose_project_name)
+verified_commit=$(git -C "$BUNDLE_DIR" rev-parse HEAD)
+[[ "$verified_commit" =~ ^[0-9a-f]{40}$ ]] || { echo "could not bind bootstrap to a Git commit" >&2; exit 1; }
 schema_signature_sql=$(postgres_public_schema_signature_sql)
 
 query_schema_signature() {
@@ -116,7 +118,17 @@ restored_schema_signature=$(query_schema_signature "$target")
 [[ "$restored_schema_signature" == "$source_schema_signature" ]] || {
   echo "bootstrap isolated restore schema signature mismatch" >&2; exit 1
 }
+
+echo "Building candidate server image for isolated legacy migration preflight..."
+docker compose build server
+POSTGRES_DB="$target" docker compose run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server
+current_readiness_sql=$(postgres_restore_readiness_sql current)
+current_ready=$(docker compose exec -T db psql -v ON_ERROR_STOP=1 -U "$db_user" -d "$target" -tAc \
+  "$current_readiness_sql" | tr -d '[:space:]')
+[[ "$current_ready" == 1 ]] || { echo "isolated migrated database failed current readiness" >&2; exit 1; }
+
 remove_bootstrap_target || { echo "bootstrap restore database cleanup failed" >&2; exit 1; }
 bootstrap_cleanup_done=1
-write_bootstrap_marker "$MARKER" "$deployment_project" "$production_database" "$backup"
-echo "INT-501 bootstrap verified. Now git pull --ff-only, replace detached update.sh, then run it."
+write_bootstrap_marker "$MARKER" "$deployment_project" "$production_database" "$backup" "$verified_commit"
+echo "INT-501 bootstrap and isolated migration verified for commit $verified_commit. Install deploy-company-update.sh as update.sh, then run it."

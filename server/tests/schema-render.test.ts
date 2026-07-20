@@ -47,23 +47,32 @@ describe('PostgreSQL schema delivery', () => {
 
   it('deploys migrations only after the sync-anchor fail-closed scan', async () => {
     const entrypoint = await read('docker-entrypoint.sh');
-    const scan = entrypoint.indexOf('migrate:sync-anchor-report');
-    const deploy = entrypoint.indexOf('prisma migrate deploy --schema prisma/postgres/schema.prisma');
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const scan = deployScript.indexOf('migrate:sync-anchor-report');
+    const deploy = deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"');
+    expect(entrypoint).toContain('scripts/deploy-postgres-migrations.sh');
     expect(scan).toBeGreaterThan(-1);
-    expect(deploy).toBeGreaterThan(scan);
+    expect(scan).toBeGreaterThan(deploy);
     expect(entrypoint).not.toContain('prisma db push');
+    expect(deployScript).not.toContain('prisma db push');
   });
 
   it('adopts an exact pre-migration production schema without replaying the baseline', async () => {
     const entrypoint = await read('docker-entrypoint.sh');
-    const stateCheck = entrypoint.indexOf('postgres-migration-state');
-    const driftCheck = entrypoint.indexOf('prisma migrate diff');
-    const resolve = entrypoint.indexOf('prisma migrate resolve --applied 20260715000000_baseline');
-    const deploy = entrypoint.indexOf('prisma migrate deploy');
-    expect(stateCheck).toBeGreaterThan(-1);
-    expect(driftCheck).toBeGreaterThan(stateCheck);
-    expect(resolve).toBeGreaterThan(driftCheck);
-    expect(deploy).toBeGreaterThan(resolve);
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const legacySchema = await read('prisma/postgres/legacy/20260712_pre_int501.prisma');
+    const bridge = await read('prisma/postgres/migrations/20260715030000_adopt_pre_int501_schema/migration.sql');
+    expect(entrypoint).toContain('scripts/deploy-postgres-migrations.sh');
+    expect(deployScript).toContain('20260712_pre_int501.prisma');
+    expect(deployScript).toContain('20260715000000_baseline');
+    expect(deployScript).toContain('20260715010000_hash_command_run_idempotency_keys');
+    expect(deployScript).toContain('20260715020000_add_person_created_at');
+    expect(deployScript).toContain('prisma migrate deploy --schema "$SCHEMA"');
+    expect(legacySchema).toContain('model Tenant');
+    expect(legacySchema).not.toContain('model SyncRun');
+    expect(bridge).toContain('CREATE TABLE IF NOT EXISTS "SyncRun"');
+    expect(bridge).toContain('ADD COLUMN IF NOT EXISTS');
+    expect(bridge).toContain('^[0-9a-f]{64}$');
   });
 
   it('packages generated schema, migrations, and the Prisma CLI for empty-schema deploys', async () => {
