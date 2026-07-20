@@ -28,6 +28,21 @@ write_runtime_revision() {
   mv "$tmp" "$RUNTIME_REVISION_FILE"
 }
 
+migration_history_snapshot() {
+  local has_history
+  has_history=$(docker compose exec -T db sh -c \
+    'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT to_regclass('\''public._prisma_migrations'\'') IS NOT NULL"' \
+    | tr -d '[:space:]') || return 1
+  case "$has_history" in
+    f) printf '%s' absent ;;
+    t)
+      docker compose exec -T db sh -c \
+        'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -F "|" -tAc "SELECT migration_name, checksum, started_at, finished_at, rolled_back_at, applied_steps_count FROM \"_prisma_migrations\" ORDER BY started_at, migration_name"'
+      ;;
+    *) echo "unexpected migration history state" >&2; return 1 ;;
+  esac
+}
+
 pre_pull_sha=$(git rev-parse HEAD)
 if [[ -n "${RUNTIME_SHA_OVERRIDE:-}" ]]; then
   runtime_sha=$RUNTIME_SHA_OVERRIDE
@@ -97,24 +112,50 @@ docker compose build server web
 
 echo "── 5/6 停写、部署 migration，再切换候选容器 ──"
 services_stopped=0
+migration_started=0
+migration_history_before=''
 restart_stopped_services() {
-  local status=$?
+  local status=$? migration_history_after='' rollback_required=0
   if [[ "$services_stopped" == 1 ]]; then
-    echo "更新在候选容器确认启动前中断；正在恢复 server/web 运行状态。" >&2
+    if [[ "$migration_started" == 1 ]]; then
+      if ! migration_history_after=$(migration_history_snapshot); then
+        echo "无法确认失败后的 migration history；按已改变处理。" >&2
+        rollback_required=1
+      elif [[ "$migration_history_after" != "$migration_history_before" ]]; then
+        rollback_required=1
+      fi
+    fi
+    if [[ "$rollback_required" == 1 ]]; then
+      echo "数据库 migration history 已改变；自动执行认证回滚，禁止启动旧代码连接新 schema。" >&2
+      services_stopped=0
+      trap - EXIT HUP INT TERM
+      if [[ -n "$rollback_point" ]] \
+          && bash deploy-company-rollback.sh "$rollback_point" --confirm; then
+        echo "认证回滚已完成；本次更新仍以失败状态退出。" >&2
+        exit "$status"
+      fi
+      echo "CRITICAL: 自动认证回滚失败；保持服务停止，请勿直接启动旧容器。" >&2
+      exit 70
+    fi
+    echo "更新在 schema 改变前中断；正在恢复原 server/web 运行状态。" >&2
     docker compose start server web || docker compose up -d --no-build server web || true
   fi
   trap - EXIT HUP INT TERM
   exit "$status"
 }
 if [[ "$existing_db" == 1 ]]; then
+  migration_history_before=$(migration_history_snapshot) || {
+    echo "无法记录 migration history，禁止停写部署。" >&2; exit 1
+  }
   services_stopped=1
   trap restart_stopped_services EXIT
   trap 'exit 129' HUP
   trap 'exit 130' INT
   trap 'exit 143' TERM
   docker compose stop web server
+  migration_started=1
   if ! docker compose run --rm --no-deps --entrypoint ./scripts/deploy-postgres-migrations.sh server; then
-    echo "生产 migration 失败；数据库事务已失败关闭，重启原 server/web 容器。" >&2
+    echo "生产 migration 失败；将按 migration history 决定恢复原服务或执行认证回滚。" >&2
     [[ -z "$rollback_point" ]] || echo "回滚命令：bash deploy-company-rollback.sh '$rollback_point' --confirm" >&2
     exit 1
   fi

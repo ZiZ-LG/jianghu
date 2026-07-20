@@ -481,6 +481,11 @@ exit 1
     expect(companyDeploy).toContain('restart_stopped_services');
     expect(companyDeploy).toContain("trap 'exit 143' TERM");
     expect(companyDeploy).toContain('--entrypoint ./scripts/deploy-postgres-migrations.sh server');
+    expect(companyDeploy).toContain('migration_history_snapshot');
+    expect(companyDeploy).toContain('migration_history_before=');
+    expect(companyDeploy).toContain('migration_history_after=');
+    expect(companyDeploy).toContain('数据库 migration history 已改变；自动执行认证回滚');
+    expect(companyDeploy).toContain('bash deploy-company-rollback.sh "$rollback_point" --confirm');
     expect(companyDeploy).toContain('docker compose start server web');
     expect(companyDeploy).toContain('docker compose up -d --no-build');
     expect(companyDeploy.indexOf('docker compose build server web')).toBeLessThan(companyDeploy.indexOf('docker compose stop web server'));

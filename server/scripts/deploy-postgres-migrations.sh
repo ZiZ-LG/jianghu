@@ -5,6 +5,7 @@ SCHEMA=prisma/postgres/schema.prisma
 LEGACY_SCHEMA=prisma/postgres/legacy/20260712_pre_int501.prisma
 PRE_BRIDGE_MIGRATIONS='20260715000000_baseline 20260715010000_hash_command_run_idempotency_keys 20260715020000_add_person_created_at'
 BRIDGE_MIGRATION=20260715030000_adopt_pre_int501_schema
+legacy_adoption=0
 
 wait_for_migration_state() {
   i=0
@@ -61,6 +62,7 @@ rollback_incomplete_bridge() {
 state=$(wait_for_migration_state)
 case "$state" in
   untracked)
+    legacy_adoption=1
     if schema_matches "$SCHEMA"; then
       echo "[migration] 检测到与当前模型一致的未纳管 schema。"
       npx tsx scripts/assert-untracked-command-runs-empty.ts
@@ -81,10 +83,12 @@ case "$state" in
     refresh_applied_migrations
     if ! migration_is_applied "$BRIDGE_MIGRATION"; then
       if schema_matches "$LEGACY_SCHEMA"; then
+        legacy_adoption=1
         echo "[migration] 继续中断的旧 schema 接管。"
         rollback_incomplete_bridge
         resolve_missing_pre_bridge_migrations
       elif schema_matches "$SCHEMA"; then
+        legacy_adoption=1
         rollback_incomplete_bridge
         if ! migration_is_applied 20260715010000_hash_command_run_idempotency_keys; then
           npx tsx scripts/assert-untracked-command-runs-empty.ts
@@ -111,7 +115,11 @@ if ! schema_matches "$SCHEMA"; then
   exit 1
 fi
 
-echo "[migration] 回填稳定负责人 ID；歧义映射失败关闭…"
-npm run migrate:account-owners -- --fail-on-ambiguous
+if [ "$legacy_adoption" = 1 ]; then
+  echo "[migration] 旧库接管：回填稳定负责人 ID；歧义映射失败关闭…"
+  npm run migrate:account-owners -- --fail-on-ambiguous
+else
+  echo "[migration] 非旧库接管：跳过一次性负责人姓名回填。"
+fi
 
 echo "[migration] 版本化迁移与冲突扫描通过。"

@@ -55,6 +55,10 @@ describe('PostgreSQL schema delivery', () => {
     expect(scan).toBeLessThan(deploy);
     expect(deployScript.indexOf('migrate:wecom-bind-report')).toBeLessThan(deploy);
     expect(deployScript.indexOf('migrate:account-owners')).toBeGreaterThan(deploy);
+    expect(deployScript).toContain('legacy_adoption=0');
+    expect(deployScript).toContain('if [ "$legacy_adoption" = 1 ]');
+    expect(deployScript.indexOf('if [ "$legacy_adoption" = 1 ]'))
+      .toBeLessThan(deployScript.indexOf('migrate:account-owners'));
     expect(entrypoint).not.toContain('prisma db push');
     expect(deployScript).not.toContain('prisma db push');
   });
