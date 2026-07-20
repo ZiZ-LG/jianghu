@@ -188,8 +188,7 @@ bad_archive="$BACKUP_DIR/jianghu-bad-archive.backup"
 cp -R "$backup" "$bad_archive"
 derive_backup_keys "$BACKUP_MASTER_SECRET"
 printf 'not a PostgreSQL archive' \
-  | openssl enc -aes-256-cbc -salt -pbkdf2 -iter 600000 -pass fd:3 -out "$bad_archive/payload.enc" \
-      3<<<"$BACKUP_ENCRYPTION_PASSPHRASE"
+  | backup_encrypt_payload "$bad_archive/payload.enc"
 write_artifact_integrity "$bad_archive"
 if bash scripts/restore-postgres.sh "$bad_archive" --database jianghu_restore_bad_archive >/dev/null 2>&1; then
   echo "bad archive accepted" >&2; exit 1

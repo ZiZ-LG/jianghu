@@ -59,18 +59,16 @@ mkdir "$work_dir"
 
 docker compose exec -T db pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null
 docker compose exec -T db pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc \
-  | openssl enc -aes-256-cbc -salt -pbkdf2 -iter 600000 -pass fd:3 -out "$work_dir/payload.enc" \
-      3<<<"$BACKUP_ENCRYPTION_PASSPHRASE"
+  | backup_encrypt_payload "$work_dir/payload.enc"
 [[ -s "$work_dir/payload.enc" ]] || { echo "encrypted backup payload is empty" >&2; exit 1; }
 
-cat > "$work_dir/metadata" <<EOF
-format=jianghu-backup-v2
-cipher=aes-256-cbc
-kdf=sha256-domain-separated-v2
-mac=hmac-sha256
+{
+  backup_cipher_metadata
+  cat <<EOF
 source_database=$POSTGRES_DB
 created_at=$stamp
 EOF
+} > "$work_dir/metadata"
 write_artifact_integrity "$work_dir"
 verify_artifact_auth "$work_dir"
 

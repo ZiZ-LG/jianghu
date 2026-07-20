@@ -59,6 +59,88 @@ describe('PostgreSQL backup cryptography', () => {
     expect(`${result.stdout}${result.stderr}`).not.toContain('deadbeefdeadbeef');
   });
 
+  it('round-trips the portable backup format when OpenSSL has no PBKDF2 option', async () => {
+    const temp = await mkdtemp(join(tmpdir(), 'jianghu-openssl-legacy-'));
+    temporaryPaths.push(temp);
+    const fakeOpenSsl = join(temp, 'openssl');
+    await writeFile(fakeOpenSsl, `#!/usr/bin/env bash
+if [[ "${'$'}1 ${'$'}2" == "enc -help" ]]; then
+  echo "options: -md digest -pass source -salt"
+  exit 0
+fi
+for arg in "${'$'}@"; do
+  if [[ "${'$'}arg" == -pbkdf2 || "${'$'}arg" == -iter ]]; then
+    echo "unknown option '${'$'}arg'" >&2
+    exit 64
+  fi
+done
+exec "${'$'}REAL_OPENSSL" "${'$'}@"
+`);
+    await chmod(fakeOpenSsl, 0o755);
+    const realOpenSsl = bash('command -v openssl').stdout.trim();
+    const result = bash(`
+      set -euo pipefail
+      source scripts/lib/backup-crypto.sh
+      master=$($REAL_OPENSSL rand -hex 32)
+      derive_backup_keys "$master"
+      artifact=$(mktemp -d)
+      printf 'portable-centos7-backup' | backup_encrypt_payload "$artifact/payload.enc"
+      backup_cipher_metadata > "$artifact/metadata"
+      write_artifact_integrity "$artifact"
+      verify_artifact_auth "$artifact"
+      validate_backup_cipher_metadata "$artifact"
+      backup_decrypt_payload "$artifact" > "$artifact/plaintext"
+      test "$(cat "$artifact/plaintext")" = portable-centos7-backup
+      sed -i.bak 's/format=jianghu-backup-v3/format=jianghu-backup-v2/' "$artifact/metadata"
+      ! validate_backup_cipher_metadata "$artifact"
+      rm -rf "$artifact"
+    `, {
+      PATH: `${temp}:${process.env.PATH ?? ''}`,
+      REAL_OPENSSL: realOpenSsl,
+    });
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it('keeps PBKDF2 v2 restore compatibility and validates ciphers before database mutation', async () => {
+    const backup = await read('scripts/backup-postgres.sh');
+    const restore = await read('scripts/restore-postgres.sh');
+    const drill = await read('scripts/test-postgres-ops-integration.sh');
+    expect(backup).toContain('backup_encrypt_payload');
+    expect(backup).toContain('backup_cipher_metadata');
+    expect(backup).not.toContain('-pbkdf2');
+    expect(restore).toContain('validate_backup_cipher_metadata');
+    expect(restore).toContain('backup_decrypt_payload');
+    expect(restore.indexOf('validate_backup_cipher_metadata'))
+      .toBeLessThan(restore.indexOf('CREATE DATABASE'));
+    expect(drill).toContain('backup_encrypt_payload');
+    expect(drill).not.toContain('-pbkdf2');
+
+    const result = bash(`
+      set -euo pipefail
+      source scripts/lib/backup-crypto.sh
+      openssl_supports_pbkdf2 || exit 0
+      master=$(openssl rand -hex 32)
+      derive_backup_keys "$master"
+      artifact=$(mktemp -d)
+      printf 'legacy-pbkdf2-backup' \
+        | openssl enc -aes-256-cbc -salt -pbkdf2 -iter 600000 -pass fd:3 \
+            -out "$artifact/payload.enc" 3<<<"$BACKUP_ENCRYPTION_PASSPHRASE"
+      cat > "$artifact/metadata" <<'EOF'
+format=jianghu-backup-v2
+cipher=aes-256-cbc
+kdf=sha256-domain-separated-v2
+mac=hmac-sha256
+EOF
+      write_artifact_integrity "$artifact"
+      verify_artifact_auth "$artifact"
+      validate_backup_cipher_metadata "$artifact"
+      backup_decrypt_payload "$artifact" > "$artifact/plaintext"
+      test "$(cat "$artifact/plaintext")" = legacy-pbkdf2-backup
+      rm -rf "$artifact"
+    `);
+    expect(result.status, result.stderr).toBe(0);
+  });
+
   it('reaps a stale lock without deleting an ABA successor lock', async () => {
     const result = bash(`
       set -euo pipefail

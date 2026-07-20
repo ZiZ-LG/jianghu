@@ -50,6 +50,70 @@ derive_backup_keys() {
   )
 }
 
+openssl_supports_pbkdf2() {
+  local help
+  help=$(openssl enc -help 2>&1 || true)
+  printf '%s' "$help" | grep -q -- '-pbkdf2'
+}
+
+backup_cipher_metadata() {
+  cat <<'EOF'
+format=jianghu-backup-v3
+cipher=aes-256-cbc
+kdf=sha256-domain-separated-v2
+openssl_kdf=evp-bytestokey-sha256
+mac=hmac-sha256
+EOF
+}
+
+backup_encrypt_payload() {
+  local output=$1
+  # The passphrase is already derived from a random 256-bit master secret.
+  # Explicit SHA-256 keeps EVP_BytesToKey output stable across OpenSSL 1.0.2+
+  # without exposing raw key material in process arguments.
+  openssl enc -aes-256-cbc -salt -md sha256 -pass fd:3 -out "$output" \
+    3<<<"$BACKUP_ENCRYPTION_PASSPHRASE"
+}
+
+validate_backup_cipher_metadata() {
+  local artifact=$1 format
+  grep -Fxq 'cipher=aes-256-cbc' "$artifact/metadata" || { echo "unsupported backup cipher" >&2; return 1; }
+  grep -Fxq 'kdf=sha256-domain-separated-v2' "$artifact/metadata" || { echo "unsupported backup key derivation" >&2; return 1; }
+  grep -Fxq 'mac=hmac-sha256' "$artifact/metadata" || { echo "unsupported backup authentication" >&2; return 1; }
+  format=$(sed -n 's/^format=//p' "$artifact/metadata" | tail -n 1)
+  case "$format" in
+    jianghu-backup-v2)
+      openssl_supports_pbkdf2 || {
+        echo "this OpenSSL cannot restore PBKDF2 backup format v2; use OpenSSL with -pbkdf2 support" >&2
+        return 1
+      }
+      ;;
+    jianghu-backup-v3)
+      grep -Fxq 'openssl_kdf=evp-bytestokey-sha256' "$artifact/metadata" || {
+        echo "unsupported OpenSSL backup key derivation" >&2
+        return 1
+      }
+      ;;
+    *) echo "unsupported backup format" >&2; return 1 ;;
+  esac
+}
+
+backup_decrypt_payload() {
+  local artifact=$1 format
+  format=$(sed -n 's/^format=//p' "$artifact/metadata" | tail -n 1)
+  case "$format" in
+    jianghu-backup-v2)
+      openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -pass fd:3 \
+        3<<<"$BACKUP_ENCRYPTION_PASSPHRASE" < "$artifact/payload.enc"
+      ;;
+    jianghu-backup-v3)
+      openssl enc -d -aes-256-cbc -md sha256 -pass fd:3 \
+        3<<<"$BACKUP_ENCRYPTION_PASSPHRASE" < "$artifact/payload.enc"
+      ;;
+    *) echo "unsupported backup format" >&2; return 1 ;;
+  esac
+}
+
 xor_pad_hex() {
   local key_hex=$1 mask=$2 padded pair value out='' i
   padded="${key_hex}$(printf '%064s' '' | tr ' ' 0)"

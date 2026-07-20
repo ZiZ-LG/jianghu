@@ -59,9 +59,7 @@ derive_backup_keys "$BACKUP_MASTER_SECRET"
 
 # Authenticate metadata and ciphertext before parsing metadata, decrypting, or mutating PostgreSQL.
 verify_artifact_auth "$BACKUP"
-grep -Fxq 'format=jianghu-backup-v2' "$BACKUP/metadata" || { echo "unsupported backup format" >&2; exit 1; }
-grep -Fxq 'cipher=aes-256-cbc' "$BACKUP/metadata" || { echo "unsupported backup cipher" >&2; exit 1; }
-grep -Fxq 'mac=hmac-sha256' "$BACKUP/metadata" || { echo "unsupported backup authentication" >&2; exit 1; }
+validate_backup_cipher_metadata "$BACKUP"
 
 postgres_query_database_presence() {
   local database=$1
@@ -121,8 +119,7 @@ docker compose exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgre
   "CREATE DATABASE \"$TARGET_DB\";" >/dev/null
 created=1
 
-openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -pass fd:3 \
-  3<<<"$BACKUP_ENCRYPTION_PASSPHRASE" < "$BACKUP/payload.enc" \
+backup_decrypt_payload "$BACKUP" \
   | docker compose exec -T db pg_restore -U "$POSTGRES_USER" -d "$TARGET_DB" \
       --exit-on-error --no-owner --no-privileges
 
