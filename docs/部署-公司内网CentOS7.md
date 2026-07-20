@@ -189,19 +189,20 @@ sudo bash /data/jianghu/update.sh
 
 bridge 仅在旧 `.env` 缺少字段时补入默认公网白名单 `open.feishu.cn,agent.qcc.com,openapi.biji.com,qyapi.weixin.qq.com` 和空的内网白名单；不会覆盖已有部署值。自定义 AI / MCP 主机仍需运维显式加入白名单。
 
-如果 bootstrap 输出 `unknown option '-pbkdf2'`，说明服务器仍是 CentOS 7/OpenSSL 1.0.2，失败发生在备份加密阶段；RC3 已兼容该环境。如果输出 `restored database failed required table readiness`，说明备份、解密和 `pg_restore` 已成功，但旧 RC 对 pre-INT501 schema 的识别仍不匹配。公司旧库只读盘点确认其没有后期新增的 `SyncRun`；RC5 改为核验初始稳定核心表，并要求生产库与隔离恢复库的有序 `public` 表清单签名完全相同。拉取 RC5 后直接重跑 bootstrap；无需升级系统 OpenSSL，也不要删除 `.env` 中已经生成的 `BACKUP_MASTER_SECRET`：
+如果 bootstrap 输出 `unknown option '-pbkdf2'`，说明服务器仍是 CentOS 7/OpenSSL 1.0.2，失败发生在备份加密阶段；RC3 已兼容该环境。如果输出 `restored database failed required table readiness`，说明备份、解密和 `pg_restore` 已成功，但旧 RC 对 pre-INT501 schema 的识别仍不匹配。公司旧库只读盘点确认其没有后期新增的 `SyncRun`；RC5 改为核验初始稳定核心表，并要求生产库与隔离恢复库的有序 `public` 表清单签名完全相同。预推送审查随后发现，仅验证恢复仍不足：41 表旧库不能直接被当前 baseline 接管。RC6 因此把 2026-07-12 公司旧 schema 固化为只读兼容基线，并要求候选镜像先在隔离恢复库完整执行版本化 migration、迁移后精确无漂移，marker 还必须绑定当前 Git commit。正式更新会先构建镜像，再停写并单独执行 migration；只有成功才切换容器，失败会重启原 server/web。拉取 RC6 后重跑 bootstrap；无需升级系统 OpenSSL，也不要删除 `.env` 中已经生成的 `BACKUP_MASTER_SECRET`：
 
 ```bash
 cd /data/jianghu
 git pull --ff-only
 git rev-parse --short HEAD
-sudo bash deploy-company-bootstrap-int501.sh
-sudo test -s /data/jianghu-backups/.int501-bootstrap-verified && \
+sudo bash deploy-company-bootstrap-int501.sh && \
+  sudo install -m 0755 deploy-company-update.sh /data/jianghu/update.sh && \
+  sudo test -s /data/jianghu-backups/.int501-bootstrap-verified && \
   echo "INT-501 marker OK" && \
   sudo bash /data/jianghu/update.sh
 ```
 
-任何一步失败都停止，不删除 `pgdata`，也不使用 `db push` 绕过。bootstrap 可安全重跑；日常更新脚本会在既有数据部署上强制检查 marker。
+任何一步失败都停止，不删除 `pgdata`，也不使用 `db push` 绕过。bootstrap 可安全重跑；日常更新脚本会在既有数据部署上强制检查 marker、认证备份和 marker 绑定的 Git commit。若 bootstrap 后又拉到了新 commit，更新会拒绝继续，必须在新 commit 上重新跑 bootstrap。
 
 ```bash
 cd /data/jianghu && sudo bash update.sh
