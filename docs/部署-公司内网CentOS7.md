@@ -123,68 +123,34 @@ bash scripts/backup-postgres.sh                        # 加密备份（建议 c
 
 ## 8. 版本更新（就地·日常）
 
-服务器上 `/data/jianghu/update.sh`（源已入库 = 仓库根 `deploy-company-update.sh`）：固定部署前 SHA、旧 server/web 镜像和认证加密备份到 `/data/jianghu-rollbacks/release-*` → `git pull`（main）→ `docker compose up -d --build` 滚动更新 → readiness 自检 → 清理悬空镜像。`pgdata` 不动；带 tag 的旧镜像和固定备份不受 prune/14 天轮转影响。
+服务器上 `/data/jianghu/update.sh`（源已入库 = 仓库根 `deploy-company-update.sh`）：记录 pull 前 SHA → `git pull`（main）→ 校验 bootstrap/认证备份 → 固定旧 server/web 镜像和数据库回滚点 → 构建候选镜像但不替换容器 → 停写并单独执行版本化 migration → 成功后才切换容器和执行 readiness。migration 失败会重启原 server/web；`pgdata` 不动，固定回滚点不受 prune/14 天轮转影响。
 
 ### 从 pre-INT501 版本首次升级（只做一次）
 
-旧 `/data/jianghu/update.sh` 和旧仓库还没有认证备份/恢复脚本，不能先 `git pull` 或 build。先在开发机把 bridge 与所需脚本按原目录打包并上传到服务器临时目录（bundle 内不得包含 `.env`）：
-
-```bash
-mkdir -p /tmp/int501-bundle/scripts/lib
-cp deploy-company-bootstrap-int501.sh /tmp/int501-bundle/
-cp scripts/backup-postgres.sh scripts/restore-postgres.sh /tmp/int501-bundle/scripts/
-cp scripts/lib/backup-crypto.sh scripts/lib/backup-lock.sh \
-  scripts/lib/deploy-common.sh scripts/lib/postgres-db-safety.sh \
-  scripts/lib/bootstrap-marker.sh /tmp/int501-bundle/scripts/lib/
-scp -r /tmp/int501-bundle <用户>@10.0.171.152:/tmp/
-```
-
-在服务器运行一次 bridge。它会为旧 `.env` 生成独立 64-hex master secret，向 `/data/jianghu-backups` 发布认证加密备份，真实恢复到随机 `jianghu_restore_bootstrap_*`，验证关键表，再删除隔离库；全部成功后才写 marker：
-
-```bash
-sudo bash /tmp/int501-bundle/deploy-company-bootstrap-int501.sh
-test -s /data/jianghu-backups/.int501-bootstrap-verified
-```
-
-marker 不是“文件存在即可”的开关：日常更新会严格校验格式、Compose project、运行中生产库名和所引用的同目录备份，并用当前独立 master secret 重新认证 metadata 与密文；任一不符都在 `git pull`/build 前停止。
-
-只有 marker 存在后，才允许拉取 INT-501 代码并替换 detached 更新脚本：
+RC6 的 bridge 必须从完整候选仓库运行，因为它要构建候选 server 镜像并在隔离恢复库执行真实 migration。`git pull` 只更新工作树，不会重建容器或改数据库；拉取后禁止手工执行 Compose 更新，必须先完成下列链路：
 
 ```bash
 cd /data/jianghu
 git pull --ff-only
-sudo cp deploy-company-update.sh /data/jianghu/update.sh
-sudo chmod 700 /data/jianghu/update.sh
-sudo bash /data/jianghu/update.sh
+git rev-parse --short HEAD
+sudo bash deploy-company-bootstrap-int501.sh && \
+  sudo install -m 0755 deploy-company-update.sh /data/jianghu/update.sh && \
+  sudo test -s /data/jianghu-backups/.int501-bootstrap-verified && \
+  echo "INT-501 marker OK" && \
+  sudo bash /data/jianghu/update.sh
 ```
 
-### 从已完成 INT-501 bootstrap 的版本首次升级到 INT-502 RC
-
-服务器上仍运行旧版 `update.sh` 时，先用已验证的 INT-501 脚本做一次认证备份；`git pull` 只更新工作树、不重建运行中的容器。随后安装新版更新/回滚脚本，再由新版 `update.sh` 在 schema 迁移和镜像重建前创建固定回滚点：
-
-```bash
-cd /data/jianghu
-sudo bash scripts/backup-postgres.sh
-git pull --ff-only
-sudo cp deploy-company-update.sh /data/jianghu/update.sh
-sudo chmod 700 /data/jianghu/update.sh \
-  deploy-company-rollback.sh scripts/create-release-rollback-point.sh
-sudo bash /data/jianghu/update.sh
-```
-
-这组命令只用于第一次进入 INT-502 RC；后续日常更新继续执行 `sudo bash /data/jianghu/update.sh`。
+bridge 会为旧 `.env` 生成独立 64-hex master secret，发布认证加密备份，恢复到随机 `jianghu_restore_bootstrap_*`，比较源/恢复表签名，再让候选镜像完成 migration、当前 schema 零漂移和严格 readiness；隔离库验证删除后才写 marker。marker 严格绑定 Compose project、生产库、认证备份和本次候选 commit。首次迁移完成后数据库已有 migration 历史，后续日常更新无需重跑 one-time bootstrap，但仍重验 marker 身份与认证备份。
 
 如果误先运行了旧版 `update.sh`，并在 `OUTBOUND_ALLOWED_HOSTS is missing a value` 处停止：该失败发生在 Compose 构建和数据库迁移之前，旧容器继续运行。此时不要重跑旧脚本，也不要执行 `down -v`；先拉取包含环境迁移的 bridge，再完成一次 bootstrap 和新版脚本安装：
 
 ```bash
 cd /data/jianghu
 git pull --ff-only
-sudo bash deploy-company-bootstrap-int501.sh
-test -s /data/jianghu-backups/.int501-bootstrap-verified
-sudo cp deploy-company-update.sh /data/jianghu/update.sh
-sudo chmod 700 /data/jianghu/update.sh \
-  deploy-company-rollback.sh scripts/create-release-rollback-point.sh
-sudo bash /data/jianghu/update.sh
+sudo bash deploy-company-bootstrap-int501.sh && \
+  sudo install -m 0755 deploy-company-update.sh /data/jianghu/update.sh && \
+  sudo test -s /data/jianghu-backups/.int501-bootstrap-verified && \
+  sudo bash /data/jianghu/update.sh
 ```
 
 bridge 仅在旧 `.env` 缺少字段时补入默认公网白名单 `open.feishu.cn,agent.qcc.com,openapi.biji.com,qyapi.weixin.qq.com` 和空的内网白名单；不会覆盖已有部署值。自定义 AI / MCP 主机仍需运维显式加入白名单。
@@ -202,7 +168,7 @@ sudo bash deploy-company-bootstrap-int501.sh && \
   sudo bash /data/jianghu/update.sh
 ```
 
-任何一步失败都停止，不删除 `pgdata`，也不使用 `db push` 绕过。bootstrap 可安全重跑；日常更新脚本会在既有数据部署上强制检查 marker、认证备份和 marker 绑定的 Git commit。若 bootstrap 后又拉到了新 commit，更新会拒绝继续，必须在新 commit 上重新跑 bootstrap。
+任何一步失败都停止，不删除 `pgdata`，也不使用 `db push` 绕过。首次 migration 前，更新脚本会强制检查 marker、认证备份和 marker 绑定的 Git commit；若 bootstrap 后又拉到了新 commit，必须在新 commit 上重跑 bootstrap。首次 migration 成功后，后续日常更新只重验 marker 身份与认证备份，不再要求 one-time marker 跟随每个新 commit。
 
 ```bash
 cd /data/jianghu && sudo bash update.sh
@@ -222,7 +188,7 @@ sudo bash deploy-company-rollback.sh /data/jianghu-rollbacks/release-TIMESTAMP-I
 
 ## 已知注意项
 
-1. **schema 变更的版本更新**：server 容器 entrypoint 启动时自动 `prisma migrate deploy`；历史 `db push` schema 只有与 baseline 完全一致才会被接管，任何差异都会失败关闭。先按 `docs/内部版-备份恢复手册.md` 完成加密备份和隔离恢复演练，不得用 `db push` 绕过。
+1. **schema 变更的版本更新**：server 容器 entrypoint 只执行版本化 `prisma migrate deploy`；未纳管数据库只接受当前模型或已固化的 2026-07-12 公司旧模型，其他差异失败关闭。旧模型先在隔离恢复库完整演练 migration；不得用 `db push` 绕过。
 2. **CentOS 7 内核 3.10 较老**：Docker 24.x 运行正常，但 overlay2 在极老内核上偶有兼容问题——`docker info | grep Storage` 确认是 overlay2 即可。
 3. **公司代理**：若服务器走公司 HTTP 代理上外网，给 Docker 配代理（`/etc/systemd/system/docker.service.d/http-proxy.conf`）后路径 A 可用。
 4. 内网纯 HTTP 下浏览器剪贴板 API 受限（复制按钮自动回退手动复制，已兼容）；若公司有内部 HTTPS/证书体系可后续加。
