@@ -23,6 +23,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --database) [[ $# -ge 2 ]] || usage; TARGET_DB=$2; shift 2 ;;
     --replace) REPLACE=1; shift ;;
+    # Internal bridge option. It is intentionally omitted from operator-facing usage
+    # and is restricted below to jianghu_restore_bootstrap_* targets.
     --readiness-profile) [[ $# -ge 2 ]] || usage; READINESS_PROFILE=$2; shift 2 ;;
     *) usage ;;
   esac
