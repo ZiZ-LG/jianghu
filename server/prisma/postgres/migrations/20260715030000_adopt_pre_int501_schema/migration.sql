@@ -148,6 +148,56 @@ WHERE account."primaryOwnerUserId" IS NULL
   AND owner."tenantId" = account."tenantId"
   AND owner."name" = account."primaryOwner";
 
+-- The company database predates INT-102's tenant-scoped index hardening.
+-- Bring that exact 41-table layout forward inside the same bridge transaction;
+-- the final Prisma zero-drift check then proves the conversion is complete.
+CREATE UNIQUE INDEX IF NOT EXISTS "Account_tenantId_id_key" ON "Account"("tenantId", "id");
+CREATE UNIQUE INDEX IF NOT EXISTS "Person_tenantId_id_key" ON "Person"("tenantId", "id");
+CREATE INDEX IF NOT EXISTS "Person_tenantId_accountId_idx" ON "Person"("tenantId", "accountId");
+CREATE UNIQUE INDEX IF NOT EXISTS "Opportunity_tenantId_id_key" ON "Opportunity"("tenantId", "id");
+CREATE INDEX IF NOT EXISTS "Opportunity_tenantId_accountId_idx" ON "Opportunity"("tenantId", "accountId");
+
+DROP INDEX IF EXISTS "OppRole_opportunityId_personId_key";
+CREATE UNIQUE INDEX IF NOT EXISTS "OppRole_tenantId_opportunityId_personId_key" ON "OppRole"("tenantId", "opportunityId", "personId");
+CREATE INDEX IF NOT EXISTS "OppRole_tenantId_opportunityId_idx" ON "OppRole"("tenantId", "opportunityId");
+CREATE INDEX IF NOT EXISTS "OppRole_tenantId_personId_idx" ON "OppRole"("tenantId", "personId");
+
+DROP INDEX IF EXISTS "OpportunityMember_opportunityId_personId_key";
+CREATE UNIQUE INDEX IF NOT EXISTS "OpportunityMember_tenantId_opportunityId_personId_key" ON "OpportunityMember"("tenantId", "opportunityId", "personId");
+CREATE INDEX IF NOT EXISTS "OpportunityMember_tenantId_opportunityId_idx" ON "OpportunityMember"("tenantId", "opportunityId");
+CREATE INDEX IF NOT EXISTS "OpportunityMember_tenantId_personId_idx" ON "OpportunityMember"("tenantId", "personId");
+
+CREATE INDEX IF NOT EXISTS "Edge_tenantId_accountId_idx" ON "Edge"("tenantId", "accountId");
+CREATE INDEX IF NOT EXISTS "Edge_tenantId_opportunityId_idx" ON "Edge"("tenantId", "opportunityId");
+CREATE INDEX IF NOT EXISTS "Edge_tenantId_source_idx" ON "Edge"("tenantId", "source");
+CREATE INDEX IF NOT EXISTS "Edge_tenantId_target_idx" ON "Edge"("tenantId", "target");
+CREATE INDEX IF NOT EXISTS "BurningIssue_tenantId_opportunityId_personId_idx" ON "BurningIssue"("tenantId", "opportunityId", "personId");
+CREATE INDEX IF NOT EXISTS "BurningIssue_tenantId_personId_idx" ON "BurningIssue"("tenantId", "personId");
+CREATE INDEX IF NOT EXISTS "UCV_tenantId_opportunityId_targetBiId_idx" ON "UCV"("tenantId", "opportunityId", "targetBiId");
+CREATE INDEX IF NOT EXISTS "UCV_tenantId_targetBiId_idx" ON "UCV"("tenantId", "targetBiId");
+CREATE INDEX IF NOT EXISTS "VisitNote_tenantId_accountId_idx" ON "VisitNote"("tenantId", "accountId");
+CREATE INDEX IF NOT EXISTS "VisitNote_tenantId_opportunityId_idx" ON "VisitNote"("tenantId", "opportunityId");
+CREATE INDEX IF NOT EXISTS "Note_tenantId_accountId_idx" ON "Note"("tenantId", "accountId");
+CREATE INDEX IF NOT EXISTS "Note_tenantId_opportunityId_idx" ON "Note"("tenantId", "opportunityId");
+CREATE INDEX IF NOT EXISTS "Note_tenantId_personId_idx" ON "Note"("tenantId", "personId");
+CREATE INDEX IF NOT EXISTS "PlanAction_tenantId_accountId_idx" ON "PlanAction"("tenantId", "accountId");
+CREATE INDEX IF NOT EXISTS "PlanAction_tenantId_opportunityId_idx" ON "PlanAction"("tenantId", "opportunityId");
+CREATE INDEX IF NOT EXISTS "PlanAction_tenantId_personId_idx" ON "PlanAction"("tenantId", "personId");
+CREATE INDEX IF NOT EXISTS "OppMilestone_tenantId_accountId_idx" ON "OppMilestone"("tenantId", "accountId");
+CREATE INDEX IF NOT EXISTS "OppMilestone_tenantId_opportunityId_idx" ON "OppMilestone"("tenantId", "opportunityId");
+CREATE INDEX IF NOT EXISTS "OppStage_tenantId_accountId_idx" ON "OppStage"("tenantId", "accountId");
+CREATE INDEX IF NOT EXISTS "OppStage_tenantId_opportunityId_idx" ON "OppStage"("tenantId", "opportunityId");
+CREATE INDEX IF NOT EXISTS "StrategyCard_tenantId_accountId_idx" ON "StrategyCard"("tenantId", "accountId");
+CREATE INDEX IF NOT EXISTS "StrategyCard_tenantId_opportunityId_idx" ON "StrategyCard"("tenantId", "opportunityId");
+CREATE INDEX IF NOT EXISTS "StrategyCard_tenantId_personId_idx" ON "StrategyCard"("tenantId", "personId");
+CREATE INDEX IF NOT EXISTS "StrategyRisk_tenantId_accountId_idx" ON "StrategyRisk"("tenantId", "accountId");
+CREATE INDEX IF NOT EXISTS "StrategyRisk_tenantId_opportunityId_idx" ON "StrategyRisk"("tenantId", "opportunityId");
+CREATE INDEX IF NOT EXISTS "StrategyResource_tenantId_accountId_idx" ON "StrategyResource"("tenantId", "accountId");
+CREATE INDEX IF NOT EXISTS "StrategyResource_tenantId_opportunityId_idx" ON "StrategyResource"("tenantId", "opportunityId");
+CREATE INDEX IF NOT EXISTS "EvidenceEvent_tenantId_accountId_idx" ON "EvidenceEvent"("tenantId", "accountId");
+CREATE INDEX IF NOT EXISTS "EvidenceEvent_tenantId_opportunityId_idx" ON "EvidenceEvent"("tenantId", "opportunityId");
+CREATE INDEX IF NOT EXISTS "EvidenceEvent_tenantId_personId_idx" ON "EvidenceEvent"("tenantId", "personId");
+
 CREATE INDEX IF NOT EXISTS "AuditEvent_tenantId_createdAt_idx" ON "AuditEvent"("tenantId", "createdAt");
 CREATE INDEX IF NOT EXISTS "AuditEvent_tenantId_entityKind_entityId_idx" ON "AuditEvent"("tenantId", "entityKind", "entityId");
 CREATE INDEX IF NOT EXISTS "CommandRun_tenantId_createdAt_idx" ON "CommandRun"("tenantId", "createdAt");

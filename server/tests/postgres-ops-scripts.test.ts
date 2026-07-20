@@ -306,6 +306,71 @@ describe('PostgreSQL restore safety', () => {
     expect(result.status, result.stderr).toBe(0);
   });
 
+  it('bridges the company pre-INT-102 index layout to tenant-scoped indexes', async () => {
+    const legacySchema = await read('server/prisma/postgres/legacy/20260712_pre_int501.prisma');
+    const bridgeMigration = await read(
+      'server/prisma/postgres/migrations/20260715030000_adopt_pre_int501_schema/migration.sql',
+    );
+
+    expect(legacySchema).toContain('@@unique([opportunityId, personId])');
+    expect(legacySchema).not.toContain('@@unique([tenantId, opportunityId, personId])');
+
+    const requiredBridgeStatements = [
+      'CREATE UNIQUE INDEX IF NOT EXISTS "Account_tenantId_id_key"',
+      'CREATE UNIQUE INDEX IF NOT EXISTS "Person_tenantId_id_key"',
+      'CREATE INDEX IF NOT EXISTS "Person_tenantId_accountId_idx"',
+      'CREATE UNIQUE INDEX IF NOT EXISTS "Opportunity_tenantId_id_key"',
+      'CREATE INDEX IF NOT EXISTS "Opportunity_tenantId_accountId_idx"',
+      'DROP INDEX IF EXISTS "OppRole_opportunityId_personId_key"',
+      'CREATE UNIQUE INDEX IF NOT EXISTS "OppRole_tenantId_opportunityId_personId_key"',
+      'CREATE INDEX IF NOT EXISTS "OppRole_tenantId_opportunityId_idx"',
+      'CREATE INDEX IF NOT EXISTS "OppRole_tenantId_personId_idx"',
+      'DROP INDEX IF EXISTS "OpportunityMember_opportunityId_personId_key"',
+      'CREATE UNIQUE INDEX IF NOT EXISTS "OpportunityMember_tenantId_opportunityId_personId_key"',
+      'CREATE INDEX IF NOT EXISTS "OpportunityMember_tenantId_opportunityId_idx"',
+      'CREATE INDEX IF NOT EXISTS "OpportunityMember_tenantId_personId_idx"',
+      'CREATE INDEX IF NOT EXISTS "Edge_tenantId_accountId_idx"',
+      'CREATE INDEX IF NOT EXISTS "Edge_tenantId_opportunityId_idx"',
+      'CREATE INDEX IF NOT EXISTS "Edge_tenantId_source_idx"',
+      'CREATE INDEX IF NOT EXISTS "Edge_tenantId_target_idx"',
+      'CREATE INDEX IF NOT EXISTS "BurningIssue_tenantId_opportunityId_personId_idx"',
+      'CREATE INDEX IF NOT EXISTS "BurningIssue_tenantId_personId_idx"',
+      'CREATE INDEX IF NOT EXISTS "UCV_tenantId_opportunityId_targetBiId_idx"',
+      'CREATE INDEX IF NOT EXISTS "UCV_tenantId_targetBiId_idx"',
+      'CREATE INDEX IF NOT EXISTS "VisitNote_tenantId_accountId_idx"',
+      'CREATE INDEX IF NOT EXISTS "VisitNote_tenantId_opportunityId_idx"',
+      'CREATE INDEX IF NOT EXISTS "Note_tenantId_accountId_idx"',
+      'CREATE INDEX IF NOT EXISTS "Note_tenantId_opportunityId_idx"',
+      'CREATE INDEX IF NOT EXISTS "Note_tenantId_personId_idx"',
+      'CREATE INDEX IF NOT EXISTS "PlanAction_tenantId_accountId_idx"',
+      'CREATE INDEX IF NOT EXISTS "PlanAction_tenantId_opportunityId_idx"',
+      'CREATE INDEX IF NOT EXISTS "PlanAction_tenantId_personId_idx"',
+      'CREATE INDEX IF NOT EXISTS "OppMilestone_tenantId_accountId_idx"',
+      'CREATE INDEX IF NOT EXISTS "OppMilestone_tenantId_opportunityId_idx"',
+      'CREATE INDEX IF NOT EXISTS "OppStage_tenantId_accountId_idx"',
+      'CREATE INDEX IF NOT EXISTS "OppStage_tenantId_opportunityId_idx"',
+      'CREATE INDEX IF NOT EXISTS "StrategyCard_tenantId_accountId_idx"',
+      'CREATE INDEX IF NOT EXISTS "StrategyCard_tenantId_opportunityId_idx"',
+      'CREATE INDEX IF NOT EXISTS "StrategyCard_tenantId_personId_idx"',
+      'CREATE INDEX IF NOT EXISTS "StrategyRisk_tenantId_accountId_idx"',
+      'CREATE INDEX IF NOT EXISTS "StrategyRisk_tenantId_opportunityId_idx"',
+      'CREATE INDEX IF NOT EXISTS "StrategyResource_tenantId_accountId_idx"',
+      'CREATE INDEX IF NOT EXISTS "StrategyResource_tenantId_opportunityId_idx"',
+      'CREATE INDEX IF NOT EXISTS "EvidenceEvent_tenantId_accountId_idx"',
+      'CREATE INDEX IF NOT EXISTS "EvidenceEvent_tenantId_opportunityId_idx"',
+      'CREATE INDEX IF NOT EXISTS "EvidenceEvent_tenantId_personId_idx"',
+    ];
+
+    for (const statement of requiredBridgeStatements) {
+      expect(bridgeMigration).toContain(statement);
+    }
+    expect(bridgeMigration.indexOf('BEGIN;')).toBeLessThan(
+      bridgeMigration.indexOf('DROP INDEX IF EXISTS "OppRole_opportunityId_personId_key"'),
+    );
+    expect(bridgeMigration.indexOf('DROP INDEX IF EXISTS "OpportunityMember_opportunityId_personId_key"'))
+      .toBeLessThan(bridgeMigration.indexOf('COMMIT;'));
+  });
+
   it('ships an executable isolated PostgreSQL failure drill', async () => {
     const drill = await read('scripts/test-postgres-ops-integration.sh');
     const readinessCall = drill.indexOf('\nwait_for_postgres_ready\n');
