@@ -262,6 +262,10 @@ describe('PostgreSQL restore safety', () => {
     const bootstrap = await read('deploy-company-bootstrap-int501.sh');
     const restore = await read('scripts/restore-postgres.sh');
     expect(bootstrap).toContain('--readiness-profile pre-int501');
+    expect(bootstrap).toContain('postgres_public_schema_signature_sql');
+    expect(bootstrap).toContain('source_schema_signature');
+    expect(bootstrap).toContain('restored_schema_signature');
+    expect(bootstrap.indexOf('source_schema_signature=')).toBeLessThan(bootstrap.indexOf('backup_output='));
     expect(restore).toContain('READINESS_PROFILE=current');
     expect(restore).toContain('postgres_validate_restore_readiness_scope "$READINESS_PROFILE" "$TARGET_DB"');
     expect(restore).toContain('postgres_restore_readiness_sql "$READINESS_PROFILE"');
@@ -276,9 +280,16 @@ describe('PostgreSQL restore safety', () => {
       [[ "$current" == *'"EvidenceEvent"'* ]]
       [[ "$current" == *'_prisma_migrations'* ]]
       [[ "$bridge" == *'"Tenant"'* ]]
-      [[ "$bridge" == *'"SyncRun"'* ]]
+      [[ "$bridge" == *'"User"'* ]]
+      [[ "$bridge" == *'"Account"'* ]]
+      [[ "$bridge" != *'"SyncRun"'* ]]
       [[ "$bridge" != *'"CommandRun"'* ]]
       [[ "$bridge" != *'_prisma_migrations'* ]]
+      schema_signature=$(postgres_public_schema_signature_sql)
+      [[ "$schema_signature" == *'pg_catalog.pg_tables'* ]]
+      [[ "$schema_signature" == *"schemaname = 'public'"* ]]
+      [[ "$schema_signature" == *'ORDER BY tablename'* ]]
+      [[ "$schema_signature" == *'md5('* ]]
       postgres_validate_restore_readiness_scope current jianghu_restore_drill
       postgres_validate_restore_readiness_scope pre-int501 jianghu_restore_bootstrap_20260720
       set +e

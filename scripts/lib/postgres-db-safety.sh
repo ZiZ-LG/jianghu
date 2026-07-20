@@ -41,13 +41,22 @@ postgres_restore_readiness_sql() {
       printf '%s' "SELECT (to_regclass('public.\"Tenant\"') IS NOT NULL AND to_regclass('public.\"CommandRun\"') IS NOT NULL AND to_regclass('public.\"EvidenceEvent\"') IS NOT NULL AND to_regclass('public._prisma_migrations') IS NOT NULL)::int"
       ;;
     pre-int501)
-      printf '%s' "SELECT (to_regclass('public.\"Tenant\"') IS NOT NULL AND to_regclass('public.\"SyncRun\"') IS NOT NULL)::int"
+      # These three tables have existed since the initial schema. Later tables
+      # such as SyncRun cannot identify an arbitrary pre-migration deployment.
+      printf '%s' "SELECT (to_regclass('public.\"Tenant\"') IS NOT NULL AND to_regclass('public.\"User\"') IS NOT NULL AND to_regclass('public.\"Account\"') IS NOT NULL)::int"
       ;;
     *)
       echo "unsupported restore readiness profile: ${1-}" >&2
       return 1
       ;;
   esac
+}
+
+postgres_public_schema_signature_sql() {
+  # This is an integrity fingerprint, not a password hash. The authenticated
+  # backup protects against tampering; this comparison proves that the isolated
+  # restore recreated the same set of public tables as the live legacy source.
+  printf '%s' "SELECT md5(string_agg(tablename, E'\\n' ORDER BY tablename)) FROM pg_catalog.pg_tables WHERE schemaname = 'public'"
 }
 
 postgres_validate_restore_readiness_scope() {

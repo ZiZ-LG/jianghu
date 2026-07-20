@@ -39,16 +39,27 @@ if ! grep -q '^BACKUP_MASTER_SECRET=' "$APP_DIR/.env"; then
   } >> "$APP_DIR/.env"
 fi
 
+cd "$APP_DIR"
+db_user=$(docker compose exec -T db sh -c 'printf "%s" "$POSTGRES_USER"')
+production_database=$(docker compose exec -T db sh -c 'printf "%s" "$POSTGRES_DB"')
+deployment_project=$(compose_project_name)
+schema_signature_sql=$(postgres_public_schema_signature_sql)
+
+query_schema_signature() {
+  local database=$1
+  docker compose exec -T db psql -v ON_ERROR_STOP=1 -U "$db_user" -d "$database" -tAc \
+    "$schema_signature_sql" | tr -d '[:space:]'
+}
+source_schema_signature=$(query_schema_signature "$production_database")
+[[ "$source_schema_signature" =~ ^[0-9a-f]{32}$ ]] || {
+  echo "production database public schema signature is unavailable" >&2; exit 1
+}
+
 export JIANGHU_ROOT="$APP_DIR"
 export BACKUP_DIR
 backup_output=$(bash "$BUNDLE_DIR/scripts/backup-postgres.sh")
 backup=$(printf '%s\n' "$backup_output" | sed -n 's/^Authenticated encrypted backup created: //p' | tail -n 1)
 [[ -d "$backup" ]] || { echo "bootstrap backup was not published" >&2; exit 1; }
-
-cd "$APP_DIR"
-db_user=$(docker compose exec -T db sh -c 'printf "%s" "$POSTGRES_USER"')
-production_database=$(docker compose exec -T db sh -c 'printf "%s" "$POSTGRES_DB"')
-deployment_project=$(compose_project_name)
 
 postgres_query_database_presence() {
   local database=$1
@@ -100,10 +111,11 @@ trap bootstrap_cleanup EXIT
 bash "$BUNDLE_DIR/scripts/restore-postgres.sh" "$backup" --database "$target" \
   --readiness-profile pre-int501
 
-smoke=$(docker compose exec -T db psql -v ON_ERROR_STOP=1 -U "$db_user" -d "$target" -tAc \
-  'SELECT (to_regclass('\''public."Tenant"'\'') IS NOT NULL AND to_regclass('\''public."SyncRun"'\'') IS NOT NULL)::int' | tr -d '[:space:]')
-[[ "${INT501_BOOTSTRAP_TEST_FAIL_SMOKE:-0}" != 1 ]] || smoke=0
-[[ "$smoke" == 1 ]] || { echo "bootstrap isolated restore smoke failed" >&2; exit 1; }
+restored_schema_signature=$(query_schema_signature "$target")
+[[ "${INT501_BOOTSTRAP_TEST_FAIL_SMOKE:-0}" != 1 ]] || restored_schema_signature=''
+[[ "$restored_schema_signature" == "$source_schema_signature" ]] || {
+  echo "bootstrap isolated restore schema signature mismatch" >&2; exit 1
+}
 remove_bootstrap_target || { echo "bootstrap restore database cleanup failed" >&2; exit 1; }
 bootstrap_cleanup_done=1
 write_bootstrap_marker "$MARKER" "$deployment_project" "$production_database" "$backup"
