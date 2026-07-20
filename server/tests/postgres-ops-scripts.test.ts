@@ -308,6 +308,10 @@ describe('PostgreSQL restore safety', () => {
 
   it('ships an executable isolated PostgreSQL failure drill', async () => {
     const drill = await read('scripts/test-postgres-ops-integration.sh');
+    const readinessCall = drill.indexOf('\nwait_for_postgres_ready\n');
+    expect(readinessCall).toBeGreaterThan(drill.indexOf('up -d db'));
+    expect(readinessCall).toBeLessThan(drill.indexOf('npx prisma db push'));
+    expect(drill).toContain('pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"');
     expect(drill).toContain('--replace');
     expect(drill).toContain('WRONG_MASTER_SECRET');
     expect(drill).toContain('bad_archive');

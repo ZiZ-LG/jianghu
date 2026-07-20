@@ -41,9 +41,21 @@ database_exists() {
 assert_database_absent() {
   postgres_assert_database_absent "$1" || exit $?
 }
+wait_for_postgres_ready() {
+  for _ in $(seq 1 60); do
+    if docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db \
+        pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "PostgreSQL did not become ready within 60 seconds" >&2
+  return 1
+}
 
 docker compose -p "$COMPOSE_PROJECT_NAME" build server >/dev/null
 docker compose -p "$COMPOSE_PROJECT_NAME" up -d db >/dev/null
+wait_for_postgres_ready
 docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
   'npx prisma db push --schema prisma/postgres/legacy/20260712_pre_int501.prisma --skip-generate' >/dev/null
 legacy_table_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
