@@ -22,13 +22,13 @@ source "$BUNDLE_DIR/scripts/lib/deploy-common.sh"
 source "$BUNDLE_DIR/scripts/lib/postgres-db-safety.sh"
 source "$BUNDLE_DIR/scripts/lib/bootstrap-marker.sh"
 
-git -C "$APP_DIR" diff --quiet --ignore-submodules -- \
-  && git -C "$APP_DIR" diff --cached --quiet --ignore-submodules -- \
+deployment_git_in_dir "$APP_DIR" diff --quiet --ignore-submodules -- \
+  && deployment_git_in_dir "$APP_DIR" diff --cached --quiet --ignore-submodules -- \
   || { echo "tracked deployment files are dirty; refusing bootstrap" >&2; exit 1; }
 # Untracked files inside a Docker build input can also change the preflighted
 # image without changing HEAD. The detached operator update.sh is at repo root,
 # so only build inputs need this additional check.
-[[ -z "$(git -C "$APP_DIR" status --porcelain --untracked-files=all -- app server packages)" ]] || {
+[[ -z "$(deployment_git_in_dir "$APP_DIR" status --porcelain --untracked-files=all -- app server packages)" ]] || {
   echo "untracked Docker build inputs exist; refusing bootstrap" >&2; exit 1
 }
 
@@ -53,7 +53,7 @@ cd "$APP_DIR"
 db_user=$(docker compose exec -T db sh -c 'printf "%s" "$POSTGRES_USER"')
 production_database=$(docker compose exec -T db sh -c 'printf "%s" "$POSTGRES_DB"')
 deployment_project=$(compose_project_name)
-verified_commit=$(git -C "$APP_DIR" rev-parse HEAD)
+verified_commit=$(deployment_git_in_dir "$APP_DIR" rev-parse HEAD)
 [[ "$verified_commit" =~ ^[0-9a-f]{40}$ ]] || { echo "could not bind bootstrap to a Git commit" >&2; exit 1; }
 schema_signature_sql=$(postgres_public_schema_signature_sql)
 

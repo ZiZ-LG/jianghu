@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 
+deployment_git_in_dir() {
+  local directory=$1
+  shift
+  (cd "$directory" && git "$@")
+}
+
 deployment_env_value() {
   local env_file=$1 key=$2 line
   line=$(grep -E "^${key}=" "$env_file" 2>/dev/null | tail -n 1 || true)

@@ -171,9 +171,9 @@ JWT_SECRET=$JWT_SECRET
 AI_KEY_SECRET=$AI_KEY_SECRET
 OUTBOUND_ALLOWED_HOSTS=$OUTBOUND_ALLOWED_HOSTS
 EOF
-git -C "$bootstrap_root" init -q
-git -C "$bootstrap_root" -c user.name=CI -c user.email=ci@example.invalid add .dockerignore docker-compose.yml server packages
-git -C "$bootstrap_root" -c user.name=CI -c user.email=ci@example.invalid commit -qm 'legacy bootstrap fixture'
+deployment_git_in_dir "$bootstrap_root" init -q
+deployment_git_in_dir "$bootstrap_root" -c user.name=CI -c user.email=ci@example.invalid add .dockerignore docker-compose.yml server packages
+deployment_git_in_dir "$bootstrap_root" -c user.name=CI -c user.email=ci@example.invalid commit -qm 'legacy bootstrap fixture'
 bootstrap_backups="$bootstrap_root/backups"
 if env -u BACKUP_MASTER_SECRET \
   JIANGHU_ROOT="$bootstrap_root" \
@@ -197,7 +197,7 @@ env -u BACKUP_MASTER_SECRET \
 [[ -s "$bootstrap_backups/verified" ]]
 bootstrap_master=$(grep '^BACKUP_MASTER_SECRET=' "$bootstrap_root/.env" | tail -n1 | cut -d= -f2)
 derive_backup_keys "$bootstrap_master"
-bootstrap_commit=$(git -C "$bootstrap_root" rev-parse HEAD)
+bootstrap_commit=$(deployment_git_in_dir "$bootstrap_root" rev-parse HEAD)
 verify_bootstrap_marker "$bootstrap_backups/verified" "$COMPOSE_PROJECT_NAME" "$POSTGRES_DB" "$bootstrap_backups" "$bootstrap_commit"
 verify_artifact_auth "$VERIFIED_BOOTSTRAP_BACKUP"
 rm -rf "$bootstrap_root"

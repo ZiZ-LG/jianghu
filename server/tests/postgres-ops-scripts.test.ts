@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -322,6 +322,42 @@ describe('PostgreSQL restore safety', () => {
 });
 
 describe('deployment safety helpers', () => {
+  it('runs bootstrap Git checks without the Git 1.8.5-only -C option', async () => {
+    const bootstrap = await read('deploy-company-bootstrap-int501.sh');
+    const drill = await read('scripts/test-postgres-ops-integration.sh');
+    expect(bootstrap).not.toContain('git -C');
+    expect(bootstrap).toContain('deployment_git_in_dir "$APP_DIR"');
+    expect(drill).not.toContain('git -C');
+    expect(drill).toContain('deployment_git_in_dir "$bootstrap_root"');
+
+    const temp = await mkdtemp(join(tmpdir(), 'jianghu-git-legacy-'));
+    temporaryPaths.push(temp);
+    const appDir = join(temp, 'app');
+    const capture = join(temp, 'capture');
+    const fakeGit = join(temp, 'git');
+    await mkdir(appDir);
+    await writeFile(fakeGit, `#!/usr/bin/env bash
+if [[ "${'$'}{1:-}" == -C ]]; then
+  echo "Unknown option: -C" >&2
+  exit 64
+fi
+printf '%s|%s\n' "${'$'}PWD" "${'$'}*" > "${'$'}GIT_CAPTURE"
+`);
+    await chmod(fakeGit, 0o755);
+
+    const result = bash(`
+      set -euo pipefail
+      source scripts/lib/deploy-common.sh
+      deployment_git_in_dir "$APP_DIR" diff --quiet --ignore-submodules --
+    `, {
+      APP_DIR: appDir,
+      GIT_CAPTURE: capture,
+      PATH: `${temp}:${process.env.PATH ?? ''}`,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(await readFile(capture, 'utf8')).toBe(`${appDir}|diff --quiet --ignore-submodules --\n`);
+  });
+
   it('captures immutable code, image and authenticated database rollback anchors', async () => {
     const capture = await read('scripts/create-release-rollback-point.sh');
     const rollback = await read('deploy-company-rollback.sh');
