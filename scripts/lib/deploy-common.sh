@@ -8,8 +8,9 @@ deployment_env_value() {
 
 deployment_ensure_env_default() {
   local env_file=$1 key=$2 value=$3
-  if ! grep -q "^${key}=" "$env_file" 2>/dev/null; then
-    printf '%s=%s\n' "$key" "$value" >> "$env_file"
+  if ! grep -q "^${key}=" "$env_file" 2>/dev/null \
+      || { [[ -n "$value" ]] && [[ -z "$(deployment_env_value "$env_file" "$key")" ]]; }; then
+    printf '\n%s=%s\n' "$key" "$value" >> "$env_file"
     echo "added $key to $env_file"
   fi
 }

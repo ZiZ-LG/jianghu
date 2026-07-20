@@ -358,7 +358,11 @@ exit 1
       grep -q '^OUTBOUND_ALLOWED_PRIVATE_HOSTS=$' "$env_file"
       deployment_require_env_value "$env_file" OUTBOUND_ALLOWED_HOSTS
       ! deployment_require_env_value "$env_file" MISSING_REQUIRED_VALUE
-      rm -f "$env_file"
+      empty_env=$(mktemp)
+      printf 'OUTBOUND_ALLOWED_HOSTS=' > "$empty_env"
+      deployment_ensure_env_default "$empty_env" OUTBOUND_ALLOWED_HOSTS 'api.example.com'
+      test "$(deployment_env_value "$empty_env" OUTBOUND_ALLOWED_HOSTS)" = api.example.com
+      rm -f "$env_file" "$empty_env"
     `);
     expect(result.status, result.stderr).toBe(0);
   });
