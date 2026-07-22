@@ -105,6 +105,7 @@ cd packages/pde-kernel && npx tsc --noEmit && npm run test   # 内核类型 + go
 - 内部版详细计划：`docs/superpowers/plans/2026-07-11-internal-edition-development.md`。
 - 唯一日常状态清单：`docs/内部版开发待办清单v1.md`；代码任务必须引用 `INT-*` ID，同一时间最多一项 `IN_PROGRESS`。
 - 除重大偏差外严格按阶段门执行；重大偏差先暂停、写 ADR、由项目所有者批准，再更新计划和清单。
+- 发布验收执行 `docs/ADR-INT-502-发布验收简化与清库重装.md` 简化口径（2026-07-21 批准）；机制收敛路线见 `docs/架构-收敛路线图v1.md`，未登记 INT 任务前不得动工。
 
 ## /compact 时保留
 

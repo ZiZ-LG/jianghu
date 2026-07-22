@@ -1,7 +1,9 @@
 import type { PrismaClient } from '@prisma/client';
 
-export const RELEASE_OBSERVATION_HOURS = 336;
-export const RELEASE_MIN_LOGICAL_COMMANDS = 100;
+// 口径依 ADR-INT-502（2026-07-21）：受控运行 336h→48h，样本门槛 100→20；
+// 不足样本且零失败时由项目所有者按 ADR 人工判定。
+export const RELEASE_OBSERVATION_HOURS = 48;
+export const RELEASE_MIN_LOGICAL_COMMANDS = 20;
 
 export type ReleaseMetricInput = {
   tenantId: string;
@@ -37,7 +39,7 @@ export async function collectInternalReleaseMetrics(db: PrismaClient, input: Rel
   const duplicateRatePct = formalPeople === 0 ? null : duplicateFormalPeople * 100 / formalPeople;
   const hours = (input.end.getTime() - input.start.getTime()) / 3_600_000;
   const thresholds = {
-    observed336Hours: hours >= RELEASE_OBSERVATION_HOURS,
+    observedRequiredHours: hours >= RELEASE_OBSERVATION_HOURS,
     minimumSample: terminal >= RELEASE_MIN_LOGICAL_COMMANDS,
     successRate: successRatePct !== null && successRatePct >= 99,
     duplicateRate: duplicateRatePct !== null && duplicateRatePct < 1,

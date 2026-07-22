@@ -34,7 +34,7 @@ describe('INT-502 controlled-run metrics', () => {
     const report = await collectInternalReleaseMetrics(context.prisma, { tenantId: context.tenant.id, start, end });
     expect(report.workbuddyLogicalCommands).toMatchObject({ completed: 99, failed: 1, terminal: 100, successRatePct: 99 });
     expect(report.formalPeople).toMatchObject({ created: 100, mergedAsDuplicate: 0, duplicateRatePct: 0 });
-    expect(report.thresholds).toMatchObject({ observed336Hours: true, minimumSample: true, successRate: true, duplicateRate: true });
+    expect(report.thresholds).toMatchObject({ observedRequiredHours: true, minimumSample: true, successRate: true, duplicateRate: true });
     expect(report.automaticPass).toBe(true);
   });
 });

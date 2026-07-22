@@ -1,6 +1,8 @@
 #!/bin/bash
 # One-time bridge for a pre-INT501 /data/jianghu deployment.
 # Run from the checked-out release candidate before the detached update script.
+# 2026-07-21 起公司路径改为清库重装（ADR-INT-502），本脚本退出关键路径，
+# 仅为存档与集成测试兼容保留，计划 2026-10 随 legacy 清退包一并删除。
 set -Eeuo pipefail
 umask 077
 
