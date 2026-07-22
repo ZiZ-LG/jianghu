@@ -26,7 +26,6 @@ import { computeGaps } from './lib/gaps';
 import { computeToday, needsYouByAccount } from './lib/today';
 import { GapCards } from './components/GapCards';
 import { nextFreeSlot } from './lib/layout';
-import { PersonForm } from './components/PersonForm';
 import { TeamBilling } from './components/TeamBilling';
 import { AiSettings } from './components/AiSettings';
 import { WeComSettings } from './components/WeComSettings';
@@ -82,7 +81,6 @@ export default function App() {
   const toggleLayer = (l: Layer) => setVisibleLayers((s) => { const n = new Set(s); n.has(l) ? n.delete(l) : n.add(l); if (n.size === 0) n.add(l); return n; });
   const [oppFormOpen, setOppFormOpen] = useState(false);
   const [repairTarget, setRepairTarget] = useState<RepairTarget | null>(null);
-  const [personFormOpen, setPersonFormOpen] = useState(false);
   const [mdDocOpen, setMdDocOpen] = useState(false);
   const [intelOpen, setIntelOpen] = useState(false);
   const [intelContext, setIntelContext] = useState<VisitCaptureContext | null>(null);
@@ -462,16 +460,6 @@ export default function App() {
       setSyncErr('归档失败：' + (e?.message || e));
     }
   };
-  const addPerson = (name: string, title: string, isCompetitor: boolean) => {
-    if (!account) return;
-    const occupied = account.persons.filter((p) => !p.isCompetitor).map((p) => ({ x: p.x, y: p.y }));
-    const { x, y } = isCompetitor ? { x: 90, y: 440 } : nextFreeSlot(occupied);
-    const p = newPerson(name, title, x, y, isCompetitor);
-    act({ type: 'ADD_PERSON', accId: account.id, person: p });
-    if (opp?.memberScoped) act({ type: 'ADD_OPP_MEMBER', accId: account.id, oppId: opp.id, personId: p.id }); // memberScoped 商机内建人 → 加入成员，否则被过滤看不见
-    setSelectedId(p.id);
-  };
-
   // ── 画布交互：选中 / 打开右侧栏 / 飞书式建点连线 ──
   const selectPerson = (id: string | null) => { setSelectedId(id); setSelectedEdgeId(null); if (id) setFocusTab(readonly ? 'profile' : 'advisor'); }; // 单击=选中→焦点面板「参谋」（viewer 无参谋→档案）
   const openPerson = (id: string) => { setSelectedId(id); setSelectedEdgeId(null); setDrawerEdgeId(null); setFocusTab('profile'); }; // 双击=选中→焦点面板「档案」
@@ -824,7 +812,6 @@ export default function App() {
           onClose={() => setAddIntelOpen(false)}
           onExtracted={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); await loadInbox(); } catch { /* 静默：保存已成功，仅刷新失败 */ } }} />
       )}
-      {personFormOpen && !readonly && <PersonForm onCreate={addPerson} onClose={() => setPersonFormOpen(false)} />}
       {teamOpen && <TeamBilling role={auth.user.role} onClose={() => setTeamOpen(false)} />}
       {aiSettingsOpen && !readonly && <AiSettings role={auth.user.role} onClose={() => setAiSettingsOpen(false)} />}
       {helpOpen && <HelpManual onClose={() => setHelpOpen(false)} />}
