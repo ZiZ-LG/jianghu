@@ -121,72 +121,131 @@ bash scripts/backup-postgres.sh                        # 加密备份（建议 c
 # 红线：绝不执行 docker compose down -v（-v 会删 pgdata 数据卷）
 ```
 
+每日自动备份 cron（root crontab，`sudo crontab -e` 加入）：
+
+```bash
+0 2 * * * cd /data/jianghu && bash scripts/backup-postgres.sh >> /var/log/jianghu-backup.log 2>&1
+```
+
 ## 8. 版本更新（就地·日常）
 
 服务器上 `/data/jianghu/update.sh`（源已入库 = 仓库根 `deploy-company-update.sh`）：持久化当前运行 SHA → `git pull`（main）→ 校验 bootstrap/认证备份 → 固定旧 server/web 镜像和数据库回滚点 → 构建候选镜像但不替换容器 → 停写并单独执行版本化 migration → 成功后才切换容器和执行 readiness。migration 失败或停服区间收到退出信号时，history 未改变则恢复原 server/web，history 已改变或无法确认则自动执行认证回滚；`pgdata` 不动，固定回滚点不受 prune/14 天轮转影响。
 
-### 从 pre-INT501 版本首次升级（只做一次）
+### 从 pre-INT501 版本首次升级 → 已由清库重装取代（ADR-INT-502）
 
-RC8 的 bridge 必须从完整候选仓库运行，因为它要构建候选 server 镜像并在隔离恢复库执行真实 migration。`git pull` 只更新工作树，不会重建容器或改数据库；拉取后禁止手工执行 Compose 更新，必须先完成下列链路：
+> 2026-07-21 起本节旧流程（`deploy-company-bootstrap-int501.sh` 旧库 bridge 接管，RC1–RC9）**不再是公司路径**：项目所有者确认旧库数据可弃，改走下方 §8A「清库重装」。历史流程与五次 fail-closed 尝试记录见 git 历史与 `docs/内部版-发布验收记录.md` §5。bootstrap 脚本仅为存档与集成测试兼容保留，2026-10 随 legacy 清退包删除。
+
+### 8A. 清库重装（一次性，约 1–2 小时，ADR-INT-502）
+
+前置检查：
+
+```bash
+cd /data/jianghu
+df -h /data                      # 余量 ≥ 旧库体积 3 倍
+docker info >/dev/null && echo docker-ok
+git status --porcelain           # 应为空；有脏文件先清理
+docker compose ps                # 确认旧栈现状
+```
+
+**第 1 步 · 留档（先于一切破坏性动作，缺一不可）**：
+
+```bash
+cd /data/jianghu
+mkdir -p /data/jianghu-backups
+cp .env "/data/jianghu-backups/env-final-$(date +%Y%m%d)"     # 必须含 BACKUP_MASTER_SECRET——丢失即历史备份永不可解
+bash scripts/backup-postgres.sh                                # 旧库最终认证加密备份，记下输出的 .backup 目录名
+ls -la /data/jianghu-backups/
+```
+
+然后把「最终备份目录 + env 副本」拷回 Mac mini 异地留档（在 **Mac mini** 上执行）：
+
+```bash
+scp -r "<用户>@10.0.171.152:/data/jianghu-backups/jianghu-*.backup" ~/jianghu-company-final-backup/
+scp "<用户>@10.0.171.152:/data/jianghu-backups/env-final-*" ~/jianghu-company-final-backup/
+```
+
+检查点：两地各一份最终备份 + env 副本。**未确认双份留档前不得进入第 2 步。**
+
+**第 2 步 · 停栈**（绝不带 `-v`，此刻数据仍在卷里可反悔）：
+
+```bash
+cd /data/jianghu && docker compose down
+```
+
+**第 3 步 · 清库（唯一破坏性动作）**：
+
+```bash
+docker volume ls | grep pgdata                 # 确认卷名（预期 jianghu_pgdata）
+docker volume rm jianghu_pgdata
+rm -f /data/jianghu-backups/.int501-bootstrap-verified   # 清历史 marker 残迹（五次失败均未写到此步，预期本就不存在）
+```
+
+**第 4 步 · 取版本并安装新脚本**：
 
 ```bash
 cd /data/jianghu
 git pull --ff-only
-git rev-parse --short HEAD
-sudo bash deploy-company-bootstrap-int501.sh && \
-  sudo install -m 0755 deploy-company-update.sh /data/jianghu/update.sh && \
-  sudo test -s /data/jianghu-backups/.int501-bootstrap-verified && \
-  echo "INT-501 marker OK" && \
-  sudo bash /data/jianghu/update.sh
+git rev-parse --short HEAD                     # 应与验收记录 §1 的 rc10 SHA 一致
+sudo install -m 0755 deploy-company-update.sh /data/jianghu/update.sh
 ```
 
-bridge 会先拒绝 tracked 修改和 Docker 构建输入中的未跟踪文件，再为旧 `.env` 生成独立 64-hex master secret，发布认证加密备份，恢复到随机 `jianghu_restore_bootstrap_*`，比较源/恢复表签名，再让候选镜像完成 migration、当前 schema 零漂移和严格 readiness；隔离库验证删除后才写 marker。marker 严格绑定 Compose project、生产库、认证备份和本次候选 commit。只有 bridge migration 已成功完成才解除 commit 绑定；仅出现部分 `_prisma_migrations` 记录时仍要求原候选 commit。后续日常更新仍重验 marker 身份与认证备份。
-
-如果误先运行了旧版 `update.sh`，并在 `OUTBOUND_ALLOWED_HOSTS is missing a value` 处停止：该失败发生在 Compose 构建和数据库迁移之前，旧容器继续运行。此时不要重跑旧脚本，也不要执行 `down -v`；先拉取包含环境迁移的 bridge，再完成一次 bootstrap 和新版脚本安装：
+**第 5 步 · 首装**：
 
 ```bash
-cd /data/jianghu
-git pull --ff-only
-sudo bash deploy-company-bootstrap-int501.sh && \
-  sudo install -m 0755 deploy-company-update.sh /data/jianghu/update.sh && \
-  sudo test -s /data/jianghu-backups/.int501-bootstrap-verified && \
-  sudo bash /data/jianghu/update.sh
+sudo bash /data/jianghu/update.sh
 ```
 
-bridge 仅在旧 `.env` 缺少字段时补入默认公网白名单 `open.feishu.cn,agent.qcc.com,openapi.biji.com,qyapi.weixin.qq.com` 和空的内网白名单；不会覆盖已有部署值。自定义 AI / MCP 主机仍需运维显式加入白名单。
+预期输出顺序：`first install: nothing to back up` → 镜像构建 → 容器启动（entrypoint 对空库按序执行 4 条版本化迁移）→ readiness 200 → `── 7/7 首装收尾 ──` → `✓ 首装认证备份 + bootstrap marker 已写入`。
 
-如果 bootstrap 输出 `unknown option '-pbkdf2'`，说明服务器仍是 CentOS 7/OpenSSL 1.0.2，失败发生在备份加密阶段；RC3 已兼容该环境。如果输出 `restored database failed required table readiness`，说明备份、解密和 `pg_restore` 已成功，但旧 RC 对 pre-INT501 schema 的识别仍不匹配。公司旧库只读盘点确认其没有后期新增的 `SyncRun`；RC5 改为核验初始稳定核心表，并要求生产库与隔离恢复库的有序 `public` 表清单签名完全相同。预推送审查随后发现，仅验证恢复仍不足：41 表旧库不能直接被当前 baseline 接管。RC6 因此把 2026-07-12 公司旧 schema 固化为只读兼容基线，并要求候选镜像先在隔离恢复库完整执行版本化 migration、迁移后精确无漂移，marker 还必须绑定当前 Git commit。正式更新会先构建镜像，再停写并单独执行 migration；只有成功才切换候选容器。若失败时 migration history 未改变，脚本恢复原 server/web；若 history 已改变或无法确认，脚本自动执行认证回滚，绝不让旧代码连接新 schema。拉取 RC8 后重跑 bootstrap；无需升级系统 OpenSSL，也不要删除 `.env` 中已经生成的 `BACKUP_MASTER_SECRET`：
+失败处置：任何一步失败都不会伤及已留档备份；旧库数据可随时恢复到隔离库取证：
 
 ```bash
-cd /data/jianghu
-git pull --ff-only
-git rev-parse --short HEAD
-sudo bash deploy-company-bootstrap-int501.sh && \
-  sudo install -m 0755 deploy-company-update.sh /data/jianghu/update.sh && \
-  sudo test -s /data/jianghu-backups/.int501-bootstrap-verified && \
-  echo "INT-501 marker OK" && \
-  sudo env RUNTIME_SHA_OVERRIDE=102988ad43907c5733bac0f5aacce69be395fede bash /data/jianghu/update.sh
+bash scripts/restore-postgres.sh "/data/jianghu-backups/<最终备份>.backup" \
+  --database "jianghu_restore_bootstrap_$(date +%s)" --readiness-profile pre-int501
 ```
 
-上面的 `RUNTIME_SHA_OVERRIDE` 仅用于本次已手工把工作树从 `102988a` 拉到后续 RC、但旧容器仍运行 `102988a` 的恢复场景；脚本会把它原子写入 `/data/jianghu-rollbacks/.runtime-sha`。部署成功后该文件自动更新为新 SHA，后续日常更新不再传 override。
+### 8B. 上线验收 runbook（rc10，ADR-INT-502 简化口径）
 
-任何一步失败都停止，不删除 `pgdata`，也不使用 `db push` 绕过。首次 bridge migration 成功完成前，更新脚本会强制检查 marker、认证备份和 marker 绑定的 Git commit；若 bootstrap 后又拉到了新 commit，必须在新 commit 上重跑 bootstrap。仅创建 migration history 或留下未完成 bridge 记录时不会放宽；事务回滚且 schema 仍精确匹配批准模型时，脚本会把该 bridge 记录安全登记为 rolled back 后重放。唯一索引前会检查同步锚和企微绑定冲突；bridge 事务内只自动回填租户内唯一同名的负责人稳定 ID，重名/无效稳定 ID 会让整个 bridge 回滚并失败关闭。bridge 成功后，后续日常更新只重验 marker 身份与认证备份，不再要求 one-time marker 跟随每个新 commit。
+1. **冒烟清单**：按 `docs/内部版-发布验收记录.md` §4 的 10 项逐项执行并勾选（两名真实用户 + 一名 viewer）。
+2. **备份恢复真机演练**（Owner 底线，不可省）：
 
-```bash
-cd /data/jianghu && sudo bash update.sh
-```
+   ```bash
+   cd /data/jianghu
+   bash scripts/backup-postgres.sh                                  # 新库首次内容备份
+   bash scripts/restore-postgres.sh "/data/jianghu-backups/<刚生成>.backup" \
+     --database "jianghu_restore_drill_$(date +%s)"                 # 恢复到隔离库
+   # 抽查隔离库行数后删演练库；把 RTO/RPO 记入验收记录 §5
+   ```
 
-readiness 失败时脚本会打印本次回滚点。确认需要回滚后显式执行（命令会停写、恢复备份到新的隔离库、切回旧 SHA 对应的镜像，再跑 readiness，并把 `.runtime-sha` 同步恢复为 manifest 中的运行 SHA；工作树保留当前 `main` 便于继续 fast-forward，失败后的数据库保留取证）：
+3. **二次更新演练**（验证日常更新通路 + 回滚点生成）：
+
+   ```bash
+   cd /data/jianghu && sudo bash update.sh
+   ```
+
+   预期：走 existing_db=1 路径（marker 验证 → 回滚点 → no-op 迁移 → readiness）。
+4. **每日备份 cron**：按 §7 配置。
+5. **48–72 小时受控运行**，每日点检（约 10 分钟）：
+
+   ```bash
+   docker compose ps                                          # 三容器 healthy
+   docker compose logs server --since 24h 2>&1 | grep -iE "error|fatal" | head
+   cd /data/jianghu/server && npm run release:metrics -- --tenant <TENANT_ID> \
+     --start <窗口起点ISO> --end <当天ISO>                     # 数字抄入验收记录 §6 表
+   ls -lt /data/jianghu-backups | head -3                     # 当日新备份存在
+   ```
+
+6. **窗口结束**：`npm run release:metrics -- … --final`（rc10 阈值 = 48h / ≥20 条）退出 0，或样本不足且零失败时由项目所有者按 ADR-INT-502 人工判定 → 填验收记录 §8 签署表 → 状态改 **GO** → 待办清单 INT-502 勾 DONE → commit `release: certify internal workbuddy-first baseline (rc10)`。
+
+readiness 失败时脚本会打印本次回滚点。确认需要回滚后显式执行（停写 → 恢复备份到新的隔离库 → 切回旧 SHA 镜像 → readiness；失败后的数据库保留取证）：
 
 ```bash
 cd /data/jianghu
 sudo bash deploy-company-rollback.sh /data/jianghu-rollbacks/release-TIMESTAMP-ID --confirm
 ```
 
-正式发布前须在隔离 Compose project 完成一次同版本演练，并把回滚点、旧/新镜像 digest、恢复库、RTO/RPO 和 smoke 结果写入 `docs/内部版-发布验收记录.md`。
-
 > ⚠️ 拉的是 **main**；功能分支（如 `feat/*`）的改动必须先合 main，`update.sh` 才会部署到。
-> 已经完成上述 bootstrap 的新部署，之后更新 detached 脚本可用：`scp deploy-company-update.sh <用户>@10.0.171.152:/data/jianghu/update.sh`。
+> 之后更新 detached 脚本可用：`scp deploy-company-update.sh <用户>@10.0.171.152:/data/jianghu/update.sh`。
 
 ## 已知注意项
 
