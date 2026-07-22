@@ -32,6 +32,7 @@ server/                  后端 API
   prisma/schema.prisma   数据模型
 packages/pde-kernel/     ★ PDE 数学内核（G64111×EV 决策引擎，纯函数零依赖）；权威规范=docs/pde-handoff/（oracle+golden **禁手改**）；硬规则见包内 AGENTS.md
 packages/g64111/       ★ G64111 唯一评分实现（公式单测+兼容 fixtures）
+packages/domain-contracts/  共享领域契约（Action/schema，app 与 server 共用）
 docs/                    PRD、G64111-评分规格.md、部署指南（设计权威来源）
 docs/pde-handoff/        PDE 交接包（SPEC/TASKS/DECISIONS/reference_impl.py/golden/seeds）
 参考文件/                 原始原型与方法论素材
@@ -64,10 +65,11 @@ cd packages/pde-kernel && npx tsc --noEmit && npm run test   # 内核类型 + go
 ```
 
 > 完整脚本以各 `package.json` 的 `scripts` 为准（含 build / preview）。**改算法后务必跑 `packages/g64111/`、`app/` 和 server parity 单测。**
+> ⚠️ 改过 `packages/*` 后，先在 `app/`、`server/` 重跑 `npm ci --install-links` 再跑收尾——`file:` 协议安装是**复制不是软链**，不刷新会拿着过期副本得到假红/假绿。
 
 ## 不可违背的硬规则
 
-1. **多租户隔离**：所有数据读写**必须按 `tenantId` 作用域**过滤；新增任何查询/接口都要带租户隔离。数据安全红线，**绝不跨租户**。
+1. **多租户隔离**：所有数据读写**必须按 `tenantId` 作用域**过滤；新增任何查询/接口都要带租户隔离。数据安全红线，**绝不跨租户**。viewer 角色（销售包只读投影）再加一层行级隔离：只见 `Account.primaryOwner === User.name` 的客户——新增「按 id 直查」的读接口须带 viewer 归属校验，写接口须挡 viewer（helper 在 `server/src/scope.ts`）。
 2. **AI 结果绝不自动写库**：AI 推断的关系/节点一律先作为候选（带置信度/证据/来源、画布灰虚线 ❓），**人审采纳后才建边**；导入的企查查/AI 节点要带「待验证」溯源日志。企查查多候选时同理——**展示候选让用户点选，不自动锁定主体**。
 3. **跨库可移植**：Prisma schema **不用原生 enum/json**，保证 SQLite ↔ Postgres 一致。
 4. **用户自配模型/数据 Key（BYO）**：Key（AI 模型、企查查 MCP token）经 **AES-256-GCM 加密存服务端**、用用户自己额度调用，平台零成本；无 Key 走演示/回退模式。**绝不明文落库、绝不外发、绝不写进提交。**
