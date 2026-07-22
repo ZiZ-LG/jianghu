@@ -1,20 +1,29 @@
 #!/bin/bash
-# 公司内网服务器（/data/jianghu）就地更新。首次进入 INT-501 前必须先跑 bootstrap。
+# 公司内网服务器（默认 /data/jianghu，可用 JIANGHU_ROOT 覆盖）就地更新。
+# 空库（首装 / ADR-INT-502 清库重装）：构建 → 容器 entrypoint 迁移空库 → 起服务，
+#   readiness 通过后自动创建首个认证备份并写 bootstrap marker（后续更新的验证锚）。
+# 已有库：验证 bootstrap marker + 认证备份后走停写迁移流程。
 set -Eeuo pipefail
-cd /data/jianghu
+APP_DIR=${JIANGHU_ROOT:-/data/jianghu}
+cd "$APP_DIR"
 source scripts/lib/deploy-common.sh
 source scripts/lib/backup-crypto.sh
 source scripts/lib/bootstrap-marker.sh
 
-BOOTSTRAP_MARKER=/data/jianghu-backups/.int501-bootstrap-verified
-RUNTIME_REVISION_FILE=/data/jianghu-rollbacks/.runtime-sha
-deployment_require_env_value .env OUTBOUND_ALLOWED_HOSTS
-resolve_deployment_db_state || { echo "无法确认现有数据库状态，禁止部署。" >&2; exit 1; }
-existing_db=$DEPLOYMENT_HAS_EXISTING_DB
-
 env_value() {
   deployment_env_value .env "$1"
 }
+
+# 备份目录解析与 scripts/backup-postgres.sh 完全同源（env BACKUP_DIR → .env → ../jianghu-backups），
+# 保证 marker 与备份天然同目录（write/verify_bootstrap_marker 的硬性要求）。
+BACKUP_ROOT=${BACKUP_DIR:-$(env_value BACKUP_DIR)}
+BACKUP_ROOT=${BACKUP_ROOT:-"$(cd "$APP_DIR/.." && pwd)/jianghu-backups"}
+ROLLBACK_ROOT=${ROLLBACK_ROOT:-"$(cd "$APP_DIR/.." && pwd)/jianghu-rollbacks"}
+BOOTSTRAP_MARKER=$BACKUP_ROOT/.int501-bootstrap-verified
+RUNTIME_REVISION_FILE=$ROLLBACK_ROOT/.runtime-sha
+deployment_require_env_value .env OUTBOUND_ALLOWED_HOSTS
+resolve_deployment_db_state || { echo "无法确认现有数据库状态，禁止部署。" >&2; exit 1; }
+existing_db=$DEPLOYMENT_HAS_EXISTING_DB
 
 write_runtime_revision() {
   local sha=$1 directory tmp
@@ -84,7 +93,7 @@ if [[ "$existing_db" == 1 ]]; then
   fi
   expected_bootstrap_commit=''
   [[ "$bridge_complete" == t ]] || expected_bootstrap_commit=$current_commit
-  verify_bootstrap_marker "$BOOTSTRAP_MARKER" "$deployment_project" "$live_database" /data/jianghu-backups "$expected_bootstrap_commit" || {
+  verify_bootstrap_marker "$BOOTSTRAP_MARKER" "$deployment_project" "$live_database" "$BACKUP_ROOT" "$expected_bootstrap_commit" || {
     echo "INT-501 bootstrap marker 无效，禁止 migration build。" >&2; exit 1
   }
   backup_master=$(env_value BACKUP_MASTER_SECRET)
@@ -98,7 +107,7 @@ fi
 rollback_point=''
 echo "── 3/6 创建认证备份和可执行回滚点 ──"
 if [[ "$existing_db" == 1 ]]; then
-  rollback_output=$(ROLLBACK_ROOT=/data/jianghu-rollbacks ROLLBACK_SHA_OVERRIDE="$runtime_sha" \
+  rollback_output=$(ROLLBACK_ROOT="$ROLLBACK_ROOT" ROLLBACK_SHA_OVERRIDE="$runtime_sha" \
     bash scripts/create-release-rollback-point.sh)
   printf '%s\n' "$rollback_output"
   rollback_point=$(printf '%s\n' "$rollback_output" | sed -n 's/^ROLLBACK_POINT=//p' | tail -n 1)
@@ -178,4 +187,27 @@ health=$(curl --noproxy '*' --fail --silent --show-error --connect-timeout 3 --m
   "http://localhost:${PORT}/api/health/ready")
 echo "$health ✓ 已更新到：$(git log --oneline -1)"
 [[ -z "$rollback_point" ]] || echo "本次回滚点：$rollback_point"
+
+if [[ "$existing_db" == 0 ]]; then
+  echo "── 7/7 首装收尾：创建首个认证备份并写入 bootstrap marker ──"
+  first_install_finalize() {
+    local backup_output backup_path project database
+    backup_output=$(JIANGHU_ROOT="$APP_DIR" BACKUP_DIR="$BACKUP_ROOT" bash scripts/backup-postgres.sh) || return 1
+    printf '%s\n' "$backup_output"
+    backup_path=$(printf '%s\n' "$backup_output" | sed -n 's/^Authenticated encrypted backup created: //p' | tail -n 1)
+    [[ -d "$backup_path" ]] || { echo "无法定位首装备份产物" >&2; return 1; }
+    project=$(compose_project_name) || return 1
+    database=$(docker compose exec -T db sh -c 'printf "%s" "$POSTGRES_DB"') || return 1
+    write_bootstrap_marker "$BOOTSTRAP_MARKER" "$project" "$database" "$backup_path" "$current_commit"
+  }
+  if ! first_install_finalize; then
+    echo "服务已部署成功，但首装备份/bootstrap marker 收尾失败——下一次更新会被 marker 验证拒绝。" >&2
+    echo "补救（在 $APP_DIR 下依次执行）：" >&2
+    echo "  bash scripts/backup-postgres.sh" >&2
+    echo "  source scripts/lib/deploy-common.sh && source scripts/lib/bootstrap-marker.sh \\" >&2
+    echo "    && write_bootstrap_marker '$BOOTSTRAP_MARKER' \"\$(compose_project_name)\" \"\$(docker compose exec -T db sh -c 'printf %s \"\$POSTGRES_DB\"')\" '<上一步输出的 .backup 目录>' '$current_commit'" >&2
+    exit 1
+  fi
+  echo "✓ 首装认证备份 + bootstrap marker 已写入：$BOOTSTRAP_MARKER"
+fi
 docker image prune -f >/dev/null
