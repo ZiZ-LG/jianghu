@@ -1,6 +1,5 @@
 // P5 「今日三件事」+ Hub 客户卡「需要你」角标（三环评价：桌面版今日一屏，纯前端可算零 schema）。
 // 三源聚合：①逾期/今明到期的行动牌（最急）②巡检提醒（warn 优先）③各商机最大缺口性价比项。
-// 手机场景 A 的今日一屏（MomentFlow）已有自己的引擎排序，这里只服务桌面 Hub。
 import type { Account } from '../types';
 import { computeGaps } from './gaps';
 

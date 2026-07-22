@@ -36,14 +36,13 @@ import { HelpManual } from './components/HelpManual';
 import { McpAccess } from './components/McpAccess';
 import { OverflowMenu } from './components/OverflowMenu';
 import { OrientationGate } from './components/OrientationGate';
-import { MomentFlow } from './components/MomentFlow';
 import { Footer } from './components/Footer';
 import { SyncStatus } from './components/SyncStatus';
 import { createCommitScheduler } from './lib/sync/commitScheduler';
 import { createMutationCoordinator, createMutationExecutionGate, entityKeyForAction } from './lib/sync/mutationCoordinator';
 import { RepairPanel, type RepairTarget } from './components/RepairPanel';
 import { localYmd } from './lib/dateYmd';
-import type { VisitCaptureContext } from './lib/momentFlowModel';
+import type { VisitCaptureContext } from './lib/sessionLifecycle';
 import { clearStableBatchItemKey, runBatchWithProgress, stableBatchItemKey, type StableBatchKeyCache } from './lib/reviewBatch';
 import {
   clearSessionUi,
@@ -110,7 +109,6 @@ export default function App() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [mcpAccessOpen, setMcpAccessOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistentState('jianghu.sidebarCollapsed', false);
-  const [forceDesktop, setForceDesktop] = usePersistentState('jianghu.forceDesktop', false); // 手机竖屏默认时刻流；true=强制完整版
   const [theme, toggleTheme] = useTheme();
   // 画布选中模型：单击=选中(节点出锚点/连线出控制点)，双击=打开右侧栏
   const [focusTab, setFocusTab] = useState<'profile' | 'dynamic' | 'advisor'>('advisor'); // 焦点面板 tab：单击→参谋、双击→档案
@@ -599,8 +597,7 @@ export default function App() {
     </div>}
   </>;
 
-  // ── Hub / 手机竖屏时刻流（场景 A：竖屏默认=时刻流，横屏提示只在进作战室后）──
-  const phonePortrait = isMobile && !isLandscape;
+  // ── Hub（手机竖屏时刻流已退役 2026-07-21：竖屏直接进 Hub，横屏提示只在进作战室后）──
   if (!account) {
     const captureAccount = intelContext ? state.accounts.find((item) => item.id === intelContext.accId) : undefined;
     const captureOpportunity = captureAccount && intelContext
@@ -608,22 +605,6 @@ export default function App() {
       : undefined;
     return (
       <>
-        {phonePortrait && !forceDesktop ? (
-          <MomentFlow
-            accounts={state.accounts} inbox={inbox} userName={auth.user.name}
-            readonly={readonly}
-            theme={theme} onToggleTheme={toggleTheme}
-            onOpenIntel={(context) => { setIntelContext(context ?? null); setIntelOpen(true); }}
-            onEnterAccount={(aId, oId) => { const a = state.accounts.find((x) => x.id === aId); setAccId(aId); setOppId(oId ?? a?.opportunities[0]?.id ?? null); setSelectedId(null); }}
-            onExitToDesktop={() => setForceDesktop(true)}
-            onLogout={logout}
-            onAcceptProposal={inboxAcceptProposal} onRejectProposal={inboxRejectProposal}
-            onAcceptPerson={inboxAcceptPerson} onRejectPerson={inboxRejectPerson}
-            onAcceptRel={inboxAcceptRel} onRejectRel={inboxRejectRel}
-            onDismissReminder={inboxDismissReminder}
-            onReviewEvidence={inboxReviewEvidence}
-          />
-        ) : (
         <CustomerHub
           accounts={state.accounts} onOpen={openAccount} onCreate={createAccount} onLoadDemo={loadDemo}
           readonly={readonly}
@@ -640,8 +621,6 @@ export default function App() {
           onIntelDone={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); await loadInbox(); } catch { /* 静默：保存已成功 */ } }}
           onOpenInbox={() => setInboxOpen(true)} inboxCount={inbox.total} patrol={inbox.patrol}
         />
-        )}
-        {phonePortrait && forceDesktop && <button className="mf-exit-desktop" onClick={() => setForceDesktop(false)}>📱 回手机版</button>}
         <SyncStatus coordinator={coordinator} onViewCloud={discardToCloudState} />
         {syncErr && <div className="sync-toast">{syncErr}</div>}
         {inboxOpen && !readonly && <InboxPanel rels={inbox.rels} persons={inbox.persons} proposals={inbox.proposals} accounts={state.accounts} onAccept={inboxAcceptRel} onReject={inboxRejectRel} onAcceptPerson={inboxAcceptPerson} onRejectPerson={inboxRejectPerson} onAcceptProposal={inboxAcceptProposal} onRejectProposal={inboxRejectProposal} reminders={inbox.reminders} onDismissReminder={inboxDismissReminder} evidences={inbox.evidences} onReviewEvidence={inboxReviewEvidence} onBatch={inboxBatch} onClose={() => setInboxOpen(false)} />}

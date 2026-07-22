@@ -1623,7 +1623,7 @@ html[data-theme="dark"] .modal { box-shadow: 0 24px 60px rgba(0,0,0,.6), 0 0 44p
 .inbox-edit:focus { border-color: var(--accent); outline: none; }
 .inbox-edited { margin-left: 4px; font-size: 10px; font-weight: 600; color: var(--accent); }
 
-/* ═══ 场景 A · 手机竖屏时刻流（MomentFlow）═══ */
+/* ═══ PDE 四动作色（强攻/跟进/摸底/止损，推演坞与徽章共用）═══ */
 :root {
   --act-raise: #2563eb; --act-raise-bg: #e5edff;
   --act-call: #059669;  --act-call-bg: #e2f5ee;
@@ -1633,59 +1633,11 @@ html[data-theme="dark"] .modal { box-shadow: 0 24px 60px rgba(0,0,0,.6), 0 0 44p
 html[data-theme="dark"] {
   --act-raise-bg: #1e3a8a33; --act-call-bg: #06402933; --act-check-bg: #78350f33; --act-fold-bg: #7f1d1d33;
 }
-.mf { max-width: 520px; margin: 0 auto; min-height: 100dvh; display: flex; flex-direction: column; gap: 10px; padding: 16px 14px calc(14px + env(safe-area-inset-bottom)); background: var(--bg); color: var(--ink); }
-.mf-head { display: flex; justify-content: space-between; align-items: flex-start; }
-.mf-date { font-size: 12px; color: var(--faint); }
-.mf-hello { font-size: 19px; font-weight: 800; margin-top: 2px; }
-.mf-gear, .mf-back { background: none; border: none; font-size: 16px; color: var(--ink); cursor: pointer; padding: 4px; }
-.mf-back { font-weight: 700; }
-.mf-menu { position: absolute; right: 14px; top: 52px; z-index: 30; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.15); display: flex; flex-direction: column; overflow: hidden; }
-.mf-menu button { background: none; border: none; padding: 11px 18px; text-align: left; font-size: 14px; color: var(--ink); cursor: pointer; }
-.mf-menu button:hover { background: var(--hover); }
-.mf-heartbeat { font-size: 11.5px; color: var(--faint); }
-.mf-opps { display: flex; gap: 8px; overflow-x: auto; }
-.mf-opp { flex: 1; min-width: 130px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; text-align: left; cursor: pointer; color: var(--ink); }
-.mf-opp-name { font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mf-opp-row { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; font-size: 13px; }
-.mf-act { font-size: 11.5px; font-weight: 800; border-radius: 999px; padding: 2px 9px; color: var(--faint); }
-.mf-act-raise { background: var(--act-raise-bg); color: var(--act-raise); }
-.mf-act-call  { background: var(--act-call-bg);  color: var(--act-call); }
-.mf-act-check { background: var(--act-check-bg); color: var(--act-check); }
-.mf-act-fold  { background: var(--act-fold-bg);  color: var(--act-fold); }
-.mf-opp-raise { border-left: 3px solid var(--act-raise); }
-.mf-opp-call  { border-left: 3px solid var(--act-call); }
-.mf-opp-check { border-left: 3px solid var(--act-check); }
-.mf-opp-fold  { border-left: 3px solid var(--act-fold); }
-.mf-sec { font-size: 12px; font-weight: 800; color: var(--faint); margin-top: 6px; }
-.mf-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 11px 13px; text-align: left; cursor: pointer; color: var(--ink); width: 100%; }
-.mf-card-warn { border-left: 3px solid var(--act-check); }
-.mf-card-t { font-size: 14px; font-weight: 700; }
-.mf-card-s { font-size: 12px; color: var(--faint); margin-top: 3px; }
-.mf-empty { font-size: 12.5px; color: var(--faint); background: var(--panel); border: 1px dashed var(--line); border-radius: 12px; padding: 12px; }
-.mf-spacer { flex: 1; }
-.mf-cta { background: var(--accent); color: #fff; border: none; border-radius: 14px; padding: 15px; font-size: 16px; font-weight: 800; cursor: pointer; width: 100%; }
-.mf-vhead { display: flex; gap: 10px; align-items: center; }
-.mf-avatar { width: 44px; height: 44px; border-radius: 50%; background: var(--hover); display: flex; align-items: center; justify-content: center; font-weight: 800; color: var(--accent); font-size: 17px; flex-shrink: 0; }
-.mf-vname { font-size: 16px; font-weight: 800; }
-.mf-vrole { font-size: 11px; color: var(--accent); font-weight: 700; margin-left: 4px; }
-.mf-stance { font-size: 13px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; }
-.mf-stance-warn { border-color: var(--act-check); }
-.mf-warn { color: var(--act-check); font-weight: 700; font-size: 12px; }
-.mf-q { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--act-call); border-radius: 12px; padding: 10px 12px; }
-.mf-q-row { display: flex; justify-content: space-between; gap: 8px; font-size: 13.5px; font-weight: 600; }
-.mf-price { color: var(--act-call); white-space: nowrap; font-size: 12.5px; }
-.mf-q-gist { font-size: 11.5px; color: var(--faint); margin-top: 5px; line-height: 1.5; }
-.mf-hint { font-size: 12px; color: var(--faint); text-align: center; border: 1px dashed var(--line); border-radius: 12px; padding: 9px; }
-.mf-review { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
-.mf-review-t { font-size: 15px; font-weight: 700; }
-.mf-evidence { font-size: 12.5px; color: var(--faint); background: var(--hover); border-radius: 8px; padding: 8px 10px; line-height: 1.55; }
-.mf-impact { font-size: 13px; }
-.mf-up { color: var(--act-call); } .mf-down { color: var(--act-fold); }
-.mf-btns { display: flex; gap: 10px; }
-.mf-btn { flex: 1; padding: 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); font-size: 14.5px; font-weight: 700; cursor: pointer; }
-.mf-btn-ok { background: var(--act-call); border-color: var(--act-call); color: #fff; }
-.mf-done { text-align: center; font-size: 17px; font-weight: 800; padding: 40px 0 10px; }
-.mf-exit-desktop { position: fixed; left: 10px; bottom: 10px; z-index: 40; font-size: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; color: var(--ink); cursor: pointer; }
+.pde-act { font-size: 11.5px; font-weight: 800; border-radius: 999px; padding: 2px 9px; color: var(--faint); }
+.pde-act-raise { background: var(--act-raise-bg); color: var(--act-raise); }
+.pde-act-call  { background: var(--act-call-bg);  color: var(--act-call); }
+.pde-act-check { background: var(--act-check-bg); color: var(--act-check); }
+.pde-act-fold  { background: var(--act-fold-bg);  color: var(--act-fold); }
 
 /* ═══ 第2刀 · 推演坞横向四列流水线（局势→策略→倒排→行动）═══ */
 .dock-scroll { display: flex; flex-direction: column; }

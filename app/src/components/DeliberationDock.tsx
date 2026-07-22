@@ -1177,7 +1177,7 @@ export function DeliberationDock({
               <div className="sb2-drawer-body">
                 {ACT_LABEL[pdeFull.recommendation?.action] && (
                   <div className="eng-verdict">
-                    <span className={`mf-act mf-act-${ACT_LABEL[pdeFull.recommendation.action]!.cls}`}>
+                    <span className={`pde-act pde-act-${ACT_LABEL[pdeFull.recommendation.action]!.cls}`}>
                       {ACT_LABEL[pdeFull.recommendation.action]!.icon} {ACT_LABEL[pdeFull.recommendation.action]!.text} · 赢面 {Math.round((pdeFull.pwin ?? 0) * 100)}%
                     </span>
                     {pdeFull.confidenceFlag && <span className="eng-flag">{pdeFull.confidenceFlag.includes('no_pot') ? '未设合同额，金额类降级为纯排序' : '置信偏低，建议先摸底再下重注'}</span>}

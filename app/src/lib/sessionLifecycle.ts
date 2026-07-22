@@ -1,5 +1,11 @@
-import type { VisitCaptureContext } from './momentFlowModel';
 import type { InboxEvidence, InboxPerson, InboxProposal, InboxRel, InboxReminder, PatrolInfo } from '../api';
+
+/** 录入情报时的挂靠上下文（客户/商机/可选焦点人）。 */
+export interface VisitCaptureContext {
+  accId: string;
+  oppId: string;
+  personId?: string;
+}
 
 export interface SessionInbox {
   rels: InboxRel[];

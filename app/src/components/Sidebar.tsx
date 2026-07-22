@@ -135,12 +135,12 @@ export function Sidebar({ account, opp, breakdown, weighted = null, pde = null, 
             <div className="diag-band-row">
               <div className="diag-band" style={{ background: BAND_COLOR[breakdown.band] }}>{BAND_LABEL[breakdown.band]}</div>
               {pde && ACT_LABEL[pde.action] && (readonly ? (
-                <span className={`mf-act mf-act-${ACT_LABEL[pde.action]!.cls} dock-act-btn`}
+                <span className={`pde-act pde-act-${ACT_LABEL[pde.action]!.cls} dock-act-btn`}
                   title={`引擎建议：赢面 ${Math.round(pde.pwin * 100)}%${pde.flag ? '（置信偏低）' : ''}`}>
                   {ACT_LABEL[pde.action]!.icon}{ACT_LABEL[pde.action]!.text}·赢面{Math.round(pde.pwin * 100)}%{pde.flag ? '⚠︎' : ''}
                 </span>
               ) : (
-                <button className={`mf-act mf-act-${ACT_LABEL[pde.action]!.cls} dock-act-btn`} onClick={onOpenEngine}
+                <button className={`pde-act pde-act-${ACT_LABEL[pde.action]!.cls} dock-act-btn`} onClick={onOpenEngine}
                   title={`引擎建议：赢面 ${Math.round(pde.pwin * 100)}%（点开看详解：理由 / 薄弱关键人 / 赢面走势 / 假设推演）${pde.flag ? ` · ${pde.flag.includes('no_pot') ? '未设合同额，金额降级' : '置信偏低，先摸底'}` : ''}`}>
                   {ACT_LABEL[pde.action]!.icon}{ACT_LABEL[pde.action]!.text}·赢面{Math.round(pde.pwin * 100)}%{pde.flag ? '⚠︎' : ''}
                 </button>
