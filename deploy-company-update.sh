@@ -15,7 +15,7 @@ env_value() {
 }
 
 # 备份目录解析与 scripts/backup-postgres.sh 完全同源（env BACKUP_DIR → .env → ../jianghu-backups），
-# 保证 marker 与备份天然同目录（write/verify_bootstrap_marker 的硬性要求）。
+# 保证 marker 与备份天然同目录（bootstrap-marker 库对两者同目录有硬性要求）。
 BACKUP_ROOT=${BACKUP_DIR:-$(env_value BACKUP_DIR)}
 BACKUP_ROOT=${BACKUP_ROOT:-"$(cd "$APP_DIR/.." && pwd)/jianghu-backups"}
 ROLLBACK_ROOT=${ROLLBACK_ROOT:-"$(cd "$APP_DIR/.." && pwd)/jianghu-rollbacks"}

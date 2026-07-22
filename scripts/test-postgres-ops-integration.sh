@@ -23,11 +23,18 @@ export BACKUP_RETENTION_DAYS=14
 export NO_PROXY=127.0.0.1,localhost
 export no_proxy=$NO_PROXY
 
+fresh_project=''
+fresh_root=''
 cleanup() {
   set +e
   POSTGRES_PASSWORD=x JWT_SECRET=x AI_KEY_SECRET=x OUTBOUND_ALLOWED_HOSTS=example.com \
     docker compose -p "$COMPOSE_PROJECT_NAME" down -v --remove-orphans >/dev/null 2>&1
   rm -rf "$BACKUP_DIR"
+  if [[ -n "${fresh_project:-}" ]]; then
+    POSTGRES_PASSWORD=x JWT_SECRET=x AI_KEY_SECRET=x OUTBOUND_ALLOWED_HOSTS=example.com \
+      docker compose -p "$fresh_project" down -v --remove-orphans >/dev/null 2>&1
+  fi
+  [[ -z "${fresh_root:-}" ]] || rm -rf "$fresh_root" "$fresh_root-backups" "$fresh_root-rollbacks"
 }
 trap cleanup EXIT
 
@@ -284,6 +291,55 @@ docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d
 docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d postgres -c \
   "DROP DATABASE \"$target\";" >/dev/null
 assert_database_absent "$target"
+
+# ── Fresh-install 场景（ADR-INT-502 清库重装的等价物）──
+# 第一遍 update.sh：空库首装（构建 → entrypoint 迁移空库 → readiness → 自动写首个认证备份 + marker）；
+# 第二遍原样重跑：existing_db=1 → marker/备份认证 → 回滚点 → 停写 no-op 迁移 → readiness，
+# 即公司服务器未来每一次日常更新的等价物。全程隔离 Compose 项目 + git clone 临时仓（自带 origin，pull --ff-only 走通）。
+fresh_root=$(mktemp -d "/tmp/jianghu-fresh-install.${$}.XXXXXX")
+fresh_project="jianghu_fresh_${$}"
+fresh_backups="$fresh_root-backups"
+fresh_rollbacks="$fresh_root-rollbacks"
+fresh_port=$(( 20000 + RANDOM % 20000 ))
+git clone -q "file://$ROOT_DIR" "$fresh_root/repo"
+cat > "$fresh_root/repo/.env" <<EOF
+COMPOSE_PROJECT_NAME=$fresh_project
+POSTGRES_USER=jianghu_fresh
+POSTGRES_PASSWORD=$(openssl rand -hex 24)
+POSTGRES_DB=jianghu_fresh
+JWT_SECRET=$(openssl rand -hex 32)
+AI_KEY_SECRET=$(openssl rand -hex 32)
+OUTBOUND_ALLOWED_HOSTS=example.com
+BACKUP_MASTER_SECRET=$(openssl rand -hex 32)
+BACKUP_DIR=$fresh_backups
+WEB_PORT=$fresh_port
+EOF
+# 清空外层测试环境变量，让临时仓的 .env 成为唯一配置来源（等价公司服务器现场）。
+fresh_env=(env -u COMPOSE_PROJECT_NAME -u POSTGRES_USER -u POSTGRES_PASSWORD -u POSTGRES_DB \
+  -u JWT_SECRET -u AI_KEY_SECRET -u OUTBOUND_ALLOWED_HOSTS -u BACKUP_MASTER_SECRET \
+  -u BACKUP_DIR -u BACKUP_RETENTION_DAYS \
+  JIANGHU_ROOT="$fresh_root/repo" ROLLBACK_ROOT="$fresh_rollbacks")
+"${fresh_env[@]}" bash "$fresh_root/repo/deploy-company-update.sh" >/dev/null
+[[ -s "$fresh_backups/.int501-bootstrap-verified" ]]
+fresh_migrations=$(docker compose -p "$fresh_project" exec -T db psql -U jianghu_fresh -d jianghu_fresh -tAc \
+  'SELECT count(*) FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL' | tr -d '[:space:]')
+[[ "$fresh_migrations" == 4 ]]
+fresh_backup_count=$(find "$fresh_backups" -maxdepth 1 -type d -name 'jianghu-*.backup' | wc -l | tr -d ' ')
+[[ "$fresh_backup_count" == 1 ]]
+echo "FRESH_INSTALL_FIRST_RUN_OK=1"
+
+"${fresh_env[@]}" bash "$fresh_root/repo/deploy-company-update.sh" >/dev/null
+fresh_migrations_after=$(docker compose -p "$fresh_project" exec -T db psql -U jianghu_fresh -d jianghu_fresh -tAc \
+  'SELECT count(*) FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL' | tr -d '[:space:]')
+[[ "$fresh_migrations_after" == 4 ]]
+fresh_rollback_count=$(find "$fresh_rollbacks" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
+[[ "$fresh_rollback_count" -ge 1 ]]
+echo "FRESH_INSTALL_SECOND_UPDATE_OK=1"
+POSTGRES_PASSWORD=x JWT_SECRET=x AI_KEY_SECRET=x OUTBOUND_ALLOWED_HOSTS=example.com \
+  docker compose -p "$fresh_project" down -v --remove-orphans >/dev/null
+rm -rf "$fresh_root" "$fresh_backups" "$fresh_rollbacks"
+fresh_project=''
+fresh_root=''
 
 docker compose -p "$COMPOSE_PROJECT_NAME" down -v --remove-orphans >/dev/null
 rm -rf "$BACKUP_DIR"
