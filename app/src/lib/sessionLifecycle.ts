@@ -1,12 +1,5 @@
 import type { InboxEvidence, InboxPerson, InboxProposal, InboxRel, InboxReminder, PatrolInfo } from '../api';
 
-/** 录入情报时的挂靠上下文（客户/商机/可选焦点人）。 */
-export interface VisitCaptureContext {
-  accId: string;
-  oppId: string;
-  personId?: string;
-}
-
 export interface SessionInbox {
   rels: InboxRel[];
   persons: InboxPerson[];
@@ -21,22 +14,22 @@ export const emptyInbox: SessionInbox = {
   rels: [], persons: [], proposals: [], reminders: [], evidences: [], total: 0,
 };
 
-export interface SessionInboxTicket {
+export interface SessionTicket {
   generation: number;
   token: string | null;
 }
 
-export interface SessionInboxGuard {
-  begin: (token: string | null) => SessionInboxTicket;
-  capture: () => SessionInboxTicket;
-  isCurrent: (ticket: SessionInboxTicket, currentToken: string | null) => boolean;
+export interface SessionGuard {
+  begin: (token: string | null) => SessionTicket;
+  capture: () => SessionTicket;
+  isCurrent: (ticket: SessionTicket, currentToken: string | null) => boolean;
 }
 
-/** Generation plus token prevents a previous tenant's delayed inbox response from committing into a later session. */
-export function createSessionInboxGuard(): SessionInboxGuard {
+/** Generation plus token prevents any previous tenant response from committing into a later session. */
+export function createSessionGuard(): SessionGuard {
   let generation = 0;
   let token: string | null = null;
-  const capture = (): SessionInboxTicket => ({ generation, token });
+  const capture = (): SessionTicket => ({ generation, token });
   return {
     begin(nextToken) {
       generation += 1;
@@ -50,23 +43,59 @@ export function createSessionInboxGuard(): SessionInboxGuard {
   };
 }
 
-export async function commitSessionInbox<T>(
-  guard: SessionInboxGuard,
-  ticket: SessionInboxTicket,
-  request: Promise<T>,
+export type SessionReadResult<T> = { current: true; value: T } | { current: false };
+
+export interface SessionLease {
+  isCurrent(): boolean;
+  run<T>(request: () => Promise<T>): Promise<SessionReadResult<T>>;
+  commit(effect: () => void): boolean;
+}
+
+/** Avoid starting stale requests, then re-check after I/O before exposing their result to the current session. */
+export async function runSessionRequest<T>(
+  guard: SessionGuard,
+  ticket: SessionTicket,
+  request: () => Promise<T>,
+  currentToken: () => string | null,
+): Promise<SessionReadResult<T>> {
+  if (!guard.isCurrent(ticket, currentToken())) return { current: false };
+  const value = await request();
+  if (!guard.isCurrent(ticket, currentToken())) return { current: false };
+  return { current: true, value };
+}
+
+/** A render-bound capability: descendants can neither continue requests nor dispatch after the session changes. */
+export function createSessionLease(
+  guard: SessionGuard,
+  ticket: SessionTicket,
+  currentToken: () => string | null,
+): SessionLease {
+  const isCurrent = () => guard.isCurrent(ticket, currentToken());
+  return {
+    isCurrent,
+    run: <T>(request: () => Promise<T>) => runSessionRequest(guard, ticket, request, currentToken),
+    commit(effect) {
+      if (!isCurrent()) return false;
+      effect();
+      return true;
+    },
+  };
+}
+
+export async function commitSessionValue<T>(
+  guard: SessionGuard,
+  ticket: SessionTicket,
+  request: () => Promise<T>,
   currentToken: () => string | null,
   commit: (value: T) => void,
 ): Promise<boolean> {
-  const value = await request;
-  if (!guard.isCurrent(ticket, currentToken())) return false;
-  commit(value);
+  const result = await runSessionRequest(guard, ticket, request, currentToken);
+  if (!result.current) return false;
+  commit(result.value);
   return true;
 }
 
 export interface ClearedSessionUi {
-  intelOpen: false;
-  intelContext: VisitCaptureContext | null;
-  inboxOpen: false;
   inbox: SessionInbox;
   syncErr: '';
 }
@@ -75,9 +104,6 @@ export interface ClearedSessionUi {
 export function clearSessionUi(batchKeys: Map<unknown, unknown>): ClearedSessionUi {
   batchKeys.clear();
   return {
-    intelOpen: false,
-    intelContext: null,
-    inboxOpen: false,
     inbox: emptyInbox,
     syncErr: '',
   };

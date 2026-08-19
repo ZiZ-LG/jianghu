@@ -33,6 +33,7 @@ export interface MutationCoordinatorOptions {
 export interface MutationExecutionGate {
   run(action: Action, beforeApply?: () => void): Promise<void>;
   runBatch(actions: readonly Action[], recover?: () => Promise<void>): Promise<void>;
+  reset(): void;
 }
 
 export async function discardAfterCloudRefresh(
@@ -52,11 +53,24 @@ export async function discardAfterCloudRefresh(
 export function createMutationExecutionGate(apply: (action: Action) => Promise<void>): MutationExecutionGate {
   let batchTail: Promise<void> = Promise.resolve();
   const singles = new Set<Promise<void>>();
+  let generation = 0;
+
+  const sessionResetError = () => new ApiError({
+    code: 'session_reset',
+    message: '会话已切换，已取消旧会话写入',
+    retryable: false,
+  });
+  const assertCurrent = (runGeneration: number) => {
+    if (runGeneration !== generation) throw sessionResetError();
+  };
 
   const run = (action: Action, beforeApply?: () => void): Promise<void> => {
-    const task = batchTail.then(() => {
+    const runGeneration = generation;
+    const task = batchTail.then(async () => {
+      assertCurrent(runGeneration);
       beforeApply?.();
-      return apply(action);
+      await apply(action);
+      assertCurrent(runGeneration);
     });
     singles.add(task);
     void task.then(
@@ -67,14 +81,20 @@ export function createMutationExecutionGate(apply: (action: Action) => Promise<v
   };
 
   const runBatch = (actions: readonly Action[], recover?: () => Promise<void>): Promise<void> => {
+    const runGeneration = generation;
     const earlierSingles = [...singles];
     const execution = batchTail
       .then(() => Promise.allSettled(earlierSingles))
       .then(async () => {
-        for (const action of actions) await apply(action);
+        assertCurrent(runGeneration);
+        for (const action of actions) {
+          await apply(action);
+          assertCurrent(runGeneration);
+        }
       });
     const task = recover
       ? execution.catch(async (error) => {
+        if (runGeneration !== generation || toApiError(error).code === 'session_reset') throw error;
         try { await recover(); } catch { /* 保留原始批次失败；恢复结果由调用方记录 */ }
         throw error;
       })
@@ -83,7 +103,15 @@ export function createMutationExecutionGate(apply: (action: Action) => Promise<v
     return task;
   };
 
-  return { run, runBatch };
+  return {
+    run,
+    runBatch,
+    reset() {
+      generation += 1;
+      batchTail = Promise.resolve();
+      singles.clear();
+    },
+  };
 }
 
 const IDLE: EntitySyncState = { phase: 'idle' };

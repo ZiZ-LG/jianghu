@@ -20,6 +20,7 @@ import {
 } from '../aiContext';
 import { api, type AdvisorCand } from '../api';
 import { localYmd } from '../lib/dateYmd';
+import type { SessionLease } from '../lib/sessionLifecycle';
 import { AiContextDisclosure } from './AiContextDisclosure';
 
 type Msg = {
@@ -37,8 +38,8 @@ const welcome = (name: string): Msg => ({
   text: `对着「${name}」问我——怎么打、倒戈风险、下一步。我只使用服务端核对后的当前商机范围；想落地就点「🎯 出候选」，我给出可采纳的 🃏行动牌 / 📌策略卡 / ⚠️风险。这里只想不落库——要录情报、改图，去坞底「💬 和地图对话」。`,
 });
 
-export function AdvisorPanel({ account, opp, breakdown, person, dispatch }: {
-  account: Account; opp: Opportunity; breakdown: ScoreBreakdown; person: Person; dispatch: Dispatch<Action>;
+export function AdvisorPanel({ account, opp, breakdown, person, dispatch, sessionLease }: {
+  account: Account; opp: Opportunity; breakdown: ScoreBreakdown; person: Person; dispatch: Dispatch<Action>; sessionLease: SessionLease;
 }) {
   const [msgs, setMsgs] = useState<Msg[]>([welcome(person.name)]);
   const [input, setInput] = useState('');
@@ -69,9 +70,15 @@ export function AdvisorPanel({ account, opp, breakdown, person, dispatch }: {
     currentRequestScopeRef.current = renderRequestScope;
   }
   const requestIsCurrent = (requestScope: AiRequestScope) =>
-    !!currentRequestScopeRef.current && isAiRequestScopeCurrent(requestScope, currentRequestScopeRef.current);
+    sessionLease.isCurrent()
+    && !!currentRequestScopeRef.current
+    && isAiRequestScopeCurrent(requestScope, currentRequestScopeRef.current);
   const visibleCands = candidateScopeRef.current && requestIsCurrent(candidateScopeRef.current) ? cands : [];
   useEffect(() => { const el = listRef.current; if (el) el.scrollTop = el.scrollHeight; }, [msgs, cands, busy, cardBusy]);
+  useEffect(() => () => {
+    currentRequestScopeRef.current = null;
+    candidateScopeRef.current = null;
+  }, []);
 
   useEffect(() => {
     setBusy(false);
@@ -121,8 +128,8 @@ export function AdvisorPanel({ account, opp, breakdown, person, dispatch }: {
     if (!confirm(`清空与「${person.name}」的参谋对话历史？（已挂到动态的笔记不受影响）`)) return;
     const requestScope = currentRequestScopeRef.current!;
     try {
-      await api.advisorClear(requestScope.opportunityId, requestScope.personId!);
-      if (!requestIsCurrent(requestScope)) return;
+      const cleared = await sessionLease.run(() => api.advisorClear(requestScope.opportunityId, requestScope.personId!));
+      if (!cleared.current || !requestIsCurrent(requestScope)) return;
       setMsgs([welcome(person.name)]); setCands([]); setSavedIdx(new Set()); candidateScopeRef.current = null;
     } catch (e: any) {
       if (!requestIsCurrent(requestScope)) return;
@@ -149,10 +156,11 @@ export function AdvisorPanel({ account, opp, breakdown, person, dispatch }: {
     const requestScope = currentRequestScopeRef.current!;
     setMsgs((m) => [...m, { role: 'user', text }]); setInput(''); setBusy(true);
     try {
-      const r = await api.aiSimulate(
+      const simulation = await sessionLease.run(() => api.aiSimulate(
         requestScope.opportunityId, requestScope.personId!, text, requestScope.options, requestScope.manifestToken,
-      );
-      if (!requestIsCurrent(requestScope)) return;
+      ));
+      if (!simulation.current || !requestIsCurrent(requestScope)) return;
+      const r = simulation.value;
       setMsgs((m) => requestIsCurrent(requestScope) ? [...m, {
         role: 'assistant', text: r.analysis,
         contextManifestToken: requestScope.manifestToken,
@@ -160,7 +168,7 @@ export function AdvisorPanel({ account, opp, breakdown, person, dispatch }: {
         contextOptions: requestScope.options,
       }] : m);
       if (!requestIsCurrent(requestScope)) return;
-      void api.advisorAppend(requestScope.opportunityId, requestScope.personId!, [{ role: 'user', text }, { role: 'assistant', text: r.analysis }])
+      void sessionLease.run(() => api.advisorAppend(requestScope.opportunityId, requestScope.personId!, [{ role: 'user', text }, { role: 'assistant', text: r.analysis }]))
         .catch(() => { /* P8 落历史失败不阻塞对话 */ });
     } catch (e: any) {
       if (!requestIsCurrent(requestScope)) return;
@@ -178,10 +186,11 @@ export function AdvisorPanel({ account, opp, breakdown, person, dispatch }: {
     setCardBusy(true);
     try {
       const note = buildAdvisorContinuationNote(msgs, requestScope);
-      const r = await api.advisorActions(
+      const suggestions = await sessionLease.run(() => api.advisorActions(
         requestScope.opportunityId, requestScope.personId!, requestScope.options, requestScope.manifestToken, note,
-      );
-      if (!requestIsCurrent(requestScope)) return;
+      ));
+      if (!suggestions.current || !requestIsCurrent(requestScope)) return;
+      const r = suggestions.value;
       const list: Cand[] = (r.candidates || []).map((c) => ({ ...c }));
       candidateScopeRef.current = requestScope;
       setCands(() => requestIsCurrent(requestScope) ? list : []);

@@ -1,14 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Account, Note, Opportunity, VisitNote } from '../types';
+import type { Account } from '../types';
 import { CUSTOMER_TYPE_LABEL } from '../types';
 import { api, newIdempotencyKey, type AccountRepairPatch, type PersonMergeDecision, type PersonMergePreview, type PersonMergeRoleDecision, type RepairContext } from '../api';
+import type { RepairTarget } from '../lib/appShellUi';
 import { Modal } from './Modal';
-
-export type RepairTarget =
-  | { kind: 'account'; account: Account }
-  | { kind: 'opportunity'; account: Account; opportunity: Opportunity }
-  | { kind: 'visitNote'; record: VisitNote }
-  | { kind: 'note'; record: Note };
 
 function targetId(target: RepairTarget): string {
   if (target.kind === 'account') return target.account.id;

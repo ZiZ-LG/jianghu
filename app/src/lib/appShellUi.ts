@@ -1,7 +1,20 @@
-import type { RepairTarget } from '../components/RepairPanel';
-import type { VisitCaptureContext } from './sessionLifecycle';
+import type { Account, Note, Opportunity, VisitNote } from '../types';
+
+/** 录入情报时的挂靠上下文（客户/商机/可选焦点人）。 */
+export interface VisitCaptureContext {
+  accId: string;
+  oppId: string;
+  personId?: string;
+}
+
+export type RepairTarget =
+  | { kind: 'account'; account: Account }
+  | { kind: 'opportunity'; account: Account; opportunity: Opportunity }
+  | { kind: 'visitNote'; record: VisitNote }
+  | { kind: 'note'; record: Note };
 
 export type GlobalDialog = 'inbox' | 'intel' | 'team' | 'aiSettings' | 'wecomSettings' | 'help' | 'mcpAccess';
+export type SettableGlobalDialog = Exclude<GlobalDialog, 'intel'>;
 export type AppShellSurface = 'hub' | 'workroom';
 
 export interface AppShellUiState {
@@ -11,7 +24,7 @@ export interface AppShellUiState {
 }
 
 export type AppShellUiAction =
-  | { type: 'SET_DIALOG'; dialog: GlobalDialog; open: boolean }
+  | { type: 'SET_DIALOG'; dialog: SettableGlobalDialog; open: boolean }
   | { type: 'OPEN_INTEL'; context: VisitCaptureContext | null }
   | { type: 'CLOSE_INTEL' }
   | { type: 'SET_REPAIR_TARGET'; target: RepairTarget | null }
@@ -79,8 +92,6 @@ export function getGlobalDialogVisibility(
     wecomSettings: writable && state.dialogs.wecomSettings,
     help: state.dialogs.help,
     mcpAccess: writable && state.dialogs.mcpAccess,
-    repair: Boolean(state.repairTarget),
+    repair: writable && Boolean(state.repairTarget),
   };
 }
-
-export type { RepairTarget };

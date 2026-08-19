@@ -36,6 +36,7 @@ import {
   deliberationBusinessYmd,
   isBusinessActionOverdue,
 } from '../lib/deliberationDates';
+import type { SessionLease } from '../lib/sessionLifecycle';
 
 function activateCardOnKey(event: React.KeyboardEvent<HTMLElement>, activate: () => void) {
   if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return;
@@ -92,12 +93,13 @@ function Sparkline({ snaps }: { snaps: any[] }) {
 }
 
 export function DeliberationDock({
-  account, opp, breakdown, dispatch, patrol, pdeFull, openEngineSignal, selectedPersonId, onSelectPerson, openActionId, onActionOpened, onChatDone,
+  account, opp, breakdown, dispatch, sessionLease, patrol, pdeFull, openEngineSignal, selectedPersonId, onSelectPerson, openActionId, onActionOpened, onChatDone,
 }: {
   account: Account;
   opp: Opportunity;
   breakdown: ScoreBreakdown;
   dispatch: (a: Action) => void;
+  sessionLease: SessionLease;
   patrol?: PatrolInfo | null; // P2 引擎心跳（坞头一行，collapsed 也可见）
   pdeFull?: any; // 第7刀：PDE 完整评估由 App 层一次 fetch 下发（左栏加权分共用），坞不再自拉
   openEngineSignal?: number; // 第8刀：左栏徽章点击 → 开「引擎详解」抽屉（counter 信号，照 openActionId 模式）
@@ -141,7 +143,17 @@ export function DeliberationDock({
     currentAiRequestScopeRef.current = renderAiRequestScope;
   }
   const requestIsCurrent = (requestScope: AiRequestScope) =>
-    !!currentAiRequestScopeRef.current && isAiRequestScopeCurrent(requestScope, currentAiRequestScopeRef.current);
+    sessionLease.isCurrent()
+    && !!currentAiRequestScopeRef.current
+    && isAiRequestScopeCurrent(requestScope, currentAiRequestScopeRef.current);
+  useEffect(() => () => {
+    currentAiRequestScopeRef.current = null;
+    currentDrawerOperationRef.current = null;
+    prefillBusyOperationRef.current = null;
+    msBusyOperationRef.current = null;
+    cardOperationRevisionsRef.current.clear();
+    milestoneOperationRevisionsRef.current.clear();
+  }, []);
   useEffect(() => {
     let alive = true;
     setContextManifest(null);

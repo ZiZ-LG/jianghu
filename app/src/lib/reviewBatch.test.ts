@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   clearStableBatchItemKey,
   removeSuccessfulSelections,
+  runBatchWithProgress,
   stableBatchItemKey,
 } from './reviewBatch';
 
@@ -11,6 +12,12 @@ type Item = {
   decision: 'accept' | 'reject';
   overrideValue?: string;
 };
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => { resolve = done; });
+  return { promise, resolve };
+}
 
 describe('batch review idempotency keys', () => {
   it('reuses one key across two manual attempts and rotates after confirmed success', () => {
@@ -24,6 +31,31 @@ describe('batch review idempotency keys', () => {
 
     clearStableBatchItemKey(cache, item);
     expect(stableBatchItemKey(cache, { ...item }, createKey)).toBe('key-2');
+  });
+
+  it('aborts the whole batch when its session is cancelled instead of continuing with later writes', async () => {
+    const first = deferred();
+    const processed: string[] = [];
+    let cancelled = false;
+    const items: Item[] = [
+      { kind: 'proposal', id: 'first', decision: 'accept' },
+      { kind: 'proposal', id: 'second', decision: 'accept' },
+    ];
+    const pending = runBatchWithProgress(items, async (item) => {
+      processed.push(item.id);
+      if (item.id === 'first') await first.promise;
+    }, undefined, {
+      isCancelled: () => cancelled,
+      cancellationError: () => new Error('session_reset'),
+    });
+    await Promise.resolve();
+    expect(processed).toEqual(['first']);
+
+    cancelled = true;
+    first.resolve();
+
+    await expect(pending).rejects.toThrow('session_reset');
+    expect(processed).toEqual(['first']);
   });
 
   it('uses a different key when decision or payload changes for the same logical item', () => {
