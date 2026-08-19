@@ -1,5 +1,8 @@
 # 部署到公司内网服务器（CentOS 7.9 / jsf-zhul-a-private）
 
+> **状态：ARCHIVED / STOPPED（2026-08-19）**。项目所有者已停止 `INT-502` 内部发布并转维护冻结；本文不再是现行部署或发布 runbook。
+> **禁止执行：** 未获得项目所有者新的显式批准和维护任务前，不得执行本文的拉取、替换、清库、删卷、上线验收或 GO 签署命令，尤其是 §8A/§8B。本文仅保留为历史证据与只读排障参考。
+>
 > 目标机：`jsf-zhul-a-private`，内网 IP `10.0.171.152`，4核 32G，CentOS 7.9，产品落 `/data` 下。
 > 复用现有 Docker 生产栈（Postgres + 后端 + Nginx 前端，`docker-compose.yml`）。内网部署无需域名/ICP。
 > ⚠️ 两个环境特殊点：① CentOS 7 已 EOL（2024-06），默认 yum 源已下线，须切归档/镜像源；② 若用 Mac mini（Apple M 芯片，arm64）离线打包镜像，必须交叉构建 **linux/amd64**，否则服务器上跑不起来。
@@ -127,7 +130,7 @@ bash scripts/backup-postgres.sh                        # 加密备份（建议 c
 0 2 * * * cd /data/jianghu && bash scripts/backup-postgres.sh >> /var/log/jianghu-backup.log 2>&1
 ```
 
-## 8. 版本更新（就地·日常）
+## 8. 版本更新（历史归档，禁止执行）
 
 服务器上 `/data/jianghu/update.sh`（源已入库 = 仓库根 `deploy-company-update.sh`）：持久化当前运行 SHA → `git pull`（main）→ 校验 bootstrap/认证备份 → 固定旧 server/web 镜像和数据库回滚点 → 构建候选镜像但不替换容器 → 停写并单独执行版本化 migration → 成功后才切换容器和执行 readiness。migration 失败或停服区间收到退出信号时，history 未改变则恢复原 server/web，history 已改变或无法确认则自动执行认证回滚；`pgdata` 不动，固定回滚点不受 prune/14 天轮转影响。
 
@@ -135,7 +138,9 @@ bash scripts/backup-postgres.sh                        # 加密备份（建议 c
 
 > 2026-07-21 起本节旧流程（`deploy-company-bootstrap-int501.sh` 旧库 bridge 接管，RC1–RC9）**不再是公司路径**：项目所有者确认旧库数据可弃，改走下方 §8A「清库重装」。历史流程与五次 fail-closed 尝试记录见 git 历史与 `docs/内部版-发布验收记录.md` §5。bootstrap 脚本仅为存档与集成测试兼容保留，2026-10 随 legacy 清退包删除。
 
-### 8A. 清库重装（一次性，约 1–2 小时，ADR-INT-502）
+### 8A. 清库重装（历史归档，禁止执行）
+
+> `INT-502` 已于 2026-08-19 以 `NO-GO / STOPPED` 关闭。下列破坏性命令不得执行，除非项目所有者通过新的 ADR 或显式维护任务重新授权，并先确认备份、目标和回滚点。
 
 前置检查：
 
@@ -204,7 +209,9 @@ bash scripts/restore-postgres.sh "/data/jianghu-backups/<最终备份>.backup" \
   --database "jianghu_restore_bootstrap_$(date +%s)" --readiness-profile pre-int501
 ```
 
-### 8B. 上线验收 runbook（rc10，ADR-INT-502 简化口径）
+### 8B. 上线验收 runbook（历史归档，禁止执行）
+
+> rc10 验收、观察窗口和 GO 签署均已停止；下列步骤只用于解释历史证据，不得据此恢复发布流程或改写归档结论。
 
 1. **冒烟清单**：按 `docs/内部版-发布验收记录.md` §4 的 10 项逐项执行并勾选（两名真实用户 + 一名 viewer）。
 2. **备份恢复真机演练**（Owner 底线，不可省）：
