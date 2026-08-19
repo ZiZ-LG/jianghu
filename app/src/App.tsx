@@ -18,7 +18,6 @@ import { FocusPanel } from './components/FocusPanel';
 import { EdgeDrawer } from './components/EdgeDrawer';
 import { OpportunityForm } from './components/OpportunityForm';
 import { MdDocPanel } from './components/MdDocPanel';
-import { IntelCapture } from './components/IntelCapture';
 import { NewOpportunityDialog } from './components/NewOpportunityDialog';
 import { layoutSkeleton, type SkeletonRole } from './data/skeletons';
 import { parsePath, buildPath, resolveRoute, type RouteTarget } from './lib/router';
@@ -26,23 +25,23 @@ import { computeGaps } from './lib/gaps';
 import { computeToday, needsYouByAccount } from './lib/today';
 import { GapCards } from './components/GapCards';
 import { nextFreeSlot } from './lib/layout';
-import { TeamBilling } from './components/TeamBilling';
-import { AiSettings } from './components/AiSettings';
-import { WeComSettings } from './components/WeComSettings';
-import { InboxPanel, type InboxBatchItem } from './components/InboxPanel';
+import type { InboxBatchItem } from './components/InboxPanel';
 import { RecordingPanel } from './components/RecordingPanel';
-import { HelpManual } from './components/HelpManual';
-import { McpAccess } from './components/McpAccess';
 import { OverflowMenu } from './components/OverflowMenu';
 import { OrientationGate } from './components/OrientationGate';
 import { Footer } from './components/Footer';
 import { SyncStatus } from './components/SyncStatus';
 import { createCommitScheduler } from './lib/sync/commitScheduler';
 import { createMutationCoordinator, createMutationExecutionGate, entityKeyForAction } from './lib/sync/mutationCoordinator';
-import { RepairPanel, type RepairTarget } from './components/RepairPanel';
 import { localYmd } from './lib/dateYmd';
-import type { VisitCaptureContext } from './lib/sessionLifecycle';
 import { clearStableBatchItemKey, runBatchWithProgress, stableBatchItemKey, type StableBatchKeyCache } from './lib/reviewBatch';
+import { GlobalDialogs, type GlobalInboxProps } from './components/GlobalDialogs';
+import {
+  appShellUiReducer,
+  createInitialAppShellUiState,
+  type GlobalDialog,
+  type RepairTarget,
+} from './lib/appShellUi';
 import {
   clearSessionUi,
   commitSessionInbox,
@@ -70,6 +69,13 @@ export default function App() {
   const historyRecovery = useRef<'refreshed' | 'refresh-failed'>('refreshed');
   const inboxBatchKeys = useRef<StableBatchKeyCache>(new Map());
   const inboxSessionGuard = useRef(createSessionInboxGuard());
+  const [appShellUi, appShellUiDispatch] = useReducer(appShellUiReducer, undefined, createInitialAppShellUiState);
+  const setGlobalDialogOpen = useCallback((dialog: GlobalDialog, open: boolean) => {
+    appShellUiDispatch({ type: 'SET_DIALOG', dialog, open });
+  }, []);
+  const setRepairTarget = useCallback((target: RepairTarget | null) => {
+    appShellUiDispatch({ type: 'SET_REPAIR_TARGET', target });
+  }, []);
   stateRef.current = state;
   // viewer 角色 = 只读投影（契约 v1.0 §二-1）：编辑/录入控件一律不渲染（非置灰）；视图交互全保留
   const readonly = auth?.user.role === 'viewer';
@@ -80,17 +86,10 @@ export default function App() {
   const [visibleLayers, setVisibleLayers] = useState<Set<Layer>>(() => new Set<Layer>(['L1'])); // 关系层级=点亮/熄灭多选(可层叠)
   const toggleLayer = (l: Layer) => setVisibleLayers((s) => { const n = new Set(s); n.has(l) ? n.delete(l) : n.add(l); if (n.size === 0) n.add(l); return n; });
   const [oppFormOpen, setOppFormOpen] = useState(false);
-  const [repairTarget, setRepairTarget] = useState<RepairTarget | null>(null);
   const [mdDocOpen, setMdDocOpen] = useState(false);
-  const [intelOpen, setIntelOpen] = useState(false);
-  const [intelContext, setIntelContext] = useState<VisitCaptureContext | null>(null);
   const [newOppOpen, setNewOppOpen] = useState(false);
-  const [teamOpen, setTeamOpen] = useState(false);
-  const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
-  const [wecomSettingsOpen, setWecomSettingsOpen] = useState(false);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]); // 当前商机的关系候选 → 喂 Canvas 画灰虚线候选边；审核统一走收件箱
   // 审核收件箱（Hub 级聚合，全租户 pending 候选）
-  const [inboxOpen, setInboxOpen] = useState(false);
   const [inbox, setInbox] = useState<SessionInbox>(emptyInbox);
   const loadInbox = useCallback(async (ticket: SessionInboxTicket = inboxSessionGuard.current.capture()) => {
     try {
@@ -104,8 +103,6 @@ export default function App() {
   const hubNeedsYou = useMemo(() => needsYouByAccount(state.accounts, inbox, hubTodayYmd), [state.accounts, inbox, hubTodayYmd]);
   const [selfComputeBusy, setSelfComputeBusy] = useState(false); // 江湖自算·补全干系人 进行中
   const [addIntelOpen, setAddIntelOpen] = useState(false); // 🎧 接入录音（P3 文本入口收敛：口述/对话归坞尾「和地图对话」，AddIntel 容器退役）
-  const [helpOpen, setHelpOpen] = useState(false);
-  const [mcpAccessOpen, setMcpAccessOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistentState('jianghu.sidebarCollapsed', false);
   const [theme, toggleTheme] = useTheme();
   // 画布选中模型：单击=选中(节点出锚点/连线出控制点)，双击=打开右侧栏
@@ -204,9 +201,7 @@ export default function App() {
     schedulerResetRef.current();
     const clearedUi = clearSessionUi(inboxBatchKeys.current);
     inboxSessionGuard.current.begin(null);
-    setIntelOpen(clearedUi.intelOpen);
-    setIntelContext(clearedUi.intelContext);
-    setInboxOpen(clearedUi.inboxOpen);
+    appShellUiDispatch({ type: 'RESET_SESSION_TRANSIENT' });
     setInbox(clearedUi.inbox);
     api.setToken(null); setAuth(null); setAccId(null); setOppId(null); setSelectedId(null);
     stateRef.current = { accounts: [] };
@@ -574,6 +569,23 @@ export default function App() {
     if (result.failures.length > 0) setSyncErr(`批量审核部分失败：${result.failures.length}/${result.total} 项，请查看失败项后重试。`);
     return result;
   };
+  const inboxDialogProps: GlobalInboxProps = {
+    rels: inbox.rels,
+    persons: inbox.persons,
+    proposals: inbox.proposals,
+    reminders: inbox.reminders,
+    evidences: inbox.evidences,
+    accounts: state.accounts,
+    onAccept: inboxAcceptRel,
+    onReject: inboxRejectRel,
+    onAcceptPerson: inboxAcceptPerson,
+    onRejectPerson: inboxRejectPerson,
+    onAcceptProposal: inboxAcceptProposal,
+    onRejectProposal: inboxRejectProposal,
+    onDismissReminder: inboxDismissReminder,
+    onReviewEvidence: inboxReviewEvidence,
+    onBatch: inboxBatch,
+  };
 
   if (booting) return <div className="boot">加载中…</div>;
   if (!auth) return <>
@@ -587,6 +599,7 @@ export default function App() {
 
   // ── Hub（手机竖屏时刻流已退役 2026-07-21：竖屏直接进 Hub，横屏提示只在进作战室后）──
   if (!account) {
+    const intelContext = appShellUi.intelContext;
     const captureAccount = intelContext ? state.accounts.find((item) => item.id === intelContext.accId) : undefined;
     const captureOpportunity = captureAccount && intelContext
       ? captureAccount.opportunities.find((item) => item.id === intelContext.oppId)
@@ -602,42 +615,39 @@ export default function App() {
           canRestoreArchives={auth.user.role === 'owner' || auth.user.role === 'admin'}
           onArchiveRestored={async () => { await refreshState(); }}
           tenantName={auth.tenant.name} userName={auth.user.name} plan={auth.tenant.plan}
-          onOpenTeam={() => setTeamOpen(true)} onLogout={logout} onOpenAiSettings={() => setAiSettingsOpen(true)} onOpenWecom={() => setWecomSettingsOpen(true)}
-          theme={theme} onToggleTheme={toggleTheme} onOpenHelp={() => setHelpOpen(true)}
-          onOpenMcpAccess={() => setMcpAccessOpen(true)}
-          onOpenIntel={() => { setIntelContext(null); setIntelOpen(true); }}
+          onOpenTeam={() => setGlobalDialogOpen('team', true)} onLogout={logout} onOpenAiSettings={() => setGlobalDialogOpen('aiSettings', true)} onOpenWecom={() => setGlobalDialogOpen('wecomSettings', true)}
+          theme={theme} onToggleTheme={toggleTheme} onOpenHelp={() => setGlobalDialogOpen('help', true)}
+          onOpenMcpAccess={() => setGlobalDialogOpen('mcpAccess', true)}
+          onOpenIntel={() => appShellUiDispatch({ type: 'OPEN_INTEL', context: null })}
           onIntelDone={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); await loadInbox(); } catch { /* 静默：保存已成功 */ } }}
-          onOpenInbox={() => setInboxOpen(true)} inboxCount={inbox.total} patrol={inbox.patrol}
+          onOpenInbox={() => setGlobalDialogOpen('inbox', true)} inboxCount={inbox.total} patrol={inbox.patrol}
         />
         <SyncStatus coordinator={coordinator} onViewCloud={discardToCloudState} />
         {syncErr && <div className="sync-toast">{syncErr}</div>}
-        {inboxOpen && !readonly && <InboxPanel rels={inbox.rels} persons={inbox.persons} proposals={inbox.proposals} accounts={state.accounts} onAccept={inboxAcceptRel} onReject={inboxRejectRel} onAcceptPerson={inboxAcceptPerson} onRejectPerson={inboxRejectPerson} onAcceptProposal={inboxAcceptProposal} onRejectProposal={inboxRejectProposal} reminders={inbox.reminders} onDismissReminder={inboxDismissReminder} evidences={inbox.evidences} onReviewEvidence={inboxReviewEvidence} onBatch={inboxBatch} onClose={() => setInboxOpen(false)} />}
-        {intelOpen && !readonly && (
-          <IntelCapture
-            account={captureAccount}
-            opportunity={captureOpportunity}
-            personId={intelContext?.personId}
-            onClose={() => { setIntelOpen(false); setIntelContext(null); }}
-            onDone={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); } catch { /* 静默：保存已成功，仅刷新失败 */ } }}
-            onEnterAccount={async (id) => {
-              setIntelOpen(false); setIntelContext(null);
+        <GlobalDialogs
+          surface="hub"
+          state={appShellUi}
+          dispatch={appShellUiDispatch}
+          readonly={readonly}
+          role={auth.user.role}
+          accounts={state.accounts}
+          inbox={inboxDialogProps}
+          intel={{
+            account: captureAccount,
+            opportunity: captureOpportunity,
+            personId: intelContext?.personId,
+            onDone: async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); } catch { /* 静默：保存已成功，仅刷新失败 */ } },
+            onEnterAccount: async (id) => {
               try {
                 const st = await api.getState();
                 dispatch({ type: 'HYDRATE', accounts: st.accounts });
                 const a = st.accounts.find((x) => x.id === id);
                 setAccId(id); setOppId(a?.opportunities[0]?.id ?? null); setSelectedId(null); setVisibleLayers(new Set(['L1']));
               } catch { setAccId(id); }
-            }}
-          />
-        )}
-        {teamOpen && <TeamBilling role={auth.user.role} onClose={() => setTeamOpen(false)} />}
-        {aiSettingsOpen && <AiSettings role={auth.user.role} onClose={() => setAiSettingsOpen(false)} />}
-        {wecomSettingsOpen && <WeComSettings role={auth.user.role} onClose={() => setWecomSettingsOpen(false)} />}
-        {helpOpen && <HelpManual onClose={() => setHelpOpen(false)} />}
-        {mcpAccessOpen && <McpAccess onClose={() => setMcpAccessOpen(false)} />}
-        {repairTarget && <RepairPanel key={`${repairTarget.kind}:${repairTarget.kind === 'account' ? repairTarget.account.id : repairTarget.kind === 'opportunity' ? repairTarget.opportunity.id : repairTarget.record.id}`}
-          target={repairTarget} accounts={state.accounts} onClose={() => setRepairTarget(null)} onChanged={refreshState}
-          onRefreshError={setSyncErr} onRepairRecord={openRepairRecord} />}
+            },
+          }}
+          repair={{ onChanged: refreshState, onRefreshError: setSyncErr, onRepairRecord: openRepairRecord }}
+        />
         <Footer />
       </>
     );
@@ -701,10 +711,11 @@ export default function App() {
                   {!readonly && <button className="btn ghost xs" onClick={() => setRepairTarget({ kind: 'opportunity', account, opportunity: opp })}>🛠️ 溯源/归档</button>}
                   <button className="btn ghost xs" onClick={() => setMdDocOpen(true)} title="客户档案 / 商机档案 / 拜访记录（.md 文档）">📋 作战档案</button>
                   {!readonly && <button className="btn ghost xs" onClick={selfCompute} disabled={selfComputeBusy} title="再跑一遍自算：后台用企查查/AI 发现干系人 + 推断商机内关系 + 补企业背景研究，候选进收件箱人审。建客户已自动跑过一次，这里是「再来一遍」。">{selfComputeBusy ? '⏳ 已启动…' : '↻ 重新补全'}</button>}
-                  {!readonly && <button className="btn ghost xs" onClick={() => setInboxOpen(true)}>📥 收件箱{inbox.total > 0 ? ` (${inbox.total})` : ''}</button>}
+                  {!readonly && <button className="btn ghost xs" onClick={() => setGlobalDialogOpen('inbox', true)}>📥 收件箱{inbox.total > 0 ? ` (${inbox.total})` : ''}</button>}
                   <span style={{ marginLeft: 'auto' }}>
                     <OverflowMenu align="right" label="⚙️" items={[
-                      { label: '❓ 帮助', onClick: () => setHelpOpen(true) },
+                      ...(!readonly ? [{ label: '📆 企微日历', onClick: () => setGlobalDialogOpen('wecomSettings', true) }] : []),
+                      { label: '❓ 帮助', onClick: () => setGlobalDialogOpen('help', true) },
                       { label: theme === 'dark' ? '☀️ 白天模式' : '🌙 黑夜模式', onClick: toggleTheme },
                     ]} />
                   </span>
@@ -718,9 +729,10 @@ export default function App() {
                     { label: '📋 作战档案', onClick: () => setMdDocOpen(true) },
                     ...(!readonly ? [
                       { label: selfComputeBusy ? '⏳ 自算中…' : '↻ 重新补全', onClick: selfCompute },
-                      { label: '📥 收件箱', badge: inbox.total > 0 ? String(inbox.total) : undefined, onClick: () => setInboxOpen(true) },
+                      { label: '📥 收件箱', badge: inbox.total > 0 ? String(inbox.total) : undefined, onClick: () => setGlobalDialogOpen('inbox', true) },
                     ] : []),
-                    { label: '❓ 帮助', onClick: () => setHelpOpen(true) },
+                    ...(!readonly ? [{ label: '📆 企微日历', onClick: () => setGlobalDialogOpen('wecomSettings', true) }] : []),
+                    { label: '❓ 帮助', onClick: () => setGlobalDialogOpen('help', true) },
                     { label: theme === 'dark' ? '☀️ 白天模式' : '🌙 黑夜模式', onClick: toggleTheme },
                   ]} />
                 </>)}
@@ -812,19 +824,20 @@ export default function App() {
           onClose={() => setAddIntelOpen(false)}
           onExtracted={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); await loadInbox(); } catch { /* 静默：保存已成功，仅刷新失败 */ } }} />
       )}
-      {teamOpen && <TeamBilling role={auth.user.role} onClose={() => setTeamOpen(false)} />}
-      {aiSettingsOpen && !readonly && <AiSettings role={auth.user.role} onClose={() => setAiSettingsOpen(false)} />}
-      {helpOpen && <HelpManual onClose={() => setHelpOpen(false)} />}
-      {mcpAccessOpen && !readonly && <McpAccess onClose={() => setMcpAccessOpen(false)} />}
       {gapsOpen && account && opp && breakdown && !readonly && (
         <GapCards account={account} opp={opp} dispatch={act} onClose={() => setGapsOpen(false)} />
       )}
-      {inboxOpen && !readonly && <InboxPanel rels={inbox.rels} persons={inbox.persons} proposals={inbox.proposals} accounts={state.accounts} onAccept={inboxAcceptRel} onReject={inboxRejectRel} onAcceptPerson={inboxAcceptPerson} onRejectPerson={inboxRejectPerson} onAcceptProposal={inboxAcceptProposal} onRejectProposal={inboxRejectProposal} reminders={inbox.reminders} onDismissReminder={inboxDismissReminder} evidences={inbox.evidences} onReviewEvidence={inboxReviewEvidence} onBatch={inboxBatch} onClose={() => setInboxOpen(false)} />}
-      {repairTarget && <RepairPanel key={`${repairTarget.kind}:${repairTarget.kind === 'account' ? repairTarget.account.id : repairTarget.kind === 'opportunity' ? repairTarget.opportunity.id : repairTarget.record.id}`}
-        target={repairTarget} accounts={state.accounts} onClose={() => setRepairTarget(null)} onChanged={refreshState}
-        onRefreshError={setSyncErr}
-        onRepairRecord={openRepairRecord}
-        onEditOpportunity={repairTarget.kind === 'opportunity' ? () => { setRepairTarget(null); setOppFormOpen(true); } : undefined} />}
+      <GlobalDialogs
+        surface="workroom"
+        state={appShellUi}
+        dispatch={appShellUiDispatch}
+        readonly={readonly}
+        role={auth.user.role}
+        accounts={state.accounts}
+        inbox={inboxDialogProps}
+        repair={{ onChanged: refreshState, onRefreshError: setSyncErr, onRepairRecord: openRepairRecord }}
+        onEditRepairOpportunity={() => setOppFormOpen(true)}
+      />
       <SyncStatus coordinator={coordinator} onViewCloud={discardToCloudState} />
       {syncErr && <div className="sync-toast">{syncErr}</div>}
       {undoHint && <div className="undo-toast">{undoHint}</div>}
