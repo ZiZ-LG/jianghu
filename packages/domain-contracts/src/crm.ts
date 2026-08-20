@@ -1,0 +1,377 @@
+import { z } from 'zod';
+import { OpaqueEntityIdSchema } from './ids.js';
+
+const id = z.string().min(1);
+const openKey = z.string().trim().min(1);
+const version = z.number().int().nonnegative();
+
+export const UtcInstantSchema = z.string().datetime({ offset: true }).refine(
+  (value) => value.endsWith('Z'),
+  'expected canonical UTC instant ending in Z',
+);
+
+function isRealLocalDate(value: string): boolean {
+  const [year, month, day] = value.split('-').map(Number);
+  if (year === undefined || month === undefined || day === undefined) return false;
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return parsed.getUTCFullYear() === year
+    && parsed.getUTCMonth() === month - 1
+    && parsed.getUTCDate() === day;
+}
+
+export const LocalDateSchema = z.string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD')
+  .refine(isRealLocalDate, 'expected a real calendar date');
+
+export const IanaTimeZoneSchema = z.string()
+  .regex(/^[A-Za-z_]+(?:\/[A-Za-z0-9._+-]+)+$/, 'expected an IANA area/location time zone')
+  .refine((value) => {
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: value }).format();
+      return true;
+    } catch {
+      return false;
+    }
+  }, 'unknown IANA time zone');
+
+const instant = UtcInstantSchema;
+const localDate = LocalDateSchema;
+
+export const MatterLifecycleStatusSchema = z.enum(['active', 'paused', 'completed', 'canceled']);
+export const CommitmentExecutionStatusSchema = z.enum(['planned', 'completed', 'canceled', 'missed']);
+export const CommitmentConfirmationStatusSchema = z.enum(['not_required', 'pending', 'confirmed', 'declined']);
+
+export const CustomerV2Schema = z.object({
+  id,
+  name: z.string().trim().min(1),
+  categoryKey: openKey.nullable(),
+  primaryOwnerUserId: id.nullable(),
+  archivedAt: instant.nullable(),
+  version,
+}).strict();
+
+export type CustomerV2 = z.infer<typeof CustomerV2Schema>;
+
+const matterObject = z.object({
+  id,
+  customerId: id,
+  title: z.string().trim().min(1),
+  kind: openKey,
+  lifecycleStatus: MatterLifecycleStatusSchema,
+  outcomeKey: openKey.nullable(),
+  priority: openKey.nullable(),
+  targetDate: localDate.nullable(),
+  primaryOwnerUserId: id.nullable(),
+  archivedAt: instant.nullable(),
+  version,
+}).strict();
+
+function validateMatterOutcome(
+  lifecycleStatus: z.infer<typeof MatterLifecycleStatusSchema>,
+  outcomeKey: string | null,
+  ctx: z.RefinementCtx,
+): void {
+  if ((lifecycleStatus === 'active' || lifecycleStatus === 'paused') && outcomeKey) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['outcomeKey'], message: 'open lifecycle state cannot carry an outcome' });
+  }
+}
+
+export const MatterV2Schema = matterObject.superRefine((value, ctx) => {
+  validateMatterOutcome(value.lifecycleStatus, value.outcomeKey, ctx);
+});
+
+export type MatterV2 = z.infer<typeof MatterV2Schema>;
+
+const commitmentFields = {
+  id,
+  customerId: id,
+  matterId: id.nullable(),
+  personId: id.nullable(),
+  title: z.string().trim().min(1),
+  kind: openKey,
+  ownerUserId: id,
+  executionStatus: CommitmentExecutionStatusSchema,
+  confirmationStatus: CommitmentConfirmationStatusSchema,
+  scheduledAtUtc: instant.nullable(),
+  dueAtUtc: instant.nullable(),
+  timeZone: IanaTimeZoneSchema,
+  isAllDay: z.boolean(),
+  localDate: localDate.nullable(),
+  confirmationDueAtUtc: instant.nullable(),
+  confirmedAtUtc: instant.nullable(),
+  confirmedByUserId: id.nullable(),
+  scheduleVersion: version,
+  nextCommitmentId: id.nullable(),
+  source: openKey,
+  sourceRef: z.string().min(1).nullable(),
+  archivedAt: instant.nullable(),
+  version,
+} satisfies z.ZodRawShape;
+
+function validateSchedule(
+  value: {
+    scheduledAtUtc: string | null;
+    dueAtUtc: string | null;
+    isAllDay: boolean;
+    localDate: string | null;
+  },
+  ctx: z.RefinementCtx,
+): void {
+  if (value.isAllDay) {
+    if (!value.localDate) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['localDate'], message: 'all-day commitment requires localDate' });
+    }
+    if (value.scheduledAtUtc || value.dueAtUtc) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['scheduledAtUtc'], message: 'all-day commitment must not use a fabricated UTC instant' });
+    }
+    return;
+  }
+
+  if (!value.scheduledAtUtc && !value.dueAtUtc) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['scheduledAtUtc'], message: 'timed commitment requires scheduledAtUtc or dueAtUtc' });
+  }
+  if (value.localDate) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['localDate'], message: 'timed commitment must not also carry localDate' });
+  }
+}
+
+function utcInstantToLocalDate(value: string, timeZone: string): string | null {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return null;
+
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      calendar: 'gregory',
+      numberingSystem: 'latn',
+    }).formatToParts(new Date(timestamp));
+    const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value;
+    const year = part('year');
+    const month = part('month');
+    const day = part('day');
+    return year && month && day ? `${year}-${month}-${day}` : null;
+  } catch {
+    return null;
+  }
+}
+
+function validateConfirmationDeadline(
+  value: {
+    scheduledAtUtc: string | null;
+    dueAtUtc: string | null;
+    timeZone: string;
+    isAllDay: boolean;
+    localDate: string | null;
+    confirmationDueAtUtc: string | null;
+  },
+  mode: 'required' | 'forbidden' | 'optional',
+  ctx: z.RefinementCtx,
+): void {
+  if (mode === 'required' && !value.confirmationDueAtUtc) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['confirmationDueAtUtc'], message: 'pending confirmation requires a due instant' });
+    return;
+  }
+  if (mode === 'forbidden' && value.confirmationDueAtUtc) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['confirmationDueAtUtc'], message: 'confirmation deadline requires confirmation' });
+    return;
+  }
+
+  if (value.confirmationDueAtUtc && value.isAllDay && value.localDate) {
+    const confirmationLocalDate = utcInstantToLocalDate(value.confirmationDueAtUtc, value.timeZone);
+    if (confirmationLocalDate && confirmationLocalDate > value.localDate) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['confirmationDueAtUtc'],
+        message: 'all-day confirmation deadline must not fall after the event business date',
+      });
+    }
+  }
+
+  const eventAt = value.scheduledAtUtc ?? value.dueAtUtc;
+  if (value.confirmationDueAtUtc && eventAt
+    && Date.parse(value.confirmationDueAtUtc) >= Date.parse(eventAt)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['confirmationDueAtUtc'], message: 'confirmation deadline must be before the event' });
+  }
+}
+
+export const CommitmentV2Schema = z.object(commitmentFields).strict().superRefine((value, ctx) => {
+  validateSchedule(value, ctx);
+  validateConfirmationDeadline(
+    value,
+    value.confirmationStatus === 'pending'
+      ? 'required'
+      : value.confirmationStatus === 'not_required' ? 'forbidden' : 'optional',
+    ctx,
+  );
+  const isConfirmed = value.confirmationStatus === 'confirmed';
+  if (isConfirmed && (!value.confirmedAtUtc || !value.confirmedByUserId)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['confirmationStatus'], message: 'confirmed commitment requires confirmation metadata' });
+  }
+  if (!isConfirmed && (value.confirmedAtUtc || value.confirmedByUserId)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['confirmedAtUtc'], message: 'only confirmed commitment may carry current confirmation metadata' });
+  }
+});
+
+export type CommitmentV2 = z.infer<typeof CommitmentV2Schema>;
+
+const customerCreate = CustomerV2Schema.omit({ archivedAt: true, version: true }).extend({
+  id: OpaqueEntityIdSchema,
+  categoryKey: openKey.nullable().default(null),
+  primaryOwnerUserId: id.nullable().default(null),
+});
+const customerPatch = CustomerV2Schema.omit({ id: true, archivedAt: true, version: true }).partial().strict()
+  .refine((value) => Object.keys(value).length > 0, 'customer patch must change at least one field');
+
+const matterCreate = matterObject.omit({
+  lifecycleStatus: true,
+  outcomeKey: true,
+  archivedAt: true,
+  version: true,
+}).extend({
+  id: OpaqueEntityIdSchema,
+  kind: openKey.default('general'),
+  lifecycleStatus: z.literal('active').default('active'),
+  outcomeKey: z.null().default(null),
+  priority: openKey.nullable().default(null),
+  targetDate: localDate.nullable().default(null),
+  primaryOwnerUserId: id.nullable().default(null),
+});
+const matterPatch = matterObject.omit({
+  id: true,
+  customerId: true,
+  lifecycleStatus: true,
+  outcomeKey: true,
+  primaryOwnerUserId: true,
+  archivedAt: true,
+  version: true,
+}).partial().strict()
+  .refine((value) => Object.keys(value).length > 0, 'matter patch must change at least one field');
+
+const openMatterLifecycle = z.enum(['active', 'paused']);
+const closedMatterLifecycle = z.enum(['completed', 'canceled']);
+const matterLifecycleTransition = z.object({
+  from: openMatterLifecycle,
+  to: MatterLifecycleStatusSchema,
+  outcomeKey: openKey.nullable(),
+  reason: z.string().trim().min(1).nullable(),
+}).strict().superRefine((value, ctx) => {
+  if (value.from === value.to) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['to'], message: 'lifecycle transition must change state' });
+  }
+  validateMatterOutcome(value.to, value.outcomeKey, ctx);
+  if (value.to === 'canceled' && !value.reason) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['reason'], message: 'cancellation requires a reason' });
+  }
+});
+
+const commitmentCreateFields = {
+  id: OpaqueEntityIdSchema,
+  customerId: id,
+  matterId: id.nullable(),
+  personId: id.nullable(),
+  title: z.string().trim().min(1),
+  kind: openKey,
+  ownerUserId: id,
+  confirmationStatus: z.enum(['not_required', 'pending']),
+  scheduledAtUtc: instant.nullable(),
+  dueAtUtc: instant.nullable(),
+  timeZone: IanaTimeZoneSchema,
+  isAllDay: z.boolean(),
+  localDate: localDate.nullable(),
+  confirmationDueAtUtc: instant.nullable(),
+  source: openKey,
+  sourceRef: z.string().min(1).nullable(),
+} satisfies z.ZodRawShape;
+
+const commitmentCreate = z.object(commitmentCreateFields).strict().superRefine((value, ctx) => {
+  validateSchedule(value, ctx);
+  validateConfirmationDeadline(value, value.confirmationStatus === 'pending' ? 'required' : 'forbidden', ctx);
+});
+
+const commitmentSchedule = z.object({
+  scheduledAtUtc: instant.nullable(),
+  dueAtUtc: instant.nullable(),
+  timeZone: IanaTimeZoneSchema,
+  isAllDay: z.boolean(),
+  localDate: localDate.nullable(),
+  confirmationDueAtUtc: instant.nullable(),
+  requiresConfirmation: z.boolean(),
+}).strict().superRefine((value, ctx) => {
+  validateSchedule(value, ctx);
+  validateConfirmationDeadline(value, value.requiresConfirmation ? 'required' : 'forbidden', ctx);
+});
+
+const command = <T extends z.ZodRawShape>(shape: T) => z.object(shape).strict();
+const versionedEntityCommand = {
+  customerId: id,
+  baseVersion: version,
+} satisfies z.ZodRawShape;
+const scheduledCommitmentCommand = {
+  ...versionedEntityCommand,
+  commitmentId: id,
+  expectedScheduleVersion: version,
+} satisfies z.ZodRawShape;
+
+export const CRM_COMMAND_TYPES = [
+  'CREATE_CUSTOMER', 'UPDATE_CUSTOMER', 'ARCHIVE_CUSTOMER', 'RESTORE_CUSTOMER',
+  'CREATE_MATTER', 'UPDATE_MATTER', 'TRANSITION_MATTER_LIFECYCLE', 'REOPEN_MATTER',
+  'ARCHIVE_MATTER', 'RESTORE_MATTER',
+  'CREATE_COMMITMENT', 'RESCHEDULE_COMMITMENT', 'CONFIRM_COMMITMENT',
+  'DECLINE_COMMITMENT', 'COMPLETE_COMMITMENT', 'CANCEL_COMMITMENT',
+  'MARK_COMMITMENT_MISSED', 'CREATE_NEXT_COMMITMENT',
+] as const;
+
+export type CrmCommandType = (typeof CRM_COMMAND_TYPES)[number];
+
+const crmCommandSchemas = [
+  command({ type: z.literal('CREATE_CUSTOMER'), customer: customerCreate }),
+  command({ type: z.literal('UPDATE_CUSTOMER'), ...versionedEntityCommand, patch: customerPatch }),
+  command({ type: z.literal('ARCHIVE_CUSTOMER'), ...versionedEntityCommand, reason: z.string().trim().min(1).optional() }),
+  command({ type: z.literal('RESTORE_CUSTOMER'), ...versionedEntityCommand }),
+  command({ type: z.literal('CREATE_MATTER'), matter: matterCreate }),
+  command({ type: z.literal('UPDATE_MATTER'), ...versionedEntityCommand, matterId: id, patch: matterPatch }),
+  command({
+    type: z.literal('TRANSITION_MATTER_LIFECYCLE'),
+    ...versionedEntityCommand,
+    matterId: id,
+    transition: matterLifecycleTransition,
+  }),
+  command({
+    type: z.literal('REOPEN_MATTER'),
+    ...versionedEntityCommand,
+    matterId: id,
+    expectedLifecycleStatus: closedMatterLifecycle,
+    reopenTo: openMatterLifecycle,
+    reason: z.string().trim().min(1),
+  }),
+  command({ type: z.literal('ARCHIVE_MATTER'), ...versionedEntityCommand, matterId: id, reason: z.string().trim().min(1).optional() }),
+  command({ type: z.literal('RESTORE_MATTER'), ...versionedEntityCommand, matterId: id }),
+  command({ type: z.literal('CREATE_COMMITMENT'), commitment: commitmentCreate }),
+  command({
+    type: z.literal('RESCHEDULE_COMMITMENT'),
+    ...scheduledCommitmentCommand,
+    schedule: commitmentSchedule,
+  }),
+  command({ type: z.literal('CONFIRM_COMMITMENT'), ...scheduledCommitmentCommand, confirmedAtUtc: instant }),
+  command({ type: z.literal('DECLINE_COMMITMENT'), ...scheduledCommitmentCommand, declinedAtUtc: instant }),
+  command({ type: z.literal('COMPLETE_COMMITMENT'), ...scheduledCommitmentCommand, completedAtUtc: instant }),
+  command({ type: z.literal('CANCEL_COMMITMENT'), ...scheduledCommitmentCommand, canceledAtUtc: instant, reason: z.string().trim().min(1).optional() }),
+  command({ type: z.literal('MARK_COMMITMENT_MISSED'), ...scheduledCommitmentCommand, missedAtUtc: instant }),
+  command({
+    type: z.literal('CREATE_NEXT_COMMITMENT'),
+    previousCommitmentId: id,
+    expectedPreviousVersion: version,
+    commitment: commitmentCreate,
+  }).superRefine((value, ctx) => {
+    if (value.previousCommitmentId === value.commitment.id) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['commitment', 'id'], message: 'next commitment cannot reference itself' });
+    }
+  }),
+] as const;
+
+export const CrmCommandSchema = z.union(crmCommandSchemas);
+export type CrmCommandInput = z.input<typeof CrmCommandSchema>;
+export type CrmCommand = z.infer<typeof CrmCommandSchema>;
