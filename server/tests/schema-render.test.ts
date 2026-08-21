@@ -185,4 +185,60 @@ describe('PostgreSQL schema delivery', () => {
     expect(deployScript.lastIndexOf('migrate:matter-participant-verify'))
       .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy'));
   });
+
+  it('delivers CORE-106 Commitment fields as an atomic fail-closed PlanAction expansion', async () => {
+    const migration = await read('prisma/postgres/migrations/20260821020000_expand_commitment_fields/migration.sql').catch(() => '');
+    const schema = await read('prisma/postgres/schema.prisma');
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const packageJson = JSON.parse(await read('package.json')) as { scripts?: Record<string, string> };
+
+    expect(migration.trimStart().startsWith('BEGIN;')).toBe(true);
+    expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(migration).toContain("SET LOCAL lock_timeout = '30s'");
+    expect(migration).toContain('LOCK TABLE "PlanAction"');
+    expect(migration).toContain('invalid legacy PlanAction parentage');
+    expect(migration).toContain('invalid legacy PlanAction business date');
+    expect(migration.indexOf('invalid legacy PlanAction parentage'))
+      .toBeLessThan(migration.indexOf('ADD COLUMN "executionStatus"'));
+    expect(migration).toContain("ADD COLUMN \"kind\" TEXT NOT NULL DEFAULT 'task'");
+    expect(migration).toContain('ADD COLUMN "executionStatus"');
+    expect(migration).toContain('ADD COLUMN "confirmationStatus"');
+    expect(migration).toContain('ADD COLUMN "scheduledAtUtc"');
+    expect(migration).toContain('ADD COLUMN "dueAtUtc"');
+    expect(migration).toContain('ADD COLUMN "timeZone"');
+    expect(migration).toContain('ADD COLUMN "isAllDay"');
+    expect(migration).toContain('ADD COLUMN "localDate"');
+    expect(migration).toContain('ADD COLUMN "confirmationDueAtUtc"');
+    expect(migration).toContain('ADD COLUMN "confirmedAtUtc"');
+    expect(migration).toContain('ADD COLUMN "confirmedByUserId"');
+    expect(migration).toContain('ADD COLUMN "scheduleVersion"');
+    expect(migration).toContain('ADD COLUMN "nextCommitmentId"');
+    expect(migration).toContain('ADD COLUMN "source"');
+    expect(migration).toContain('ADD COLUMN "sourceRef"');
+    expect(migration).toContain('ADD COLUMN "archivedAt"');
+    expect(migration).toContain('ADD COLUMN "version"');
+    expect(migration).toContain('CORE-106-commitment-backfill-v1');
+    expect(migration).toContain('Commitment backfill parity failed');
+
+    for (const field of [
+      'kind', 'ownerUserId', 'executionStatus', 'confirmationStatus', 'scheduledAtUtc', 'dueAtUtc',
+      'timeZone', 'isAllDay', 'localDate', 'confirmationDueAtUtc', 'confirmedAtUtc',
+      'confirmedByUserId', 'scheduleVersion', 'nextCommitmentId', 'source', 'sourceRef',
+      'archivedAt', 'version',
+    ]) expect(schema).toContain(field);
+
+    expect(packageJson.scripts?.['migrate:commitment-report']).toBeTruthy();
+    expect(packageJson.scripts?.['migrate:commitment-verify']).toBeTruthy();
+    expect(deployScript).toContain('recover_incomplete_commitment_migration');
+    expect(deployScript).toContain('adopt_existing_commitment_schema_if_safe');
+    expect(deployScript).toContain('postgres-commitment-schema-state.ts');
+    expect(deployScript.indexOf('migrate:commitment-report'))
+      .toBeLessThan(deployScript.indexOf('prisma migrate deploy'));
+    expect(deployScript.lastIndexOf('migrate:commitment-verify'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy'));
+    const preCommitment = await read('prisma/postgres/legacy/20260821_pre_core106.prisma');
+    expect(preCommitment).toContain('model MatterParticipant');
+    expect(preCommitment).not.toContain('executionStatus');
+    expect(deployScript).toContain('PRE_COMMITMENT_SCHEMA=prisma/postgres/legacy/20260821_pre_core106.prisma');
+  });
 });

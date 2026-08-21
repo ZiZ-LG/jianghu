@@ -9,6 +9,7 @@ import { activePersonWhere } from './activePerson.js';
 import { pickKeyInfluencerKeeper } from './g64111.js';
 import { businessYmd } from './businessDate.js';
 import { mapLegacyOpportunityStatus } from './matter/lifecycle.js';
+import { mapLegacyPlanActionToCommitmentFields } from './commitment/legacy.js';
 
 export type { DbClient } from './mutation/scopeGuards.js';
 
@@ -531,18 +532,55 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
     // ── 商机策划 · 行动计划（PlanAction）──
     case 'ADD_PLAN_ACTION': {
       const a = action.planAction;
+      const legacyOwnerId = a.ownerId || ctx.actorId;
+      const ownerUserId = legacyOwnerId
+        ? await requireOwner(legacyOwnerId)
+        : null;
+      const commitment = mapLegacyPlanActionToCommitmentFields({
+        startDate: a.startDate,
+        endDate: a.endDate,
+        done: a.done,
+        origin: a.origin ?? 'manual',
+      }, ownerUserId ?? null);
       await db.planAction.create({ data: {
         id: a.id, tenantId, accountId: action.accId, opportunityId: action.oppId,
         gapItem: a.gapItem ?? '', personId: a.personId ?? null, title: a.title ?? '',
-        scene: a.scene ?? '', scripts: a.scripts ?? '', target: a.target ?? '', ownerId: a.ownerId ?? '',
+        scene: a.scene ?? '', scripts: a.scripts ?? '', target: a.target ?? '', ownerId: legacyOwnerId,
         startDate: a.startDate ?? '', endDate: a.endDate ?? '', half: a.half ?? 'am',
         done: !!a.done, doneAt: a.doneAt ?? null, draft: !!a.draft, review: a.review ?? '', origin: a.origin ?? 'manual', createdBy: ctx.actorId,
         resources: a.resources ?? '', cautions: a.cautions ?? '', props: a.props ?? '',
+        ...commitment,
       } });
       return;
     }
     case 'UPDATE_PLAN_ACTION': {
       const d = pick(action.patch, ['gapItem', 'personId', 'title', 'scene', 'scripts', 'target', 'ownerId', 'startDate', 'endDate', 'half', 'done', 'doneAt', 'draft', 'review', 'resources', 'cautions', 'props']);
+      if (action.patch.startDate !== undefined
+        || action.patch.endDate !== undefined
+        || action.patch.done !== undefined
+        || action.patch.ownerId !== undefined) {
+        const current = await requireScopedRow(db.planAction.findFirst({
+          where: { id: action.actionId, tenantId, accountId: action.accId },
+          select: {
+            startDate: true, endDate: true, done: true, origin: true,
+            ownerUserId: true,
+          },
+        }));
+        const ownerUserId = action.patch.ownerId === undefined
+          ? current.ownerUserId
+          : action.patch.ownerId ? await requireOwner(action.patch.ownerId) : null;
+        const commitment = mapLegacyPlanActionToCommitmentFields({
+          startDate: action.patch.startDate ?? current.startDate,
+          endDate: action.patch.endDate ?? current.endDate,
+          done: action.patch.done ?? current.done,
+          origin: current.origin,
+        }, ownerUserId ?? null);
+        if (action.patch.startDate !== undefined || action.patch.endDate !== undefined) {
+          d.localDate = commitment.localDate;
+        }
+        if (action.patch.done !== undefined) d.executionStatus = commitment.executionStatus;
+        if (action.patch.ownerId !== undefined) d.ownerUserId = commitment.ownerUserId;
+      }
       await db.planAction.updateMany({ where: { id: action.actionId, tenantId, accountId: action.accId }, data: d });
       return;
     }
@@ -592,7 +630,11 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
     case 'TOGGLE_PLAN_ACTION':
       await db.planAction.updateMany({
         where: { id: action.actionId, tenantId, accountId: action.accId },
-        data: { done: !!action.done, doneAt: action.done ? (action.doneAt ?? businessYmd()) : null },
+        data: {
+          done: !!action.done,
+          doneAt: action.done ? (action.doneAt ?? businessYmd()) : null,
+          executionStatus: action.done ? 'completed' : 'planned',
+        },
       });
       return;
 

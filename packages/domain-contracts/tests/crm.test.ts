@@ -103,6 +103,17 @@ describe('neutral CRM V2 contracts', () => {
     expect(CommitmentV2Schema.safeParse(TIMED_COMMITMENT_DTO).success).toBe(true);
   });
 
+  it('keeps a legacy unassigned commitment explicit instead of inventing an owner', () => {
+    expect(CommitmentV2Schema.safeParse({
+      ...TIMED_COMMITMENT_DTO,
+      ownerUserId: null,
+    }).success).toBe(true);
+    expect(CrmCommandSchema.safeParse({
+      type: 'CREATE_COMMITMENT',
+      commitment: { ...COMMITMENT_CREATE_INPUT, ownerUserId: null },
+    }).success).toBe(false);
+  });
+
   it('rejects non-canonical offsets, invalid IANA zones, and impossible calendar dates', () => {
     expect(CommitmentV2Schema.safeParse({
       ...TIMED_COMMITMENT_DTO, scheduledAtUtc: '2026-08-25T10:00:00+08:00',

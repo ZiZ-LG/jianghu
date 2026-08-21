@@ -42,7 +42,7 @@
 | `sales.forecast` | `legacy_path: expectedAmountW + winProbability + expectedSignDate` | `core_path: ForecastEntry` | OpportunityForm；server state/PDE | 只生成待确认迁移候选；币种、周期、类别和金额均确认且快照可重放后切换 | 团队预测只读 ForecastEntry；G7 清零旧消费 | 预计金额冒充已签；概率隐式变成预测类别 |
 | `sales.outcome` | `legacy_path: Opportunity.status + expectedAmountW` | `core_path: SalesOutcomeRecord` | server state；G5 forecast assembler | 对 won 行列出缺金额／日期／币种原因，用户确认后写正式结果 | 实绩只读 SalesOutcomeRecord；G7 完成迁移后收缩 | 用 won＋预计金额推断已签；静默接受缺失输入 |
 | `matter.participants` | `core_path: MatterParticipant` | `core_path: MatterParticipant` | app store；server state/mutate/opp/suggest/personMerge | 已按 OppRole＋OpportunityMember 去重并校验 tenant／Matter／Person／Customer 父树；SQLite 备份恢复、PostgreSQL 原子 migration、legacy visibility 与开放 Relation.kind 回归通过 | 通用读写只用 MatterParticipant；OppRole 仅保留方法论角色、OpportunityMember 仅保留旧可见性；G7 再评估旧表收缩 | ADURC 兼任参与关系；OpportunityMember 兼任真相源；切换后 fallback 双读 |
-| `commitment.record` | `legacy_path: PlanAction` | `core_path: 同一 PlanAction 行的通用 Commitment 字段` | Today/store；server mutate/jobs/WeCom | 以稳定 ID 比较负责人、UTC/IANA 时间、双状态与 scheduleVersion；全部消费者兼容后切换 | 新通用命令写同一物理行；G7 收缩旧命令，物理表名可保留 | 新建第二主表；长期双写或 fallback 双读 |
+| `commitment.record` | `legacy_path: PlanAction` | `core_path: 同一 PlanAction 行的通用 Commitment 字段` | Today/store；server mutate/jobs/WeCom | CORE-106 已完成同行扩展与原子回填：只接受同租户稳定 User.id，无负责人显式未分配；旧时段映射为 Asia/Shanghai 全天 localDate，不伪造 UTC；双状态与 scheduleVersion 逐行 parity 通过。CORE-107/108 完成命令、state 与消费者切换前仍不改权威 | 新通用命令写同一物理行；G7 收缩旧命令，物理表名可保留 | 新建第二主表；长期双写或 fallback 双读；用 createdBy、姓名或时段猜测负责人/精确时间 |
 
 ## 4. 切换记录模板
 
@@ -54,3 +54,5 @@
 | 2026-08-21 | `matter.participants` | `OppRole + OpportunityMember` → `MatterParticipant` | 通用读仅 `app/src/store.ts`、`server/src/state.ts`；所有在线写显式落 MatterParticipant；旧表消费者只保留方法论／可见性语义 | `matter-participant.test.ts`、`sqlite-matter-upgrade.test.ts`、`schema-render.test.ts`、`actions.test.ts`；PostgreSQL 单事务 migration，SQLite 写前备份与中断恢复 | `53e1331`；`20260821010000_expand_matter_participants_relations`；回滚不删除已生成的 MatterParticipant 数据 |
 
 `CORE-102` 仅建立映射，没有发生权威切换。
+
+`CORE-106` 仅完成 `commitment.record` 的 Expand + Migrate，不是权威切换：PostgreSQL migration `20260821020000_expand_commitment_fields` 与 SQLite 写前备份/中断恢复均已通过，当前唯一权威仍是 legacy PlanAction，通用命令与 state 切换由 `CORE-107` 独立执行。

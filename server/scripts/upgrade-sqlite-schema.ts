@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
 type MatterSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
 type ParticipantSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
+type CommitmentSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
 
 const MATTER_COLUMNS = [
   'kind',
@@ -13,6 +14,14 @@ const MATTER_COLUMNS = [
   'targetDate',
   'primaryOwnerUserId',
   'activeMethodologyBindingId',
+] as const;
+
+const COMMITMENT_COLUMNS = [
+  'kind', 'ownerUserId', 'executionStatus', 'confirmationStatus',
+  'scheduledAtUtc', 'dueAtUtc', 'timeZone', 'isAllDay', 'localDate',
+  'confirmationDueAtUtc', 'confirmedAtUtc', 'confirmedByUserId',
+  'scheduleVersion', 'nextCommitmentId', 'source', 'sourceRef',
+  'archivedAt', 'version',
 ] as const;
 
 async function databaseUrl(): Promise<string> {
@@ -104,6 +113,21 @@ async function inspectParticipantSchemaState(prisma: {
   return 'partial';
 }
 
+async function inspectCommitmentSchemaState(prisma: {
+  $queryRawUnsafe<T>(query: string): Promise<T>;
+}): Promise<CommitmentSchemaState> {
+  const planActionTables = await prisma.$queryRawUnsafe<Array<{ name: string }>>(
+    `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'PlanAction'`,
+  );
+  if (planActionTables.length === 0) return 'uninitialized';
+  const columns = await prisma.$queryRawUnsafe<Array<{ name: string }>>('PRAGMA table_info("PlanAction")');
+  const names = new Set(columns.map((column) => column.name));
+  const present = COMMITMENT_COLUMNS.filter((column) => names.has(column)).length;
+  if (present === 0) return 'legacy';
+  if (present === COMMITMENT_COLUMNS.length) return 'expanded';
+  return 'partial';
+}
+
 async function createConsistentBackup(
   prisma: { $executeRawUnsafe(query: string): Promise<number> },
   databasePath: string,
@@ -125,19 +149,25 @@ const { PrismaClient } = await import('@prisma/client');
 const prisma = new PrismaClient();
 let state: MatterSchemaState;
 let participantState: ParticipantSchemaState;
+let commitmentState: CommitmentSchemaState;
 let backupPath: string | null = null;
 let schemaChanges = false;
 let matterBackfillRequired = false;
 let participantBackfillRequired = false;
+let commitmentBackfillRequired = false;
 
 try {
   state = await inspectSchemaState(prisma);
   participantState = await inspectParticipantSchemaState(prisma);
+  commitmentState = await inspectCommitmentSchemaState(prisma);
   if (state === 'partial') {
     throw new Error('partial Matter column expansion detected; restore the latest backup before retrying');
   }
   if (participantState === 'partial') {
     throw new Error('partial MatterParticipant/Relation expansion detected; restore the latest backup before retrying');
+  }
+  if (commitmentState === 'partial') {
+    throw new Error('partial Commitment field expansion detected; restore the latest backup before retrying');
   }
   if (state === 'legacy') {
     run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-matter-fields.ts', '--dry-run'], url);
@@ -181,8 +211,26 @@ try {
       participantBackfillRequired = true;
     }
   }
+  if (commitmentState === 'uninitialized') {
+    commitmentBackfillRequired = true;
+  } else if (commitmentState === 'legacy') {
+    run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-commitment-fields.ts', '--dry-run'], url);
+    commitmentBackfillRequired = true;
+  } else {
+    const { hasCommitmentMigrationMarker, verifyCommitmentBackfill } = await import('../src/commitment/migration.js');
+    const markerPresent = await hasCommitmentMigrationMarker(prisma);
+    if (!markerPresent) {
+      run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-commitment-fields.ts', '--dry-run'], url);
+      commitmentBackfillRequired = true;
+    } else {
+      const conflicts = await verifyCommitmentBackfill(prisma);
+      if (conflicts.length > 0) {
+        throw new Error(`Commitment legacy shadow parity failed (${conflicts.length} sampled conflicts)`);
+      }
+    }
+  }
   schemaChanges = state === 'uninitialized' ? true : schemaHasChanges(url);
-  if (state !== 'uninitialized' && (schemaChanges || matterBackfillRequired || participantBackfillRequired)) {
+  if (state !== 'uninitialized' && (schemaChanges || matterBackfillRequired || participantBackfillRequired || commitmentBackfillRequired)) {
     backupPath = await createConsistentBackup(prisma, databasePath);
   }
 } finally {
@@ -201,13 +249,19 @@ if (participantBackfillRequired) {
   run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-matter-participants.ts', '--apply'], url);
   run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-matter-participants.ts', '--verify'], url);
 }
+if (commitmentBackfillRequired) {
+  run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-commitment-fields.ts', '--apply'], url);
+}
+run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-commitment-fields.ts', '--verify'], url);
 
 console.log(JSON.stringify({
   ok: true,
   stateBefore: state,
   participantStateBefore: participantState,
+  commitmentStateBefore: commitmentState,
   schemaChanges,
   matterBackfillRequired,
   participantBackfillRequired,
+  commitmentBackfillRequired,
   backupPath,
 }, null, 2));

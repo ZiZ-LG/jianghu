@@ -498,11 +498,37 @@ model PlanAction {
   createdBy     String   @default("")
   createdAt     DateTime @default(now())
 
+  // CORE-106 Commitment 同行扩展。旧 PlanAction 字段在兼容期仍是 legacy authority；
+  // 新字段是同一物理行的受检影子，不建立第二张 Commitment 主表。
+  kind                  String    @default("task")
+  ownerUserId           String?
+  executionStatus       String    @default("planned") // planned | completed | canceled | missed
+  confirmationStatus    String    @default("not_required") // not_required | pending | confirmed | declined
+  scheduledAtUtc        DateTime?
+  dueAtUtc              DateTime?
+  timeZone              String    @default("Asia/Shanghai")
+  isAllDay              Boolean   @default(true)
+  localDate             String?
+  confirmationDueAtUtc  DateTime?
+  confirmedAtUtc        DateTime?
+  confirmedByUserId     String?
+  scheduleVersion       Int       @default(0)
+  nextCommitmentId      String?
+  source                String    @default("manual")
+  sourceRef             String?
+  archivedAt            DateTime?
+  version               Int       @default(0)
+
   @@index([accountId])
   @@index([opportunityId])
   @@index([tenantId, accountId])
   @@index([tenantId, opportunityId])
   @@index([tenantId, personId])
+  @@index([tenantId, ownerUserId, executionStatus])
+  @@index([tenantId, confirmationStatus, confirmationDueAtUtc])
+  @@index([tenantId, executionStatus, dueAtUtc])
+  @@index([tenantId, executionStatus, localDate])
+  @@index([tenantId, nextCommitmentId])
 }
 
 // 商机策划 · 商机里程碑（🚩）。轻量，可多个/自由增删。同样按 accountId 挂载。

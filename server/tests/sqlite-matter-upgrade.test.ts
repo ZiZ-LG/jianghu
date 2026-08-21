@@ -32,6 +32,24 @@ async function createLegacyFixture(databasePath: string, databaseUrl: string): P
     await client.$executeRawUnsafe('DROP TABLE "DataMigrationState"');
     await client.$executeRawUnsafe('ALTER TABLE "Edge" DROP COLUMN "kind"');
     for (const indexName of [
+      'PlanAction_tenantId_ownerUserId_executionStatus_idx',
+      'PlanAction_tenantId_confirmationStatus_confirmationDueAtUtc_idx',
+      'PlanAction_tenantId_executionStatus_dueAtUtc_idx',
+      'PlanAction_tenantId_executionStatus_localDate_idx',
+      'PlanAction_tenantId_nextCommitmentId_idx',
+    ]) {
+      await client.$executeRawUnsafe(`DROP INDEX "${indexName}"`);
+    }
+    for (const column of [
+      'kind', 'ownerUserId', 'executionStatus', 'confirmationStatus',
+      'scheduledAtUtc', 'dueAtUtc', 'timeZone', 'isAllDay', 'localDate',
+      'confirmationDueAtUtc', 'confirmedAtUtc', 'confirmedByUserId',
+      'scheduleVersion', 'nextCommitmentId', 'source', 'sourceRef',
+      'archivedAt', 'version',
+    ]) {
+      await client.$executeRawUnsafe(`ALTER TABLE "PlanAction" DROP COLUMN "${column}"`);
+    }
+    for (const indexName of [
       'Opportunity_tenantId_kind_lifecycleStatus_idx',
       'Opportunity_tenantId_primaryOwnerUserId_idx',
       'Opportunity_tenantId_targetDate_idx',
@@ -47,6 +65,10 @@ async function createLegacyFixture(databasePath: string, databaseUrl: string): P
     }
     await client.$executeRawUnsafe(
       `INSERT INTO "Tenant" (id, name) VALUES ('sqlite-upgrade-tenant', 'SQLite Upgrade Tenant')`,
+    );
+    await client.$executeRawUnsafe(
+      `INSERT INTO "User" (id, "tenantId", email, "passwordHash", name, role)
+       VALUES ('sqlite-upgrade-user', 'sqlite-upgrade-tenant', 'sqlite-upgrade@example.test', 'unused', 'Owner', 'owner')`,
     );
     await client.$executeRawUnsafe(
       `INSERT INTO "Account" (id, "tenantId", name, "customerType")
@@ -78,12 +100,24 @@ async function createLegacyFixture(databasePath: string, databaseUrl: string): P
          ('sqlite-upgrade-member-one', 'sqlite-upgrade-tenant', 'sqlite-upgrade-active', 'sqlite-upgrade-person-one'),
          ('sqlite-upgrade-member-two', 'sqlite-upgrade-tenant', 'sqlite-upgrade-active', 'sqlite-upgrade-person-two')`,
     );
+    await client.$executeRawUnsafe(
+      `INSERT INTO "PlanAction"
+         (id, "tenantId", "accountId", "opportunityId", "personId", title,
+          "ownerId", "startDate", "endDate", half, done, origin, "createdBy")
+       VALUES
+         ('sqlite-upgrade-action-planned', 'sqlite-upgrade-tenant', 'sqlite-upgrade-account',
+          'sqlite-upgrade-active', 'sqlite-upgrade-person-one', 'Planned action',
+          'sqlite-upgrade-user', '2026-10-07', '2026-10-08', 'am', false, 'workbuddy', ''),
+         ('sqlite-upgrade-action-done', 'sqlite-upgrade-tenant', 'sqlite-upgrade-account',
+          'sqlite-upgrade-won', NULL, 'Completed action',
+          '', '2026-09-01', '2026-09-01', 'pm', true, '', 'sqlite-upgrade-user')`,
+    );
   } finally {
     await client.$disconnect();
   }
 }
 
-describe('CORE-103/105 SQLite schema upgrade', () => {
+describe('CORE-103/105/106 SQLite schema upgrade', () => {
   it('initializes a fresh SQLite database through the standard db:push wrapper', async () => {
     const directory = await mkdtemp(resolve('prisma/.matter-fresh-test-'));
     const relativeDirectory = basename(directory);
@@ -102,6 +136,13 @@ describe('CORE-103/105 SQLite schema upgrade', () => {
       ]));
       const edgeColumns = await client.$queryRawUnsafe<Array<{ name: string }>>('PRAGMA table_info("Edge")');
       expect(edgeColumns.map((column) => column.name)).toContain('kind');
+      const planColumns = await client.$queryRawUnsafe<Array<{ name: string }>>('PRAGMA table_info("PlanAction")');
+      expect(planColumns.map((column) => column.name)).toEqual(expect.arrayContaining([
+        'kind', 'ownerUserId', 'executionStatus', 'confirmationStatus',
+        'scheduledAtUtc', 'dueAtUtc', 'timeZone', 'isAllDay', 'localDate',
+        'confirmationDueAtUtc', 'confirmedAtUtc', 'confirmedByUserId',
+        'scheduleVersion', 'nextCommitmentId', 'source', 'sourceRef', 'archivedAt', 'version',
+      ]));
       await expect(client.matterParticipant.count()).resolves.toBe(0);
       await expect(readdir(join(directory, 'backups'))).rejects.toThrow();
     } finally {
@@ -148,6 +189,30 @@ describe('CORE-103/105 SQLite schema upgrade', () => {
         { opportunityId: 'sqlite-upgrade-active', personId: 'sqlite-upgrade-person-one' },
         { opportunityId: 'sqlite-upgrade-active', personId: 'sqlite-upgrade-person-two' },
       ]);
+      await expect(upgradedClient.planAction.findMany({
+        orderBy: { id: 'asc' },
+        select: {
+          id: true, kind: true, ownerUserId: true, executionStatus: true,
+          confirmationStatus: true, scheduledAtUtc: true, dueAtUtc: true,
+          timeZone: true, isAllDay: true, localDate: true, scheduleVersion: true,
+          source: true, version: true,
+        },
+      })).resolves.toEqual([
+        {
+          id: 'sqlite-upgrade-action-done', kind: 'task', ownerUserId: null,
+          executionStatus: 'completed', confirmationStatus: 'not_required',
+          scheduledAtUtc: null, dueAtUtc: null, timeZone: 'Asia/Shanghai',
+          isAllDay: true, localDate: '2026-09-01', scheduleVersion: 0,
+          source: 'manual', version: 0,
+        },
+        {
+          id: 'sqlite-upgrade-action-planned', kind: 'task', ownerUserId: 'sqlite-upgrade-user',
+          executionStatus: 'planned', confirmationStatus: 'not_required',
+          scheduledAtUtc: null, dueAtUtc: null, timeZone: 'Asia/Shanghai',
+          isAllDay: true, localDate: '2026-10-08', scheduleVersion: 0,
+          source: 'workbuddy', version: 0,
+        },
+      ]);
       await upgradedClient.$disconnect();
       upgradedClient = null;
 
@@ -166,6 +231,10 @@ describe('CORE-103/105 SQLite schema upgrade', () => {
         'PRAGMA table_info("Edge")',
       );
       expect(restoredEdgeColumns.map((column) => column.name)).not.toContain('kind');
+      const restoredPlanColumns = await restoredClient.$queryRawUnsafe<Array<{ name: string }>>(
+        'PRAGMA table_info("PlanAction")',
+      );
+      expect(restoredPlanColumns.map((column) => column.name)).not.toContain('executionStatus');
       const restoredParticipantTables = await restoredClient.$queryRawUnsafe<Array<{ name: string }>>(
         `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'MatterParticipant'`,
       );
@@ -214,6 +283,10 @@ describe('CORE-103/105 SQLite schema upgrade', () => {
       const backups = (await readdir(join(directory, 'backups'))).filter((name) => name.endsWith('.bak'));
       expect(backups).toHaveLength(1);
       await expect(client.matterParticipant.count()).resolves.toBe(2);
+      await expect(client.planAction.findUniqueOrThrow({
+        where: { id: 'sqlite-upgrade-action-planned' },
+        select: { localDate: true, executionStatus: true, source: true },
+      })).resolves.toEqual({ localDate: '2026-10-08', executionStatus: 'planned', source: 'workbuddy' });
     } finally {
       await client?.$disconnect();
       await rm(directory, { recursive: true, force: true });
@@ -252,6 +325,49 @@ describe('CORE-103/105 SQLite schema upgrade', () => {
       ]);
       const backups = (await readdir(join(directory, 'backups'))).filter((name) => name.endsWith('.bak'));
       expect(backups).toHaveLength(1);
+    } finally {
+      await client?.$disconnect();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('fails before DDL for an invalid legacy PlanAction date and succeeds after repair', async () => {
+    const directory = await mkdtemp(resolve('prisma/.commitment-invalid-test-'));
+    const relativeDirectory = basename(directory);
+    const databasePath = join(directory, 'invalid.db');
+    const databaseUrl = `file:./${relativeDirectory}/invalid.db`;
+    let client: PrismaClient | null = null;
+    try {
+      await createLegacyFixture(databasePath, databaseUrl);
+      client = new PrismaClient({ datasourceUrl: databaseUrl });
+      await client.$executeRawUnsafe(
+        `UPDATE "PlanAction" SET "endDate" = '2026-02-31' WHERE id = 'sqlite-upgrade-action-planned'`,
+      );
+      await client.$disconnect();
+      client = null;
+
+      const failed = spawnSync(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], {
+        cwd: serverRoot,
+        encoding: 'utf8',
+        env: { ...process.env, DATABASE_URL: databaseUrl, JIANGHU_SKIP_PRISMA_GENERATE: '1' },
+      });
+      expect(failed.status).not.toBe(0);
+      expect(`${failed.stdout}\n${failed.stderr}`).toContain('invalid_end_date');
+
+      client = new PrismaClient({ datasourceUrl: databaseUrl });
+      const failedColumns = await client.$queryRawUnsafe<Array<{ name: string }>>('PRAGMA table_info("PlanAction")');
+      expect(failedColumns.map((column) => column.name)).not.toContain('executionStatus');
+      await client.$executeRawUnsafe(
+        `UPDATE "PlanAction" SET "endDate" = '2026-02-28' WHERE id = 'sqlite-upgrade-action-planned'`,
+      );
+      await client.$disconnect();
+      client = null;
+
+      run(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], databaseUrl);
+      client = new PrismaClient({ datasourceUrl: databaseUrl });
+      await expect(client.planAction.findUniqueOrThrow({
+        where: { id: 'sqlite-upgrade-action-planned' }, select: { localDate: true },
+      })).resolves.toEqual({ localDate: '2026-02-28' });
     } finally {
       await client?.$disconnect();
       await rm(directory, { recursive: true, force: true });

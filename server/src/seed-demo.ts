@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { prisma } from './prisma.js';
 import { shiftBusinessYmd } from './businessDate.js';
+import { mapLegacyPlanActionToCommitmentFields } from './commitment/legacy.js';
 
 /** 为某租户创建一份演示数据（西部电力建设集团风光储项目）。每次调用用独立 id 前缀，避免冲突。 */
 export async function createDemoForTenant(tenantId: string): Promise<void> {
@@ -95,7 +96,16 @@ export async function createDemoForTenant(tenantId: string): Promise<void> {
     ['准备“局级降本标杆”汇报材料，借钱大钧引荐上赵建国', '1K', 'zhao', 5, 'pm', false, '', ''],
     ['CP3D 信创实测演示给信息化骨干郑工，建技术口碑', 'C6', 'zheng', 8, 'pm', false, '', ''],
     ['推动评标规则向“一体化降本能力”倾斜', 'C5', 'li', 12, 'am', false, '', ''],
-  ] as [string, string, string, number, string, boolean, string, string][]).map((a, i) => ({ id: id(`pa${i}`), tenantId, accountId: accId, opportunityId: oppId, title: a[0], gapItem: a[1], personId: id(a[2]), scene: a[6], scripts: a[7], target: '', ownerId: '', startDate: ymd(a[3]), endDate: ymd(a[3]), half: a[4], done: a[5], doneAt: a[5] ? ymd(a[3]) : null, review: '', origin: 'manual', createdBy: '' })) });
+  ] as [string, string, string, number, string, boolean, string, string][]).map((a, i) => {
+    const startDate = ymd(a[3]);
+    return {
+      id: id(`pa${i}`), tenantId, accountId: accId, opportunityId: oppId,
+      title: a[0], gapItem: a[1], personId: id(a[2]), scene: a[6], scripts: a[7],
+      target: '', ownerId: '', startDate, endDate: startDate, half: a[4], done: a[5],
+      doneAt: a[5] ? startDate : null, review: '', origin: 'manual', createdBy: '',
+      ...mapLegacyPlanActionToCommitmentFields({ startDate, endDate: startDate, done: a[5], origin: 'manual' }, null),
+    };
+  }) });
 
   // ── 策略沙盘示例：策略卡（挂靠 G64111 缺口，含 AI 来源）+ 风险/假设 + 弹药 ──
   await prisma.strategyCard.createMany({ data: ([

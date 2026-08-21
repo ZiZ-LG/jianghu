@@ -1,5 +1,5 @@
 // 江湖 · 领域类型（对应 docs/产品设计方案.md §3 与 G64111-评分规格.md）
-import type { JsonValue, MatterV2 } from '@jianghu/domain-contracts';
+import type { CommitmentV2, JsonValue, MatterV2 } from '@jianghu/domain-contracts';
 export type {
   CapabilityPolicy,
   CommitmentV2,
@@ -283,6 +283,27 @@ export interface PlanAction {
   origin?: string;         // manual | ai | workbuddy
   createdBy?: string;
   createdAt?: string;
+
+  // CORE-106 expand-phase shadow fields. They remain optional in the legacy
+  // PlanAction UI until CORE-107 switches state/commands to Commitment V2.
+  kind?: CommitmentV2['kind'];
+  ownerUserId?: CommitmentV2['ownerUserId'];
+  executionStatus?: CommitmentV2['executionStatus'];
+  confirmationStatus?: CommitmentV2['confirmationStatus'];
+  scheduledAtUtc?: CommitmentV2['scheduledAtUtc'];
+  dueAtUtc?: CommitmentV2['dueAtUtc'];
+  timeZone?: CommitmentV2['timeZone'];
+  isAllDay?: CommitmentV2['isAllDay'];
+  localDate?: CommitmentV2['localDate'];
+  confirmationDueAtUtc?: CommitmentV2['confirmationDueAtUtc'];
+  confirmedAtUtc?: CommitmentV2['confirmedAtUtc'];
+  confirmedByUserId?: CommitmentV2['confirmedByUserId'];
+  scheduleVersion?: CommitmentV2['scheduleVersion'];
+  nextCommitmentId?: CommitmentV2['nextCommitmentId'];
+  source?: CommitmentV2['source'];
+  sourceRef?: CommitmentV2['sourceRef'];
+  archivedAt?: CommitmentV2['archivedAt'];
+  version?: CommitmentV2['version'];
 }
 
 /** 商机策划 · 里程碑（🚩，可多个/自由增删） */

@@ -78,7 +78,11 @@ docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U 
      ('legacy-matter-active','legacy-owner-tenant','legacy-owner-account','Active Matter',1,'qualify','discover','active'),
      ('legacy-matter-paused','legacy-owner-tenant','legacy-owner-account','Paused Matter',1,'qualify','discover','paused'),
      ('legacy-matter-won','legacy-owner-tenant','legacy-owner-account','Won Matter',1,'qualify','discover','won'),
-     ('legacy-matter-lost','legacy-owner-tenant','legacy-owner-account','Lost Matter',1,'qualify','discover','lost');" >/dev/null
+     ('legacy-matter-lost','legacy-owner-tenant','legacy-owner-account','Lost Matter',1,'qualify','discover','lost');
+   INSERT INTO \"PlanAction\"
+     (id,\"tenantId\",\"accountId\",\"opportunityId\",title,\"ownerId\",\"startDate\",\"endDate\",half,done,origin,\"createdBy\")
+     VALUES ('legacy-plan-action','legacy-owner-tenant','legacy-owner-account','legacy-matter-active',
+       'Legacy customer visit','legacy-owner-user','2026-10-07','2026-10-08','am',false,'workbuddy','legacy-owner-user');" >/dev/null
 # Simulate a process kill after the first of the three adoption resolves. The
 # next server start must recognize and complete this partial history.
 docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint npx server \
@@ -120,9 +124,26 @@ legacy_matter_mapping_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T 
        OR (status = 'lost' AND \"lifecycleStatus\" = 'completed' AND \"outcomeKey\" = 'lost'))" | tr -d '[:space:]')
 [[ "$legacy_matter_total" == 4 ]]
 [[ "$legacy_matter_mapping_count" == 4 ]]
+legacy_commitment_mapping_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+  "SELECT count(*) FROM \"PlanAction\"
+   WHERE id = 'legacy-plan-action'
+     AND kind = 'task'
+     AND \"ownerUserId\" = 'legacy-owner-user'
+     AND \"executionStatus\" = 'planned'
+     AND \"confirmationStatus\" = 'not_required'
+     AND \"scheduledAtUtc\" IS NULL
+     AND \"dueAtUtc\" IS NULL
+     AND \"timeZone\" = 'Asia/Shanghai'
+     AND \"isAllDay\" IS true
+     AND \"localDate\" = '2026-10-08'
+     AND \"scheduleVersion\" = 0
+     AND source = 'workbuddy'
+     AND version = 0" | tr -d '[:space:]')
+[[ "$legacy_commitment_mapping_count" == 1 ]]
 echo "LEGACY_ACCOUNT_OWNER_BACKFILL_OK=1"
 echo "LEGACY_SCHEMA_MIGRATION_PREFLIGHT_OK=1"
 echo "LEGACY_MATTER_STATUS_BACKFILL_OK=1"
+echo "LEGACY_COMMITMENT_BACKFILL_OK=1"
 
 # Unknown legacy statuses must fail before the expand migration changes the
 # schema. Repairing the source value must make the same database retryable.
@@ -182,6 +203,71 @@ matter_incomplete_after_adoption=$(docker compose -p "$COMPOSE_PROJECT_NAME" exe
 [[ "$matter_incomplete_after_adoption" == 0 ]]
 echo "INTERRUPTED_MATTER_AFTER_COMMIT_ADOPTION_OK=1"
 echo "UNKNOWN_MATTER_STATUS_FAIL_CLOSED_RETRY_OK=1"
+
+# Invalid legacy business dates must fail before Commitment DDL. Repairing the
+# source date makes the same database retryable; a later commit/registration
+# interruption is adopted only after parity and exact-schema checks.
+invalid_commitment_db=jianghu_commitment_invalid
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$invalid_commitment_db"
+POSTGRES_DB="$invalid_commitment_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npx prisma db push --schema prisma/postgres/legacy/20260712_pre_int501.prisma --skip-generate' >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$invalid_commitment_db" -c \
+  "INSERT INTO \"Tenant\" (id,name) VALUES ('invalid-commitment-tenant','Invalid Commitment Tenant');
+   INSERT INTO \"Account\" (id,\"tenantId\",name,\"customerType\")
+     VALUES ('invalid-commitment-account','invalid-commitment-tenant','Invalid Commitment Account',1);
+   INSERT INTO \"Opportunity\" (id,\"tenantId\",\"accountId\",name,\"customerType\",\"pipelineStage\",\"engageStage\",status)
+     VALUES ('invalid-commitment-matter','invalid-commitment-tenant','invalid-commitment-account','Matter',1,'qualify','discover','active');
+   INSERT INTO \"PlanAction\"
+     (id,\"tenantId\",\"accountId\",\"opportunityId\",title,\"startDate\",\"endDate\",half,done)
+     VALUES ('invalid-commitment-action','invalid-commitment-tenant','invalid-commitment-account',
+       'invalid-commitment-matter','Invalid date','2026-02-28','2026-02-31','am',false);" >/dev/null
+if POSTGRES_DB="$invalid_commitment_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "invalid legacy Commitment date unexpectedly migrated" >&2; exit 1
+fi
+commitment_columns_after_failure=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$invalid_commitment_db" -tAc \
+  "SELECT count(*) FROM information_schema.columns
+   WHERE table_schema = 'public' AND table_name = 'PlanAction'
+     AND column_name IN ('kind','ownerUserId','executionStatus','confirmationStatus','scheduledAtUtc','dueAtUtc',
+       'timeZone','isAllDay','localDate','confirmationDueAtUtc','confirmedAtUtc','confirmedByUserId',
+       'scheduleVersion','nextCommitmentId','source','sourceRef','archivedAt','version')" | tr -d '[:space:]')
+[[ "$commitment_columns_after_failure" == 0 ]]
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$invalid_commitment_db" -c \
+  "UPDATE \"PlanAction\" SET \"endDate\" = '2026-02-28' WHERE id = 'invalid-commitment-action';" >/dev/null
+POSTGRES_DB="$invalid_commitment_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+invalid_commitment_recovered=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$invalid_commitment_db" -tAc \
+  "SELECT count(*) FROM \"PlanAction\"
+   WHERE id = 'invalid-commitment-action'
+     AND \"localDate\" = '2026-02-28'
+     AND \"executionStatus\" = 'planned'
+     AND \"scheduledAtUtc\" IS NULL
+     AND \"dueAtUtc\" IS NULL" | tr -d '[:space:]')
+commitment_rolled_back_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$invalid_commitment_db" -tAc \
+  "SELECT count(*) FROM \"_prisma_migrations\"
+   WHERE migration_name = '20260821020000_expand_commitment_fields' AND rolled_back_at IS NOT NULL" | tr -d '[:space:]')
+[[ "$invalid_commitment_recovered" == 1 ]]
+[[ "$commitment_rolled_back_count" == 1 ]]
+echo "INVALID_COMMITMENT_FAIL_CLOSED_RETRY_OK=1"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$invalid_commitment_db" -c \
+  "DELETE FROM \"_prisma_migrations\"
+    WHERE migration_name = '20260821020000_expand_commitment_fields' AND finished_at IS NOT NULL;
+   INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+     VALUES ('interrupted-commitment-after-commit', repeat('0', 64), '20260821020000_expand_commitment_fields', CURRENT_TIMESTAMP, 0);" >/dev/null
+POSTGRES_DB="$invalid_commitment_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+commitment_applied_after_adoption=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$invalid_commitment_db" -tAc \
+  "SELECT count(*) FROM \"_prisma_migrations\"
+   WHERE migration_name = '20260821020000_expand_commitment_fields'
+     AND finished_at IS NOT NULL AND rolled_back_at IS NULL" | tr -d '[:space:]')
+commitment_incomplete_after_adoption=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$invalid_commitment_db" -tAc \
+  "SELECT count(*) FROM \"_prisma_migrations\"
+   WHERE migration_name = '20260821020000_expand_commitment_fields'
+     AND finished_at IS NULL AND rolled_back_at IS NULL" | tr -d '[:space:]')
+[[ "$commitment_applied_after_adoption" == 1 ]]
+[[ "$commitment_incomplete_after_adoption" == 0 ]]
+echo "INTERRUPTED_COMMITMENT_AFTER_COMMIT_ADOPTION_OK=1"
 
 # A duplicate tenant-local owner name must roll the bridge transaction back.
 # After data repair, the same database must resume and complete safely.
