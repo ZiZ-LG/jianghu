@@ -1,13 +1,25 @@
-// viewer（只读投影）门禁与归属过滤。授权只使用稳定 User.id，姓名仅展示。
-// 语义边界：仅 viewer 收紧到"名下可见"；owner/admin/member 维持租户内全员共享（协作产品语义不变）。
+// 旧函数名兼容层。所有 Customer/Matter 读门禁统一委托当前数据库状态的 effective scope。
 import { prisma } from './prisma.js';
+import { resolveEffectiveResourceScope } from './resourceScope.js';
+import type { ReadPrincipal } from './visibility.js';
 
-/** viewer 名下客户 id 集合（未归属记录 fail closed）。 */
+function requestPrincipal(req: any): ReadPrincipal | null {
+  const user = req?.user;
+  if (!user || typeof user.tenantId !== 'string' || typeof user.userId !== 'string') return null;
+  return {
+    tenantId: user.tenantId,
+    userId: user.userId,
+    // Resolver revalidates the current role. This value is only a typed transport placeholder.
+    role: user.role === 'owner' || user.role === 'admin' || user.role === 'member' || user.role === 'viewer'
+      ? user.role
+      : 'viewer',
+  };
+}
+
+/** Legacy adapter: returns the Customers whose full data the current actor may read. */
 export async function viewerAccountIds(tenantId: string, userId: string): Promise<Set<string>> {
-  const u = await prisma.user.findFirst({ where: { id: userId, tenantId }, select: { id: true } });
-  if (!u) return new Set();
-  const rows = await prisma.account.findMany({ where: { tenantId, primaryOwnerUserId: userId }, select: { id: true } });
-  return new Set(rows.map((r) => r.id));
+  const scope = await resolveEffectiveResourceScope(prisma, { tenantId, userId, role: 'viewer' });
+  return new Set(scope.fullAccountIds);
 }
 
 /** 操作口对 viewer 一律 403（"极简"指操作极简、不是门禁极简）。返回 true = 已拒绝，调用方应 return。 */
@@ -19,25 +31,24 @@ export function denyViewer(req: any, reply: any): boolean {
   return false;
 }
 
-/** 读口的 viewer 归属校验（按客户）：非 viewer 直接放行。返回 false = 已回 404（不泄漏存在性）。 */
+/** Full Customer-data check. Returns false after a generic 404 to avoid existence disclosure. */
 export async function viewerCanReadAccount(req: any, reply: any, accountId: string): Promise<boolean> {
-  if (req.user?.role !== 'viewer') return true;
-  const ids = await viewerAccountIds(req.user.tenantId, req.user.userId);
-  if (ids.has(accountId)) return true;
+  const principal = requestPrincipal(req);
+  if (principal) {
+    const scope = await resolveEffectiveResourceScope(prisma, principal);
+    if (scope.canReadAccountData(accountId)) return true;
+  }
   reply.code(404).send({ error: '客户不存在或无权限' });
   return false;
 }
 
-/** 读口的 viewer 归属校验（按商机定位所属客户）。返回 false = 已回 404。 */
+/** Matter check. Returns false after a generic 404 to avoid existence disclosure. */
 export async function viewerCanReadOpp(req: any, reply: any, opportunityId: string): Promise<boolean> {
-  if (req.user?.role !== 'viewer') return true;
-  const opp = await prisma.opportunity.findFirst({
-    where: { id: opportunityId, tenantId: req.user.tenantId },
-    select: { accountId: true },
-  });
-  if (!opp) {
-    reply.code(404).send({ error: '商机不存在或无权限' });
-    return false;
+  const principal = requestPrincipal(req);
+  if (principal) {
+    const scope = await resolveEffectiveResourceScope(prisma, principal);
+    if (scope.canReadMatter(opportunityId)) return true;
   }
-  return viewerCanReadAccount(req, reply, opp.accountId);
+  reply.code(404).send({ error: '商机不存在或无权限' });
+  return false;
 }
