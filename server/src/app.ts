@@ -34,6 +34,7 @@ import { compoundCommandRoutes } from './mutation/compoundCommands.js';
 import { matterOwnershipRoutes } from './mutation/matterOwnership.js';
 import { matterParticipantRoutes } from './mutation/matterParticipants.js';
 import { commitmentRoutes } from './mutation/commitments.js';
+import { methodologyCommandRoutes } from './methodology/commands.js';
 import { repairRoutes } from './repair.js';
 import { personMergeRoutes } from './personMerge.js';
 
@@ -113,6 +114,7 @@ function registerRoutes(app: FastifyInstance, readinessProbe: ReadinessProbe): v
   matterOwnershipRoutes(app);
   matterParticipantRoutes(app);
   commitmentRoutes(app);
+  methodologyCommandRoutes(app);
   repairRoutes(app);
   personMergeRoutes(app);
 
