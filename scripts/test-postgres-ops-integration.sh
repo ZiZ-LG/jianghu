@@ -232,6 +232,13 @@ commitment_columns_after_failure=$(docker compose -p "$COMPOSE_PROJECT_NAME" exe
        'timeZone','isAllDay','localDate','confirmationDueAtUtc','confirmedAtUtc','confirmedByUserId',
        'scheduleVersion','nextCommitmentId','source','sourceRef','archivedAt','version')" | tr -d '[:space:]')
 [[ "$commitment_columns_after_failure" == 0 ]]
+commitment_migration_rows_after_failure=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$invalid_commitment_db" -tAc \
+  "SELECT count(*) FROM \"_prisma_migrations\"
+   WHERE migration_name = '20260821020000_expand_commitment_fields'" | tr -d '[:space:]')
+[[ "$commitment_migration_rows_after_failure" == 0 ]] || {
+  echo "Commitment preflight unexpectedly entered Prisma migration history: $commitment_migration_rows_after_failure row(s)" >&2
+  exit 1
+}
 docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$invalid_commitment_db" -c \
   "UPDATE \"PlanAction\" SET \"endDate\" = '2026-02-28' WHERE id = 'invalid-commitment-action';" >/dev/null
 POSTGRES_DB="$invalid_commitment_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
@@ -243,11 +250,18 @@ invalid_commitment_recovered=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T
      AND \"executionStatus\" = 'planned'
      AND \"scheduledAtUtc\" IS NULL
      AND \"dueAtUtc\" IS NULL" | tr -d '[:space:]')
-commitment_rolled_back_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$invalid_commitment_db" -tAc \
+commitment_applied_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$invalid_commitment_db" -tAc \
   "SELECT count(*) FROM \"_prisma_migrations\"
-   WHERE migration_name = '20260821020000_expand_commitment_fields' AND rolled_back_at IS NOT NULL" | tr -d '[:space:]')
-[[ "$invalid_commitment_recovered" == 1 ]]
-[[ "$commitment_rolled_back_count" == 1 ]]
+   WHERE migration_name = '20260821020000_expand_commitment_fields'
+     AND finished_at IS NOT NULL AND rolled_back_at IS NULL" | tr -d '[:space:]')
+[[ "$invalid_commitment_recovered" == 1 ]] || {
+  echo "Commitment retry did not backfill the repaired row: $invalid_commitment_recovered row(s)" >&2
+  exit 1
+}
+[[ "$commitment_applied_count" == 1 ]] || {
+  echo "Commitment retry did not leave one applied migration: $commitment_applied_count row(s)" >&2
+  exit 1
+}
 echo "INVALID_COMMITMENT_FAIL_CLOSED_RETRY_OK=1"
 
 docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$invalid_commitment_db" -c \
