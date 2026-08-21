@@ -283,6 +283,91 @@ commitment_incomplete_after_adoption=$(docker compose -p "$COMPOSE_PROJECT_NAME"
 [[ "$commitment_incomplete_after_adoption" == 0 ]]
 echo "INTERRUPTED_COMMITMENT_AFTER_COMMIT_ADOPTION_OK=1"
 
+# A pre-CORE-110 database may contain a reserved active pointer but cannot
+# prove the referenced immutable binding because the foundation tables do not
+# exist yet. Refuse all DDL until the pointer is repaired, then cover both
+# before-commit replay and after-commit migration-history adoption.
+methodology_db=jianghu_methodology_pointer
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$methodology_db"
+POSTGRES_DB="$methodology_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npx prisma db push --schema prisma/postgres/legacy/20260821_pre_core110.prisma --skip-generate' >/dev/null
+for migration in \
+  20260715000000_baseline \
+  20260715010000_hash_command_run_idempotency_keys \
+  20260715020000_add_person_created_at \
+  20260715030000_adopt_pre_int501_schema \
+  20260821000000_expand_matter_fields \
+  20260821010000_expand_matter_participants_relations \
+  20260821020000_expand_commitment_fields \
+  20260821030000_release_customer_level_commitments; do
+  POSTGRES_DB="$methodology_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint npx server \
+    prisma migrate resolve --applied "$migration" --schema prisma/postgres/schema.prisma >/dev/null
+done
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$methodology_db" -c \
+  "INSERT INTO \"Tenant\" (id,name) VALUES ('methodology-tenant','Methodology Tenant');
+   INSERT INTO \"Account\" (id,\"tenantId\",name,\"customerType\")
+     VALUES ('methodology-account','methodology-tenant','Methodology Account',1);
+   INSERT INTO \"Opportunity\"
+     (id,\"tenantId\",\"accountId\",name,\"customerType\",\"pipelineStage\",\"engageStage\",\"activeMethodologyBindingId\")
+     VALUES ('methodology-matter','methodology-tenant','methodology-account','Methodology Matter',1,
+       'qualify','discover','unmanaged-binding');" >/dev/null
+if POSTGRES_DB="$methodology_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "unmanaged methodology pointer unexpectedly migrated" >&2; exit 1
+fi
+methodology_tables_after_failure=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$methodology_db" -tAc \
+  "SELECT count(*) FROM information_schema.tables
+   WHERE table_schema = 'public'
+     AND table_name IN ('MethodologyPack','MethodologyPackVersion','MethodologyBinding','MethodologyPilotAssignment')" | tr -d '[:space:]')
+methodology_rows_after_failure=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$methodology_db" -tAc \
+  "SELECT count(*) FROM \"_prisma_migrations\"
+   WHERE migration_name = '20260821050000_add_methodology_foundation'" | tr -d '[:space:]')
+scope_applied_after_adoption=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$methodology_db" -tAc \
+  "SELECT count(*) FROM \"_prisma_migrations\"
+   WHERE migration_name = '20260821040000_add_tenant_data_scope_policy'
+     AND finished_at IS NOT NULL AND rolled_back_at IS NULL" | tr -d '[:space:]')
+[[ "$methodology_tables_after_failure" == 0 ]]
+[[ "$methodology_rows_after_failure" == 0 ]]
+[[ "$scope_applied_after_adoption" == 1 ]]
+echo "INTERRUPTED_SCOPE_AFTER_COMMIT_ADOPTION_OK=1"
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$methodology_db" -c \
+  "UPDATE \"Opportunity\" SET \"activeMethodologyBindingId\" = NULL WHERE id = 'methodology-matter';
+   INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+     VALUES ('int-methodology-before-commit', repeat('0', 64),
+       '20260821050000_add_methodology_foundation', CURRENT_TIMESTAMP, 0);" >/dev/null
+POSTGRES_DB="$methodology_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+methodology_tables_after_retry=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$methodology_db" -tAc \
+  "SELECT count(*) FROM information_schema.tables
+   WHERE table_schema = 'public'
+     AND table_name IN ('MethodologyPack','MethodologyPackVersion','MethodologyBinding','MethodologyPilotAssignment')" | tr -d '[:space:]')
+methodology_rolled_back_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$methodology_db" -tAc \
+  "SELECT count(*) FROM \"_prisma_migrations\"
+   WHERE migration_name = '20260821050000_add_methodology_foundation' AND rolled_back_at IS NOT NULL" | tr -d '[:space:]')
+[[ "$methodology_tables_after_retry" == 4 ]]
+[[ "$methodology_rolled_back_count" == 1 ]]
+echo "METHODOLOGY_POINTER_FAIL_CLOSED_RETRY_OK=1"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$methodology_db" -c \
+  "DELETE FROM \"_prisma_migrations\"
+    WHERE migration_name = '20260821050000_add_methodology_foundation' AND finished_at IS NOT NULL;
+   INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+     VALUES ('int-methodology-after-commit', repeat('0', 64),
+       '20260821050000_add_methodology_foundation', CURRENT_TIMESTAMP, 0);" >/dev/null
+POSTGRES_DB="$methodology_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+methodology_applied_after_adoption=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$methodology_db" -tAc \
+  "SELECT count(*) FROM \"_prisma_migrations\"
+   WHERE migration_name = '20260821050000_add_methodology_foundation'
+     AND finished_at IS NOT NULL AND rolled_back_at IS NULL" | tr -d '[:space:]')
+methodology_incomplete_after_adoption=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$methodology_db" -tAc \
+  "SELECT count(*) FROM \"_prisma_migrations\"
+   WHERE migration_name = '20260821050000_add_methodology_foundation'
+     AND finished_at IS NULL AND rolled_back_at IS NULL" | tr -d '[:space:]')
+[[ "$methodology_applied_after_adoption" == 1 ]]
+[[ "$methodology_incomplete_after_adoption" == 0 ]]
+echo "INTERRUPTED_METHODOLOGY_AFTER_COMMIT_ADOPTION_OK=1"
+
 # A duplicate tenant-local owner name must roll the bridge transaction back.
 # After data repair, the same database must resume and complete safely.
 ambiguous_db=jianghu_owner_ambiguous

@@ -5,6 +5,7 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 type MatterSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
 type ParticipantSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
 type CommitmentSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
+type MethodologySchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
 
 const MATTER_COLUMNS = [
   'kind',
@@ -128,6 +129,26 @@ async function inspectCommitmentSchemaState(prisma: {
   return 'partial';
 }
 
+async function inspectMethodologySchemaState(prisma: {
+  $queryRawUnsafe<T>(query: string): Promise<T>;
+}): Promise<MethodologySchemaState> {
+  const baseTables = await prisma.$queryRawUnsafe<Array<{ name: string }>>(
+    `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'Opportunity'`,
+  );
+  if (baseTables.length === 0) return 'uninitialized';
+  const tables = await prisma.$queryRawUnsafe<Array<{ name: string }>>(
+    `SELECT name FROM sqlite_master
+      WHERE type = 'table'
+        AND name IN (
+          'MethodologyPack', 'MethodologyPackVersion',
+          'MethodologyBinding', 'MethodologyPilotAssignment'
+        )`,
+  );
+  if (tables.length === 0) return 'legacy';
+  if (tables.length === 4) return 'expanded';
+  return 'partial';
+}
+
 async function createConsistentBackup(
   prisma: { $executeRawUnsafe(query: string): Promise<number> },
   databasePath: string,
@@ -150,16 +171,19 @@ const prisma = new PrismaClient();
 let state: MatterSchemaState;
 let participantState: ParticipantSchemaState;
 let commitmentState: CommitmentSchemaState;
+let methodologyState: MethodologySchemaState;
 let backupPath: string | null = null;
 let schemaChanges = false;
 let matterBackfillRequired = false;
 let participantBackfillRequired = false;
 let commitmentBackfillRequired = false;
+let methodologyExpansionRequired = false;
 
 try {
   state = await inspectSchemaState(prisma);
   participantState = await inspectParticipantSchemaState(prisma);
   commitmentState = await inspectCommitmentSchemaState(prisma);
+  methodologyState = await inspectMethodologySchemaState(prisma);
   if (state === 'partial') {
     throw new Error('partial Matter column expansion detected; restore the latest backup before retrying');
   }
@@ -168,6 +192,9 @@ try {
   }
   if (commitmentState === 'partial') {
     throw new Error('partial Commitment field expansion detected; restore the latest backup before retrying');
+  }
+  if (methodologyState === 'partial') {
+    throw new Error('partial methodology foundation detected; restore the latest backup before retrying');
   }
   if (state === 'legacy') {
     run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-matter-fields.ts', '--dry-run'], url);
@@ -224,8 +251,18 @@ try {
       commitmentBackfillRequired = true;
     }
   }
+  if (methodologyState === 'uninitialized') {
+    methodologyExpansionRequired = true;
+  } else if (methodologyState === 'legacy') {
+    if (state === 'expanded') {
+      run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/check-methodology-foundation.ts', '--preflight'], url);
+    }
+    methodologyExpansionRequired = true;
+  } else {
+    run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/check-methodology-foundation.ts', '--verify'], url);
+  }
   schemaChanges = state === 'uninitialized' ? true : schemaHasChanges(url);
-  if (state !== 'uninitialized' && (schemaChanges || matterBackfillRequired || participantBackfillRequired || commitmentBackfillRequired)) {
+  if (state !== 'uninitialized' && (schemaChanges || matterBackfillRequired || participantBackfillRequired || commitmentBackfillRequired || methodologyExpansionRequired)) {
     backupPath = await createConsistentBackup(prisma, databasePath);
   }
 } finally {
@@ -252,15 +289,18 @@ if (commitmentBackfillRequired) {
 // wrapper against the existing backup and generic integrity preflight.
 run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-commitment-fields.ts', '--cutover'], url);
 run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-commitment-fields.ts', '--verify'], url);
+run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/check-methodology-foundation.ts', '--verify'], url);
 
 console.log(JSON.stringify({
   ok: true,
   stateBefore: state,
   participantStateBefore: participantState,
   commitmentStateBefore: commitmentState,
+  methodologyStateBefore: methodologyState,
   schemaChanges,
   matterBackfillRequired,
   participantBackfillRequired,
   commitmentBackfillRequired,
+  methodologyExpansionRequired,
   backupPath,
 }, null, 2));

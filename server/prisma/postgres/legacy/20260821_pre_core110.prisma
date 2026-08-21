@@ -147,43 +147,43 @@ model Person {
 }
 
 model Opportunity {
-  id                         String                       @id
+  id                         String              @id
   tenantId                   String
   accountId                  String
-  account                    Account                      @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  account                    Account             @relation(fields: [accountId], references: [id], onDelete: Cascade)
   name                       String
-  kind                       String                       @default("sales_opportunity") // 通用 Matter 类型；开放字符串，未知值必须可读
+  kind                       String              @default("sales_opportunity") // 通用 Matter 类型；开放字符串，未知值必须可读
   customerType               Int
   pipelineStage              String
   engageStage                String
   changeMode                 String?
-  singleSalesGoal            String                       @default("")
+  singleSalesGoal            String              @default("")
   customerBusinessGoal       String?
   buyingMotivation           String?
   primaryDPersonId           String? // 主拍板人 D；服务端校验同租户/客户/商机当前有效 D
   externalRef                String? // 销售包商机锚，跨系统幂等(WorkBuddy)
-  status                     String                       @default("active") // active/paused/won/lost
-  lifecycleStatus            String                       @default("active") // active/paused/completed/canceled；迁移期为 status 的影子列
+  status                     String              @default("active") // active/paused/won/lost
+  lifecycleStatus            String              @default("active") // active/paused/completed/canceled；迁移期为 status 的影子列
   outcomeKey                 String? // 开放结果键；销售 won/lost 映射到 completed + outcomeKey
   priority                   String? // 通用优先级开放键
   targetDate                 String? // 通用目标日 YYYY-MM-DD
   primaryOwnerUserId         String? // 稳定 User.id；CORE-104 确认归属并启用授权
   activeMethodologyBindingId String? // CORE-110 预留的唯一 primary binding 指针
-  productSolution            String                       @default("")
-  competitor                 String                       @default("")
-  competitiveSituation       String                       @default("") // 领先/胶着/落后/未识别
-  winProbability             Float                        @default(0) // ⚠️ 销售在江湖自填，WorkBuddy 永不推/覆盖
-  expectedSignDate           String                       @default("") // YYYY-MM-DD
-  expectedAmountW            Float                        @default(0) // 万元
-  meta                       String                       @default("{}") // JSON 兜底：BANT 辅助分等
-  c3Items                    String                       @default("{}") // JSON
-  c5Items                    String                       @default("{}") // JSON
-  memberScoped               Boolean                      @default(false) // false=全员可见(存量兼容)；true=按 OpportunityMember 过滤
+  productSolution            String              @default("")
+  competitor                 String              @default("")
+  competitiveSituation       String              @default("") // 领先/胶着/落后/未识别
+  winProbability             Float               @default(0) // ⚠️ 销售在江湖自填，WorkBuddy 永不推/覆盖
+  expectedSignDate           String              @default("") // YYYY-MM-DD
+  expectedAmountW            Float               @default(0) // 万元
+  meta                       String              @default("{}") // JSON 兜底：BANT 辅助分等
+  c3Items                    String              @default("{}") // JSON
+  c5Items                    String              @default("{}") // JSON
+  memberScoped               Boolean             @default(false) // false=全员可见(存量兼容)；true=按 OpportunityMember 过滤
   archivedAt                 DateTime?
   archivedBy                 String?
-  archiveReason              String                       @default("")
-  version                    Int                          @default(0) // 乐观锁：内容编辑并发冲突检测（UPDATE_OPP）
-  createdAt                  DateTime                     @default(now()) // 巡检停滞基准 / 排序（补齐：此前缺失，存量行迁移时填当时）
+  archiveReason              String              @default("")
+  version                    Int                 @default(0) // 乐观锁：内容编辑并发冲突检测（UPDATE_OPP）
+  createdAt                  DateTime            @default(now()) // 巡检停滞基准 / 排序（补齐：此前缺失，存量行迁移时填当时）
   roles                      OppRole[]
   edges                      Edge[]
   bis                        BurningIssue[]
@@ -191,8 +191,6 @@ model Opportunity {
   suggestions                RelSuggestion[]
   members                    OpportunityMember[]
   participants               MatterParticipant[]
-  methodologyBindings        MethodologyBinding[]
-  methodologyPilots          MethodologyPilotAssignment[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, accountId, externalRef])
@@ -203,97 +201,6 @@ model Opportunity {
   @@index([tenantId, targetDate])
   @@index([tenantId, activeMethodologyBindingId])
   @@index([tenantId, archivedAt])
-}
-
-// 租户级方法论身份。平台内置模板必须先物化为本租户快照，业务行不得引用跨租户可变模板。
-model MethodologyPack {
-  id                        String                   @id
-  tenantId                  String
-  key                       String
-  name                      String
-  sourceTemplateRef         String?
-  currentPublishedVersionId String?
-  archivedAt                DateTime?
-  version                   Int                      @default(0)
-  createdByUserId           String
-  createdAt                 DateTime                 @default(now())
-  updatedAt                 DateTime                 @updatedAt
-  versions                  MethodologyPackVersion[]
-
-  @@unique([tenantId, id])
-  @@unique([tenantId, key])
-  @@index([tenantId, currentPublishedVersionId])
-  @@index([tenantId, archivedAt])
-}
-
-// 版本行是不可变快照；发布后不原位修改，后续变更只能追加新 Version。
-model MethodologyPackVersion {
-  id                 String                       @id
-  tenantId           String
-  packId             String
-  pack               MethodologyPack              @relation(fields: [tenantId, packId], references: [tenantId, id], onDelete: Restrict)
-  versionKey         String
-  status             String                       @default("draft")
-  engineRef          String
-  contentHash        String
-  learningContentRef String?
-  sourceTemplateRef  String?
-  createdByUserId    String
-  createdAt          DateTime                     @default(now())
-  publishedByUserId  String?
-  publishedAt        DateTime?
-  bindings           MethodologyBinding[]
-  pilotAssignments   MethodologyPilotAssignment[]
-
-  @@unique([tenantId, id])
-  @@unique([tenantId, packId, id])
-  @@unique([tenantId, packId, versionKey])
-  @@index([tenantId, packId, status])
-  @@index([tenantId, sourceTemplateRef])
-}
-
-// Binding 只追加历史；当前 primary 仅由 Opportunity.activeMethodologyBindingId 单指针表达。
-model MethodologyBinding {
-  id                 String                       @id
-  tenantId           String
-  opportunityId      String
-  opportunity        Opportunity                  @relation(fields: [tenantId, opportunityId], references: [tenantId, id], onDelete: Restrict)
-  packId             String
-  versionId          String
-  methodologyVersion MethodologyPackVersion       @relation(fields: [tenantId, packId, versionId], references: [tenantId, packId, id], onDelete: Restrict)
-  decisionProfileRef String?
-  decisionProfile    IndustryPack?                @relation(fields: [decisionProfileRef], references: [id], onDelete: Restrict)
-  createdByUserId    String
-  createdAt          DateTime                     @default(now())
-  pilotBaselineFor   MethodologyPilotAssignment[] @relation("MethodologyPilotBaseline")
-
-  @@unique([tenantId, id])
-  @@index([tenantId, opportunityId, createdAt])
-  @@index([tenantId, packId, versionId])
-  @@index([tenantId, decisionProfileRef])
-}
-
-// Pilot 与 primary binding 并排存在，绝不修改 activeMethodologyBindingId。
-model MethodologyPilotAssignment {
-  id                 String                 @id
-  tenantId           String
-  opportunityId      String
-  opportunity        Opportunity            @relation(fields: [tenantId, opportunityId], references: [tenantId, id], onDelete: Restrict)
-  candidatePackId    String
-  candidateVersionId String
-  candidateVersion   MethodologyPackVersion @relation(fields: [tenantId, candidatePackId, candidateVersionId], references: [tenantId, packId, id], onDelete: Restrict)
-  baselineBindingId  String?
-  baselineBinding    MethodologyBinding?    @relation("MethodologyPilotBaseline", fields: [baselineBindingId], references: [id], onDelete: Restrict)
-  matterVersion      Int
-  status             String                 @default("active")
-  assignedByUserId   String
-  assignedAt         DateTime               @default(now())
-  completedAt        DateTime?
-
-  @@unique([tenantId, id])
-  @@index([tenantId, opportunityId, status])
-  @@index([tenantId, candidatePackId, candidateVersionId, status])
-  @@index([tenantId, baselineBindingId])
 }
 
 // 只记录命令元数据与变更字段名，不复制 FORM/BI/日志/会议正文等敏感业务内容。
@@ -594,24 +501,24 @@ model PlanAction {
 
   // CORE-106 Commitment 同行扩展。旧 PlanAction 字段在兼容期仍是 legacy authority；
   // 新字段是同一物理行的受检影子，不建立第二张 Commitment 主表。
-  kind                 String    @default("task")
-  ownerUserId          String?
-  executionStatus      String    @default("planned") // planned | completed | canceled | missed
-  confirmationStatus   String    @default("not_required") // not_required | pending | confirmed | declined
-  scheduledAtUtc       DateTime?
-  dueAtUtc             DateTime?
-  timeZone             String    @default("Asia/Shanghai")
-  isAllDay             Boolean   @default(true)
-  localDate            String?
-  confirmationDueAtUtc DateTime?
-  confirmedAtUtc       DateTime?
-  confirmedByUserId    String?
-  scheduleVersion      Int       @default(0)
-  nextCommitmentId     String?
-  source               String    @default("manual")
-  sourceRef            String?
-  archivedAt           DateTime?
-  version              Int       @default(0)
+  kind                  String    @default("task")
+  ownerUserId           String?
+  executionStatus       String    @default("planned") // planned | completed | canceled | missed
+  confirmationStatus    String    @default("not_required") // not_required | pending | confirmed | declined
+  scheduledAtUtc        DateTime?
+  dueAtUtc              DateTime?
+  timeZone              String    @default("Asia/Shanghai")
+  isAllDay              Boolean   @default(true)
+  localDate             String?
+  confirmationDueAtUtc  DateTime?
+  confirmedAtUtc        DateTime?
+  confirmedByUserId     String?
+  scheduleVersion       Int       @default(0)
+  nextCommitmentId      String?
+  source                String    @default("manual")
+  sourceRef             String?
+  archivedAt            DateTime?
+  version               Int       @default(0)
 
   @@index([accountId])
   @@index([opportunityId])
@@ -1017,14 +924,13 @@ model DealPdeConfig {
 
 // 行业包：schema+params+signals+actions+roles 的版本化容器（租户级，惰性装载）
 model IndustryPack {
-  id                  String               @id // pack_xxx
-  tenantId            String
-  packKey             String // "digital-energy"
-  schemaVersion       String // "1.1"
-  payload             String               @default("{}") // 五个 seed 文件的合并快照（JSON 文本）
-  active              Boolean              @default(true)
-  createdAt           DateTime             @default(now())
-  methodologyBindings MethodologyBinding[]
+  id            String   @id // pack_xxx
+  tenantId      String
+  packKey       String // "digital-energy"
+  schemaVersion String // "1.1"
+  payload       String   @default("{}") // 五个 seed 文件的合并快照（JSON 文本）
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
 
   @@unique([tenantId, packKey, schemaVersion])
 }

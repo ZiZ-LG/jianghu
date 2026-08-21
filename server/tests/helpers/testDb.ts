@@ -43,6 +43,10 @@ export async function assertDevDbUnchanged(expected: DevDbSnapshot): Promise<voi
 export async function clearTestTenant(client: PrismaClient, tenantId: string): Promise<void> {
   assertTestDatabaseUrl();
   await client.$transaction([
+    client.methodologyPilotAssignment.deleteMany({ where: { tenantId } }),
+    client.methodologyBinding.deleteMany({ where: { tenantId } }),
+    client.methodologyPackVersion.deleteMany({ where: { tenantId } }),
+    client.methodologyPack.deleteMany({ where: { tenantId } }),
     client.eVSnapshot.deleteMany({ where: { tenantId } }),
     client.signalCatalog.deleteMany({ where: { tenantId } }),
     client.actionCatalog.deleteMany({ where: { tenantId } }),

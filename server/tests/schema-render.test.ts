@@ -281,6 +281,7 @@ describe('PostgreSQL schema delivery', () => {
     const schema = await read('prisma/postgres/schema.prisma');
     const preScopeSchema = await read('prisma/postgres/legacy/20260821_pre_core109.prisma').catch(() => '');
     const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const schemaState = await read('scripts/postgres-scope-schema-state.ts').catch(() => '');
 
     expect(migration.trimStart().startsWith('BEGIN;')).toBe(true);
     expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
@@ -298,11 +299,78 @@ describe('PostgreSQL schema delivery', () => {
     expect(deployScript).toContain(
       'PRE_SCOPE_SCHEMA=prisma/postgres/legacy/20260821_pre_core109.prisma',
     );
+    expect(deployScript).toContain('SCOPE_MIGRATION=20260821040000_add_tenant_data_scope_policy');
+    expect(deployScript).toContain('recover_incomplete_scope_migration');
+    expect(deployScript).toContain('adopt_existing_scope_schema_if_safe');
+    expect(schemaState).toContain("process.stdout.write('legacy')");
+    expect(schemaState).toContain("process.stdout.write('expanded')");
+    expect(schemaState).toContain("process.stdout.write('partial')");
     expect(deployScript).toMatch(
       /matter_schema_matches_known_state\(\) \{[\s\S]*schema_matches "\$PRE_SCOPE_SCHEMA"[\s\S]*\|\| schema_matches "\$SCHEMA"/,
     );
     expect(deployScript).toMatch(
       /participant_schema_matches_known_state\(\) \{[\s\S]*schema_matches "\$PRE_SCOPE_SCHEMA"[\s\S]*\|\| schema_matches "\$SCHEMA"/,
     );
+  });
+
+  it('adds the CORE-110 methodology foundation with fail-closed active-pointer adoption', async () => {
+    const migration = await read('prisma/postgres/migrations/20260821050000_add_methodology_foundation/migration.sql').catch(() => '');
+    const schema = await read('prisma/postgres/schema.prisma');
+    const preMethodologySchema = await read('prisma/postgres/legacy/20260821_pre_core110.prisma').catch(() => '');
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const schemaState = await read('scripts/postgres-methodology-schema-state.ts').catch(() => '');
+    const integrity = await read('scripts/check-methodology-foundation.ts').catch(() => '');
+    const sqliteUpgrade = await read('scripts/upgrade-sqlite-schema.ts');
+    const packageJson = JSON.parse(await read('package.json')) as { scripts?: Record<string, string> };
+
+    expect(migration.trimStart().startsWith('BEGIN;')).toBe(true);
+    expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(migration).toContain("SET LOCAL lock_timeout = '30s'");
+    expect(migration).toContain("SET LOCAL statement_timeout = '15min'");
+    expect(migration).toContain('LOCK TABLE "Opportunity" IN SHARE ROW EXCLUSIVE MODE');
+    expect(migration).toContain('unmanaged active methodology binding pointer');
+    expect(migration.indexOf('unmanaged active methodology binding pointer'))
+      .toBeLessThan(migration.indexOf('CREATE TABLE "MethodologyPack"'));
+    for (const table of [
+      'MethodologyPack',
+      'MethodologyPackVersion',
+      'MethodologyBinding',
+      'MethodologyPilotAssignment',
+    ]) {
+      expect(migration).toContain(`CREATE TABLE "${table}"`);
+      expect(schema).toContain(`model ${table}`);
+    }
+    expect(migration).toContain('FOREIGN KEY ("tenantId", "opportunityId")');
+    expect(migration).toContain('FOREIGN KEY ("tenantId", "packId", "versionId")');
+    expect(migration).toContain('FOREIGN KEY ("tenantId", "candidatePackId", "candidateVersionId")');
+    expect(migration).toContain('FOREIGN KEY ("baselineBindingId")');
+    expect(migration).toContain('FOREIGN KEY ("decisionProfileRef")');
+    expect(schema).toMatch(/model MethodologyBinding \{[^}]*decisionProfileRef\s+String\?/);
+    expect(schema).toMatch(/model MethodologyBinding \{[^}]*createdAt\s+DateTime\s+@default\(now\(\)\)/);
+    expect(schema).not.toMatch(/model MethodologyBinding \{[^}]*active\s+Boolean/);
+    expect(schema).toMatch(/model MethodologyPilotAssignment \{[^}]*baselineBindingId\s+String\?/);
+    expect(schema).toMatch(/model MethodologyPilotAssignment \{[^}]*matterVersion\s+Int/);
+    expect(preMethodologySchema).toContain('activeMethodologyBindingId');
+    expect(preMethodologySchema).not.toContain('model MethodologyPack');
+
+    expect(deployScript).toContain('PRE_METHODOLOGY_SCHEMA=prisma/postgres/legacy/20260821_pre_core110.prisma');
+    expect(deployScript).toContain('METHODOLOGY_MIGRATION=20260821050000_add_methodology_foundation');
+    expect(deployScript).toContain('recover_incomplete_methodology_migration');
+    expect(deployScript).toContain('adopt_existing_methodology_schema_if_safe');
+    expect(deployScript).toContain('if [ "$matter_migration_pending" -eq 0 ]');
+    expect(deployScript).toContain('Matter 扩展后由方法论迁移事务内预检');
+    expect(deployScript.indexOf('migrate:methodology-report'))
+      .toBeLessThan(deployScript.indexOf('prisma migrate deploy'));
+    expect(deployScript.lastIndexOf('migrate:methodology-verify'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy'));
+    expect(schemaState).toContain("process.stdout.write('legacy')");
+    expect(schemaState).toContain("process.stdout.write('expanded')");
+    expect(schemaState).toContain("process.stdout.write('partial')");
+    expect(integrity).toContain('unmanaged active methodology binding pointer');
+    expect(integrity).toContain('methodology foundation integrity failed');
+    expect(sqliteUpgrade).toContain('inspectMethodologySchemaState');
+    expect(sqliteUpgrade).toContain("['tsx', 'scripts/check-methodology-foundation.ts', '--verify']");
+    expect(packageJson.scripts?.['migrate:methodology-report']).toBeTruthy();
+    expect(packageJson.scripts?.['migrate:methodology-verify']).toBeTruthy();
   });
 });

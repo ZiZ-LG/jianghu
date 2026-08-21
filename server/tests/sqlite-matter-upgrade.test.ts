@@ -7,6 +7,12 @@ import { describe, expect, it } from 'vitest';
 const serverRoot = resolve('.');
 const prismaBin = resolve('node_modules/.bin/prisma');
 const tsxBin = resolve('node_modules/.bin/tsx');
+const methodologyTables = [
+  'MethodologyPack',
+  'MethodologyPackVersion',
+  'MethodologyBinding',
+  'MethodologyPilotAssignment',
+] as const;
 
 function run(command: string, args: string[], databaseUrl: string) {
   const result = spawnSync(command, args, {
@@ -20,6 +26,20 @@ function run(command: string, args: string[], databaseUrl: string) {
   return result;
 }
 
+async function listMethodologyTables(client: {
+  $queryRawUnsafe<T>(query: string): Promise<T>;
+}): Promise<Array<{ name: string }>> {
+  return client.$queryRawUnsafe<Array<{ name: string }>>(
+    `SELECT name FROM sqlite_master
+      WHERE type = 'table'
+        AND name IN (
+          'MethodologyPack', 'MethodologyPackVersion',
+          'MethodologyBinding', 'MethodologyPilotAssignment'
+        )
+      ORDER BY name`,
+  );
+}
+
 async function createLegacyFixture(databasePath: string, databaseUrl: string): Promise<void> {
   // Prisma's schema engine cannot create a brand-new SQLite file on the
   // external workspace volume, but it can initialize an existing file.
@@ -28,6 +48,9 @@ async function createLegacyFixture(databasePath: string, databaseUrl: string): P
 
   const client = new PrismaClient({ datasourceUrl: databaseUrl });
   try {
+    for (const table of [...methodologyTables].reverse()) {
+      await client.$executeRawUnsafe(`DROP TABLE "${table}"`);
+    }
     const tenantColumns = await client.$queryRawUnsafe<Array<{ name: string }>>(
       'PRAGMA table_info("Tenant")',
     );
@@ -153,7 +176,7 @@ async function createLegacyFixture(databasePath: string, databaseUrl: string): P
   }
 }
 
-describe('CORE-103/105/106/108/109 SQLite schema upgrade', () => {
+describe('CORE-103/105/106/108/109/110 SQLite schema upgrade', () => {
   it('initializes a fresh SQLite database through the standard db:push wrapper', async () => {
     const directory = await mkdtemp(resolve('prisma/.matter-fresh-test-'));
     const relativeDirectory = basename(directory);
@@ -187,6 +210,11 @@ describe('CORE-103/105/106/108/109 SQLite schema upgrade', () => {
       ]));
       expect(Number(planColumns.find((column) => column.name === 'opportunityId')?.notnull)).toBe(0);
       await expect(client.matterParticipant.count()).resolves.toBe(0);
+      await expect(listMethodologyTables(client)).resolves.toHaveLength(methodologyTables.length);
+      await expect(client.methodologyPack.count()).resolves.toBe(0);
+      await expect(client.methodologyPackVersion.count()).resolves.toBe(0);
+      await expect(client.methodologyBinding.count()).resolves.toBe(0);
+      await expect(client.methodologyPilotAssignment.count()).resolves.toBe(0);
       await expect(readdir(join(directory, 'backups'))).rejects.toThrow();
     } finally {
       await client?.$disconnect();
@@ -259,6 +287,8 @@ describe('CORE-103/105/106/108/109 SQLite schema upgrade', () => {
           source: 'workbuddy', version: 0,
         },
       ]);
+      await expect(listMethodologyTables(upgradedClient)).resolves.toHaveLength(methodologyTables.length);
+      await expect(upgradedClient.methodologyBinding.count()).resolves.toBe(0);
       const upgradedPlanColumns = await upgradedClient.$queryRawUnsafe<Array<{ name: string; notnull: number }>>(
         'PRAGMA table_info("PlanAction")',
       );
@@ -304,6 +334,7 @@ describe('CORE-103/105/106/108/109 SQLite schema upgrade', () => {
         `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'MatterParticipant'`,
       );
       expect(restoredParticipantTables).toEqual([]);
+      await expect(listMethodologyTables(restoredClient)).resolves.toEqual([]);
       const restoredStatuses = await restoredClient.$queryRawUnsafe<Array<{ status: string }>>(
         'SELECT status FROM "Opportunity" ORDER BY status',
       );
@@ -433,6 +464,84 @@ describe('CORE-103/105/106/108/109 SQLite schema upgrade', () => {
       await expect(client.planAction.findUniqueOrThrow({
         where: { id: 'sqlite-upgrade-action-planned' }, select: { localDate: true },
       })).resolves.toEqual({ localDate: '2026-02-28' });
+    } finally {
+      await client?.$disconnect();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('fails before methodology DDL for an unmanaged active pointer and succeeds after repair', async () => {
+    const directory = await mkdtemp(resolve('prisma/.methodology-pointer-test-'));
+    const relativeDirectory = basename(directory);
+    const databasePath = join(directory, 'pointer.db');
+    const databaseUrl = `file:./${relativeDirectory}/pointer.db`;
+    let client: PrismaClient | null = null;
+    try {
+      await createLegacyFixture(databasePath, databaseUrl);
+      run(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], databaseUrl);
+
+      client = new PrismaClient({ datasourceUrl: databaseUrl });
+      for (const table of [...methodologyTables].reverse()) {
+        await client.$executeRawUnsafe(`DROP TABLE "${table}"`);
+      }
+      await client.$executeRawUnsafe(
+        `UPDATE "Opportunity"
+            SET "activeMethodologyBindingId" = 'unmanaged-binding'
+          WHERE id = 'sqlite-upgrade-active'`,
+      );
+      await client.$disconnect();
+      client = null;
+
+      const failed = spawnSync(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], {
+        cwd: serverRoot,
+        encoding: 'utf8',
+        env: { ...process.env, DATABASE_URL: databaseUrl, JIANGHU_SKIP_PRISMA_GENERATE: '1' },
+      });
+      expect(failed.status).not.toBe(0);
+      expect(`${failed.stdout}\n${failed.stderr}`).toContain('unmanaged active methodology binding pointer');
+
+      client = new PrismaClient({ datasourceUrl: databaseUrl });
+      await expect(listMethodologyTables(client)).resolves.toEqual([]);
+      await client.$executeRawUnsafe(
+        `UPDATE "Opportunity" SET "activeMethodologyBindingId" = NULL
+          WHERE id = 'sqlite-upgrade-active'`,
+      );
+      await client.$disconnect();
+      client = null;
+
+      run(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], databaseUrl);
+      client = new PrismaClient({ datasourceUrl: databaseUrl });
+      await expect(listMethodologyTables(client)).resolves.toHaveLength(methodologyTables.length);
+      await expect(client.methodologyBinding.count()).resolves.toBe(0);
+    } finally {
+      await client?.$disconnect();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('fails closed when only part of the methodology schema exists', async () => {
+    const directory = await mkdtemp(resolve('prisma/.methodology-partial-test-'));
+    const relativeDirectory = basename(directory);
+    const databaseUrl = `file:./${relativeDirectory}/partial.db`;
+    let client: PrismaClient | null = null;
+    try {
+      run(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], databaseUrl);
+      client = new PrismaClient({ datasourceUrl: databaseUrl });
+      for (const table of ['MethodologyPilotAssignment', 'MethodologyBinding', 'MethodologyPackVersion']) {
+        await client.$executeRawUnsafe(`DROP TABLE "${table}"`);
+      }
+      await client.$disconnect();
+      client = null;
+
+      const failed = spawnSync(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], {
+        cwd: serverRoot,
+        encoding: 'utf8',
+        env: { ...process.env, DATABASE_URL: databaseUrl, JIANGHU_SKIP_PRISMA_GENERATE: '1' },
+      });
+      expect(failed.status).not.toBe(0);
+      expect(`${failed.stdout}\n${failed.stderr}`).toContain(
+        'partial methodology foundation detected; restore the latest backup before retrying',
+      );
     } finally {
       await client?.$disconnect();
       await rm(directory, { recursive: true, force: true });
