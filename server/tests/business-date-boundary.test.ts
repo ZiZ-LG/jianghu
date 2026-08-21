@@ -125,18 +125,21 @@ describe('Asia/Shanghai business-day writes at Beijing 00:30', () => {
       .resolves.toMatchObject({ done: true, doneAt: '2026-07-15' });
   });
 
-  it('treats yesterday in Beijing as overdue during patrol', async () => {
+  it('treats yesterday in Beijing as a due all-day Commitment during patrol', async () => {
     const tree = await seedTree('patrol-date');
     await test.prisma.planAction.create({ data: {
       id: 'action-patrol-date', tenantId: test.tenant.id, accountId: tree.accountId,
       opportunityId: tree.opportunityId, personId: tree.personId, title: '虚构逾期行动',
       startDate: '2026-07-14', endDate: '2026-07-14', draft: false, done: false,
+      ownerId: test.owner.id, ownerUserId: test.owner.id,
+      executionStatus: 'planned', confirmationStatus: 'not_required',
+      isAllDay: true, localDate: '2026-07-14', timeZone: 'Asia/Shanghai',
     } });
 
     await runPatrol();
 
     await expect(test.prisma.reminder.findFirst({ where: {
-      tenantId: test.tenant.id, opportunityId: tree.opportunityId, kind: 'action_overdue', entityId: 'action-patrol-date',
+      tenantId: test.tenant.id, opportunityId: tree.opportunityId, kind: 'commitment_due', entityId: 'action-patrol-date',
     } })).resolves.toMatchObject({ status: 'pending' });
   });
 
@@ -157,7 +160,7 @@ describe('Asia/Shanghai business-day writes at Beijing 00:30', () => {
     const reminders = await test.prisma.reminder.findMany({ where: {
       tenantId: test.tenant.id,
       opportunityId: tree.opportunityId,
-      kind: 'action_overdue',
+      kind: 'commitment_due',
     } });
     expect(reminders).toEqual([]);
     expect(JSON.stringify(await test.prisma.reminder.findMany({ where: { tenantId: test.tenant.id } }))).not.toContain('NaN');

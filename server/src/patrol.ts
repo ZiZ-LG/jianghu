@@ -3,7 +3,7 @@
 // 五规则互补于前端 GapCards(g64111 缺口)——这里只管「时间 / 覆盖」维度。
 // 严守铁律②：只产出草稿(进收件箱人审)，绝不直接改库。
 
-import { businessDayDistance, businessYmd } from './businessDate.js';
+import { businessDayDistance, businessWeekKey, businessYmd } from './businessDate.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 export const STALL_DAYS = 7; // 商机多久无新动作算停滞
@@ -20,14 +20,6 @@ export interface PatrolRole {
   personCreatedAt: Date;        // 该人建立时间（P14 FORM 空缺规则用宽限期判断）
   formFilledCount: number;      // FORM 四大项（family/occupation/recreation/moneyMotivation）非空数量 0..4
 }
-// 行动牌逾期规则的最小输入（P14）
-export interface PatrolAction {
-  actionId: string;
-  title: string;
-  personId: string | null; // 责任人（可空）
-  endDate: string;         // YYYY-MM-DD 最晚完成日
-  personName?: string;     // 冗余便于文案（jobs 组装时填）
-}
 export interface PatrolOpp {
   tenantId: string;
   accountId: string;
@@ -37,15 +29,22 @@ export interface PatrolOpp {
   createdAt: Date; // 商机建立时间（无任何活动时的停滞基准）
   lastActivityAt: Date | null; // max(visitNote/evidence/planAction createdAt)
   roles: PatrolRole[];
-  overdueActions: PatrolAction[]; // 已上桌·未完成·endDate 已过 的行动牌（jobs.ts 预筛，patrol.ts 不再查库）
 }
 
-export type ReminderKind = 'stalled' | 'no_decider' | 'sentiment_recheck' | 'action_overdue' | 'form_empty';
+export type ReminderKind =
+  | 'stalled'
+  | 'no_decider'
+  | 'sentiment_recheck'
+  | 'action_overdue'
+  | 'form_empty'
+  | 'confirmation_due'
+  | 'commitment_due'
+  | 'matter_without_next_commitment';
 export interface ReminderDraft {
   tenantId: string;
   accountId: string;
   accountName: string;
-  opportunityId: string;
+  opportunityId: string | null;
   oppName: string;
   kind: ReminderKind;
   title: string;
@@ -53,6 +52,132 @@ export interface ReminderDraft {
   severity: 'info' | 'warn';
   entityId: string | null;
   dedupeKey: string;
+}
+
+export interface PatrolCommitment {
+  tenantId: string;
+  accountId: string;
+  accountName: string;
+  matterId: string | null;
+  matterName: string;
+  commitmentId: string;
+  title: string;
+  ownerUserId: string | null;
+  executionStatus: string;
+  confirmationStatus: string;
+  scheduledAtUtc: Date | null;
+  dueAtUtc: Date | null;
+  timeZone: string;
+  isAllDay: boolean;
+  localDate: string | null;
+  confirmationDueAtUtc: Date | null;
+  scheduleVersion: number;
+  archivedAt: Date | null;
+}
+
+export interface PatrolMatterNextStep {
+  tenantId: string;
+  accountId: string;
+  accountName: string;
+  matterId: string;
+  matterName: string;
+  hasValidNextCommitment: boolean;
+  businessTimeZone: string;
+}
+
+const commitmentBase = (commitment: PatrolCommitment) => ({
+  tenantId: commitment.tenantId,
+  accountId: commitment.accountId,
+  accountName: commitment.accountName,
+  opportunityId: commitment.matterId,
+  oppName: commitment.matterName,
+  entityId: commitment.commitmentId,
+});
+
+/**
+ * Derive read-only reminders from the generic Commitment state. The function
+ * never mutates the Commitment; a changed scheduleVersion deliberately yields
+ * a new key so the patrol writer can resolve the old revision.
+ */
+export function computeCommitmentReminders(commitment: PatrolCommitment, now: Date): ReminderDraft[] {
+  if (commitment.archivedAt
+    || commitment.executionStatus !== 'planned'
+    || commitment.confirmationStatus === 'declined') return [];
+
+  const out: ReminderDraft[] = [];
+  const base = commitmentBase(commitment);
+  const key = (kind: 'confirmation_due' | 'commitment_due') =>
+    `${commitment.tenantId}:${commitment.commitmentId}:${kind}:${commitment.scheduleVersion}`;
+
+  if (commitment.confirmationStatus === 'pending'
+    && commitment.confirmationDueAtUtc
+    && commitment.confirmationDueAtUtc.getTime() <= now.getTime()) {
+    out.push({
+      ...base,
+      kind: 'confirmation_due',
+      severity: 'warn',
+      title: `待确认：${commitment.title}`,
+      detail: '最晚确认时间已到；请确认、拒绝或改期。巡检不会替你改变承诺状态。',
+      dedupeKey: key('confirmation_due'),
+    });
+  }
+
+  const eventAt = commitment.dueAtUtc ?? commitment.scheduledAtUtc;
+  const timedDue = !commitment.isAllDay && !!eventAt && eventAt.getTime() <= now.getTime();
+  let allDayDue = false;
+  try {
+    allDayDue = commitment.isAllDay
+      && !!commitment.localDate
+      && businessDayDistance(businessYmd(now, commitment.timeZone), commitment.localDate) >= 0;
+  } catch { /* malformed persisted time zone fails closed without stopping the patrol */ }
+  if (timedDue || allDayDue) {
+    out.push({
+      ...base,
+      kind: 'commitment_due',
+      severity: 'warn',
+      title: `承诺已到期：${commitment.title}`,
+      detail: '请明确完成、取消、标记未赴约或改期；到期本身不会自动改写正式状态。',
+      dedupeKey: key('commitment_due'),
+    });
+  }
+
+  return out;
+}
+
+/** A valid next step must still be planned, assigned and carry a coherent schedule. */
+export function isValidNextCommitment(commitment: PatrolCommitment): boolean {
+  if (commitment.archivedAt
+    || commitment.executionStatus !== 'planned'
+    || commitment.confirmationStatus === 'declined'
+    || !commitment.ownerUserId
+    || !commitment.title.trim()) return false;
+  if (commitment.confirmationStatus === 'pending' && !commitment.confirmationDueAtUtc) return false;
+  if (commitment.isAllDay) {
+    return !!commitment.localDate
+      && /^\d{4}-\d{2}-\d{2}$/.test(commitment.localDate)
+      && !commitment.scheduledAtUtc
+      && !commitment.dueAtUtc;
+  }
+  return !commitment.localDate
+    && (!!commitment.scheduledAtUtc || !!commitment.dueAtUtc);
+}
+
+/** One weekly read-only prompt for an active Matter that has no valid next step. */
+export function computeMatterWithoutNextReminder(matter: PatrolMatterNextStep, now: Date): ReminderDraft | null {
+  if (matter.hasValidNextCommitment) return null;
+  return {
+    tenantId: matter.tenantId,
+    accountId: matter.accountId,
+    accountName: matter.accountName,
+    opportunityId: matter.matterId,
+    oppName: matter.matterName,
+    kind: 'matter_without_next_commitment',
+    severity: 'warn',
+    entityId: matter.matterId,
+    title: `「${matter.matterName}」还没有有效下一步`,
+    detail: '请补充一条负责人和时间明确的跟进承诺；巡检只提醒，不会替你创建。',
+    dedupeKey: `${matter.tenantId}:${matter.matterId}:matter_without_next_commitment:${businessWeekKey(now, matter.businessTimeZone)}`,
+  };
 }
 
 const SENT_LABEL: Record<string, string> = { star: '排他支持', plus: '明确支持', neutral: '中立', unknown: '未明', minus: '负面', x: '倒向对手' };
@@ -119,21 +244,7 @@ export function computeReminders(opp: PatrolOpp, now: Date): ReminderDraft[] {
     });
   }
 
-  // P14 规则④：行动牌逾期——已上桌未完成，endDate 已过。每张牌一条，警戒等级按逾期天数分档
-  for (const a of opp.overdueActions) {
-    const overdueDays = businessDayDistance(businessYmd(now), a.endDate);
-    if (!Number.isFinite(overdueDays) || overdueDays <= 0) continue; // 防御：存量非法日期与未逾期均跳过
-    const who = a.personName ? `【责任人 ${a.personName}】` : '（未指定责任人）';
-    out.push({
-      ...base, kind: 'action_overdue', entityId: a.actionId,
-      severity: overdueDays >= 7 ? 'warn' : 'info',
-      title: `行动逾期 ${overdueDays} 天：${a.title || '（未命名）'}`,
-      detail: `${who} 计划最晚 ${a.endDate} 完成，已逾期 ${overdueDays} 天。做完就打卡反馈；跟不上就调期。`,
-      dedupeKey: `${opp.opportunityId}:action_overdue:${a.actionId}`,
-    });
-  }
-
-  // P14 规则⑤：关键人 FORM 长期空缺——A/D 建立 ≥ FORM_GRACE_DAYS，FORM 四大项全空。1 个人一条
+  // P14 规则④：关键人 FORM 长期空缺——A/D 建立 ≥ FORM_GRACE_DAYS，FORM 四大项全空。1 个人一条
   for (const r of opp.roles) {
     if (r.role !== 'A' && r.role !== 'D') continue;
     if (r.formFilledCount > 0) continue; // 四大项任一有值就算跑起来了

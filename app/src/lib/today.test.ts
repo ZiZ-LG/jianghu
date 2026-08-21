@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import type { CommitmentV2 } from '@jianghu/domain-contracts';
 import { computeToday, needsYouByAccount } from './today';
 import { seedAccount } from '../data/seed';
 import { newPlanAction } from '../store';
@@ -6,76 +7,122 @@ import type { Account } from '../types';
 
 const TODAY = '2026-07-02';
 
-// 基于 seed 克隆一个可控 fixture：清掉行动牌，按需注入
-function accWith(actions: Array<{ title: string; endDate: string; done?: boolean; draft?: boolean }>): Account {
-  const acc: Account = JSON.parse(JSON.stringify(seedAccount));
-  const opp = acc.opportunities[0];
-  acc.planActions = actions.map((s, i) => {
-    const pa = newPlanAction(acc.id, opp.id, s.endDate);
-    pa.id = 'pa' + i; pa.title = s.title; pa.endDate = s.endDate; pa.done = s.done ?? false; pa.draft = s.draft ?? false;
-    return pa;
-  });
-  return acc;
+type CommitmentSeed = {
+  title: string;
+  localDate: string;
+  executionStatus?: CommitmentV2['executionStatus'];
+  confirmationStatus?: CommitmentV2['confirmationStatus'];
+  matterId?: string | null;
+};
+
+function accWith(items: CommitmentSeed[]): Account {
+  const account: Account = JSON.parse(JSON.stringify(seedAccount));
+  const matter = account.opportunities[0];
+  account.commitments = items.map((item, index): CommitmentV2 => ({
+    id: `commitment-${index}`,
+    customerId: account.id,
+    matterId: item.matterId === undefined ? matter.id : item.matterId,
+    personId: null,
+    title: item.title,
+    kind: 'task',
+    ownerUserId: 'owner-a',
+    executionStatus: item.executionStatus ?? 'planned',
+    confirmationStatus: item.confirmationStatus ?? 'not_required',
+    scheduledAtUtc: null,
+    dueAtUtc: null,
+    timeZone: 'Asia/Shanghai',
+    isAllDay: true,
+    localDate: item.localDate,
+    confirmationDueAtUtc: null,
+    confirmedAtUtc: null,
+    confirmedByUserId: null,
+    scheduleVersion: 0,
+    nextCommitmentId: null,
+    source: 'manual',
+    sourceRef: null,
+    archivedAt: null,
+    version: 0,
+  }));
+  return account;
 }
 
-describe('today · 今日三件事（P5）', () => {
-  it('逾期行动排最前，越久越靠前', () => {
-    const acc = accWith([
-      { title: '拜访 A', endDate: '2026-06-30' }, // 逾期 2 天
-      { title: '拜访 B', endDate: '2026-06-20' }, // 逾期 12 天
+describe('today · generic Commitment consumer', () => {
+  it('逾期 Commitment 排最前，越久越靠前', () => {
+    const account = accWith([
+      { title: '拜访 A', localDate: '2026-06-30' },
+      { title: '拜访 B', localDate: '2026-06-20' },
     ]);
-    const out = computeToday([acc], [], TODAY);
+    const out = computeToday([account], [], TODAY);
     expect(out[0].text).toContain('拜访 B');
     expect(out[0].text).toContain('逾期 12 天');
     expect(out[1].text).toContain('拜访 A');
   });
 
-  it('done/draft/无到期日 的行动不进清单', () => {
-    const acc = accWith([
-      { title: '已完成', endDate: '2026-06-01', done: true },
-      { title: '草稿', endDate: '2026-06-01', draft: true },
+  it('终态、客户拒绝和 legacy PlanAction 都不进入通用清单', () => {
+    const account = accWith([
+      { title: '已完成', localDate: '2026-06-01', executionStatus: 'completed' },
+      { title: '已取消', localDate: '2026-06-01', executionStatus: 'canceled' },
+      { title: '客户拒绝', localDate: '2026-06-01', confirmationStatus: 'declined' },
     ]);
-    const out = computeToday([acc], [], TODAY);
-    expect(out.some((t) => t.text.includes('已完成') || t.text.includes('草稿'))).toBe(false);
+    const legacy = newPlanAction(account.id, account.opportunities[0].id, '2026-05-01');
+    legacy.title = '旧行动牌不得 fallback';
+    account.planActions = [legacy];
+
+    const out = computeToday([account], [], TODAY, 20);
+    expect(out.some((item) => ['已完成', '已取消', '客户拒绝', '旧行动牌不得 fallback']
+      .some((text) => item.text.includes(text)))).toBe(false);
+  });
+
+  it('客户级 Commitment 无 Matter 也能进入 Today', () => {
+    const account = accWith([{ title: '客户级回访', localDate: TODAY, matterId: null }]);
+    expect(computeToday([account], [], TODAY)[0]).toMatchObject({
+      text: expect.stringContaining('客户级回访'),
+      sub: account.name,
+    });
   });
 
   it('顺序：warn 提醒 > 缺口 > info 提醒；默认取 3 件', () => {
-    const acc = accWith([]);
+    const account = accWith([]);
     const reminders = [
-      { accountId: acc.id, accountName: acc.name, title: '商机停滞 8 天', severity: 'warn' },
-      { accountId: acc.id, accountName: acc.name, title: '一条 info 提醒', severity: 'info' },
+      { accountId: account.id, accountName: account.name, title: '商机停滞 8 天', severity: 'warn' },
+      { accountId: account.id, accountName: account.name, title: '一条 info 提醒', severity: 'info' },
     ];
-    const all = computeToday([acc], reminders, TODAY, 10); // 放宽上限看完整顺序
-    const iWarn = all.findIndex((t) => t.text === '商机停滞 8 天');
-    const iGap = all.findIndex((t) => t.icon === '🎒');
-    const iInfo = all.findIndex((t) => t.text === '一条 info 提醒');
+    const all = computeToday([account], reminders, TODAY, 10);
+    const iWarn = all.findIndex((item) => item.text === '商机停滞 8 天');
+    const iGap = all.findIndex((item) => item.icon === '🎒');
+    const iInfo = all.findIndex((item) => item.text === '一条 info 提醒');
     expect(iWarn).toBe(0);
     expect(iGap).toBeGreaterThan(iWarn);
     expect(iInfo).toBeGreaterThan(iGap);
-    expect(computeToday([acc], reminders, TODAY)).toHaveLength(3); // 默认截 3
+    expect(computeToday([account], reminders, TODAY)).toHaveLength(3);
   });
 
-  it('今天到期的行动压过 warn 提醒', () => {
-    const acc = accWith([{ title: '今天要交', endDate: TODAY }]);
-    const out = computeToday([acc], [{ accountId: acc.id, accountName: acc.name, title: 'warn 提醒', severity: 'warn' }], TODAY);
+  it('今天到期的 Commitment 压过 warn 提醒', () => {
+    const account = accWith([{ title: '今天要交', localDate: TODAY }]);
+    const out = computeToday([account], [{
+      accountId: account.id, accountName: account.name, title: 'warn 提醒', severity: 'warn',
+    }], TODAY);
     expect(out[0].text).toContain('今天要交');
   });
 });
 
-describe('today · 需要你角标（P5）', () => {
-  it('聚合 inbox 各类 + 逾期行动；done/draft 不计', () => {
-    const acc = accWith([
-      { title: '逾期', endDate: '2026-06-30' },
-      { title: '没到期', endDate: '2026-12-31' },
-      { title: '草稿逾期', endDate: '2026-06-01', draft: true },
+describe('today · 需要你角标', () => {
+  it('聚合 inbox 与到期 Commitment，并按 entityId 避免同一到期提醒重复计数', () => {
+    const account = accWith([
+      { title: '逾期', localDate: '2026-06-30' },
+      { title: '没到期', localDate: '2026-12-31' },
     ]);
+    const dueId = account.commitments![0].id;
     const inbox = {
-      rels: [{ accountId: acc.id }],
-      proposals: [{ accountId: acc.id }, { accountId: acc.id }],
-      reminders: [{ accountId: 'other-acc' }],
+      rels: [{ accountId: account.id }],
+      proposals: [{ accountId: account.id }, { accountId: account.id }],
+      reminders: [
+        { accountId: account.id, kind: 'commitment_due', entityId: dueId },
+        { accountId: 'other-acc' },
+      ],
     };
-    const m = needsYouByAccount([acc], inbox, TODAY);
-    expect(m.get(acc.id)).toBe(4);        // 1 rel + 2 proposal + 1 逾期行动
-    expect(m.get('other-acc')).toBe(1);   // 别的客户的提醒各归各
+    const counts = needsYouByAccount([account], inbox, TODAY);
+    expect(counts.get(account.id)).toBe(4);
+    expect(counts.get('other-acc')).toBe(1);
   });
 });

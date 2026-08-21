@@ -46,3 +46,13 @@ export function shiftBusinessYmd(date: Date, days: number): string {
   const shifted = new Date(value + days * 86_400_000);
   return `${shifted.getUTCFullYear()}-${pad2(shifted.getUTCMonth() + 1)}-${pad2(shifted.getUTCDate())}`;
 }
+
+/** Stable Monday anchor for a business week in the selected IANA time zone. */
+export function businessWeekKey(date: Date = new Date(), timeZone: string = BUSINESS_TIME_ZONE): string {
+  const value = ymdUtc(businessYmd(date, timeZone));
+  if (!Number.isFinite(value)) throw new RangeError('Unable to derive business week');
+  const weekday = new Date(value).getUTCDay();
+  const daysSinceMonday = (weekday + 6) % 7;
+  const monday = new Date(value - daysSinceMonday * 86_400_000);
+  return `${monday.getUTCFullYear()}-${pad2(monday.getUTCMonth() + 1)}-${pad2(monday.getUTCDate())}`;
+}

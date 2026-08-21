@@ -6,10 +6,20 @@ import { prisma } from './prisma.js';
 import { denyViewer } from './scope.js';
 import { discoverPersons, researchCompanyProfile } from './enrich.js';
 import { generateRelSuggestions } from './suggest.js';
-import { computeReminders, recordPatrol, type PatrolOpp, type PatrolRole, type PatrolAction } from './patrol.js';
+import {
+  computeCommitmentReminders,
+  computeMatterWithoutNextReminder,
+  computeReminders,
+  isValidNextCommitment,
+  recordPatrol,
+  type PatrolCommitment,
+  type PatrolOpp,
+  type PatrolRole,
+  type ReminderDraft,
+} from './patrol.js';
 import type { DbClient } from './mutation/scopeGuards.js';
 import { activePersonWhere } from './activePerson.js';
-import { businessYmd } from './businessDate.js';
+import { BUSINESS_TIME_ZONE } from './businessDate.js';
 
 // 江湖自算 · 轻量后台任务队列（DB-backed）。
 // 设计取舍（对齐架构纲领「加轻量 job 队列」）：单实例 setInterval 消费，原子 claim；
@@ -438,82 +448,201 @@ let patrolTimer: NodeJS.Timeout | null = null;
 let patrolling = false;
 
 /**
- * 巡检一轮：遍历所有租户的活跃商机 → computeReminders → 按 dedupeKey upsert（去重不刷屏）+ 自动消除。
- * - 新提醒 → create(pending)；已 pending → 刷新文案；已 dismissed/done → 跳过（尊重人已处理，不复活）。
- * - 条件消失（某 pending 的 dedupeKey 不在本轮 draft）→ status=done（提醒随商机更新自动消失）。
- * tenantId 隔离：每条 Reminder 带其商机的 tenantId（后台动作在明确租户上下文，铁律①）。
+ * 巡检一轮：读取通用 Commitment 字段和 active Matter，派生只读 Reminder。
+ * 正式业务行永不在此函数中写入；状态变化通过本轮 draft key 的缺失自动结束旧提醒。
  */
 export async function runPatrol(): Promise<{ scanned: number; created: number; resolved: number }> {
   const now = new Date();
-  const opps = await prisma.opportunity.findMany({ where: { status: 'active' } });
-  const accIds = [...new Set(opps.map((o) => o.accountId))];
-  const accs = accIds.length ? await prisma.account.findMany({ where: { id: { in: accIds } } }) : [];
-  const accName = new Map(accs.map((a) => [a.id, a.name]));
-  let created = 0, resolved = 0;
-  const byTenant = new Map<string, { scanned: number; created: number; resolved: number }>(); // P2 心跳：按租户分桶（红线：绝不把全平台数字给单租户看）
-  const bucket = (tid: string) => { let b = byTenant.get(tid); if (!b) { b = { scanned: 0, created: 0, resolved: 0 }; byTenant.set(tid, b); } return b; };
+  const opps = await prisma.opportunity.findMany({ where: { lifecycleStatus: 'active', archivedAt: null } });
+  const accs = await prisma.account.findMany({
+    where: { archivedAt: null },
+    select: { id: true, tenantId: true, name: true },
+  });
+  const accIds = accs.map((account) => account.id);
+  const accountKey = (tenantId: string, accountId: string) => `${tenantId}\u0000${accountId}`;
+  const opportunityKey = (tenantId: string, opportunityId: string) => `${tenantId}\u0000${opportunityId}`;
+  const accounts = new Map(accs.map((account) => [accountKey(account.tenantId, account.id), account]));
+  const validOpps = opps.filter((opportunity) => accounts.has(accountKey(opportunity.tenantId, opportunity.accountId)));
+  const opportunities = new Map(validOpps.map((opportunity) => [opportunityKey(opportunity.tenantId, opportunity.id), opportunity]));
 
-  for (const opp of opps) {
-    // 最近活动 = max(evidence / visitNote / planAction)；并按人取最近证据（支持度复查用）
-    const evs = await prisma.evidenceEvent.findMany({ where: { opportunityId: opp.id }, orderBy: { createdAt: 'desc' } });
-    const lastEvByPerson = new Map<string, Date>();
-    for (const e of evs) if (!lastEvByPerson.has(e.personId)) lastEvByPerson.set(e.personId, e.createdAt);
-    const [lastVn, lastPa] = await Promise.all([
-      prisma.visitNote.findFirst({ where: { opportunityId: opp.id }, orderBy: { createdAt: 'desc' } }),
-      prisma.planAction.findFirst({ where: { opportunityId: opp.id }, orderBy: { createdAt: 'desc' } }),
+  const rawCommitments = accIds.length ? await prisma.planAction.findMany({
+    where: { accountId: { in: accIds }, archivedAt: null },
+    orderBy: { createdAt: 'desc' },
+  }) : [];
+  const commitments: Array<{ row: (typeof rawCommitments)[number]; patrol: PatrolCommitment }> = [];
+  const commitmentsByMatter = new Map<string, PatrolCommitment[]>();
+  const latestCommitmentAtByMatter = new Map<string, Date>();
+  for (const row of rawCommitments) {
+    const account = accounts.get(accountKey(row.tenantId, row.accountId));
+    if (!account) continue;
+    const matterId: string | null = row.opportunityId;
+    const matter = matterId ? opportunities.get(opportunityKey(row.tenantId, matterId)) : undefined;
+    if (matterId && (!matter || matter.accountId !== row.accountId)) continue;
+    const patrol: PatrolCommitment = {
+      tenantId: row.tenantId,
+      accountId: row.accountId,
+      accountName: account.name,
+      matterId,
+      matterName: matter?.name ?? '',
+      commitmentId: row.id,
+      title: row.title,
+      ownerUserId: row.ownerUserId,
+      executionStatus: row.executionStatus,
+      confirmationStatus: row.confirmationStatus,
+      scheduledAtUtc: row.scheduledAtUtc,
+      dueAtUtc: row.dueAtUtc,
+      timeZone: row.timeZone,
+      isAllDay: row.isAllDay,
+      localDate: row.localDate,
+      confirmationDueAtUtc: row.confirmationDueAtUtc,
+      scheduleVersion: row.scheduleVersion,
+      archivedAt: row.archivedAt,
+    };
+    commitments.push({ row, patrol });
+    if (matterId) {
+      const key = opportunityKey(row.tenantId, matterId);
+      const rows = commitmentsByMatter.get(key) ?? [];
+      rows.push(patrol);
+      commitmentsByMatter.set(key, rows);
+      const currentLatest = latestCommitmentAtByMatter.get(key);
+      if (!currentLatest || row.createdAt > currentLatest) latestCommitmentAtByMatter.set(key, row.createdAt);
+    }
+  }
+
+  const drafts: ReminderDraft[] = commitments.flatMap(({ patrol }) => computeCommitmentReminders(patrol, now));
+  const byTenant = new Map<string, { scanned: number; created: number; resolved: number }>();
+  const bucket = (tenantId: string) => {
+    let current = byTenant.get(tenantId);
+    if (!current) {
+      current = { scanned: 0, created: 0, resolved: 0 };
+      byTenant.set(tenantId, current);
+    }
+    return current;
+  };
+
+  for (const opp of validOpps) {
+    const account = accounts.get(accountKey(opp.tenantId, opp.accountId))!;
+    const [evs, lastVn, roles] = await Promise.all([
+      prisma.evidenceEvent.findMany({
+        where: { tenantId: opp.tenantId, accountId: opp.accountId, opportunityId: opp.id },
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.visitNote.findFirst({
+        where: { tenantId: opp.tenantId, accountId: opp.accountId, opportunityId: opp.id },
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.oppRole.findMany({ where: { tenantId: opp.tenantId, opportunityId: opp.id } }),
     ]);
-    const times = [evs[0]?.createdAt, lastVn?.createdAt, lastPa?.createdAt].filter(Boolean) as Date[];
-    const lastActivityAt = times.length ? new Date(Math.max(...times.map((t) => t.getTime()))) : null;
+    const lastEvByPerson = new Map<string, Date>();
+    for (const evidence of evs) {
+      if (!lastEvByPerson.has(evidence.personId)) lastEvByPerson.set(evidence.personId, evidence.createdAt);
+    }
+    const lastPaAt = latestCommitmentAtByMatter.get(opportunityKey(opp.tenantId, opp.id));
+    const times = [evs[0]?.createdAt, lastVn?.createdAt, lastPaAt].filter(Boolean) as Date[];
+    const lastActivityAt = times.length ? new Date(Math.max(...times.map((time) => time.getTime()))) : null;
 
-    const roles = await prisma.oppRole.findMany({ where: { opportunityId: opp.id } });
-    const persons = roles.length ? await prisma.person.findMany({ where: { tenantId: opp.tenantId, accountId: opp.accountId, id: { in: roles.map((r) => r.personId) }, ...activePersonWhere } }) : [];
-    const personById = new Map(persons.map((p) => [p.id, p]));
-    const nameOf = new Map(persons.map((p) => [p.id, p.name]));
-    // P14：FORM 四大项非空计数（family/occupation/recreation/moneyMotivation）——FORM 空缺规则的量化输入
+    const persons = roles.length ? await prisma.person.findMany({ where: {
+      tenantId: opp.tenantId,
+      accountId: opp.accountId,
+      id: { in: roles.map((role) => role.personId) },
+      ...activePersonWhere,
+    } }) : [];
+    const personById = new Map(persons.map((person) => [person.id, person]));
+    const nameOf = new Map(persons.map((person) => [person.id, person.name]));
     const formFilled = (formStr: string): number => {
-      try { const f = JSON.parse(formStr || '{}');
-        return ['family', 'occupation', 'recreation', 'moneyMotivation'].filter((k) => String(f?.[k] || '').trim() !== '').length;
+      try {
+        const form = JSON.parse(formStr || '{}');
+        return ['family', 'occupation', 'recreation', 'moneyMotivation']
+          .filter((key) => String(form?.[key] || '').trim() !== '').length;
       } catch { return 0; }
     };
-    const patrolRoles: PatrolRole[] = roles.map((r) => ({
-      personId: r.personId, personName: nameOf.get(r.personId) ?? '某干系人',
-      role: r.role, sentiment: r.sentiment, lastEvidenceAt: lastEvByPerson.get(r.personId) ?? null,
-      // Person 表无 createdAt——用 OppRole.assessedAt（M2 有，SET_ROLE 时刷新）代理，兜底商机 createdAt
-      personCreatedAt: r.assessedAt ?? opp.createdAt,
-      formFilledCount: formFilled(personById.get(r.personId)?.form ?? '{}'),
+    const patrolRoles: PatrolRole[] = roles.map((role) => ({
+      personId: role.personId,
+      personName: nameOf.get(role.personId) ?? '某干系人',
+      role: role.role,
+      sentiment: role.sentiment,
+      lastEvidenceAt: lastEvByPerson.get(role.personId) ?? null,
+      personCreatedAt: role.assessedAt ?? opp.createdAt,
+      formFilledCount: formFilled(personById.get(role.personId)?.form ?? '{}'),
     }));
-
-    // P14：预筛已上桌未完成、endDate 已过的行动牌（草稿=没上桌不算逾期）
-    const nowYmd = businessYmd(now);
-    const overdueRaw = await prisma.planAction.findMany({
-      where: { opportunityId: opp.id, done: false, draft: false, endDate: { lt: nowYmd, not: '' } },
-      select: { id: true, title: true, personId: true, endDate: true },
-    });
-    const overdueActions: PatrolAction[] = overdueRaw.map((a) => ({
-      actionId: a.id, title: a.title, personId: a.personId ?? null, endDate: a.endDate,
-      personName: a.personId ? nameOf.get(a.personId) : undefined,
-    }));
-
     const patrolOpp: PatrolOpp = {
-      tenantId: opp.tenantId, accountId: opp.accountId, accountName: accName.get(opp.accountId) ?? '',
-      opportunityId: opp.id, oppName: opp.name, createdAt: opp.createdAt, lastActivityAt, roles: patrolRoles, overdueActions,
+      tenantId: opp.tenantId,
+      accountId: opp.accountId,
+      accountName: account.name,
+      opportunityId: opp.id,
+      oppName: opp.name,
+      createdAt: opp.createdAt,
+      lastActivityAt,
+      roles: patrolRoles,
     };
-
-    const drafts = computeReminders(patrolOpp, now);
-    const draftKeys = new Set(drafts.map((d) => d.dedupeKey));
-    const b = bucket(opp.tenantId); b.scanned++;
-    for (const d of drafts) {
-      const existing = await prisma.reminder.findUnique({ where: { tenantId_dedupeKey: { tenantId: d.tenantId, dedupeKey: d.dedupeKey } } });
-      if (!existing) { await prisma.reminder.create({ data: { id: 'rem_' + randomUUID().replaceAll('-', ''), ...d } }); created++; b.created++; }
-      else if (existing.status === 'pending') { await prisma.reminder.update({ where: { id: existing.id }, data: { title: d.title, detail: d.detail, severity: d.severity } }); }
-      // dismissed / done → 跳过，不复活
-    }
-    // 自动消除：本轮 draft 已不含的 pending 提醒（条件消失）→ done
-    const pendings = await prisma.reminder.findMany({ where: { tenantId: opp.tenantId, opportunityId: opp.id, status: 'pending' } });
-    for (const p of pendings) if (!draftKeys.has(p.dedupeKey)) { await prisma.reminder.update({ where: { id: p.id }, data: { status: 'done' } }); resolved++; b.resolved++; }
+    drafts.push(...computeReminders(patrolOpp, now));
+    const matterGap = computeMatterWithoutNextReminder({
+      tenantId: opp.tenantId,
+      accountId: opp.accountId,
+      accountName: account.name,
+      matterId: opp.id,
+      matterName: opp.name,
+      hasValidNextCommitment: (commitmentsByMatter.get(opportunityKey(opp.tenantId, opp.id)) ?? [])
+        .some(isValidNextCommitment),
+      businessTimeZone: BUSINESS_TIME_ZONE,
+    }, now);
+    if (matterGap) drafts.push(matterGap);
+    bucket(opp.tenantId).scanned += 1;
   }
-  recordPatrol(byTenant, now.toISOString()); // P2 心跳：按租户落最近一轮统计（状态在 patrol.ts，避免 suggest↔jobs 循环 import）
-  return { scanned: opps.length, created, resolved };
+
+  let created = 0;
+  const draftKeysByTenant = new Map<string, Set<string>>();
+  for (const draft of drafts) {
+    const keys = draftKeysByTenant.get(draft.tenantId) ?? new Set<string>();
+    keys.add(draft.dedupeKey);
+    draftKeysByTenant.set(draft.tenantId, keys);
+    const existing = await prisma.reminder.findUnique({ where: { tenantId_dedupeKey: {
+      tenantId: draft.tenantId,
+      dedupeKey: draft.dedupeKey,
+    } } });
+    if (!existing) {
+      await prisma.reminder.create({ data: {
+        id: 'rem_' + randomUUID().replaceAll('-', ''),
+        ...draft,
+      } });
+      created += 1;
+      bucket(draft.tenantId).created += 1;
+    } else if (existing.status === 'pending') {
+      await prisma.reminder.updateMany({
+        where: { id: existing.id, tenantId: draft.tenantId, status: 'pending' },
+        data: {
+          accountId: draft.accountId,
+          accountName: draft.accountName,
+          opportunityId: draft.opportunityId,
+          oppName: draft.oppName,
+          title: draft.title,
+          detail: draft.detail,
+          severity: draft.severity,
+          entityId: draft.entityId,
+        },
+      });
+    }
+  }
+
+  const managedKinds = [
+    'stalled', 'no_decider', 'sentiment_recheck', 'action_overdue', 'form_empty',
+    'confirmation_due', 'commitment_due', 'matter_without_next_commitment',
+  ];
+  const pending = await prisma.reminder.findMany({ where: { status: 'pending', kind: { in: managedKinds } } });
+  let resolved = 0;
+  for (const reminder of pending) {
+    if (draftKeysByTenant.get(reminder.tenantId)?.has(reminder.dedupeKey)) continue;
+    const changed = await prisma.reminder.updateMany({
+      where: { id: reminder.id, tenantId: reminder.tenantId, status: 'pending' },
+      data: { status: 'done' },
+    });
+    if (changed.count !== 1) continue;
+    resolved += 1;
+    bucket(reminder.tenantId).resolved += 1;
+  }
+
+  recordPatrol(byTenant, now.toISOString());
+  return { scanned: validOpps.length, created, resolved };
 }
 
 /** 启动后台巡检（index.ts 在 listen 成功后调用一次）。串行保护：上一轮没跑完不叠跑。 */
