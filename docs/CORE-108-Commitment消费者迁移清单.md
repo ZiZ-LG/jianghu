@@ -1,6 +1,6 @@
 # CORE-108｜Commitment 消费者迁移清单
 
-- 状态：`IN_PROGRESS`（本地验收完成；等待本批独立 commit、push 与远端 CI 阶段门）
+- 状态：`DONE`（最终代码提交 `ca53efc` 已 push；GitHub Actions 运行 `32524966717` 精确 SHA 12/12 全绿）
 - 权威源：同一 `PlanAction` 行的通用 Commitment 字段
 - 放宽门：全部消费者已为 `DONE`，SQLite/PostgreSQL migration 与恢复验证已通过，`PlanAction.opportunityId` 已按阶段门放宽
 - 回滚：每一批消费者独立提交；回滚单批不得回写或删除通用 Commitment 数据。若已存在客户级行，禁止把列强制改回非空；应关闭通用命令入口、保留 nullable 数据并前向修复

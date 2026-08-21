@@ -52,7 +52,7 @@
 |---|---|---|---|---|---|
 | YYYY-MM-DD | `logical.field` | `legacy_path` → `core_path/methodology_value` | 文件、查询、命令清单 | 测试、dry-run、备份恢复 | commit / migration / backup |
 | 2026-08-21 | `matter.participants` | `OppRole + OpportunityMember` → `MatterParticipant` | 通用读仅 `app/src/store.ts`、`server/src/state.ts`；所有在线写显式落 MatterParticipant；旧表消费者只保留方法论／可见性语义 | `matter-participant.test.ts`、`sqlite-matter-upgrade.test.ts`、`schema-render.test.ts`、`actions.test.ts`；PostgreSQL 单事务 migration，SQLite 写前备份与中断恢复 | `53e1331`；`20260821010000_expand_matter_participants_relations`；回滚不删除已生成的 MatterParticipant 数据 |
-| 2026-08-21 | `commitment.record` | `legacy_path: PlanAction` → `core_path: 同行 Commitment 字段` | 新通用写入 `server/src/mutation/commitments.ts` 与受检反馈事务；通用读为 state/Today/jobs/patrol/WeCom；旧 App/store/StrategyCard 仅保留 Matter-required adapter；机器 `planned` 消费者已清零 | CORE-106 初始 parity；CORE-107 命令/CAS/审计；CORE-108 客户级 state、旧路径失败关闭、提醒终止、无伪造 Evidence、企微客户上下文、SQLite 备份/中断恢复与 PostgreSQL 原子 nullable migration | `5edef534` 为通用切换前点；CORE-108 分消费者提交 `c0a5653`、`622c31f` 及本批 nullable cutover。若已有空 Matter 行，回滚仅关闭入口并保留 nullable 数据，禁止强制 `SET NOT NULL` 或删除业务行 |
+| 2026-08-21 | `commitment.record` | `legacy_path: PlanAction` → `core_path: 同行 Commitment 字段` | 新通用写入 `server/src/mutation/commitments.ts` 与受检反馈事务；通用读为 state/Today/jobs/patrol/WeCom；旧 App/store/StrategyCard 仅保留 Matter-required adapter；机器 `planned` 消费者已清零 | CORE-106 初始 parity；CORE-107 命令/CAS/审计；CORE-108 客户级 state、旧路径失败关闭、提醒终止、无伪造 Evidence、企微客户上下文、SQLite 备份/中断恢复与 PostgreSQL 原子 nullable migration | `5edef534` 为通用切换前点；CORE-108 分消费者提交 `c0a5653`、`622c31f`、nullable cutover `ca53efc`。若已有空 Matter 行，回滚仅关闭入口并保留 nullable 数据，禁止强制 `SET NOT NULL` 或删除业务行 |
 
 `CORE-102` 仅建立映射，没有发生权威切换。
 
