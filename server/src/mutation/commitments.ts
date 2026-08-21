@@ -11,6 +11,7 @@ import {
   type CommitmentCommandReceipt,
 } from '@jianghu/domain-contracts';
 import { prisma } from '../prisma.js';
+import { syncCommitmentToWeCom } from '../wecom.js';
 import { runCommand } from './commandRunner.js';
 import {
   requireScopedRow,
@@ -579,6 +580,9 @@ export function commitmentRoutes(app: FastifyInstance): void {
         (tx) => executeCommitmentCommand(ctx, input, tx),
         prisma,
       );
+      if (!result.replayed) {
+        void syncCommitmentToWeCom(ctx.tenantId, result.result.commitmentId).catch(() => {});
+      }
       return { ...result.result, replayed: result.replayed };
     } catch (error) {
       return sendError(req, reply, error);

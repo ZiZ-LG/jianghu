@@ -238,7 +238,15 @@ export const api = {
     req('/api/opportunity/clone', { method: 'POST', body: JSON.stringify(b) }),
   opportunitySkeleton: (b: { accountId: string; name: string; fromOppId?: string; personIds: string[]; withEdges: boolean; skeleton: Array<{ title: string; role: string; orgLevel: number; x: number; y: number }> }, idempotencyKey: string): Promise<{ opportunityId: string; memberCount: number; skeletonPersonIds: string[]; replayed: boolean }> =>
     commandReq('/api/commands/opportunity-skeleton', { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(b) }),
-  actionFeedback: (b: { accountId: string; opportunityId: string; actionId: string; outcome: 'up' | 'flat' | 'down'; occurredAt: string }, idempotencyKey: string): Promise<{ evidenceId?: string; replayed: boolean }> =>
+  actionFeedback: (b: {
+    accountId: string;
+    opportunityId: string;
+    actionId: string;
+    outcome: 'up' | 'flat' | 'down';
+    occurredAt: string;
+    baseVersion: number;
+    expectedScheduleVersion: number;
+  }, idempotencyKey: string): Promise<{ evidenceId?: string; replayed: boolean }> =>
     commandReq('/api/commands/action-feedback', { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(b) }),
   inboxBatch: (b: { items: Array<{ kind: 'proposal' | 'person' | 'rel' | 'evidence' | 'reminder'; id: string; decision: 'accept' | 'reject'; overrideValue?: string; personOverride?: { name?: string; title?: string }; relOverride?: { layer?: string; label?: string }; direction?: -1 | 0 | 1 }> }, idempotencyKey: string): Promise<{ items: Array<{ kind: string; id: string; status: string }>; replayed: boolean }> =>
     commandReq('/api/commands/inbox-batch', { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(b) }),

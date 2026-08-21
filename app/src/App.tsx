@@ -539,7 +539,15 @@ export default function App() {
     if (!a) return;
     const today = localYmd(new Date());
     try {
-      await api.actionFeedback({ accountId: account.id, opportunityId: opp.id, actionId, outcome, occurredAt: today }, newIdempotencyKey());
+      await api.actionFeedback({
+        accountId: account.id,
+        opportunityId: opp.id,
+        actionId,
+        outcome,
+        occurredAt: today,
+        baseVersion: a.version ?? 0,
+        expectedScheduleVersion: a.scheduleVersion ?? 0,
+      }, newIdempotencyKey());
       await refreshState(ticket);
     } catch (error: any) {
       if (sessionGuard.current.isCurrent(ticket, api.getToken())) setSyncErr('行动回填失败：' + (error?.message || error));

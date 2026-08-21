@@ -11,11 +11,24 @@ import { createPdeSnapshot } from '../pde/routes.js';
 import { businessYmd } from '../businessDate.js';
 import { ScopedNotFoundError } from './scopeGuards.js';
 import { runCommand } from './commandRunner.js';
+import { syncCommitmentToWeCom } from '../wecom.js';
 
 class ActionAlreadyCompletedError extends Error {
   readonly statusCode = 409;
   readonly code = 'action_already_completed';
   constructor() { super('该行动已完成，请刷新后查看'); }
+}
+
+class ActionFeedbackVersionConflictError extends Error {
+  readonly statusCode = 409;
+  readonly code = 'commitment_version_conflict';
+  constructor() { super('跟进承诺已变化，请刷新后重试'); }
+}
+
+class ActionFeedbackPermissionError extends Error {
+  readonly statusCode = 403;
+  readonly code = 'commitment_write_forbidden';
+  constructor() { super('无权回填跟进承诺'); }
 }
 
 const SkeletonRoleSchema = z.object({
@@ -36,7 +49,11 @@ export const ActionFeedbackCommandSchema = z.object({
   actionId: z.string().min(1),
   outcome: z.enum(['up', 'flat', 'down']),
   occurredAt: z.string().min(1),
+  baseVersion: z.number().int().nonnegative().default(0),
+  expectedScheduleVersion: z.number().int().nonnegative().default(0),
 }).strict();
+
+type ActionFeedbackInput = z.input<typeof ActionFeedbackCommandSchema>;
 
 const InboxBatchItemSchema = z.object({
   kind: z.enum(['proposal', 'person', 'rel', 'evidence', 'reminder']),
@@ -83,18 +100,34 @@ export async function executeOpportunitySkeleton(
 
 export async function executeActionFeedback(
   ctx: CommandContext,
-  input: z.infer<typeof ActionFeedbackCommandSchema>,
+  rawInput: ActionFeedbackInput,
   db: DbClient,
   options?: FaultOptions,
 ): Promise<{ evidenceId?: string }> {
+  const input = ActionFeedbackCommandSchema.parse(rawInput);
+  const actor = await db.user.findFirst({
+    where: { id: ctx.actorId, tenantId: ctx.tenantId },
+    select: { role: true },
+  });
+  const actorRole = ActorRoleSchema.safeParse(actor?.role);
+  if (!actorRole.success || actorRole.data === 'viewer') throw new ActionFeedbackPermissionError();
+  const actorLock = await db.user.updateMany({
+    where: { id: ctx.actorId, tenantId: ctx.tenantId, role: actorRole.data },
+    data: { role: actorRole.data },
+  });
+  if (actorLock.count !== 1) throw new ActionFeedbackPermissionError();
   const plan = await db.planAction.findFirst({
     where: { id: input.actionId, tenantId: ctx.tenantId, accountId: input.accountId, opportunityId: input.opportunityId },
   });
   if (!plan) throw new ScopedNotFoundError();
+  if (plan.version !== input.baseVersion || plan.scheduleVersion !== input.expectedScheduleVersion) {
+    throw new ActionFeedbackVersionConflictError();
+  }
   const claimed = await db.planAction.updateMany({
     where: {
       id: input.actionId, tenantId: ctx.tenantId, accountId: input.accountId,
       opportunityId: input.opportunityId, done: false, executionStatus: 'planned',
+      version: input.baseVersion, scheduleVersion: input.expectedScheduleVersion,
     },
     data: {
       done: true,
@@ -103,7 +136,17 @@ export async function executeActionFeedback(
       version: { increment: 1 },
     },
   });
-  if (claimed.count !== 1) throw new ActionAlreadyCompletedError();
+  if (claimed.count !== 1) {
+    const current = await db.planAction.findFirst({
+      where: { id: input.actionId, tenantId: ctx.tenantId, accountId: input.accountId, opportunityId: input.opportunityId },
+      select: { version: true, scheduleVersion: true, executionStatus: true, done: true },
+    });
+    if (!current) throw new ScopedNotFoundError();
+    if (current.version !== input.baseVersion || current.scheduleVersion !== input.expectedScheduleVersion) {
+      throw new ActionFeedbackVersionConflictError();
+    }
+    throw new ActionAlreadyCompletedError();
+  }
   fault(options, 1);
   let evidenceId: string | undefined;
   if (plan.personId && input.outcome !== 'flat') {
@@ -128,14 +171,19 @@ export async function executeActionFeedback(
     actorId: ctx.actorId,
     channel: ctx.channel,
     action: 'action_feedback',
-    entityKind: 'plan_action',
+    entityKind: 'commitment',
     entityId: input.actionId,
     requestId: ctx.requestId ?? null,
     sourceRef: evidenceId ?? null,
     changedFields: JSON.stringify(evidenceId
-      ? ['done', 'doneAt', 'executionStatus', 'version', 'evidenceId']
-      : ['done', 'doneAt', 'executionStatus', 'version']),
-    metadata: JSON.stringify(evidenceId ? { evidenceId } : {}),
+      ? ['executionStatus', 'version', 'done', 'doneAt', 'evidenceId']
+      : ['executionStatus', 'version', 'done', 'doneAt']),
+    metadata: JSON.stringify({
+      fromVersion: input.baseVersion,
+      toVersion: input.baseVersion + 1,
+      scheduleVersion: input.expectedScheduleVersion,
+      ...(evidenceId ? { evidenceId } : {}),
+    }),
   } });
   fault(options, 3);
   return evidenceId ? { evidenceId } : {};
@@ -216,6 +264,7 @@ const commandContext = (req: any): CommandContext => ({
 
 const commandFailure = (reply: any, error: any, message: string) => {
   if (error instanceof ScopedNotFoundError || error?.scopedNotFound) return reply.code(404).send({ error: '资源不存在' });
+  if (error?.statusCode === 403) return reply.code(403).send({ code: error.code, error: error.message });
   if (error?.statusCode === 409 || error?.commandInProgress) return reply.code(409).send({ code: error.code, error: error.message });
   if (error?.statusCode === 503) return reply.code(503).send({ code: error.code, error: error.message });
   return reply.code(500).send({ error: message });
@@ -242,6 +291,9 @@ export function compoundCommandRoutes(app: FastifyInstance): void {
     try {
       const result = await runCommand(commandContext(req), { kind: 'action-feedback', idempotencyKey: key, payload: body.data },
         (tx) => executeActionFeedback(commandContext(req), body.data, tx));
+      if (!result.replayed) {
+        void syncCommitmentToWeCom(req.user.tenantId, body.data.actionId).catch(() => {});
+      }
       return { ...result.result, replayed: result.replayed };
     } catch (error) { return commandFailure(reply, error, '行动回填失败'); }
   });

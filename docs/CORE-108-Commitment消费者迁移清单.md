@@ -13,9 +13,9 @@
 | 提醒版本与终止 | Commitment key 含 `scheduleVersion`；确认/终态/拒绝/改期结束旧提醒；有效下一步结束 Matter 缺口 | DONE | `server/tests/commitment-reminders.test.ts` |
 | 删除反向引用 / undo | legacy 删除与 StrategyCard 引用只接受同 Matter Commitment；客户级行失败关闭 | PENDING | 待 scope/store/state fixture |
 | StrategyCard 派发 | 继续作为销售 Matter adapter，引用同 Matter Commitment ID | PENDING | 待派发/父树回归 |
-| 行动反馈 | 使用 generic version/schedule CAS，审计实体改为 Commitment；客户级完成不伪造 Evidence | PENDING | 待 WorkBuddy 与 customer-level fixture |
-| WorkBuddy / MCP adapter | 外部候选不直写正式 Commitment；既有反馈 adapter 走受检命令 | PENDING | 待 WorkBuddy E2E/MCP 边界回归 |
-| 企微日程 | 读取通用时间/负责人，客户级上下文可同步；终态删除旧日程 | PENDING | 待 WeCom connector fixture |
+| 行动反馈 | 使用 generic version/schedule CAS，审计实体改为 Commitment；客户级完成不伪造 Evidence | IN_PROGRESS | Matter 级 CAS/审计已由 `server/tests/action-feedback-commitment.test.ts` 覆盖；待 nullable fixture |
+| WorkBuddy / MCP adapter | 外部候选不直写正式 Commitment；既有反馈 adapter 走受检命令 | DONE | `server/tests/workbuddy-e2e.test.ts`、`server/tests/mcpBoundary.test.ts` |
+| 企微日程 | 读取通用时间/负责人，客户级上下文可同步；终态删除旧日程 | IN_PROGRESS | 通用 UTC/owner、旧 map 接管和终态删除已由 `server/tests/wecom-commitment.test.ts` 覆盖；待 nullable fixture |
 | 物理 nullable 与跨库 migration | SQLite/PostgreSQL 可允许客户级空 Matter，旧销售命令仍强制 Matter | BLOCKED | 必须等待以上消费者清零 |
 | authority map / 运维文档 | 清零 planned consumer，登记 migration、停止与回滚条件 | PENDING | 最终阶段门更新 |
 

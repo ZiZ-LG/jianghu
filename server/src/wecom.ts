@@ -108,8 +108,8 @@ export function decryptWeComCred(row: { tenantId: string; corpId: string; agentI
   return { tenantId: row.tenantId, corpId: row.corpId, agentId: row.agentId, secret: row.secretEnc ? dec(row.secretEnc) : '' };
 }
 
-// ── 江湖 → 企微 单向同步（PlanAction / OppMilestone 落库后由 /api/mutate fire-and-forget 触发）──
-// PIPL 白名单：日程只含 标题 / 商机名 / 时间 / 操作者本人 userid，绝不含 FORM / 态度 / 弱点。
+// ── 江湖 → 企微 单向同步（Commitment / OppMilestone）──
+// PIPL 白名单：日程只含标题、客户/事项中性上下文、时间与负责人 userid。
 const HALF_TIME: Record<string, [number, number]> = { am: [9, 12], pm: [14, 17], eve: [19, 21] };
 function toUnix(dateStr: string, hour: number): number {
   const hh = String(hour).padStart(2, '0');
@@ -117,25 +117,212 @@ function toUnix(dateStr: string, hour: number): number {
   return Number.isNaN(t) ? 0 : Math.floor(t / 1000);
 }
 
+function zonedLocalUnix(localDate: string, hour: number, timeZone: string): number {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(localDate);
+  if (!match) return 0;
+  const target = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), hour);
+  let guess = target;
+  try {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+        hourCycle: 'h23', calendar: 'gregory', numberingSystem: 'latn',
+      }).formatToParts(new Date(guess));
+      const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value;
+      const observed = Date.UTC(
+        Number(part('year')), Number(part('month')) - 1, Number(part('day')),
+        Number(part('hour')), Number(part('minute')),
+      );
+      if (!Number.isFinite(observed)) return 0;
+      const delta = target - observed;
+      guess += delta;
+      if (delta === 0) break;
+    }
+    return Math.floor(guess / 1000);
+  } catch { return 0; }
+}
+
+async function commitmentMap(tenantId: string, refId: string) {
+  const current = await prisma.scheduleSync.findUnique({ where: { tenantId_kind_refId: {
+    tenantId, kind: 'commitment', refId,
+  } } });
+  if (current) return current;
+  const legacy = await prisma.scheduleSync.findUnique({ where: { tenantId_kind_refId: {
+    tenantId, kind: 'plan_action', refId,
+  } } });
+  if (!legacy) return null;
+  const adopted = await prisma.scheduleSync.updateMany({
+    where: { id: legacy.id, tenantId, kind: 'plan_action', refId },
+    data: { kind: 'commitment' },
+  });
+  if (adopted.count === 1) return prisma.scheduleSync.findUnique({ where: { id: legacy.id } });
+  return prisma.scheduleSync.findUnique({ where: { tenantId_kind_refId: {
+    tenantId, kind: 'commitment', refId,
+  } } });
+}
+
+async function deleteCommitmentSchedule(
+  cfg: { tenantId: string; corpId: string; agentId: string; secretEnc: string },
+  map: Awaited<ReturnType<typeof commitmentMap>>,
+): Promise<void> {
+  if (!map?.wecomScheduleId || map.status === 'deleted') return;
+  try {
+    const cred = decryptWeComCred(cfg);
+    const token = await getAccessToken(cred.tenantId, cred.corpId, cred.secret);
+    await delSchedule(token, map.wecomScheduleId);
+    await prisma.scheduleSync.updateMany({
+      where: { id: map.id, tenantId: cfg.tenantId, kind: 'commitment' },
+      data: { status: 'deleted', lastError: '' },
+    });
+  } catch (error: any) {
+    await prisma.scheduleSync.updateMany({
+      where: { id: map.id, tenantId: cfg.tenantId, kind: 'commitment' },
+      data: { status: 'failed', lastError: String(error?.message || error).slice(0, 300) },
+    }).catch(() => {});
+  }
+}
+
+/**
+ * Sync one same-row generic Commitment. Canonical time, status and owner fields
+ * are the only inputs; legacy startDate/endDate/half/ownerId are never fallback.
+ */
+export async function syncCommitmentToWeCom(
+  tenantId: string,
+  commitmentId: string,
+  fallbackUserId?: string,
+  forceDelete = false,
+): Promise<void> {
+  const cfg = await prisma.weComConfig.findUnique({ where: { tenantId } });
+  if (!cfg?.corpId || !cfg.secretEnc) return;
+  const map = await commitmentMap(tenantId, commitmentId);
+  if (forceDelete) {
+    await deleteCommitmentSchedule(cfg, map);
+    return;
+  }
+
+  const commitment = await prisma.planAction.findFirst({ where: {
+    id: commitmentId, tenantId,
+  } });
+  if (!commitment
+    || commitment.archivedAt
+    || commitment.executionStatus !== 'planned'
+    || commitment.confirmationStatus === 'declined') {
+    await deleteCommitmentSchedule(cfg, map);
+    return;
+  }
+
+  const ownerUserId = commitment.ownerUserId ?? fallbackUserId;
+  if (!ownerUserId) {
+    await deleteCommitmentSchedule(cfg, map);
+    return;
+  }
+  const owner = await prisma.user.findFirst({ where: {
+    id: ownerUserId, tenantId, role: { in: ['owner', 'admin', 'member'] },
+  }, select: { id: true } });
+  if (!owner) {
+    await deleteCommitmentSchedule(cfg, map);
+    return;
+  }
+  const bind = await prisma.weComUserBind.findUnique({ where: { tenantId_userId: {
+    tenantId, userId: owner.id,
+  } } });
+  if (!bind?.wecomUserid) {
+    await deleteCommitmentSchedule(cfg, map);
+    return;
+  }
+
+  let startTime = 0;
+  let endTime = 0;
+  if (commitment.isAllDay && commitment.localDate) {
+    startTime = zonedLocalUnix(commitment.localDate, 9, commitment.timeZone);
+    endTime = zonedLocalUnix(commitment.localDate, 10, commitment.timeZone);
+  } else {
+    const start = commitment.scheduledAtUtc ?? commitment.dueAtUtc;
+    const end = commitment.dueAtUtc ?? commitment.scheduledAtUtc;
+    startTime = start ? Math.floor(start.getTime() / 1000) : 0;
+    endTime = end ? Math.floor(end.getTime() / 1000) : 0;
+    if (startTime && endTime <= startTime) endTime = startTime + 3600;
+  }
+  if (!startTime || !endTime) {
+    await deleteCommitmentSchedule(cfg, map);
+    return;
+  }
+
+  const account = await prisma.account.findFirst({ where: {
+    id: commitment.accountId, tenantId, archivedAt: null,
+  }, select: { name: true } });
+  if (!account) {
+    await deleteCommitmentSchedule(cfg, map);
+    return;
+  }
+  const matterId: string | null = commitment.opportunityId;
+  const matter = matterId ? await prisma.opportunity.findFirst({ where: {
+    id: matterId, tenantId, accountId: commitment.accountId, archivedAt: null,
+  }, select: { name: true } }) : null;
+  if (matterId && !matter) {
+    await deleteCommitmentSchedule(cfg, map);
+    return;
+  }
+  const schedule: WeComSchedule = {
+    summary: commitment.title || '跟进承诺',
+    description: [`客户：${account.name}`, matter ? `事项：${matter.name}` : ''].filter(Boolean).join(' · '),
+    startTime,
+    endTime,
+    organizerUserid: bind.wecomUserid,
+    attendeeUserids: [bind.wecomUserid],
+    remindBeforeSecs: 3600,
+  };
+  const whereMap = { tenantId_kind_refId: { tenantId, kind: 'commitment', refId: commitmentId } };
+  try {
+    const cred = decryptWeComCred(cfg);
+    const token = await getAccessToken(cred.tenantId, cred.corpId, cred.secret);
+    if (map?.wecomScheduleId && map.status !== 'deleted') {
+      await updateSchedule(token, map.wecomScheduleId, schedule);
+      await prisma.scheduleSync.updateMany({
+        where: { id: map.id, tenantId, kind: 'commitment' },
+        data: { status: 'synced', lastError: '' },
+      });
+    } else {
+      const scheduleId = await addSchedule(token, schedule);
+      await prisma.scheduleSync.upsert({
+        where: whereMap,
+        create: {
+          id: 'ss_' + randomUUID().replaceAll('-', ''), tenantId, kind: 'commitment', refId: commitmentId,
+          wecomScheduleId: scheduleId, status: 'synced',
+        },
+        update: { wecomScheduleId: scheduleId, status: 'synced', lastError: '' },
+      });
+    }
+  } catch (error: any) {
+    const message = String(error?.message || error).slice(0, 300);
+    await prisma.scheduleSync.upsert({
+      where: whereMap,
+      create: {
+        id: 'ss_' + randomUUID().replaceAll('-', ''), tenantId, kind: 'commitment', refId: commitmentId,
+        wecomScheduleId: '', status: 'failed', lastError: message,
+      },
+      update: { status: 'failed', lastError: message },
+    });
+  }
+}
+
 /**
  * 行动/里程碑落库后同步到操作者的企微日历。未配企微 / 操作者未绑 userid → 静默跳过。
  * 失败记 ScheduleSync.status=failed（绝不抛——不影响江湖侧落库，调用方 fire-and-forget）。
  */
 export async function syncFromAction(tenantId: string, userId: string, action: Action): Promise<void> {
-  let kind: 'plan_action' | 'milestone';
-  let refId: string;
   switch (action.type) {
-    case 'ADD_PLAN_ACTION': kind = 'plan_action'; refId = action.planAction.id; break;
+    case 'ADD_PLAN_ACTION': return syncCommitmentToWeCom(tenantId, action.planAction.id, userId);
     case 'UPDATE_PLAN_ACTION':
-    case 'DELETE_PLAN_ACTION':
-    case 'TOGGLE_PLAN_ACTION': kind = 'plan_action'; refId = action.actionId; break;
-    case 'ADD_MILESTONE': kind = 'milestone'; refId = action.milestone.id; break;
-    case 'UPDATE_MILESTONE':
-    case 'DELETE_MILESTONE': kind = 'milestone'; refId = action.milestoneId; break;
-    default: return;
+    case 'TOGGLE_PLAN_ACTION': return syncCommitmentToWeCom(tenantId, action.actionId, userId);
+    case 'DELETE_PLAN_ACTION': return syncCommitmentToWeCom(tenantId, action.actionId, userId, true);
   }
-  const isPlan = kind === 'plan_action';
-  const isMile = kind === 'milestone';
+  let refId: string;
+  if (action.type === 'ADD_MILESTONE') refId = action.milestone.id;
+  else if (action.type === 'UPDATE_MILESTONE' || action.type === 'DELETE_MILESTONE') refId = action.milestoneId;
+  else return;
+  const kind = 'milestone';
 
   const cfg = await prisma.weComConfig.findUnique({ where: { tenantId } });
   if (!cfg || !cfg.corpId || !cfg.secretEnc) return; // 未接企微
@@ -156,10 +343,8 @@ export async function syncFromAction(tenantId: string, userId: string, action: A
     return;
   }
 
-  // 新建 / 更新：读 ref + 操作者企微 userid
-  const ref: any = isPlan
-    ? await prisma.planAction.findFirst({ where: { id: refId, tenantId } })
-    : await prisma.oppMilestone.findFirst({ where: { id: refId, tenantId } });
+  // 新建 / 更新：里程碑继续作为销售 Matter adapter。
+  const ref: any = await prisma.oppMilestone.findFirst({ where: { id: refId, tenantId } });
   if (!ref) return;
   const bind = await prisma.weComUserBind.findUnique({ where: { tenantId_userId: { tenantId, userId } } });
   if (!bind?.wecomUserid) return; // 操作者没绑企微 userid → 无法建日程
@@ -171,7 +356,7 @@ export async function syncFromAction(tenantId: string, userId: string, action: A
 
   const opp = await prisma.opportunity.findFirst({ where: { id: ref.opportunityId, tenantId }, select: { name: true } });
   const schedule: WeComSchedule = {
-    summary: (isMile ? '🚩 ' : '') + (ref.title || (isMile ? '里程碑' : '销售行动')),
+    summary: '🚩 ' + (ref.title || '里程碑'),
     description: opp?.name ? `商机：${opp.name}` : '', // 中性上下文，无敏感
     startTime, endTime,
     organizerUserid: bind.wecomUserid,

@@ -137,11 +137,11 @@ describe('atomic idempotent compound commands', () => {
       actorId: test.owner.id,
       channel: 'web',
       action: 'action_feedback',
-      entityKind: 'plan_action',
+      entityKind: 'commitment',
       requestId: 'compound-test',
       sourceRef: null,
-      changedFields: JSON.stringify(['done', 'doneAt', 'executionStatus', 'version']),
-      metadata: JSON.stringify({}),
+      changedFields: JSON.stringify(['executionStatus', 'version', 'done', 'doneAt']),
+      metadata: JSON.stringify({ fromVersion: 0, toVersion: 1, scheduleVersion: 0 }),
     });
     expect(audits.map((audit) => audit.entityId)).toEqual(['action-audit-flat', 'action-audit-no-person']);
     expect(JSON.stringify(audits)).not.toContain('敏感平盘行动');
@@ -184,8 +184,8 @@ describe('atomic idempotent compound commands', () => {
     });
     expect(audit).toMatchObject({
       sourceRef: evidence.id,
-      changedFields: JSON.stringify(['done', 'doneAt', 'executionStatus', 'version', 'evidenceId']),
-      metadata: JSON.stringify({ evidenceId: evidence.id }),
+      changedFields: JSON.stringify(['executionStatus', 'version', 'done', 'doneAt', 'evidenceId']),
+      metadata: JSON.stringify({ fromVersion: 0, toVersion: 1, scheduleVersion: 0, evidenceId: evidence.id }),
     });
     expect(JSON.stringify(audit)).not.toContain('敏感负向行动');
   });

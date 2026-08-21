@@ -249,6 +249,7 @@ describe('INT-304 WorkBuddy to decision-loop HTTP journey', () => {
     const feedbackPayload = {
       accountId: account.id, opportunityId: opportunity.id, actionId: fixture.actionFeedback.actionId,
       outcome: fixture.actionFeedback.outcome, occurredAt: fixture.actionFeedback.occurredAt,
+      baseVersion: 0, expectedScheduleVersion: 0,
     };
     const beforeDeniedFeedback = {
       evidence: await context.prisma.evidenceEvent.count({ where: { tenantId: context.tenant.id } }),
@@ -305,7 +306,7 @@ describe('INT-304 WorkBuddy to decision-loop HTTP journey', () => {
     const auditRows = await context.prisma.auditEvent.findMany({ where: {
       tenantId: context.tenant.id,
       action: 'action_feedback',
-      entityKind: 'plan_action',
+      entityKind: 'commitment',
       entityId: fixture.actionFeedback.actionId,
     } });
     expect(auditRows).toHaveLength(1);
@@ -313,12 +314,17 @@ describe('INT-304 WorkBuddy to decision-loop HTTP journey', () => {
       actorId: context.owner.id,
       channel: 'web',
       action: 'action_feedback',
-      entityKind: 'plan_action',
+      entityKind: 'commitment',
       entityId: fixture.actionFeedback.actionId,
       requestId: expect.any(String),
       sourceRef: firstFeedback.json().evidenceId,
-      changedFields: JSON.stringify(['done', 'doneAt', 'executionStatus', 'version', 'evidenceId']),
-      metadata: JSON.stringify({ evidenceId: firstFeedback.json().evidenceId }),
+      changedFields: JSON.stringify(['executionStatus', 'version', 'done', 'doneAt', 'evidenceId']),
+      metadata: JSON.stringify({
+        fromVersion: 0,
+        toVersion: 1,
+        scheduleVersion: 0,
+        evidenceId: firstFeedback.json().evidenceId,
+      }),
     });
     const auditTrail = JSON.stringify({ commandRuns, auditRows });
     expect(auditTrail).not.toContain(fixture.phaseA.bundle.visit.summary);

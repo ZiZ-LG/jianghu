@@ -872,12 +872,12 @@ model WeComOAuthState {
   @@index([tenantId, userId, expiresAt])
 }
 
-// 日程映射：江湖 PlanAction / OppMilestone ↔ 企微 scheduleId（幂等防重复建 + 双向同步锚）。
+// 日程映射：江湖 Commitment / OppMilestone ↔ 企微 scheduleId（幂等防重复建 + 双向同步锚）。
 model ScheduleSync {
   id              String   @id // ss_xxx
   tenantId        String
-  kind            String // plan_action | milestone
-  refId           String // planActionId 或 milestoneId
+  kind            String // commitment | milestone（旧 plan_action 由 adapter 原位接管）
+  refId           String // commitmentId 或 milestoneId
   wecomScheduleId String   @default("")
   status          String   @default("synced") // synced | pending | failed | deleted
   lastError       String   @default("")
