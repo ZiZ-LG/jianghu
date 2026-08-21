@@ -317,6 +317,7 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
         data: { primaryDPersonId: null },
       });
       await db.opportunityMember.deleteMany({ where: { personId: pid, tenantId, opportunityId: { in: opportunityIds } } });
+      await db.matterParticipant.deleteMany({ where: { personId: pid, tenantId, opportunityId: { in: opportunityIds } } });
       await db.edge.deleteMany({ where: { tenantId, accountId: action.accId, OR: [{ source: pid }, { target: pid }] } });
       await db.person.deleteMany({ where: { id: pid, tenantId, accountId: action.accId, ...activePersonWhere } });
       return;
@@ -389,6 +390,11 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
           data: { primaryDPersonId: null },
         });
       }
+      await db.matterParticipant.upsert({
+        where: { tenantId_opportunityId_personId: { tenantId, opportunityId: action.oppId, personId: action.personId } },
+        create: { tenantId, accountId: action.accId, opportunityId: action.oppId, personId: action.personId },
+        update: {},
+      });
       return;
     }
     case 'REMOVE_ROLE':
@@ -414,7 +420,7 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
       const e = action.edge;
       await db.edge.create({ data: {
         id: e.id, tenantId, accountId: action.accId, opportunityId: action.oppId ?? null,
-        source: e.source, target: e.target, layer: e.layer, label: e.label,
+        source: e.source, target: e.target, kind: e.kind ?? 'related', layer: e.layer, label: e.label,
         color: e.color ?? null, style: e.style ?? null, width: e.width ?? null, directed: !!e.directed, origin: e.origin ?? 'manual',
         shape: e.shape ?? null, bend: e.bend ?? null,
       } });
@@ -422,7 +428,7 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
     }
     case 'UPDATE_EDGE': {
       // 端点改接(source/target)+外观(label/color/style/width/directed/layer)+形状(shape/bend)，全程租户隔离 + 乐观锁
-      const d = pick(action.patch, ['source', 'target', 'layer', 'label', 'color', 'style', 'width', 'directed', 'shape', 'bend']);
+      const d = pick(action.patch, ['source', 'target', 'kind', 'layer', 'label', 'color', 'style', 'width', 'directed', 'shape', 'bend']);
       await lockedUpdate({
         baseVersion: action.baseVersion,
         update: (vw) => db.edge.updateMany({

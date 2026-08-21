@@ -115,6 +115,27 @@ describe('account-level edges', () => {
     expect(state.accounts[0].baseEdges.map((edge) => edge.id)).toContain('e-base-new');
     expect(state.accounts[0].opportunities[0].edges.map((edge) => edge.id)).not.toContain('e-base-new');
   });
+
+  it('keeps an unknown open Relation kind during optimistic add and update', () => {
+    const added = reducer(baseState(), {
+      type: 'ADD_EDGE', accId: 'acc1', oppId: 'opp1',
+      edge: { id: 'e-open', source: 'p1', target: 'p2', kind: 'trusted_advisor', layer: 'L2', label: '顾问' },
+    });
+    expect((added.accounts[0].opportunities[0].edges.find((edge) => edge.id === 'e-open') as any).kind).toBe('trusted_advisor');
+    const updated = reducer(added, {
+      type: 'UPDATE_EDGE', accId: 'acc1', oppId: 'opp1', edgeId: 'e-open', patch: { kind: 'former_colleague' },
+    });
+    expect((updated.accounts[0].opportunities[0].edges.find((edge) => edge.id === 'e-open') as any).kind).toBe('former_colleague');
+  });
+});
+
+describe('generic Matter participation projection', () => {
+  it('adds participation when the sales adapter writes a role', () => {
+    const next = reducer(baseState(), {
+      type: 'SET_ROLE', accId: 'acc1', oppId: 'opp1', personId: 'p1', patch: { role: 'R' },
+    });
+    expect((next.accounts[0].opportunities[0] as any).participantIds).toEqual(['p1']);
+  });
 });
 
 describe('G64111 selection optimism', () => {

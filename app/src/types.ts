@@ -115,6 +115,7 @@ export interface Edge {
   id: string;
   source: string;
   target: string;
+  kind?: string; // 通用开放关系类型；未知值原样保留，销售视图仍由 layer 映射
   layer: Layer;
   label: string;
   color?: string;
@@ -163,6 +164,7 @@ export interface Opportunity {
   edges: Edge[]; // 增量边 L2/L3/L4
   memberScoped?: boolean;  // true=只显示 memberIds 的人(含竞品)；false/缺省=全员可见(存量兼容)
   memberIds?: string[];    // 该商机可见的干系人 id 集(缺省视为空；仅 memberScoped 时生效)
+  participantIds?: string[]; // 通用 Matter 参与人；与销售角色、legacy visibility 相互独立
   evidenceEvents?: EvidenceEvent[]; // 策略引擎证据事件(E2，喂局势分布)
   version?: number;        // 乐观锁版本（后端带出；UPDATE_OPP 时回传作 baseVersion）
 }

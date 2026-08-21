@@ -32,6 +32,7 @@ import { handleMcpBody } from './mcpServer.js';
 import { accessTokenRoutes, mcpAuthenticate } from './accessToken.js';
 import { compoundCommandRoutes } from './mutation/compoundCommands.js';
 import { matterOwnershipRoutes } from './mutation/matterOwnership.js';
+import { matterParticipantRoutes } from './mutation/matterParticipants.js';
 import { repairRoutes } from './repair.js';
 import { personMergeRoutes } from './personMerge.js';
 
@@ -109,6 +110,7 @@ function registerRoutes(app: FastifyInstance, readinessProbe: ReadinessProbe): v
   pdeRoutes(app); // PDE 决策引擎（M3 评估主链）：ev / intel-priorities / action-ranking / snapshot
   compoundCommandRoutes(app);
   matterOwnershipRoutes(app);
+  matterParticipantRoutes(app);
   repairRoutes(app);
   personMergeRoutes(app);
 

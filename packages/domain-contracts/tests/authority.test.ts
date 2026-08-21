@@ -115,6 +115,16 @@ describe('CRM field authority map', () => {
       'server/scripts/migrate-matter-fields.ts', 'server/scripts/upgrade-sqlite-schema.ts',
     ]));
     expect(lifecycle?.consumers.planned).toEqual([]);
+    const participants = getCrmFieldAuthority('matter.participants');
+    expect(participants).toMatchObject({
+      currentAuthority: { kind: 'core_path', path: 'MatterParticipant' },
+      targetAuthority: { kind: 'core_path', path: 'MatterParticipant' },
+    });
+    expect(participants?.consumers.migrations).toEqual(expect.arrayContaining([
+      'server/prisma/postgres/migrations/20260821010000_expand_matter_participants_relations/migration.sql',
+      'server/scripts/migrate-matter-participants.ts', 'server/scripts/upgrade-sqlite-schema.ts',
+    ]));
+    expect(participants?.consumers.planned).toEqual([]);
     expect(listCrmFieldConsumers(getCrmFieldAuthority('matter.owner'))).toEqual(expect.arrayContaining([
       'server/src/matter/ownership.ts', 'server/src/mutation/matterOwnership.ts',
       'server/scripts/report-matter-owner-suggestions.ts', 'server/src/state.ts',

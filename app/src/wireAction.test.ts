@@ -88,6 +88,16 @@ describe('toWireAction', () => {
     });
   });
 
+  it('preserves an open Relation kind on create and update payloads', () => {
+    expect(toWireAction({
+      type: 'ADD_EDGE', accId: 'a', oppId: 'o',
+      edge: { id: 'e', source: 'p1', target: 'p2', kind: 'trusted_advisor', layer: 'L2', label: '顾问' },
+    })).toMatchObject({ edge: { kind: 'trusted_advisor' } });
+    expect(toWireAction({
+      type: 'UPDATE_EDGE', accId: 'a', oppId: 'o', edgeId: 'e', patch: { kind: 'former_colleague' },
+    })).toMatchObject({ patch: { kind: 'former_colleague' } });
+  });
+
   it('strips server-owned createdBy from all create payloads', () => {
     const visit: VisitNote = {
       id: 'v', accountId: 'a', date: '2026-07-12', topic: 'Visit', summary: 'Summary', participants: [], createdBy: 'forged-user',

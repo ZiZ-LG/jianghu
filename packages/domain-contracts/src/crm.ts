@@ -378,10 +378,31 @@ const scheduledCommitmentCommand = {
   expectedScheduleVersion: version,
 } satisfies z.ZodRawShape;
 
+const matterParticipantCommandFields = {
+  customerId: id,
+  matterId: id,
+  personId: id,
+} satisfies z.ZodRawShape;
+
+export const AddMatterParticipantCommandSchema = command({
+  type: z.literal('ADD_MATTER_PARTICIPANT'),
+  ...matterParticipantCommandFields,
+});
+export const RemoveMatterParticipantCommandSchema = command({
+  type: z.literal('REMOVE_MATTER_PARTICIPANT'),
+  ...matterParticipantCommandFields,
+});
+export const MatterParticipantCommandSchema = z.union([
+  AddMatterParticipantCommandSchema,
+  RemoveMatterParticipantCommandSchema,
+]);
+export type MatterParticipantCommand = z.infer<typeof MatterParticipantCommandSchema>;
+
 export const CRM_COMMAND_TYPES = [
   'CREATE_CUSTOMER', 'UPDATE_CUSTOMER', 'ARCHIVE_CUSTOMER', 'RESTORE_CUSTOMER',
   'CREATE_MATTER', 'UPDATE_MATTER', 'TRANSFER_MATTER_OWNER', 'TRANSITION_MATTER_LIFECYCLE', 'REOPEN_MATTER',
   'ARCHIVE_MATTER', 'RESTORE_MATTER',
+  'ADD_MATTER_PARTICIPANT', 'REMOVE_MATTER_PARTICIPANT',
   'CREATE_COMMITMENT', 'RESCHEDULE_COMMITMENT', 'CONFIRM_COMMITMENT',
   'DECLINE_COMMITMENT', 'COMPLETE_COMMITMENT', 'CANCEL_COMMITMENT',
   'MARK_COMMITMENT_MISSED', 'CREATE_NEXT_COMMITMENT',
@@ -413,6 +434,8 @@ const crmCommandSchemas = [
   }),
   command({ type: z.literal('ARCHIVE_MATTER'), ...versionedEntityCommand, matterId: id, reason: z.string().trim().min(1).optional() }),
   command({ type: z.literal('RESTORE_MATTER'), ...versionedEntityCommand, matterId: id }),
+  AddMatterParticipantCommandSchema,
+  RemoveMatterParticipantCommandSchema,
   command({ type: z.literal('CREATE_COMMITMENT'), commitment: commitmentCreate }),
   command({
     type: z.literal('RESCHEDULE_COMMITMENT'),

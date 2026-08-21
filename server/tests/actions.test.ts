@@ -235,6 +235,79 @@ describe('/api/mutate Action contract', () => {
       await context.cleanup();
     }
   });
+
+  it('adds participation with a sales role while keeping later role removal independent', async () => {
+    const context = await createTestContext();
+    try {
+      const { accountId, opportunityId } = await seedMutationParents(context, 'participant-role-adapter');
+      await context.prisma.person.create({ data: {
+        id: 'role-participant', tenantId: context.tenant.id, accountId, name: 'Role participant', title: 'Advisor',
+      } });
+      const role = await context.app.inject({
+        method: 'POST', url: '/api/mutate', headers: { authorization: `Bearer ${context.token}` }, payload: { action: {
+          type: 'SET_ROLE', accId: accountId, oppId: opportunityId, personId: 'role-participant',
+          patch: { role: 'R', sentiment: 'plus', confidence: '明确' },
+        } },
+      });
+      expect(role.statusCode).toBe(200);
+      let state = (await context.app.inject({
+        method: 'GET', url: '/api/state', headers: { authorization: `Bearer ${context.token}` },
+      })).json<any>();
+      expect(state.accounts[0].opportunities[0]).toMatchObject({
+        participantIds: ['role-participant'],
+        memberIds: [],
+      });
+
+      const remove = await context.app.inject({
+        method: 'POST', url: '/api/mutate', headers: { authorization: `Bearer ${context.token}` }, payload: { action: {
+          type: 'REMOVE_ROLE', accId: accountId, oppId: opportunityId, personId: 'role-participant',
+        } },
+      });
+      expect(remove.statusCode).toBe(200);
+      state = (await context.app.inject({
+        method: 'GET', url: '/api/state', headers: { authorization: `Bearer ${context.token}` },
+      })).json<any>();
+      expect(state.accounts[0].opportunities[0].participantIds).toEqual(['role-participant']);
+      expect(state.accounts[0].opportunities[0].roles).toEqual([]);
+      expect(state.accounts[0].opportunities[0].memberIds).toEqual([]);
+    } finally {
+      await context.cleanup();
+    }
+  });
+
+  it('round-trips an unknown Relation kind through persistence and state', async () => {
+    const context = await createTestContext();
+    try {
+      const { accountId, opportunityId } = await seedMutationParents(context, 'relation-kind');
+      await context.prisma.person.createMany({ data: ['source', 'target'].map((id) => ({
+        id: `relation-${id}`, tenantId: context.tenant.id, accountId, name: id, title: id,
+      })) });
+      const response = await context.app.inject({
+        method: 'POST', url: '/api/mutate', headers: { authorization: `Bearer ${context.token}` }, payload: { action: {
+          type: 'ADD_EDGE', accId: accountId, oppId: opportunityId, edge: {
+            id: 'relation-open-kind', source: 'relation-source', target: 'relation-target',
+            kind: 'trusted_advisor', layer: 'L2', label: '顾问',
+          },
+        } },
+      });
+      expect(response.statusCode).toBe(200);
+      const update = await context.app.inject({
+        method: 'POST', url: '/api/mutate', headers: { authorization: `Bearer ${context.token}` }, payload: { action: {
+          type: 'UPDATE_EDGE', accId: accountId, oppId: opportunityId, edgeId: 'relation-open-kind',
+          patch: { kind: 'former_colleague' }, baseVersion: 0,
+        } },
+      });
+      expect(update.statusCode).toBe(200);
+      const state = (await context.app.inject({
+        method: 'GET', url: '/api/state', headers: { authorization: `Bearer ${context.token}` },
+      })).json<any>();
+      expect(state.accounts[0].opportunities[0].edges).toEqual([
+        expect.objectContaining({ id: 'relation-open-kind', kind: 'former_colleague', layer: 'L2', version: 1 }),
+      ]);
+    } finally {
+      await context.cleanup();
+    }
+  });
 });
 
 describe('WorkBuddy integration documentation', () => {

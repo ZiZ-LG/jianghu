@@ -181,6 +181,7 @@ const edgeInput = z.object({
   id,
   source: id,
   target: id,
+  kind: z.string().trim().min(1).optional(),
   layer,
   label: z.string(),
   color: z.string().optional(),
@@ -195,6 +196,7 @@ const edgeInput = z.object({
 const edgePatch = z.object({
   source: id.optional(),
   target: id.optional(),
+  kind: z.string().trim().min(1).optional(),
   layer: layer.optional(),
   label: z.string().optional(),
   color: z.string().optional(),

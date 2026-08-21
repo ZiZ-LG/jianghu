@@ -739,6 +739,15 @@ describe('INT-102 tenant parentage and reference guards', () => {
       expect(response.statusCode).toBe(200);
       expect(candidate.status).toBe('accepted');
       expect(candidate.resolvedPersonId).toBeTruthy();
+      await expect(context.prisma.matterParticipant.findUnique({
+        where: {
+          tenantId_opportunityId_personId: {
+            tenantId: context.tenant.id,
+            opportunityId: left.opportunityId,
+            personId: candidate.resolvedPersonId!,
+          },
+        },
+      })).resolves.toMatchObject({ accountId: left.accountId });
       await expect(context.prisma.relSuggestion.findUnique({ where: { id: 'rs-valid-rewrite' } })).resolves.toMatchObject({
         status: 'pending',
         sourceKind: 'person',

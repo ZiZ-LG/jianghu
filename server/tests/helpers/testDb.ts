@@ -74,6 +74,7 @@ export async function clearTestTenant(client: PrismaClient, tenantId: string): P
     client.uCV.deleteMany({ where: { tenantId } }),
     client.burningIssue.deleteMany({ where: { tenantId } }),
     client.edge.deleteMany({ where: { tenantId } }),
+    client.matterParticipant.deleteMany({ where: { tenantId } }),
     client.opportunityMember.deleteMany({ where: { tenantId } }),
     client.oppRole.deleteMany({ where: { tenantId } }),
     client.relSuggestion.deleteMany({ where: { tenantId } }),
@@ -95,6 +96,7 @@ export async function clearTestDatabase(client: PrismaClient): Promise<void> {
   assertTestDatabaseUrl();
   const tenants = await client.tenant.findMany({ select: { id: true } });
   for (const tenant of tenants) await clearTestTenant(client, tenant.id);
+  await client.dataMigrationState.deleteMany();
 }
 
 // Vitest loads this module as a setup file before importing app/prisma modules.

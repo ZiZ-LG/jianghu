@@ -110,6 +110,24 @@ export async function materializePerson(
     if (!ps.resolvedPersonId) throw new SuggestionConflictError();
     await requirePerson(tx, tenantId, ps.accountId, ps.resolvedPersonId);
     if (options.allowAcceptedReuse === false) throw new SuggestionConflictError();
+    if (ps.opportunityId) {
+      await tx.matterParticipant.upsert({
+        where: {
+          tenantId_opportunityId_personId: {
+            tenantId,
+            opportunityId: ps.opportunityId,
+            personId: ps.resolvedPersonId,
+          },
+        },
+        create: {
+          tenantId,
+          accountId: ps.accountId,
+          opportunityId: ps.opportunityId,
+          personId: ps.resolvedPersonId,
+        },
+        update: {},
+      });
+    }
     return { personId: ps.resolvedPersonId, accountId: ps.accountId };
   }
   if (ps.status !== 'pending' || ps.resolvedPersonId) throw new SuggestionConflictError();
@@ -136,8 +154,24 @@ export async function materializePerson(
   const logs = [{ date: today, content: `📥 ${ORIGIN_LABEL[candidate.origin] || '外部导入'}（${candidate.evidence || '无备注'}）${candidate.sourceUrl ? ' · ' + candidate.sourceUrl : ''}`, visibility: 'team' }];
   const personId = 'p_' + randomUUID().replaceAll('-', '');
   await tx.person.create({ data: { id: personId, tenantId, accountId: candidate.accountId, name: candidate.name, title: candidate.title, orgLevel: candidate.orgLevel, isCompetitor: false, x, y, form: '{}', logs: JSON.stringify(logs) } });
-  // 候选挂在 memberScoped 商机 → 新建的人加入该商机成员（可见性）
+  // 人审采纳后建立通用参与关系；只有 memberScoped 商机才另写 legacy 可见性成员。
   if (candidate.opportunityId) {
+    await tx.matterParticipant.upsert({
+      where: {
+        tenantId_opportunityId_personId: {
+          tenantId,
+          opportunityId: candidate.opportunityId,
+          personId,
+        },
+      },
+      create: {
+        tenantId,
+        accountId: candidate.accountId,
+        opportunityId: candidate.opportunityId,
+        personId,
+      },
+      update: {},
+    });
     const mo = await tx.opportunity.findFirst({ where: { id: candidate.opportunityId, tenantId, accountId: candidate.accountId }, select: { memberScoped: true } });
     if (mo?.memberScoped) await tx.opportunityMember.upsert({ where: { tenantId_opportunityId_personId: { tenantId, opportunityId: candidate.opportunityId, personId } }, create: { tenantId, opportunityId: candidate.opportunityId, personId }, update: {} });
   }

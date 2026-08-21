@@ -28,7 +28,7 @@ export interface PersonMergeReceipt {
   sourcePersonId: string;
   targetPersonId: string;
   redirected: RedirectCounts;
-  deleted: { oppRoles: number; opportunityMembers: number; edgeSelfLoops: number; edgeDuplicates: number; reminders: number };
+  deleted: { oppRoles: number; opportunityMembers: number; matterParticipants: number; edgeSelfLoops: number; edgeDuplicates: number; reminders: number };
   roleConflictByOpportunity: PersonMergeDecision['roleConflictByOpportunity'];
 }
 
@@ -113,10 +113,11 @@ const mergedLogs = (targetRaw: string, sourceRaw: string): unknown[] => {
 
 const edgeKey = (edge: {
   opportunityId: string | null; source: string; target: string; layer: string; label: string;
+  kind: string;
   color: string | null; style: string | null; width: number | null; directed: boolean;
   origin: string; shape: string | null; bend: number | null;
 }) => JSON.stringify([
-  edge.opportunityId, edge.source, edge.target, edge.layer, edge.label, edge.color, edge.style,
+  edge.opportunityId, edge.source, edge.target, edge.kind, edge.layer, edge.label, edge.color, edge.style,
   edge.width, edge.directed, edge.origin, edge.shape, edge.bend,
 ]);
 
@@ -209,9 +210,10 @@ export async function executePersonMerge(
     throw new MergeInputError('每个实际角色冲突都必须提供且仅提供一个明确决策');
   }
 
-  const [members, edges, burningIssues, evidenceEvents, notes, planActions, strategyCards, transcripts, advisorMsgs,
+  const [members, participants, edges, burningIssues, evidenceEvents, notes, planActions, strategyCards, transcripts, advisorMsgs,
     relSuggestions, personSuggestions, changeProposals, reminders] = await Promise.all([
     tx.opportunityMember.findMany({ where: { tenantId: ctx.tenantId, personId: { in: [target.id, source.id] } }, orderBy: { id: 'asc' } }),
+    tx.matterParticipant.findMany({ where: { tenantId: ctx.tenantId, personId: { in: [target.id, source.id] } }, orderBy: { id: 'asc' } }),
     tx.edge.findMany({ where: { tenantId: ctx.tenantId, OR: [
       { accountId: account.id }, { source: source.id }, { target: source.id },
     ] }, orderBy: { id: 'asc' } }),
@@ -237,6 +239,10 @@ export async function executePersonMerge(
   ]);
 
   for (const member of members) requireAccountOpportunity(account.id, member.opportunityId, opportunityAccounts);
+  for (const participant of participants) {
+    if (participant.accountId !== account.id) throw new MergeNotFoundError('引用客户异常');
+    requireAccountOpportunity(account.id, participant.opportunityId, opportunityAccounts);
+  }
   for (const edge of edges) {
     if (edge.accountId !== account.id) throw new MergeNotFoundError('引用客户异常');
     requireAccountOpportunity(account.id, edge.opportunityId, opportunityAccounts);
@@ -338,6 +344,21 @@ export async function executePersonMerge(
     }
   }
 
+  let deletedParticipants = 0;
+  let redirectedParticipants = 0;
+  const targetParticipantOpps = new Set(participants
+    .filter((row) => row.personId === target.id)
+    .map((row) => row.opportunityId));
+  for (const participant of participants.filter((row) => row.personId === source.id)) {
+    if (targetParticipantOpps.has(participant.opportunityId)) {
+      await tx.matterParticipant.delete({ where: { id: participant.id } });
+      deletedParticipants += 1;
+    } else {
+      await tx.matterParticipant.update({ where: { id: participant.id }, data: { personId: target.id } });
+      redirectedParticipants += 1;
+    }
+  }
+
   const projectedEdges = edges.map((edge) => ({
     ...edge,
     redirectedFromSource: edge.source === source.id || edge.target === source.id,
@@ -434,6 +455,7 @@ export async function executePersonMerge(
   const redirected: RedirectCounts = {
     oppRoles: redirectedOppRoles,
     opportunityMembers: redirectedMembers,
+    matterParticipants: redirectedParticipants,
     edges: edgeRedirect.count + edgeTargetRedirect.count,
     burningIssues: await updateMany(tx.burningIssue, { tenantId: ctx.tenantId, personId: source.id }, { personId: target.id }),
     evidenceEvents: await updateMany(tx.evidenceEvent, { tenantId: ctx.tenantId, personId: source.id }, { personId: target.id }),
@@ -462,7 +484,14 @@ export async function executePersonMerge(
     sourcePersonId: source.id,
     targetPersonId: target.id,
     redirected,
-    deleted: { oppRoles: deletedOppRoles, opportunityMembers: deletedMembers, edgeSelfLoops: selfLoopCount, edgeDuplicates: duplicateCount, reminders: deletedReminders },
+    deleted: {
+      oppRoles: deletedOppRoles,
+      opportunityMembers: deletedMembers,
+      matterParticipants: deletedParticipants,
+      edgeSelfLoops: selfLoopCount,
+      edgeDuplicates: duplicateCount,
+      reminders: deletedReminders,
+    },
     roleConflictByOpportunity: input.roleConflictByOpportunity,
   };
   await tx.auditEvent.create({ data: {

@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
 type MatterSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
+type ParticipantSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
 
 const MATTER_COLUMNS = [
   'kind',
@@ -85,6 +86,24 @@ async function inspectSchemaState(prisma: {
   return 'partial';
 }
 
+async function inspectParticipantSchemaState(prisma: {
+  $queryRawUnsafe<T>(query: string): Promise<T>;
+}): Promise<ParticipantSchemaState> {
+  const baseTables = await prisma.$queryRawUnsafe<Array<{ name: string }>>(
+    `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('Opportunity', 'Edge')`,
+  );
+  if (baseTables.length === 0) return 'uninitialized';
+  if (baseTables.length !== 2) return 'partial';
+  const expansionTables = await prisma.$queryRawUnsafe<Array<{ name: string }>>(
+    `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('MatterParticipant', 'DataMigrationState')`,
+  );
+  const edgeColumns = await prisma.$queryRawUnsafe<Array<{ name: string }>>('PRAGMA table_info("Edge")');
+  const hasKind = edgeColumns.some((column) => column.name === 'kind');
+  if (expansionTables.length === 0 && !hasKind) return 'legacy';
+  if (expansionTables.length === 2 && hasKind) return 'expanded';
+  return 'partial';
+}
+
 async function createConsistentBackup(
   prisma: { $executeRawUnsafe(query: string): Promise<number> },
   databasePath: string,
@@ -105,14 +124,20 @@ process.env.DATABASE_URL = url;
 const { PrismaClient } = await import('@prisma/client');
 const prisma = new PrismaClient();
 let state: MatterSchemaState;
+let participantState: ParticipantSchemaState;
 let backupPath: string | null = null;
 let schemaChanges = false;
 let matterBackfillRequired = false;
+let participantBackfillRequired = false;
 
 try {
   state = await inspectSchemaState(prisma);
+  participantState = await inspectParticipantSchemaState(prisma);
   if (state === 'partial') {
     throw new Error('partial Matter column expansion detected; restore the latest backup before retrying');
+  }
+  if (participantState === 'partial') {
+    throw new Error('partial MatterParticipant/Relation expansion detected; restore the latest backup before retrying');
   }
   if (state === 'legacy') {
     run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-matter-fields.ts', '--dry-run'], url);
@@ -143,8 +168,21 @@ try {
       matterBackfillRequired = true;
     }
   }
+  if (participantState === 'uninitialized') {
+    participantBackfillRequired = true;
+  } else if (participantState === 'legacy') {
+    run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-matter-participants.ts', '--dry-run'], url);
+    participantBackfillRequired = true;
+  } else {
+    const { hasMatterParticipantMigrationMarker } = await import('../src/matter/participants.js');
+    if (!(await hasMatterParticipantMigrationMarker(prisma))) {
+      // Recover the atomic data step after a kill that occurred after db push.
+      run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-matter-participants.ts', '--dry-run'], url);
+      participantBackfillRequired = true;
+    }
+  }
   schemaChanges = state === 'uninitialized' ? true : schemaHasChanges(url);
-  if (state !== 'uninitialized' && (schemaChanges || matterBackfillRequired)) {
+  if (state !== 'uninitialized' && (schemaChanges || matterBackfillRequired || participantBackfillRequired)) {
     backupPath = await createConsistentBackup(prisma, databasePath);
   }
 } finally {
@@ -159,11 +197,17 @@ if (matterBackfillRequired) {
   run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-matter-fields.ts', '--apply'], url);
 }
 run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-matter-fields.ts', '--verify'], url);
+if (participantBackfillRequired) {
+  run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-matter-participants.ts', '--apply'], url);
+  run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-matter-participants.ts', '--verify'], url);
+}
 
 console.log(JSON.stringify({
   ok: true,
   stateBefore: state,
+  participantStateBefore: participantState,
   schemaChanges,
   matterBackfillRequired,
+  participantBackfillRequired,
   backupPath,
 }, null, 2));

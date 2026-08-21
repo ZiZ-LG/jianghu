@@ -118,6 +118,7 @@ export const seedAccount: Account = {
         { personId: 'wu', role: 'R', sentiment: 'x', sentimentValue: -5, confidence: '明确', procurementType: 'purchasing', procurementStatus: 'none' },
         { personId: 'agent', role: 'R', sentiment: 'neutral', confidence: '推理', procurementType: 'agency', procurementStatus: 'verbal' },
       ],
+      participantIds: ['zhao', 'qian', 'sun', 'li', 'zhou', 'zheng', 'wang', 'wu', 'agent'],
       bis: [
         {
           id: 'bi_qian', personId: 'qian',

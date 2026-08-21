@@ -208,11 +208,12 @@ describe('generic CRM commands', () => {
       'CREATE_CUSTOMER', 'UPDATE_CUSTOMER', 'ARCHIVE_CUSTOMER', 'RESTORE_CUSTOMER',
       'CREATE_MATTER', 'UPDATE_MATTER', 'TRANSFER_MATTER_OWNER', 'TRANSITION_MATTER_LIFECYCLE', 'REOPEN_MATTER',
       'ARCHIVE_MATTER', 'RESTORE_MATTER',
+      'ADD_MATTER_PARTICIPANT', 'REMOVE_MATTER_PARTICIPANT',
       'CREATE_COMMITMENT', 'RESCHEDULE_COMMITMENT', 'CONFIRM_COMMITMENT',
       'DECLINE_COMMITMENT', 'COMPLETE_COMMITMENT', 'CANCEL_COMMITMENT',
       'MARK_COMMITMENT_MISSED', 'CREATE_NEXT_COMMITMENT',
     ]);
-    expect(CrmCommandSchema.options).toHaveLength(19);
+    expect(CrmCommandSchema.options).toHaveLength(21);
   });
 
   it('accepts one real fixture for every generic command', () => {
@@ -237,6 +238,8 @@ describe('generic CRM commands', () => {
       },
       { type: 'ARCHIVE_MATTER', customerId: 'legacy-account-1', matterId: 'legacy-opportunity-1', baseVersion: 4, reason: '历史归档' },
       { type: 'RESTORE_MATTER', customerId: 'legacy-account-1', matterId: 'legacy-opportunity-1', baseVersion: 5 },
+      { type: 'ADD_MATTER_PARTICIPANT', customerId: 'legacy-account-1', matterId: 'legacy-opportunity-1', personId: 'legacy-person-1' },
+      { type: 'REMOVE_MATTER_PARTICIPANT', customerId: 'legacy-account-1', matterId: 'legacy-opportunity-1', personId: 'legacy-person-1' },
       { type: 'CREATE_COMMITMENT', commitment: COMMITMENT_CREATE_INPUT },
       {
         type: 'RESCHEDULE_COMMITMENT', customerId: 'legacy-account-1', commitmentId: 'legacy-plan-action-1',

@@ -144,4 +144,45 @@ describe('PostgreSQL schema delivery', () => {
     expect(reportScript).toContain('inspectMatterOwnerAssignments');
     expect(reportScript).not.toMatch(/\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\s*\(/);
   });
+
+  it('delivers CORE-105 participants and open Relation kinds as an atomic fail-closed expansion', async () => {
+    const migration = await read('prisma/postgres/migrations/20260821010000_expand_matter_participants_relations/migration.sql').catch(() => '');
+    const schema = await read('prisma/postgres/schema.prisma');
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const packageJson = JSON.parse(await read('package.json')) as { scripts?: Record<string, string> };
+
+    expect(migration.trimStart().startsWith('BEGIN;')).toBe(true);
+    expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(migration).toContain("SET LOCAL lock_timeout = '30s'");
+    expect(migration).toContain('LOCK TABLE "OppRole", "OpportunityMember", "Opportunity", "Person", "Edge"');
+    expect(migration).toContain('invalid MatterParticipant legacy parentage');
+    expect(migration.indexOf('invalid MatterParticipant legacy parentage'))
+      .toBeLessThan(migration.indexOf('CREATE TABLE "MatterParticipant"'));
+    expect(migration).toContain('CREATE TABLE "MatterParticipant"');
+    expect(migration).toContain('CREATE TABLE "DataMigrationState"');
+    expect(migration).toContain('CORE-105-matter-participant-backfill-v1');
+    expect(migration).toContain('ADD COLUMN "kind" TEXT NOT NULL DEFAULT');
+    expect(migration).toContain('FROM "OppRole"');
+    expect(migration).toContain('FROM "OpportunityMember"');
+    expect(migration).toContain('NOT EXISTS');
+    expect(migration).toContain('"MatterParticipant_tenantId_opportunityId_personId_key"');
+    expect(migration).toContain('"MatterParticipant_tenantId_accountId_fkey"');
+    expect(migration).toContain('"MatterParticipant_tenantId_opportunityId_fkey"');
+    expect(migration).toContain('"MatterParticipant_tenantId_personId_fkey"');
+    expect(migration).toContain('MatterParticipant backfill parity failed');
+
+    expect(schema).toContain('model MatterParticipant');
+    expect(schema).toContain('model DataMigrationState');
+    expect(schema).toContain('kind          String');
+    expect(packageJson.scripts?.['migrate:matter-participant-report']).toBeTruthy();
+    expect(packageJson.scripts?.['migrate:matter-participant-verify']).toBeTruthy();
+    expect(deployScript).toContain('migrate:matter-participant-report');
+    expect(deployScript).toContain('migrate:matter-participant-verify');
+    expect(deployScript).toMatch(/matter_schema_matches_known_state\(\) \{[\s\S]*schema_matches "\$PRE_PARTICIPANT_SCHEMA"[\s\S]*\|\| schema_matches "\$SCHEMA"/);
+    expect(deployScript.match(/if ! matter_schema_matches_known_state/g)).toHaveLength(2);
+    expect(deployScript.indexOf('migrate:matter-participant-report'))
+      .toBeLessThan(deployScript.indexOf('prisma migrate deploy'));
+    expect(deployScript.lastIndexOf('migrate:matter-participant-verify'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy'));
+  });
 });

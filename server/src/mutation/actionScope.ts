@@ -144,6 +144,7 @@ async function requireNoForeignOpportunityChildren(
     db.relSuggestion.findFirst({ where: { opportunityId, tenantId: foreignTenant }, select: { id: true } }),
     db.oppRole.findFirst({ where: { opportunityId, tenantId: foreignTenant }, select: { id: true } }),
     db.opportunityMember.findFirst({ where: { opportunityId, tenantId: foreignTenant }, select: { id: true } }),
+    db.matterParticipant.findFirst({ where: { opportunityId, tenantId: foreignTenant }, select: { id: true } }),
     db.edge.findFirst({ where: { opportunityId, tenantId: foreignTenant }, select: { id: true } }),
     db.burningIssue.findFirst({ where: { opportunityId, tenantId: foreignTenant }, select: { id: true } }),
     db.uCV.findFirst({ where: { opportunityId, tenantId: foreignTenant }, select: { id: true } }),

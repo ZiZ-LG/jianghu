@@ -3,9 +3,11 @@ set -eu
 
 SCHEMA=prisma/postgres/schema.prisma
 LEGACY_SCHEMA=prisma/postgres/legacy/20260712_pre_int501.prisma
+PRE_PARTICIPANT_SCHEMA=prisma/postgres/legacy/20260821_pre_core105.prisma
 PRE_BRIDGE_MIGRATIONS='20260715000000_baseline 20260715010000_hash_command_run_idempotency_keys 20260715020000_add_person_created_at'
 BRIDGE_MIGRATION=20260715030000_adopt_pre_int501_schema
 MATTER_MIGRATION=20260821000000_expand_matter_fields
+PARTICIPANT_MIGRATION=20260821010000_expand_matter_participants_relations
 
 wait_for_migration_state() {
   i=0
@@ -31,6 +33,10 @@ schema_matches() {
     --from-schema-datasource "$SCHEMA" \
     --to-schema-datamodel "$target_schema" \
     --exit-code >/tmp/postgres-schema-drift.log 2>&1
+}
+
+matter_schema_matches_known_state() {
+  schema_matches "$PRE_PARTICIPANT_SCHEMA" || schema_matches "$SCHEMA"
 }
 
 refresh_applied_migrations() {
@@ -73,7 +79,7 @@ recover_incomplete_matter_migration() {
     expanded)
       echo "[migration] 检测到已提交但未完成登记的 Matter 事务，验证后接管。"
       npm run migrate:matter-verify
-      if ! schema_matches "$SCHEMA"; then
+      if ! matter_schema_matches_known_state; then
         echo "[migration] Matter schema 已扩展但与当前模型不一致，拒绝接管：" >&2
         cat /tmp/postgres-schema-drift.log >&2
         exit 1
@@ -98,7 +104,7 @@ adopt_existing_matter_schema_if_safe() {
     expanded)
       echo "[migration] 检测到未登记但完整的 Matter schema，验证后接管。"
       npm run migrate:matter-verify
-      if ! schema_matches "$SCHEMA"; then
+      if ! matter_schema_matches_known_state; then
         echo "[migration] 未登记 Matter schema 与当前模型不一致，拒绝接管：" >&2
         cat /tmp/postgres-schema-drift.log >&2
         exit 1
@@ -107,6 +113,59 @@ adopt_existing_matter_schema_if_safe() {
       ;;
     *)
       echo "[migration] 检测到未登记的部分 Matter schema，拒绝继续。" >&2
+      exit 1
+      ;;
+  esac
+}
+
+recover_incomplete_participant_migration() {
+  incomplete_migrations=$(npx tsx scripts/list-incomplete-postgres-migrations.ts)
+  if ! printf '%s\n' "$incomplete_migrations" | grep -Fxq "$PARTICIPANT_MIGRATION"; then
+    return 0
+  fi
+  participant_schema_state=$(npx tsx scripts/postgres-participant-schema-state.ts)
+  case "$participant_schema_state" in
+    legacy)
+      echo "[migration] 检测到中断且已由 PostgreSQL 回滚的参与关系事务，登记后安全重放。"
+      npx prisma migrate resolve --rolled-back "$PARTICIPANT_MIGRATION" --schema "$SCHEMA"
+      ;;
+    expanded)
+      echo "[migration] 检测到已提交但未完成登记的参与关系事务，验证后接管。"
+      npm run migrate:matter-participant-verify
+      if ! schema_matches "$SCHEMA"; then
+        echo "[migration] 参与关系 schema 已扩展但与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$PARTICIPANT_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] 参与关系 migration 留下部分 schema，必须从认证备份恢复后再试。" >&2
+      exit 1
+      ;;
+  esac
+}
+
+adopt_existing_participant_schema_if_safe() {
+  refresh_applied_migrations
+  if migration_is_applied "$PARTICIPANT_MIGRATION"; then
+    return 0
+  fi
+  participant_schema_state=$(npx tsx scripts/postgres-participant-schema-state.ts)
+  case "$participant_schema_state" in
+    legacy) return 0 ;;
+    expanded)
+      echo "[migration] 检测到未登记但完整的参与关系 schema，验证后接管。"
+      npm run migrate:matter-participant-verify
+      if ! schema_matches "$SCHEMA"; then
+        echo "[migration] 未登记参与关系 schema 与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$PARTICIPANT_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] 检测到未登记的部分参与关系 schema，拒绝继续。" >&2
       exit 1
       ;;
   esac
@@ -154,12 +213,21 @@ esac
 
 recover_incomplete_matter_migration
 adopt_existing_matter_schema_if_safe
+recover_incomplete_participant_migration
+adopt_existing_participant_schema_if_safe
 refresh_applied_migrations
 matter_migration_pending=0
 if ! migration_is_applied "$MATTER_MIGRATION"; then
   matter_migration_pending=1
   echo "[migration] 在 Matter 扩展前执行只读状态映射预演…"
   npm run migrate:matter-report
+fi
+
+participant_migration_pending=0
+if ! migration_is_applied "$PARTICIPANT_MIGRATION"; then
+  participant_migration_pending=1
+  echo "[migration] 在参与关系扩展前执行只读父树与去重预演…"
+  npm run migrate:matter-participant-report
 fi
 
 echo "[migration] 在唯一索引迁移前执行同步锚与企微绑定冲突扫描…"
@@ -172,6 +240,11 @@ npx prisma migrate deploy --schema "$SCHEMA"
 if [ "$matter_migration_pending" -eq 1 ]; then
   echo "[migration] 校验 Matter 生命周期影子列与 legacy status 一致…"
   npm run migrate:matter-verify
+fi
+
+if [ "$participant_migration_pending" -eq 1 ]; then
+  echo "[migration] 校验 MatterParticipant 回填与迁移时 legacy 候选一致…"
+  npm run migrate:matter-participant-verify
 fi
 
 if ! schema_matches "$SCHEMA"; then

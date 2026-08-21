@@ -67,6 +67,14 @@ export async function createDemoForTenant(tenantId: string): Promise<void> {
     ['agent', 'R', 'neutral', null, '推理', false, 'agency', 'verbal'],
   ];
   await prisma.oppRole.createMany({ data: roles.map((r) => ({ tenantId, opportunityId: oppId, personId: id(r[0]), role: r[1], sentiment: r[2], sentimentValue: r[3], confidence: r[4], isKeyInfluencer: r[5], procurementType: r[6], procurementStatus: r[7] })) });
+  await prisma.matterParticipant.createMany({
+    data: roles.map((r) => ({
+      tenantId,
+      accountId: accId,
+      opportunityId: oppId,
+      personId: id(r[0]),
+    })),
+  });
 
   const biId = id('bi_qian');
   await prisma.burningIssue.create({ data: { id: biId, tenantId, opportunityId: oppId, personId: id('qian'), description: '集团数字化考核排名靠后 + 个人晋升关口(处长→部门总)', category: '个人晋升', isPrivate: true, confidence: '明确' } });

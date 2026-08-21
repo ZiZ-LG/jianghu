@@ -52,6 +52,10 @@ describe('opportunity clone P4 normalization', () => {
       expect(clonedRoles.filter((role) => role.isKeyInfluencer).map((role) => role.personId)).toEqual(['a-legal']);
       expect(clonedRoles).toHaveLength(3);
       expect(clonedRoles.map((role) => role.personId)).not.toContain('0-cross-account');
+      await expect(context.prisma.matterParticipant.findMany({
+        where: { tenantId: context.tenant.id, opportunityId },
+        orderBy: { personId: 'asc' }, select: { personId: true },
+      })).resolves.toEqual(personIds.sort().map((personId) => ({ personId })));
     } finally {
       await context.cleanup();
     }

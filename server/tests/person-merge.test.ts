@@ -56,6 +56,11 @@ async function seedMergeGraph(context: TestContext, suffix: string) {
     { id: `member-source-${suffix}`, tenantId: context.tenant.id, opportunityId, personId: sourcePersonId },
     { id: `member-source-second-${suffix}`, tenantId: context.tenant.id, opportunityId: secondOpportunityId, personId: sourcePersonId },
   ] });
+  await context.prisma.matterParticipant.createMany({ data: [
+    { id: `participant-target-${suffix}`, tenantId: context.tenant.id, accountId, opportunityId, personId: targetPersonId },
+    { id: `participant-source-${suffix}`, tenantId: context.tenant.id, accountId, opportunityId, personId: sourcePersonId },
+    { id: `participant-source-second-${suffix}`, tenantId: context.tenant.id, accountId, opportunityId: secondOpportunityId, personId: sourcePersonId },
+  ] });
   await context.prisma.edge.createMany({ data: [
     { id: `edge-self-${suffix}`, tenantId: context.tenant.id, accountId, opportunityId, source: sourcePersonId, target: targetPersonId, layer: 'L1', label: 'secret self' },
     { id: `edge-duplicate-keep-${suffix}`, tenantId: context.tenant.id, accountId, opportunityId, source: targetPersonId, target: otherPersonId, layer: 'L2', label: 'same', directed: false, color: '#123' },
@@ -255,6 +260,11 @@ describe('INT-302 safe duplicate Person merge', () => {
       await context.prisma.opportunity.update({
         where: { id: tree.secondOpportunityId }, data: { primaryDPersonId: tree.sourcePersonId },
       });
+      await context.prisma.edge.create({ data: {
+        id: 'edge-kind-preserved-success', tenantId: context.tenant.id, accountId: tree.accountId,
+        opportunityId: tree.opportunityId, source: tree.sourcePersonId, target: tree.otherPersonId,
+        kind: 'trusted_advisor', layer: 'L2', label: 'same', directed: false, color: '#123',
+      } });
       const payload = {
         targetPersonId: tree.targetPersonId,
         sourcePersonId: tree.sourcePersonId,
@@ -291,11 +301,18 @@ describe('INT-302 safe duplicate Person merge', () => {
       expect(await context.prisma.oppRole.count({ where: { tenantId: context.tenant.id, personId: tree.sourcePersonId } })).toBe(0);
       expect(await context.prisma.opportunityMember.count({ where: { tenantId: context.tenant.id, personId: tree.sourcePersonId } })).toBe(0);
       expect(await context.prisma.opportunityMember.count({ where: { tenantId: context.tenant.id, personId: tree.targetPersonId } })).toBe(2);
+      expect(await context.prisma.matterParticipant.count({ where: { tenantId: context.tenant.id, personId: tree.sourcePersonId } })).toBe(0);
+      expect(await context.prisma.matterParticipant.count({ where: { tenantId: context.tenant.id, personId: tree.targetPersonId } })).toBe(2);
+      expect(first.json()).toMatchObject({
+        redirected: { matterParticipants: 1 },
+        deleted: { matterParticipants: 1 },
+      });
 
       const edges = await context.prisma.edge.findMany({ where: { tenantId: context.tenant.id }, orderBy: { id: 'asc' } });
-      expect(edges).toHaveLength(2);
+      expect(edges).toHaveLength(3);
       expect(edges).toEqual(expect.arrayContaining([
         expect.objectContaining({ id: `edge-duplicate-keep-success`, source: tree.targetPersonId, target: tree.otherPersonId }),
+        expect.objectContaining({ id: 'edge-kind-preserved-success', source: tree.targetPersonId, target: tree.otherPersonId, kind: 'trusted_advisor' }),
         expect.objectContaining({ id: `edge-reverse-preserved-success`, source: tree.otherPersonId, target: tree.targetPersonId }),
       ]));
 

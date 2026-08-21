@@ -1,5 +1,5 @@
 // 商机相关端点：新建商机（空白 / 从已有商机克隆选定的人物 + 角色 + 可选关系线）。
-// 人物是客户级共享，"克隆"只复制商机级数据：成员可见性(OpportunityMember) + 角色(OppRole) + 增量边(opp.edges)。
+// 人物是客户级共享，"克隆"只复制商机级数据：通用参与人(MatterParticipant) + 成员可见性(OpportunityMember) + 角色(OppRole) + 增量边(opp.edges)。
 // 新商机一律 memberScoped=true（白板/选定成员）；改新商机的角色/关系不影响源商机（按 opportunityId 分库）。
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
@@ -39,7 +39,10 @@ export async function cloneOpportunityInTransaction(
     id: oppId, tenantId, accountId, name: name.slice(0, 100), customerType: acc.customerType,
     pipelineStage: '线索', engageStage: '需求调研立项', memberScoped: true,
   } });
-  for (const pid of validIds) await db.opportunityMember.create({ data: { tenantId, opportunityId: oppId, personId: pid } });
+  for (const pid of validIds) {
+    await db.opportunityMember.create({ data: { tenantId, opportunityId: oppId, personId: pid } });
+    await db.matterParticipant.create({ data: { tenantId, accountId, opportunityId: oppId, personId: pid } });
+  }
   if (fromOppId && validIds.length) {
     const source = await db.opportunity.findFirst({ where: { id: fromOppId, tenantId, accountId }, select: { id: true } });
     if (!source) throw new ScopedNotFoundError();
@@ -54,7 +57,7 @@ export async function cloneOpportunityInTransaction(
       const edges = await db.edge.findMany({ where: { tenantId, opportunityId: fromOppId } });
       for (const e of edges) if (sel.has(e.source) && sel.has(e.target)) await db.edge.create({ data: {
         id: 'e_' + randomUUID().replaceAll('-', ''), tenantId, accountId, opportunityId: oppId,
-        source: e.source, target: e.target, layer: e.layer, label: e.label, color: e.color,
+        source: e.source, target: e.target, kind: e.kind, layer: e.layer, label: e.label, color: e.color,
         style: e.style, width: e.width, directed: e.directed, origin: e.origin, shape: e.shape, bend: e.bend,
       } });
     }

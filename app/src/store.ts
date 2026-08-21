@@ -36,7 +36,7 @@ export function newOpportunity(accountId: string, name: string, customerType: Cu
   return {
     id: uid('opp'), accountId, name, customerType,
     pipelineStage: '线索', engageStage: '需求调研立项', singleSalesGoal: '',
-    c3Items: {}, c5Items: {}, roles: [], bis: [], ucvs: [], edges: [], memberScoped: false, memberIds: [],
+    c3Items: {}, c5Items: {}, roles: [], bis: [], ucvs: [], edges: [], memberScoped: false, memberIds: [], participantIds: [],
   };
 }
 export function newPerson(name: string, title: string, x: number, y: number, isCompetitor?: boolean): Person {
@@ -99,7 +99,7 @@ export function reducer(s: StoreState, action: StoreAction): StoreState {
     case 'ADD_OPP': {
       const opp: Opportunity = {
         accountId: action.accId,
-        singleSalesGoal: '', c3Items: {}, c5Items: {}, roles: [], bis: [], ucvs: [], edges: [], memberIds: [],
+        singleSalesGoal: '', c3Items: {}, c5Items: {}, roles: [], bis: [], ucvs: [], edges: [], memberIds: [], participantIds: [],
         ...action.opp,
       };
       return mapAcc(s, action.accId, (a) => ({ ...a, opportunities: [...a.opportunities, opp] }));
@@ -140,6 +140,7 @@ export function reducer(s: StoreState, action: StoreAction): StoreState {
             bis: o.bis.filter((b) => b.personId !== action.personId),
             ucvs: o.ucvs.filter((u) => !deadBis.includes(u.targetBiId)),
             memberIds: (o.memberIds ?? []).filter((id) => id !== action.personId),
+            participantIds: (o.participantIds ?? []).filter((id) => id !== action.personId),
             primaryDPersonId: o.primaryDPersonId === action.personId ? null : o.primaryDPersonId,
           };
         }),
@@ -163,6 +164,9 @@ export function reducer(s: StoreState, action: StoreAction): StoreState {
         return {
           ...o,
           roles,
+          participantIds: (o.participantIds ?? []).includes(action.personId)
+            ? o.participantIds
+            : [...(o.participantIds ?? []), action.personId],
           primaryDPersonId: o.primaryDPersonId === action.personId && effectiveRole !== 'D'
             ? null
             : o.primaryDPersonId,

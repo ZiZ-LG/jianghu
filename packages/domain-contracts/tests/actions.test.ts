@@ -27,6 +27,17 @@ describe('ActionSchema', () => {
     expect(ActionSchema.options).toHaveLength(51);
   });
 
+  it('accepts an unknown non-empty Relation kind while retaining the sales layer adapter', () => {
+    expect(ActionSchema.safeParse({
+      type: 'ADD_EDGE', accId: 'a', oppId: 'o', edge: {
+        id: 'e', source: 'p1', target: 'p2', layer: 'L2', label: '顾问', kind: 'trusted_advisor',
+      },
+    }).success).toBe(true);
+    expect(ActionSchema.safeParse({
+      type: 'UPDATE_EDGE', accId: 'a', oppId: 'o', edgeId: 'e', patch: { kind: '  ' },
+    }).success).toBe(false);
+  });
+
   it('rejects missing required entity fields', () => {
     expect(ActionSchema.safeParse({ type: 'ADD_PERSON', person: {} }).success).toBe(false);
   });

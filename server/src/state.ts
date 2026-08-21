@@ -63,14 +63,14 @@ const accountTreeInclude = {
   edges: true,
   opportunities: {
     where: { archivedAt: null },
-    include: { roles: true, edges: true, bis: true, ucvs: true, members: true },
+    include: { roles: true, edges: true, bis: true, ucvs: true, members: true, participants: true },
   },
 } as const satisfies Prisma.AccountInclude;
 
 type AccountTreeRow = Prisma.AccountGetPayload<{ include: typeof accountTreeInclude }>;
 
 function edgeView(e: any) {
-  return { id: e.id, source: e.source, target: e.target, layer: e.layer, label: e.label, color: e.color ?? undefined, style: e.style ?? undefined, width: e.width ?? undefined, directed: e.directed, origin: e.origin, shape: e.shape ?? undefined, bend: e.bend ?? undefined, version: e.version };
+  return { id: e.id, source: e.source, target: e.target, kind: e.kind, layer: e.layer, label: e.label, color: e.color ?? undefined, style: e.style ?? undefined, width: e.width ?? undefined, directed: e.directed, origin: e.origin, shape: e.shape ?? undefined, bend: e.bend ?? undefined, version: e.version };
 }
 function roleView(r: any) {
   return { personId: r.personId, role: r.role, sentiment: r.sentiment, sentimentValue: r.sentimentValue ?? undefined, confidence: r.confidence, isKeyInfluencer: r.isKeyInfluencer, procurementType: r.procurementType ?? undefined, procurementStatus: r.procurementStatus ?? undefined };
@@ -206,6 +206,14 @@ export async function assembleState(
         if (member.opportunityId !== opportunity.id) reasons.push('opportunity_mismatch');
         if (personAccount.get(member.personId) !== account.id) reasons.push('person_mismatch');
         return drops.keep('OpportunityMember', member.id, reasons);
+      });
+      opportunity.participants = opportunity.participants.filter((participant) => {
+        const reasons: string[] = [];
+        if (participant.tenantId !== tenantId) reasons.push('tenant_mismatch');
+        if (participant.accountId !== account.id) reasons.push('account_mismatch');
+        if (participant.opportunityId !== opportunity.id) reasons.push('opportunity_mismatch');
+        if (personAccount.get(participant.personId) !== account.id) reasons.push('person_mismatch');
+        return drops.keep('MatterParticipant', participant.id, reasons);
       });
     }
   }
@@ -419,6 +427,7 @@ export async function assembleState(
         ucvs: o.ucvs.map((u) => ({ id: u.id, targetBiId: u.targetBiId, description: u.description, competitorCannot: u.competitorCannot, status: u.status })),
         memberScoped: o.memberScoped,
         memberIds: o.members.map((m) => m.personId),
+        participantIds: o.participants.map((participant) => participant.personId),
         evidenceEvents: evByOpp.get(o.id) ?? [],
         version: o.version,
       })),
