@@ -7,6 +7,7 @@ import { deploymentOutboundPolicy, fetchOutbound } from './security/outboundUrl.
 import type { DbClient } from './mutation/scopeGuards.js';
 import { visiblePersonLogs, type ReadPrincipal } from './visibility.js';
 import { pickKeyInfluencerKeeper, scoreFromState, type Confidence, type Role, type Sentiment } from './g64111.js';
+import { resolveEffectiveResourceScope } from './resourceScope.js';
 
 export interface AiContextOptions {
   includeRawLogs: boolean;
@@ -93,15 +94,17 @@ export async function buildServerAiContext(input: {
 }): Promise<{ context: any; manifest: ContextManifest }> {
   const options = AiContextOptionsSchema.parse(input.options ?? {});
   if (input.principal.tenantId !== input.tenantId) throw new AiContextNotFoundError('商机不存在');
+  const scope = await resolveEffectiveResourceScope(prisma, input.principal);
+  if (!scope.canReadMatter(input.opportunityId)) throw new AiContextNotFoundError('商机不存在');
+  const currentPrincipal: ReadPrincipal = {
+    tenantId: input.tenantId,
+    userId: scope.actorUserId,
+    role: scope.actorRole,
+  };
   const opportunity = await prisma.opportunity.findFirst({
     where: { id: input.opportunityId, tenantId: input.tenantId, archivedAt: null, account: { tenantId: input.tenantId, archivedAt: null } },
     include: {
-      account: {
-        include: {
-          persons: { where: { tenantId: input.tenantId, archivedAt: null } },
-          edges: { where: { tenantId: input.tenantId, opportunityId: null } },
-        },
-      },
+      account: { select: { id: true, name: true, customerType: true } },
       roles: { where: { tenantId: input.tenantId } },
       edges: { where: { tenantId: input.tenantId } },
       bis: { where: { tenantId: input.tenantId } },
@@ -110,12 +113,29 @@ export async function buildServerAiContext(input: {
     },
   });
   if (!opportunity) throw new AiContextNotFoundError('商机不存在');
-  if (input.principal.role === 'viewer' && opportunity.account.primaryOwnerUserId !== input.principal.userId) {
-    throw new AiContextNotFoundError('商机不存在');
-  }
+
+  const relatedPersonIds = new Set([
+    ...opportunity.roles.map((role) => role.personId),
+    ...opportunity.edges.flatMap((edge) => [edge.source, edge.target]),
+    ...opportunity.bis.map((bi) => bi.personId),
+    ...opportunity.members.map((member) => member.personId),
+  ]);
+  const accountPersons = await prisma.person.findMany({
+    where: {
+      tenantId: input.tenantId,
+      accountId: opportunity.accountId,
+      archivedAt: null,
+      ...(scope.canReadAccountData(opportunity.accountId) ? {} : { id: { in: [...relatedPersonIds] } }),
+    },
+  });
+  const accountEdges = scope.canReadAccountData(opportunity.accountId)
+    ? await prisma.edge.findMany({
+        where: { tenantId: input.tenantId, accountId: opportunity.accountId, opportunityId: null },
+      })
+    : [];
 
   const memberIds = new Set(opportunity.members.map((member) => member.personId));
-  const peopleRows = opportunity.account.persons.filter((person) => !opportunity.memberScoped || memberIds.has(person.id));
+  const peopleRows = accountPersons.filter((person) => !opportunity.memberScoped || memberIds.has(person.id));
   const allowedPersonIds = new Set(peopleRows.map((person) => person.id));
   const roles = opportunity.roles
     .filter((role) => allowedPersonIds.has(role.personId)
@@ -152,7 +172,7 @@ export async function buildServerAiContext(input: {
     };
   });
   const nameById = new Map(peopleRows.map((person) => [person.id, person.name]));
-  const relationships = [...opportunity.account.edges, ...opportunity.edges]
+  const relationships = [...accountEdges, ...opportunity.edges]
     .filter((edge) => allowedPersonIds.has(edge.source) && allowedPersonIds.has(edge.target))
     .slice(0, 40)
     .map((edge) => ({
@@ -189,7 +209,7 @@ export async function buildServerAiContext(input: {
   if (options.includeRawLogs) {
     for (const person of peopleRows) {
       if (!keyIds.has(person.id)) continue;
-      const logs = visiblePersonLogs(person.logs, input.principal)
+      const logs = visiblePersonLogs(person.logs, currentPrincipal)
         .filter((log) => log.visibility !== 'self')
         .filter((log): log is typeof log & { date: string; content: string } => typeof log.date === 'string' && typeof log.content === 'string')
         .slice(0, 2);
@@ -399,6 +419,8 @@ export function aiRoutes(app: FastifyInstance) {
   // Authoritative preflight: lets the user inspect counts/categories before any model call.
   app.post('/api/ai/context-manifest', { preHandler: [app.authenticate] }, async (req, reply) => {
     if (denyViewer(req, reply)) return;
+    const currentScope = await resolveEffectiveResourceScope(prisma, principalOf(req));
+    if (currentScope.actorRole === 'viewer') return reply.code(403).send({ error: '只读成员不可操作' });
     const parsed = z.object({
       opportunityId: z.string().min(1),
       options: AiContextOptionsSchema,
@@ -428,6 +450,8 @@ export function aiRoutes(app: FastifyInstance) {
 
   app.post('/api/ai/simulate', { preHandler: [app.authenticate] }, async (req, reply) => {
     if (denyViewer(req, reply)) return; // viewer 只读，不可操作
+    const currentScope = await resolveEffectiveResourceScope(prisma, principalOf(req));
+    if (currentScope.actorRole === 'viewer') return reply.code(403).send({ error: '只读成员不可操作' });
     const p = z.object({
       opportunityId: z.string().min(1),
       focusPersonId: z.string().min(1),

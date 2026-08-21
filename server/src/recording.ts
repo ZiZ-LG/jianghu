@@ -21,6 +21,7 @@ import { extractText, getDocumentProxy } from 'unpdf';
 import { listGetnoteNotes, getGetnoteTranscript } from './getnote.js';
 import { failReservedCommand, readCommandReplay, reserveCommand, runCommand } from './mutation/commandRunner.js';
 import type { DbClient } from './mutation/scopeGuards.js';
+import { resolveEffectiveResourceScope } from './resourceScope.js';
 
 export type RecordingSource = 'getnote' | 'feishu' | 'dingtalk' | 'mock' | 'manual' | 'upload';
 
@@ -340,8 +341,21 @@ export function recordingRoutes(app: FastifyInstance): void {
   app.get('/api/recording/transcripts', { preHandler: [app.authenticate] }, async (req: any, reply: any) => {
     if (denyViewer(req, reply)) return; // viewer 只读，不可操作
     const accountId = typeof req.query?.accountId === 'string' ? req.query.accountId : undefined;
+    const scope = await resolveEffectiveResourceScope(prisma, {
+      tenantId: req.user.tenantId,
+      userId: req.user.userId,
+      role: req.user.role,
+    });
+    if (scope.actorRole === 'viewer') return reply.code(403).send({ error: '只读成员不可操作' });
     const rows = await prisma.transcript.findMany({
-      where: { tenantId: req.user.tenantId, ...(accountId ? { accountId } : {}) },
+      where: {
+        tenantId: req.user.tenantId,
+        ...(accountId ? { accountId } : {}),
+        OR: [
+          { accountId: { in: [...scope.fullAccountIds] } },
+          { opportunityId: { in: [...scope.matterIds] } },
+        ],
+      },
       orderBy: { createdAt: 'desc' }, take: 50,
     });
     return {

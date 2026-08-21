@@ -7,6 +7,7 @@ import { aggregateApprovedEvidence, type ApprovedEvidenceAggregate } from './evi
 import type { DbClient } from '../mutation/scopeGuards.js';
 import type { ReadPrincipal } from '../visibility.js';
 import { activePersonWhere } from '../activePerson.js';
+import { resolveEffectiveResourceScope } from '../resourceScope.js';
 
 // ── 值域映射（江湖 ↔ 内核）──
 export const SENT2MARK: Record<string, Mark> = { star: 'star', plus: 'plus', neutral: 'eq', unknown: 'unk', minus: 'minus', x: 'x' };
@@ -41,16 +42,48 @@ export async function assembleDeal(
   db: DbClient = prisma,
   principal?: ReadPrincipal,
 ): Promise<AssembledPde | null> {
+  let currentPrincipal = principal;
+  let canReadFullAccount = true;
+  let effectiveScope: Awaited<ReturnType<typeof resolveEffectiveResourceScope>> | null = null;
+  if (principal) {
+    if (principal.tenantId !== tenantId) return null;
+    effectiveScope = await resolveEffectiveResourceScope(db, principal);
+    if (!effectiveScope.canReadMatter(oppId)) return null;
+    canReadFullAccount = false;
+    currentPrincipal = {
+      tenantId,
+      userId: effectiveScope.actorUserId,
+      role: effectiveScope.actorRole,
+    };
+  }
   const opp = await db.opportunity.findFirst({
-    where: { id: oppId, tenantId },
-    include: { roles: true, bis: true, ucvs: true, account: { include: { persons: { where: activePersonWhere } } } },
+    where: { id: oppId, tenantId, archivedAt: null, account: { tenantId, archivedAt: null } },
+    include: {
+      roles: { where: { tenantId } },
+      bis: { where: { tenantId } },
+      ucvs: { where: { tenantId } },
+      account: { select: { id: true } },
+    },
   });
   if (!opp) return null;
+  if (effectiveScope) canReadFullAccount = effectiveScope.canReadAccountData(opp.accountId);
+  const relatedPersonIds = new Set([
+    ...opp.roles.map((role) => role.personId),
+    ...opp.bis.map((bi) => bi.personId),
+  ]);
+  const persons = await db.person.findMany({
+    where: {
+      tenantId,
+      accountId: opp.accountId,
+      ...activePersonWhere,
+      ...(canReadFullAccount ? {} : { id: { in: [...relatedPersonIds] } }),
+    },
+  });
   const cfg = await db.dealPdeConfig.findFirst({ where: { tenantId, opportunityId: oppId } });
   const itemStates = await db.scoringItemState.findMany({ where: { tenantId, opportunityId: oppId, subItemKey: '' } });
 
   // 1) 干系人 → stakeholders（排除竞品；slots = 角色 + 招采身份 + 关键影响人，多 slot 权重相加）
-  const personById = new Map(opp.account.persons.map((p) => [p.id, p]));
+  const personById = new Map(persons.map((p) => [p.id, p]));
   const personName = new Map<string, string>();
   const stakeholders: Stakeholder[] = [];
   const keyInfluencerKeeper = pickKeyInfluencerKeeper(opp.roles);
@@ -86,8 +119,8 @@ export async function assembleDeal(
   }
 
   // 2) 名义分（g64111，照 mcpServer.getWinTendency 组装）+ 可信度元层 → items
-  const account = { persons: opp.account.persons.map((p) => ({ id: p.id, form: J(p.form, {}) })) };
-  const visibleBis = principal?.role === 'viewer' ? opp.bis.filter((b) => !b.isPrivate) : opp.bis;
+  const account = { persons: persons.map((p) => ({ id: p.id, form: J(p.form, {}) })) };
+  const visibleBis = currentPrincipal?.role === 'viewer' ? opp.bis.filter((b) => !b.isPrivate) : opp.bis;
   const visibleBiIds = new Set(visibleBis.map((b) => b.id));
   const visibleUcvs = opp.ucvs.filter((u) => visibleBiIds.has(u.targetBiId));
   const opportunity = {

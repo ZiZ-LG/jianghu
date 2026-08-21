@@ -20,6 +20,7 @@ import {
 import type { DbClient } from './mutation/scopeGuards.js';
 import { activePersonWhere } from './activePerson.js';
 import { BUSINESS_TIME_ZONE } from './businessDate.js';
+import { resolveEffectiveResourceScope } from './resourceScope.js';
 
 // 江湖自算 · 轻量后台任务队列（DB-backed）。
 // 设计取舍（对齐架构纲领「加轻量 job 队列」）：单实例 setInterval 消费，原子 claim；
@@ -692,8 +693,21 @@ export function jobRoutes(app: FastifyInstance): void {
   app.get('/api/enrich/jobs', { preHandler: [app.authenticate] }, async (req: any, reply: any) => {
     if (denyViewer(req, reply)) return; // viewer 只读，不可操作
     const accountId = typeof req.query?.accountId === 'string' ? req.query.accountId : undefined;
+    const scope = await resolveEffectiveResourceScope(prisma, {
+      tenantId: req.user.tenantId,
+      userId: req.user.userId,
+      role: req.user.role,
+    });
+    if (scope.actorRole === 'viewer') return reply.code(403).send({ error: '只读成员不可操作' });
     const jobs = await prisma.enrichJob.findMany({
-      where: { tenantId: req.user.tenantId, ...(accountId ? { accountId } : {}) },
+      where: {
+        tenantId: req.user.tenantId,
+        ...(accountId ? { accountId } : {}),
+        OR: [
+          { accountId: { in: [...scope.fullAccountIds] } },
+          { opportunityId: { in: [...scope.matterIds] } },
+        ],
+      },
       orderBy: { createdAt: 'desc' }, take: 20,
     });
     return { jobs: jobs.map((j) => ({ id: j.id, accountId: j.accountId, type: j.type, status: j.status, result: j.result, error: j.error, createdAt: j.createdAt })) };

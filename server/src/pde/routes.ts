@@ -15,6 +15,7 @@ import { ensureIndustryPack, PACK_KEY } from './pack.js';
 import { z } from 'zod';
 import type { DbClient } from '../mutation/scopeGuards.js';
 import type { ReadPrincipal } from '../visibility.js';
+import { resolveEffectiveResourceScope } from '../resourceScope.js';
 
 const STAGE_ORDER: Stage[] = ['initiation', 'feasibility', 'budget_approval', 'tender_design', 'tender_execution'];
 
@@ -104,15 +105,22 @@ interface PdeComputation {
 
 /** 核心计算（三路由与快照共用）。opp 不存在返回 null。 */
 export async function computePde(tenantId: string, oppId: string, db: DbClient = prisma, principal?: ReadPrincipal): Promise<PdeComputation | null> {
+  let currentPrincipal = principal;
+  if (principal) {
+    if (principal.tenantId !== tenantId) return null;
+    const scope = await resolveEffectiveResourceScope(db, principal);
+    if (!scope.canReadMatter(oppId)) return null;
+    currentPrincipal = { tenantId, userId: scope.actorUserId, role: scope.actorRole };
+  }
   const { seeds, packId, packSchemaVersion, signalCatalogSchemaVersion } = await ensureIndustryPack(tenantId, db);
-  const asm = await assembleDeal(tenantId, oppId, seeds, packId, db, principal);
+  const asm = await assembleDeal(tenantId, oppId, seeds, packId, db, currentPrincipal);
   if (!asm) return null;
   const catalog = await db.actionCatalog.findMany({ where: { tenantId, packId } });
   const ev = evaluate(asm.deal);
   const score = weightedScore(asm.deal.items);
   const actions = rankActions(asm.deal, catalog, asm.personName);
   // prevEv：上一张快照的 ev_continue（FOLD 的「连续两期」判据；无快照=null 不触发 FOLD）
-  const prevSnap = principal?.role === 'viewer' ? null : await db.eVSnapshot.findFirst({ where: { tenantId, opportunityId: oppId }, orderBy: { createdAt: 'desc' } });
+  const prevSnap = currentPrincipal?.role === 'viewer' ? null : await db.eVSnapshot.findFirst({ where: { tenantId, opportunityId: oppId }, orderBy: { createdAt: 'desc' } });
   let prevEv: number | null = null;
   try { prevEv = prevSnap ? (JSON.parse(prevSnap.resultJson)?.eval?.ev_continue ?? null) : null; } catch { prevEv = null; }
   const recommendation = recommend(ev, actions, ev.stakeholders, score, ev.m_stage, prevEv);

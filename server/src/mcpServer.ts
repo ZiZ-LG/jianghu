@@ -22,7 +22,7 @@ import { enqueueEnrichJob, enqueueSuggestJob, enqueueProfileJob } from './jobs.j
 import { resolveScopedRelSuggestions } from './suggestionScope.js';
 import { syncIntelBundle } from './mcp/syncBundle.js';
 import { ALL_ACCESS_SCOPES, scopesForCurrentRole, type AccessScope } from './accessToken.js';
-import { viewerAccountIds } from './scope.js';
+import { resolveEffectiveResourceScope } from './resourceScope.js';
 
 // 每租户 pending 候选容量上限（防外部 agent 刷爆）
 const MAX_PENDING_PERSON_SUGG = 200;
@@ -498,37 +498,68 @@ const J = <T>(s: string | null | undefined, d: T): T => { try { return s ? (JSON
 /** list_accounts：本租户客户清单 + 计数。 */
 async function listAccounts(ctx: CommandContext) {
   const { tenantId } = ctx;
-  const readableIds = ctx.actorRole === 'viewer' ? await viewerAccountIds(tenantId, ctx.actorId) : null;
-  const accounts = await prisma.account.findMany({
-    where: { tenantId, ...(readableIds ? { id: { in: [...readableIds] } } : {}) },
-    orderBy: { createdAt: 'asc' },
-    include: { _count: { select: { persons: { where: activePersonWhere }, opportunities: true } } },
+  const scope = await resolveEffectiveResourceScope(prisma, {
+    tenantId,
+    userId: ctx.actorId,
+    role: ctx.actorRole,
   });
+  const accounts = await prisma.account.findMany({
+    where: { tenantId, archivedAt: null, id: { in: [...scope.accountIds] } },
+    orderBy: { createdAt: 'asc' },
+    select: { id: true, name: true, customerType: true },
+  });
+  const fullAccounts = scope.fullAccountIds.size === 0 ? [] : await prisma.account.findMany({
+    where: { tenantId, archivedAt: null, id: { in: [...scope.fullAccountIds] } },
+    select: {
+      id: true,
+      externalRef: true,
+      unifiedCreditCode: true,
+      _count: {
+        select: {
+          persons: { where: { tenantId, ...activePersonWhere } },
+          opportunities: { where: { tenantId, archivedAt: null } },
+        },
+      },
+    },
+  });
+  const fullById = new Map(fullAccounts.map((account) => [account.id, account]));
   return {
-    accounts: accounts.map((a) => ({
-      id: a.id,
-      name: a.name,
-      customerType: a.customerType,
-      customerTypeLabel: CUSTOMER_TYPE_LABEL[a.customerType] ?? `类型${a.customerType}`,
-      externalRef: a.externalRef ?? undefined, // 为空 = 江湖原生建、WorkBuddy 尚未加工（认领判据）
-      unifiedCreditCode: a.unifiedCreditCode ?? undefined,
-      personCount: a._count.persons,
-      opportunityCount: a._count.opportunities,
-    })),
+    accounts: accounts.map((account) => {
+      const full = fullById.get(account.id);
+      return {
+        id: account.id,
+        name: account.name,
+        customerType: account.customerType,
+        customerTypeLabel: CUSTOMER_TYPE_LABEL[account.customerType] ?? `类型${account.customerType}`,
+        ...(full ? {
+          externalRef: full.externalRef ?? undefined, // 为空 = 江湖原生建、WorkBuddy 尚未加工（认领判据）
+          unifiedCreditCode: full.unifiedCreditCode ?? undefined,
+          personCount: full._count.persons,
+          opportunityCount: full._count.opportunities,
+        } : {}),
+      };
+    }),
   };
 }
 
 /** get_account_detail：某客户干系人 + 角色 + 关系概览（findFirst 双重锁定 tenantId）。 */
 async function getAccountDetail(ctx: CommandContext, accountId: string) {
   const { tenantId } = ctx;
-  const readableIds = ctx.actorRole === 'viewer' ? await viewerAccountIds(tenantId, ctx.actorId) : null;
-  if (readableIds && !readableIds.has(accountId)) throw new Error('客户不存在或不属于当前工作区');
+  const scope = await resolveEffectiveResourceScope(prisma, {
+    tenantId,
+    userId: ctx.actorId,
+    role: ctx.actorRole,
+  });
+  if (!scope.canReadAccountData(accountId)) throw new Error('客户不存在或不属于当前工作区');
   const account = await prisma.account.findFirst({
-    where: { id: accountId, tenantId },
+    where: { id: accountId, tenantId, archivedAt: null },
     include: {
-      persons: { where: activePersonWhere },
-      edges: true,
-      opportunities: { include: { roles: true } },
+      persons: { where: { tenantId, ...activePersonWhere } },
+      edges: { where: { tenantId } },
+      opportunities: {
+        where: { tenantId, archivedAt: null },
+        include: { roles: { where: { tenantId } } },
+      },
     },
   });
   if (!account) throw new Error('客户不存在或不属于当前工作区');
@@ -586,23 +617,47 @@ async function getAccountDetail(ctx: CommandContext, accountId: string) {
 /** get_win_tendency：某商机 G64111 评分（先按 tenantId 取商机及其父客户的人，再算分）。 */
 async function getWinTendency(ctx: CommandContext, opportunityId: string) {
   const { tenantId } = ctx;
-  const readableIds = ctx.actorRole === 'viewer' ? await viewerAccountIds(tenantId, ctx.actorId) : null;
+  const scope = await resolveEffectiveResourceScope(prisma, {
+    tenantId,
+    userId: ctx.actorId,
+    role: ctx.actorRole,
+  });
+  if (!scope.canReadMatter(opportunityId)) throw new Error('商机不存在或不属于当前工作区');
   const opp = await prisma.opportunity.findFirst({
-    where: { id: opportunityId, tenantId, ...(readableIds ? { accountId: { in: [...readableIds] } } : {}) },
+    where: {
+      id: opportunityId,
+      tenantId,
+      archivedAt: null,
+      account: { tenantId, archivedAt: null },
+    },
     include: {
-      roles: true,
-      bis: true,
-      ucvs: true,
-      account: { include: { persons: { where: activePersonWhere } } },
+      roles: { where: { tenantId } },
+      bis: { where: { tenantId } },
+      ucvs: { where: { tenantId } },
+      account: { select: { id: true } },
     },
   });
   if (!opp) throw new Error('商机不存在或不属于当前工作区');
 
+  const relatedPersonIds = new Set([
+    ...opp.roles.map((role) => role.personId),
+    ...opp.bis.map((bi) => bi.personId),
+  ]);
+  const persons = await prisma.person.findMany({
+    where: {
+      tenantId,
+      accountId: opp.accountId,
+      ...activePersonWhere,
+      ...(scope.canReadAccountData(opp.accountId) ? {} : { id: { in: [...relatedPersonIds] } }),
+    },
+    select: { id: true, form: true },
+  });
+
   const account = {
-    persons: opp.account.persons.map((p) => ({ id: p.id, form: J<{ family7?: Record<string, string | undefined> }>(p.form, {}) })),
+    persons: persons.map((p) => ({ id: p.id, form: J<{ family7?: Record<string, string | undefined> }>(p.form, {}) })),
   };
   // 与 state/PDE 的 viewer 字段 ACL 一致：私人 BI 及其依赖 UCV 不得通过精确分数侧信道泄漏。
-  const visibleBis = ctx.actorRole === 'viewer' ? opp.bis.filter((bi) => !bi.isPrivate) : opp.bis;
+  const visibleBis = scope.actorRole === 'viewer' ? opp.bis.filter((bi) => !bi.isPrivate) : opp.bis;
   const visibleBiIds = new Set(visibleBis.map((bi) => bi.id));
   const visibleUcvs = opp.ucvs.filter((ucv) => visibleBiIds.has(ucv.targetBiId));
   const opportunity = {
@@ -806,20 +861,37 @@ async function proposeRelationship(tenantId: string, _userId: string, args: Reco
 /** list_pending：列本租户待人审候选（只读）。 */
 async function listPending(ctx: CommandContext, accountId: string) {
   const { tenantId } = ctx;
-  const readableIds = ctx.actorRole === 'viewer' ? await viewerAccountIds(tenantId, ctx.actorId) : null;
-  if (accountId && readableIds && !readableIds.has(accountId)) throw new Error('客户不存在或不属于当前工作区');
+  const scope = await resolveEffectiveResourceScope(prisma, {
+    tenantId,
+    userId: ctx.actorId,
+    role: ctx.actorRole,
+  });
+  if (accountId && !scope.canReadAccountContainer(accountId)) throw new Error('客户不存在或不属于当前工作区');
 
-  const personWhere: any = { tenantId, status: 'pending' };
-  if (accountId) personWhere.accountId = accountId;
-  else if (readableIds) personWhere.accountId = { in: [...readableIds] };
+  const readablePersonAccountIds = accountId
+    ? (scope.canReadAccountData(accountId) ? [accountId] : [])
+    : [...scope.fullAccountIds];
+  const personWhere: any = {
+    tenantId,
+    status: 'pending',
+    accountId: { in: readablePersonAccountIds },
+  };
   const persons = await prisma.personSuggestion.findMany({ where: personWhere, orderBy: { createdAt: 'desc' }, take: 100 });
 
-  const relWhere: any = { tenantId, status: 'pending' };
-  if (accountId || readableIds) {
-    const accountFilter = accountId ? { accountId } : { accountId: { in: [...readableIds!] } };
-    const opps = await prisma.opportunity.findMany({ where: { tenantId, ...accountFilter }, select: { id: true } });
-    relWhere.opportunityId = { in: opps.map((o) => o.id) };
-  }
+  const visibleMatters = await prisma.opportunity.findMany({
+    where: {
+      tenantId,
+      archivedAt: null,
+      id: { in: [...scope.matterIds] },
+      ...(accountId ? { accountId } : {}),
+    },
+    select: { id: true },
+  });
+  const relWhere: any = {
+    tenantId,
+    status: 'pending',
+    opportunityId: { in: visibleMatters.map((matter) => matter.id) },
+  };
   const rels = await prisma.relSuggestion.findMany({ where: relWhere, orderBy: { createdAt: 'desc' }, take: 100 });
   const scopedRels = await resolveScopedRelSuggestions(prisma, tenantId, rels);
 

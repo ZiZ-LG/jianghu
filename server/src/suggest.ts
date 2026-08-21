@@ -19,6 +19,7 @@ import { createPdeSnapshot } from './pde/routes.js';
 import { activePersonWhere } from './activePerson.js';
 import type { DbClient } from './mutation/scopeGuards.js';
 import { businessYmd } from './businessDate.js';
+import { resolveEffectiveResourceScope } from './resourceScope.js';
 
 const pairKey = (a: string, b: string) => [a, b].sort().join('|');
 const LAYER_COLOR: Record<string, string> = { L1: '#2563eb', L2: '#9333ea', L3: '#16a34a', L4: '#ef4444' };
@@ -493,17 +494,38 @@ export function suggestRoutes(app: FastifyInstance) {
   app.get('/api/inbox', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (denyViewer(req, reply)) return; // viewer 只读，不可拍板/操作
     const tenantId = req.user.tenantId;
-    const [relRows, psRows, cpRows, remRows, evRows, sigRows, persons, opps, accounts] = await Promise.all([
-      prisma.relSuggestion.findMany({ where: { tenantId, status: 'pending' }, orderBy: { confidence: 'desc' } }),
-      prisma.personSuggestion.findMany({ where: { tenantId, status: 'pending' }, orderBy: { confidence: 'desc' } }),
-      prisma.changeProposal.findMany({ where: { tenantId, status: 'pending' }, orderBy: { createdAt: 'desc' } }), // v2.0 字段更新提案
-      prisma.reminder.findMany({ where: { tenantId, status: 'pending' }, orderBy: { createdAt: 'desc' } }), // 巡检提醒（提醒型，自带 account/opp 名免 join）
-      prisma.evidenceEvent.findMany({ where: { tenantId, status: 'pending_review' }, orderBy: { createdAt: 'desc' } }), // M3 第5类：机器抽取证据待人审
+    const scope = await resolveEffectiveResourceScope(prisma, {
+      tenantId,
+      userId: req.user.userId,
+      role: req.user.role,
+    });
+    if (scope.actorRole === 'viewer') return reply.code(403).send({ error: '只读成员不可操作' });
+    const fullAccountIds = [...scope.fullAccountIds];
+    const matterIds = [...scope.matterIds];
+    const visibleParentWhere = {
+      OR: [
+        { accountId: { in: fullAccountIds } },
+        { opportunityId: { in: matterIds } },
+      ],
+    };
+    const [relRows, psRows, cpRows, remRows, evRows, sigRows, opps, accounts] = await Promise.all([
+      prisma.relSuggestion.findMany({ where: { tenantId, status: 'pending', opportunityId: { in: matterIds } }, orderBy: { confidence: 'desc' } }),
+      prisma.personSuggestion.findMany({ where: { tenantId, status: 'pending', accountId: { in: fullAccountIds } }, orderBy: { confidence: 'desc' } }),
+      prisma.changeProposal.findMany({ where: { tenantId, status: 'pending', ...visibleParentWhere }, orderBy: { createdAt: 'desc' } }), // v2.0 字段更新提案
+      prisma.reminder.findMany({ where: { tenantId, status: 'pending', ...visibleParentWhere }, orderBy: { createdAt: 'desc' } }), // 巡检提醒（提醒型，自带 account/opp 名免 join）
+      prisma.evidenceEvent.findMany({ where: { tenantId, status: 'pending_review', opportunityId: { in: matterIds } }, orderBy: { createdAt: 'desc' } }), // M3 第5类：机器抽取证据待人审
       prisma.signalCatalog.findMany({ where: { tenantId }, select: { signalKey: true, label: true, tier: true } }),
-      prisma.person.findMany({ where: { tenantId, ...activePersonWhere }, select: { id: true, name: true } }),
-      prisma.opportunity.findMany({ where: { tenantId }, select: { id: true, name: true, accountId: true } }),
-      prisma.account.findMany({ where: { tenantId }, select: { id: true, name: true } }),
+      prisma.opportunity.findMany({ where: { tenantId, archivedAt: null, id: { in: matterIds } }, select: { id: true, name: true, accountId: true } }),
+      prisma.account.findMany({ where: { tenantId, archivedAt: null, id: { in: [...scope.accountIds] } }, select: { id: true, name: true } }),
     ]);
+    const referencedPersonIds = new Set([
+      ...cpRows.filter((proposal) => proposal.entityKind === 'oppRole').map((proposal) => proposal.entityId),
+      ...evRows.map((evidence) => evidence.personId),
+    ]);
+    const persons = await prisma.person.findMany({
+      where: { tenantId, ...activePersonWhere, id: { in: [...referencedPersonIds] } },
+      select: { id: true, name: true },
+    });
     const accName = new Map(accounts.map((a) => [a.id, a.name]));
     const oppById = new Map(opps.map((o) => [o.id, o]));
     const personName = new Map(persons.map((p) => [p.id, p.name]));

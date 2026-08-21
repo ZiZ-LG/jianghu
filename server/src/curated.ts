@@ -7,10 +7,10 @@ import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
-import { viewerCanReadAccount, viewerCanReadOpp } from './scope.js';
 import { loadAiConfig, callLLM } from './ai.js';
 import { visiblePersonLogs } from './visibility.js';
 import { activePersonWhere } from './activePerson.js';
+import { resolveEffectiveResourceScope } from './resourceScope.js';
 
 type EntityKind = 'account' | 'opportunity';
 
@@ -104,13 +104,17 @@ export function curatedRoutes(app: FastifyInstance): void {
     const kind = req.query?.entityKind;
     const eid = typeof req.query?.entityId === 'string' ? req.query.entityId : '';
     if ((kind !== 'account' && kind !== 'opportunity') || !eid) return reply.code(400).send({ error: '参数错误' });
-    if (!(await entityOwned(req.user.tenantId, kind, eid))) return reply.code(404).send({ error: '实体不存在' });
+    const scope = await resolveEffectiveResourceScope(prisma, {
+      tenantId: req.user.tenantId,
+      userId: req.user.userId,
+      role: req.user.role,
+    });
+    const canRead = kind === 'account'
+      ? scope.canReadAccountData(eid)
+      : scope.canReadMatter(eid);
+    if (!canRead) return reply.code(404).send({ error: '实体不存在' });
     // viewer 归属校验（契约 v1.0 §四）+ 只读缓存：不触发懒生成（不花租户 AI 额度、不写缓存行）
-    if (req.user.role === 'viewer') {
-      const okScope = kind === 'account'
-        ? await viewerCanReadAccount(req, reply, eid)
-        : await viewerCanReadOpp(req, reply, eid);
-      if (!okScope) return;
+    if (scope.actorRole === 'viewer') {
       // 历史共享摘要可能由旧版本把 team/self 动态纳入；无法证明字段级来源时 fail closed。
       return { content: '', status: 'restricted', editedByHuman: false };
     }

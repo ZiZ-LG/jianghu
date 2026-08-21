@@ -13,6 +13,7 @@ import {
 } from './mutation/scopeGuards.js';
 import { archiveEntity, restoreEntity, type ArchiveTarget } from './mutation/audit.js';
 import { mapLegacyOpportunityStatus } from './matter/lifecycle.js';
+import { resolveEffectiveResourceScope } from './resourceScope.js';
 
 const accountPatchSchema = z.object({
   base: z.object({
@@ -355,10 +356,17 @@ async function loadRelatedSyncRuns(tenantId: string, prefix: string, sourceRef: 
 }
 
 async function loadRepairContext(ctx: CommandContext, kind: z.infer<typeof contextKindSchema>, id: string) {
+  const scope = await resolveEffectiveResourceScope(prisma, {
+    tenantId: ctx.tenantId,
+    userId: ctx.actorId,
+    role: ctx.actorRole,
+  });
+  if (scope.actorRole === 'viewer') throw new ScopedNotFoundError();
   let source = 'manual';
   let sourceRef: string | null = null;
   let syncPrefix = '';
   if (kind === 'account') {
+    if (!scope.canReadAccountData(id)) throw new ScopedNotFoundError();
     const row = await requireScopedRow(prisma.account.findFirst({
       where: { id, tenantId: ctx.tenantId, archivedAt: null },
       select: { externalRef: true },
@@ -367,6 +375,7 @@ async function loadRepairContext(ctx: CommandContext, kind: z.infer<typeof conte
     source = sourceRef ? 'workbuddy' : 'manual';
     syncPrefix = 'account';
   } else if (kind === 'opportunity') {
+    if (!scope.canReadMatter(id)) throw new ScopedNotFoundError();
     const row = await requireScopedRow(prisma.opportunity.findFirst({
       where: { id, tenantId: ctx.tenantId, archivedAt: null, account: { archivedAt: null } },
       select: { accountId: true, externalRef: true },
@@ -376,6 +385,14 @@ async function loadRepairContext(ctx: CommandContext, kind: z.infer<typeof conte
     source = sourceRef ? 'workbuddy' : 'manual';
     syncPrefix = 'opportunity';
   } else if (kind === 'visitNote') {
+    const parent = await requireScopedRow(prisma.visitNote.findFirst({
+      where: { id, tenantId: ctx.tenantId },
+      select: { accountId: true, opportunityId: true },
+    }));
+    const canRead = parent.opportunityId
+      ? scope.canReadMatter(parent.opportunityId)
+      : scope.canReadAccountData(parent.accountId);
+    if (!canRead) throw new ScopedNotFoundError();
     const row = await requireScopedRow(prisma.visitNote.findFirst({
       where: { id, tenantId: ctx.tenantId },
       select: { accountId: true, opportunityId: true, externalRef: true, origin: true },
@@ -386,6 +403,19 @@ async function loadRepairContext(ctx: CommandContext, kind: z.infer<typeof conte
     source = row.origin || (sourceRef ? 'workbuddy' : 'manual');
     syncPrefix = 'visit';
   } else {
+    const parent = await requireScopedRow(prisma.note.findFirst({
+      where: { id, tenantId: ctx.tenantId },
+      select: { accountId: true, opportunityId: true, personId: true },
+    }));
+    const canReadUnfiled = scope.actorRole === 'owner'
+      || scope.actorRole === 'admin'
+      || (scope.actorRole === 'member' && scope.policy === 'legacy_tenant_shared');
+    const canRead = parent.opportunityId
+      ? scope.canReadMatter(parent.opportunityId)
+      : parent.accountId
+        ? scope.canReadAccountData(parent.accountId)
+        : !parent.personId && canReadUnfiled;
+    if (!canRead) throw new ScopedNotFoundError();
     const row = await requireScopedRow(prisma.note.findFirst({
       where: { id, tenantId: ctx.tenantId },
       select: { accountId: true, opportunityId: true, personId: true, source: true },
