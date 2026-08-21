@@ -1,23 +1,46 @@
 // P8 参谋会话历史：右栏参谋 tab 问答流的落库与回放（原阅后即焚）。
-// 会话按 商机×焦点人 分桶；纯分析文本不参与计算，团队同租户可见（沉淀结论另走 ADD_LOG 挂人动态）。
-// 多租户红线：全部按 tenantId 过滤，商机归属校验后才读写。
+// 会话按 商机×焦点人 分桶；纯分析文本不参与计算，仅对当前 effective Matter scope 可见
+//（沉淀结论另走 ADD_LOG 挂人动态）。多租户红线：先解析当前 DB role/scope，再校验 tenant 与父树。
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
 import { denyViewer } from './scope.js';
 import { activePersonWhere } from './activePerson.js';
+import { resolveEffectiveResourceScope } from './resourceScope.js';
+import type { ReadPrincipal, VisibilityRole } from './visibility.js';
 
 const MAX_KEEP = 200; // 每个 商机×人 会话保留上限（超出丢最旧——防止无限膨胀）
 
-async function advisorScope(tenantId: string, opportunityId: string, personId: string) {
-  const opp = await prisma.opportunity.findFirst({ where: { id: opportunityId, tenantId }, select: { id: true, accountId: true } });
-  if (!opp) return null;
-  const person = await prisma.person.findFirst({
-    where: { id: personId, tenantId, accountId: opp.accountId, ...activePersonWhere }, select: { id: true },
+async function advisorScope(principal: ReadPrincipal, opportunityId: string, personId: string): Promise<{
+  actorRole: VisibilityRole;
+  opportunity: { id: string; accountId: string } | null;
+}> {
+  const scope = await resolveEffectiveResourceScope(prisma, principal);
+  if (scope.actorRole === 'viewer' || !scope.canReadMatter(opportunityId)) {
+    return { actorRole: scope.actorRole, opportunity: null };
+  }
+  const opp = await prisma.opportunity.findFirst({
+    where: {
+      id: opportunityId,
+      tenantId: principal.tenantId,
+      archivedAt: null,
+      account: { tenantId: principal.tenantId, archivedAt: null },
+    },
+    select: { id: true, accountId: true },
   });
-  return person ? opp : null;
+  if (!opp) return { actorRole: scope.actorRole, opportunity: null };
+  const person = await prisma.person.findFirst({
+    where: { id: personId, tenantId: principal.tenantId, accountId: opp.accountId, ...activePersonWhere }, select: { id: true },
+  });
+  return { actorRole: scope.actorRole, opportunity: person ? opp : null };
 }
+
+const principalOf = (req: any): ReadPrincipal => ({
+  tenantId: req.user.tenantId,
+  userId: req.user.userId,
+  role: req.user.role,
+});
 
 export function advisorRoutes(app: FastifyInstance) {
   // 读会话（按时间升序，最近 100 条）
@@ -26,7 +49,9 @@ export function advisorRoutes(app: FastifyInstance) {
     const p = z.object({ opportunityId: z.string().min(1), personId: z.string().min(1) }).safeParse(req.query);
     if (!p.success) return reply.code(400).send({ error: '参数无效' });
     const tenantId = req.user.tenantId;
-    const opp = await advisorScope(tenantId, p.data.opportunityId, p.data.personId);
+    const scoped = await advisorScope(principalOf(req), p.data.opportunityId, p.data.personId);
+    if (scoped.actorRole === 'viewer') return reply.code(403).send({ error: '只读成员不可操作' });
+    const opp = scoped.opportunity;
     if (!opp) return reply.code(404).send({ error: '商机不存在' });
     const rows = await prisma.advisorMsg.findMany({
       where: { tenantId, opportunityId: p.data.opportunityId, personId: p.data.personId },
@@ -45,7 +70,9 @@ export function advisorRoutes(app: FastifyInstance) {
     }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '参数无效' });
     const tenantId = req.user.tenantId;
-    const opp = await advisorScope(tenantId, p.data.opportunityId, p.data.personId);
+    const scoped = await advisorScope(principalOf(req), p.data.opportunityId, p.data.personId);
+    if (scoped.actorRole === 'viewer') return reply.code(403).send({ error: '只读成员不可操作' });
+    const opp = scoped.opportunity;
     if (!opp) return reply.code(404).send({ error: '商机不存在' });
     const now = Date.now();
     for (let i = 0; i < p.data.entries.length; i++) {
@@ -76,7 +103,9 @@ export function advisorRoutes(app: FastifyInstance) {
     const p = z.object({ opportunityId: z.string().min(1), personId: z.string().min(1) }).safeParse(req.query);
     if (!p.success) return reply.code(400).send({ error: '参数无效' });
     const tenantId = req.user.tenantId;
-    const opp = await advisorScope(tenantId, p.data.opportunityId, p.data.personId);
+    const scoped = await advisorScope(principalOf(req), p.data.opportunityId, p.data.personId);
+    if (scoped.actorRole === 'viewer') return reply.code(403).send({ error: '只读成员不可操作' });
+    const opp = scoped.opportunity;
     if (!opp) return reply.code(404).send({ error: '商机不存在' });
     await prisma.advisorMsg.deleteMany({ where: { tenantId, opportunityId: p.data.opportunityId, personId: p.data.personId } });
     return { ok: true };

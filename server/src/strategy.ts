@@ -12,6 +12,8 @@ import {
   callLLM,
 } from './ai.js';
 import { ITEM_LABEL, ITEM_MAX, type ItemKey } from './g64111.js';
+import { prisma } from './prisma.js';
+import { resolveEffectiveResourceScope } from './resourceScope.js';
 
 interface StrategyCand { gapItem: string; title: string; basis: string; }
 interface MilestoneCand { title: string; offsetDays: number; why: string; } // why=排期依据（P4：候选标注依据）
@@ -246,6 +248,16 @@ async function llmMilestoneActions(cfg: any, ctx: any, ms: { title: string; date
 }
 
 export function strategyRoutes(app: FastifyInstance) {
+  const currentWriter = async (req: any, reply: any): Promise<boolean> => {
+    const scope = await resolveEffectiveResourceScope(prisma, {
+      tenantId: req.user.tenantId,
+      userId: req.user.userId,
+      role: req.user.role,
+    });
+    if (scope.actorRole !== 'viewer') return true;
+    reply.code(403).send({ error: '只读成员不可操作' });
+    return false;
+  };
   const buildContext = (req: any, opportunityId: string, options: { includeRawLogs: boolean; includeForm: boolean }) =>
     buildServerAiContext({
       tenantId: req.user.tenantId,
@@ -267,6 +279,7 @@ export function strategyRoutes(app: FastifyInstance) {
 
   app.post('/api/strategy/suggest', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (denyViewer(req, reply)) return; // viewer 只读，不可操作
+    if (!(await currentWriter(req, reply))) return;
     const p = z.object({
       opportunityId: z.string(),
       mode: z.enum(['forward', 'backward']),
@@ -302,6 +315,7 @@ export function strategyRoutes(app: FastifyInstance) {
   // 参谋出牌（P2④b）：右栏焦点人 → AI 产行动牌候选。只返回候选，前端本地暂存、人审采纳才 dispatch ADD_PLAN_ACTION（守硬规则②）。
   app.post('/api/strategy/actions', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (denyViewer(req, reply)) return; // viewer 只读，不可操作
+    if (!(await currentWriter(req, reply))) return;
     const p = z.object({
       opportunityId: z.string(),
       focusPersonId: z.string().min(1),
@@ -339,6 +353,7 @@ export function strategyRoutes(app: FastifyInstance) {
   // 派发预填（第3刀）：策略卡 → 行动牌四要素初稿。只返回初稿不写库，前端落草稿人微调（守硬规则②）。
   app.post('/api/strategy/prefill', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (denyViewer(req, reply)) return; // viewer 只读，不可操作
+    if (!(await currentWriter(req, reply))) return;
     const p = z.object({
       opportunityId: z.string(),
       card: z.object({
@@ -383,6 +398,7 @@ export function strategyRoutes(app: FastifyInstance) {
   // P6 里程碑「→ 排行动」：只返回行动候选不写库（前端落 draft 草稿人审，守铁律②）
   app.post('/api/strategy/milestone-actions', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (denyViewer(req, reply)) return; // viewer 只读，不可操作
+    if (!(await currentWriter(req, reply))) return;
     const p = z.object({
       opportunityId: z.string(),
       milestone: z.object({ title: z.string().min(1).max(200), date: z.string().max(32).optional() }).strict(),

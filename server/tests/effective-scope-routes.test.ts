@@ -93,6 +93,7 @@ describe('CORE-109 effective scope parity across read surfaces', () => {
       const directMatterId = 'scope-routes-direct-matter';
       const hiddenMatterId = 'scope-routes-hidden-matter';
       const fullPersonId = 'scope-routes-full-person';
+      const fullSecondPersonId = 'scope-routes-full-second-person';
       const directPersonId = 'scope-routes-direct-person';
       const hiddenPersonId = 'scope-routes-hidden-person';
 
@@ -152,6 +153,7 @@ describe('CORE-109 effective scope parity across read surfaces', () => {
       ] });
       await context.prisma.person.createMany({ data: [
         { id: fullPersonId, tenantId, accountId: fullAccountId, name: 'FULL_PERSON_VISIBLE', title: 'Full' },
+        { id: fullSecondPersonId, tenantId, accountId: fullAccountId, name: 'FULL_SECOND_PERSON_VISIBLE', title: 'Full second' },
         { id: directPersonId, tenantId, accountId: partialAccountId, name: 'DIRECT_PERSON_VISIBLE', title: 'Direct' },
         {
           id: hiddenPersonId,
@@ -172,6 +174,12 @@ describe('CORE-109 effective scope parity across read surfaces', () => {
         { id: 'scope-routes-curated-partial-account', tenantId, entityKind: 'account', entityId: partialAccountId, content: 'CURATED_PARTIAL_ACCOUNT_SECRET', editedByHuman: true },
         { id: 'scope-routes-curated-direct', tenantId, entityKind: 'opportunity', entityId: directMatterId, content: 'CURATED_DIRECT_MATTER', editedByHuman: true },
         { id: 'scope-routes-curated-hidden', tenantId, entityKind: 'opportunity', entityId: hiddenMatterId, content: 'CURATED_HIDDEN_MATTER_SECRET', editedByHuman: true },
+      ] });
+      await context.prisma.aiConfig.create({ data: { tenantId, provider: 'mock' } });
+      await context.prisma.advisorMsg.createMany({ data: [
+        { id: 'scope-routes-advisor-full', tenantId, accountId: fullAccountId, opportunityId: fullMatterId, personId: fullPersonId, role: 'assistant', text: 'ADVISOR_FULL_VISIBLE' },
+        { id: 'scope-routes-advisor-direct', tenantId, accountId: partialAccountId, opportunityId: directMatterId, personId: directPersonId, role: 'assistant', text: 'ADVISOR_DIRECT_VISIBLE' },
+        { id: 'scope-routes-advisor-hidden', tenantId, accountId: partialAccountId, opportunityId: hiddenMatterId, personId: hiddenPersonId, role: 'assistant', text: 'ADVISOR_HIDDEN_SECRET' },
       ] });
       await context.prisma.personSuggestion.createMany({ data: [
         { id: 'scope-routes-person-suggestion-full', tenantId, accountId: fullAccountId, name: 'PENDING_FULL_PERSON_VISIBLE' },
@@ -231,6 +239,10 @@ describe('CORE-109 effective scope parity across read surfaces', () => {
         method: 'POST', url: '/api/ai/context-manifest', payload: { opportunityId: directMatterId, options: {} },
       }, 200);
       expect(directManifest.json().manifest.entities.people).toBe(1);
+      const fullManifest = await expectStatus(context, actor.token, {
+        method: 'POST', url: '/api/ai/context-manifest', payload: { opportunityId: fullMatterId, options: {} },
+      }, 200);
+      const fullManifestToken = fullManifest.json().manifestToken as string;
       await expectStatus(context, actor.token, {
         method: 'POST', url: '/api/ai/context-manifest', payload: { opportunityId: hiddenMatterId, options: {} },
       }, 404);
@@ -288,6 +300,20 @@ describe('CORE-109 effective scope parity across read surfaces', () => {
       await expectStatus(context, actor.token, { url: `/api/repair/context/opportunity/${directMatterId}` }, 200);
       await expectStatus(context, actor.token, { url: `/api/repair/context/opportunity/${hiddenMatterId}` }, 404);
 
+      const advisorDirect = await expectStatus(context, actor.token, {
+        url: `/api/advisor/messages?opportunityId=${directMatterId}&personId=${directPersonId}`,
+      }, 200);
+      expect(advisorDirect.body).toContain('ADVISOR_DIRECT_VISIBLE');
+      await expectStatus(context, actor.token, {
+        url: `/api/advisor/messages?opportunityId=${hiddenMatterId}&personId=${hiddenPersonId}`,
+      }, 404);
+      await expectStatus(context, actor.token, {
+        url: `/api/repair/person-merge/preview?targetPersonId=${fullPersonId}&sourcePersonId=${fullSecondPersonId}`,
+      }, 200);
+      await expectStatus(context, actor.token, {
+        url: `/api/repair/person-merge/preview?targetPersonId=${directPersonId}&sourcePersonId=${hiddenPersonId}`,
+      }, 404);
+
       // Ownership transfer takes effect on the next request without a new JWT.
       await context.prisma.opportunity.update({ where: { id: directMatterId }, data: { primaryOwnerUserId: other.user.id } });
       await context.prisma.opportunity.update({ where: { id: hiddenMatterId }, data: { primaryOwnerUserId: actor.user.id } });
@@ -315,6 +341,14 @@ describe('CORE-109 effective scope parity across read surfaces', () => {
       expect(toolResult(await callTool(ctx, 10, 'get_win_tendency', { opportunityId: hiddenMatterId }))).toMatchObject({ isError: true });
       await expectStatus(context, actor.token, {
         method: 'POST', url: '/api/ai/context-manifest', payload: { opportunityId: hiddenMatterId, options: {} },
+      }, 403);
+      await expectStatus(context, actor.token, {
+        method: 'POST',
+        url: '/api/strategy/suggest',
+        payload: { opportunityId: fullMatterId, mode: 'forward', options: {}, manifestToken: fullManifestToken },
+      }, 403);
+      await expectStatus(context, actor.token, {
+        url: `/api/advisor/messages?opportunityId=${fullMatterId}&personId=${fullPersonId}`,
       }, 403);
       const downgradedCurated = await expectStatus(context, actor.token, {
         url: `/api/curated?entityKind=account&entityId=${fullAccountId}`,

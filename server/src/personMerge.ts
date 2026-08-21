@@ -7,6 +7,7 @@ import { prisma } from './prisma.js';
 import { runCommand } from './mutation/commandRunner.js';
 import { activePersonWhere } from './activePerson.js';
 import { resolveScopedRelSuggestions } from './suggestionScope.js';
+import { resolveEffectiveResourceScope } from './resourceScope.js';
 
 const roleDecisionSchema = z.enum(['keep_target', 'keep_source']);
 export const PersonMergeDecisionSchema = z.object({
@@ -129,14 +130,38 @@ const requireAccountOpportunity = (
   if (opportunityId && opportunityAccounts.get(opportunityId) !== accountId) throw new MergeNotFoundError('引用父树异常');
 };
 
+async function requireFullMergeAccount(
+  ctx: CommandContext,
+  ids: { targetPersonId: string; sourcePersonId: string },
+  db: Tx | typeof prisma,
+): Promise<string> {
+  const scope = await resolveEffectiveResourceScope(db, {
+    tenantId: ctx.tenantId,
+    userId: ctx.actorId,
+    role: ctx.actorRole,
+  });
+  if (scope.actorRole === 'viewer') throw new MergeNotFoundError('人物不存在或无权限');
+  const parents = await db.person.findMany({
+    where: { tenantId: ctx.tenantId, id: { in: [ids.targetPersonId, ids.sourcePersonId] }, archivedAt: null },
+    select: { id: true, accountId: true },
+  });
+  const target = parents.find((person) => person.id === ids.targetPersonId);
+  const source = parents.find((person) => person.id === ids.sourcePersonId);
+  if (!target || !source || target.accountId !== source.accountId || !scope.canReadAccountData(target.accountId)) {
+    throw new MergeNotFoundError('人物不存在或不属于可管理客户');
+  }
+  return target.accountId;
+}
+
 export async function previewPersonMerge(
   ctx: CommandContext,
   ids: Pick<PersonMergeDecision, 'targetPersonId' | 'sourcePersonId'>,
   db: Tx | typeof prisma = prisma,
 ): Promise<PersonMergePreview> {
   if (ids.sourcePersonId === ids.targetPersonId) throw new MergeInputError('源人物和目标人物必须不同');
+  const accountId = await requireFullMergeAccount(ctx, ids, db);
   const persons = await db.person.findMany({
-    where: { tenantId: ctx.tenantId, id: { in: [ids.targetPersonId, ids.sourcePersonId] }, archivedAt: null },
+    where: { tenantId: ctx.tenantId, accountId, id: { in: [ids.targetPersonId, ids.sourcePersonId] }, archivedAt: null },
     select: { id: true, accountId: true, name: true, title: true },
   });
   const targetPerson = persons.find((person) => person.id === ids.targetPersonId);
@@ -185,8 +210,9 @@ export async function executePersonMerge(
   hooks: PersonMergeTestHooks = {},
 ): Promise<PersonMergeReceipt> {
   if (input.sourcePersonId === input.targetPersonId) throw new MergeInputError('源人物和目标人物必须不同');
+  const accountId = await requireFullMergeAccount(ctx, input, tx);
   const persons = await tx.person.findMany({
-    where: { tenantId: ctx.tenantId, id: { in: [input.targetPersonId, input.sourcePersonId] }, archivedAt: null },
+    where: { tenantId: ctx.tenantId, accountId, id: { in: [input.targetPersonId, input.sourcePersonId] }, archivedAt: null },
   });
   const target = persons.find((person) => person.id === input.targetPersonId);
   const source = persons.find((person) => person.id === input.sourcePersonId);
