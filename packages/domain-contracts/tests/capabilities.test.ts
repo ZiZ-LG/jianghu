@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   ENTITLEMENT_KEYS,
   PERMISSION_KEYS,
+  TENANT_DATA_SCOPE_POLICIES,
   CapabilityPolicySchema,
+  TenantDataScopePolicySchema,
   capabilityPolicyAllows,
 } from '../src/index.js';
 
@@ -24,6 +26,17 @@ describe('central capability policy', () => {
       'candidate.review_shared',
       'data.read_all',
     ]);
+    expect(TENANT_DATA_SCOPE_POLICIES).toEqual([
+      'legacy_tenant_shared',
+      'scoped',
+    ]);
+  });
+
+  it('publishes an explicit, fail-closed tenant data-scope policy contract', () => {
+    expect(TenantDataScopePolicySchema.parse('legacy_tenant_shared')).toBe('legacy_tenant_shared');
+    expect(TenantDataScopePolicySchema.parse('scoped')).toBe('scoped');
+    expect(TenantDataScopePolicySchema.safeParse('enterprise').success).toBe(false);
+    expect(TenantDataScopePolicySchema.safeParse(undefined).success).toBe(false);
   });
 
   it('fails closed for absent grants and requires both grants when both are requested', () => {

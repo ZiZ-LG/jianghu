@@ -28,6 +28,12 @@ async function createLegacyFixture(databasePath: string, databaseUrl: string): P
 
   const client = new PrismaClient({ datasourceUrl: databaseUrl });
   try {
+    const tenantColumns = await client.$queryRawUnsafe<Array<{ name: string }>>(
+      'PRAGMA table_info("Tenant")',
+    );
+    if (tenantColumns.some((column) => column.name === 'dataScopePolicy')) {
+      await client.$executeRawUnsafe('ALTER TABLE "Tenant" DROP COLUMN "dataScopePolicy"');
+    }
     await client.$executeRawUnsafe('DROP TABLE "MatterParticipant"');
     await client.$executeRawUnsafe('DROP TABLE "DataMigrationState"');
     await client.$executeRawUnsafe('ALTER TABLE "Edge" DROP COLUMN "kind"');
@@ -147,7 +153,7 @@ async function createLegacyFixture(databasePath: string, databaseUrl: string): P
   }
 }
 
-describe('CORE-103/105/106/108 SQLite schema upgrade', () => {
+describe('CORE-103/105/106/108/109 SQLite schema upgrade', () => {
   it('initializes a fresh SQLite database through the standard db:push wrapper', async () => {
     const directory = await mkdtemp(resolve('prisma/.matter-fresh-test-'));
     const relativeDirectory = basename(directory);
@@ -164,6 +170,12 @@ describe('CORE-103/105/106/108 SQLite schema upgrade', () => {
         'kind', 'lifecycleStatus', 'outcomeKey', 'priority', 'targetDate',
         'primaryOwnerUserId', 'activeMethodologyBindingId',
       ]));
+      const tenantColumns = await client.$queryRawUnsafe<Array<{ name: string; dflt_value: string | null }>>(
+        'PRAGMA table_info("Tenant")',
+      );
+      expect(tenantColumns.map((column) => column.name)).toContain('dataScopePolicy');
+      expect(tenantColumns.find((column) => column.name === 'dataScopePolicy')?.dflt_value)
+        .toBe("'legacy_tenant_shared'");
       const edgeColumns = await client.$queryRawUnsafe<Array<{ name: string }>>('PRAGMA table_info("Edge")');
       expect(edgeColumns.map((column) => column.name)).toContain('kind');
       const planColumns = await client.$queryRawUnsafe<Array<{ name: string; notnull: number }>>('PRAGMA table_info("PlanAction")');
@@ -213,6 +225,9 @@ describe('CORE-103/105/106/108 SQLite schema upgrade', () => {
         { status: 'paused', kind: 'sales_opportunity', lifecycleStatus: 'paused', outcomeKey: null },
         { status: 'won', kind: 'sales_opportunity', lifecycleStatus: 'completed', outcomeKey: 'won' },
       ]);
+      await expect(upgradedClient.$queryRawUnsafe<Array<{ dataScopePolicy: string }>>(
+        'SELECT dataScopePolicy FROM "Tenant" WHERE id = \'sqlite-upgrade-tenant\'',
+      )).resolves.toEqual([{ dataScopePolicy: 'legacy_tenant_shared' }]);
       await expect(upgradedClient.matterParticipant.findMany({
         orderBy: { personId: 'asc' },
         select: { opportunityId: true, personId: true },
@@ -272,6 +287,10 @@ describe('CORE-103/105/106/108 SQLite schema upgrade', () => {
         'PRAGMA table_info("Opportunity")',
       );
       expect(restoredColumns.map((column) => column.name)).not.toContain('lifecycleStatus');
+      const restoredTenantColumns = await restoredClient.$queryRawUnsafe<Array<{ name: string }>>(
+        'PRAGMA table_info("Tenant")',
+      );
+      expect(restoredTenantColumns.map((column) => column.name)).not.toContain('dataScopePolicy');
       const restoredEdgeColumns = await restoredClient.$queryRawUnsafe<Array<{ name: string }>>(
         'PRAGMA table_info("Edge")',
       );

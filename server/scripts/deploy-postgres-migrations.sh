@@ -6,6 +6,7 @@ LEGACY_SCHEMA=prisma/postgres/legacy/20260712_pre_int501.prisma
 PRE_PARTICIPANT_SCHEMA=prisma/postgres/legacy/20260821_pre_core105.prisma
 PRE_COMMITMENT_SCHEMA=prisma/postgres/legacy/20260821_pre_core106.prisma
 PRE_COMMITMENT_CUTOVER_SCHEMA=prisma/postgres/legacy/20260821_pre_core108.prisma
+PRE_SCOPE_SCHEMA=prisma/postgres/legacy/20260821_pre_core109.prisma
 PRE_BRIDGE_MIGRATIONS='20260715000000_baseline 20260715010000_hash_command_run_idempotency_keys 20260715020000_add_person_created_at'
 BRIDGE_MIGRATION=20260715030000_adopt_pre_int501_schema
 MATTER_MIGRATION=20260821000000_expand_matter_fields
@@ -41,11 +42,17 @@ schema_matches() {
 
 matter_schema_matches_known_state() {
   schema_matches "$PRE_PARTICIPANT_SCHEMA" || schema_matches "$PRE_COMMITMENT_SCHEMA" \
-    || schema_matches "$PRE_COMMITMENT_CUTOVER_SCHEMA" || schema_matches "$SCHEMA"
+    || schema_matches "$PRE_COMMITMENT_CUTOVER_SCHEMA" || schema_matches "$PRE_SCOPE_SCHEMA" \
+    || schema_matches "$SCHEMA"
 }
 
 participant_schema_matches_known_state() {
-  schema_matches "$PRE_COMMITMENT_SCHEMA" || schema_matches "$PRE_COMMITMENT_CUTOVER_SCHEMA" || schema_matches "$SCHEMA"
+  schema_matches "$PRE_COMMITMENT_SCHEMA" || schema_matches "$PRE_COMMITMENT_CUTOVER_SCHEMA" \
+    || schema_matches "$PRE_SCOPE_SCHEMA" || schema_matches "$SCHEMA"
+}
+
+commitment_cutover_schema_matches_known_state() {
+  schema_matches "$PRE_SCOPE_SCHEMA" || schema_matches "$SCHEMA"
 }
 
 refresh_applied_migrations() {
@@ -204,7 +211,7 @@ recover_incomplete_commitment_migration() {
     expanded_nullable)
       echo "[migration] 检测到 Commitment 与客户级 cutover 均已提交，验证当前权威后接管。"
       npm run migrate:commitment-verify
-      if ! schema_matches "$SCHEMA"; then
+      if ! commitment_cutover_schema_matches_known_state; then
         echo "[migration] Commitment nullable schema 与当前模型不一致，拒绝接管：" >&2
         cat /tmp/postgres-schema-drift.log >&2
         exit 1
@@ -239,7 +246,7 @@ adopt_existing_commitment_schema_if_safe() {
     expanded_nullable)
       echo "[migration] 检测到未登记的 nullable Commitment schema，验证当前权威后接管。"
       npm run migrate:commitment-verify
-      if ! schema_matches "$SCHEMA"; then
+      if ! commitment_cutover_schema_matches_known_state; then
         echo "[migration] 未登记 nullable Commitment schema 与当前模型不一致，拒绝接管：" >&2
         cat /tmp/postgres-schema-drift.log >&2
         exit 1
@@ -267,7 +274,7 @@ recover_incomplete_commitment_cutover_migration() {
     expanded_nullable)
       echo "[migration] 检测到已提交但未完成登记的 Commitment cutover，验证后接管。"
       npm run migrate:commitment-verify
-      if ! schema_matches "$SCHEMA"; then
+      if ! commitment_cutover_schema_matches_known_state; then
         echo "[migration] Commitment cutover schema 与当前模型不一致，拒绝接管：" >&2
         cat /tmp/postgres-schema-drift.log >&2
         exit 1
@@ -292,7 +299,7 @@ adopt_existing_commitment_cutover_schema_if_safe() {
     expanded_nullable)
       echo "[migration] 检测到未登记但完整的 Commitment cutover，验证后接管。"
       npm run migrate:commitment-verify
-      if ! schema_matches "$SCHEMA"; then
+      if ! commitment_cutover_schema_matches_known_state; then
         echo "[migration] 未登记 Commitment cutover 与当前模型不一致，拒绝接管：" >&2
         cat /tmp/postgres-schema-drift.log >&2
         exit 1
@@ -311,6 +318,9 @@ case "$state" in
   untracked)
     if schema_matches "$SCHEMA"; then
       echo "[migration] 检测到与当前模型一致的未纳管 schema。"
+      npx tsx scripts/assert-untracked-command-runs-empty.ts
+    elif schema_matches "$PRE_SCOPE_SCHEMA"; then
+      echo "[migration] 检测到已批准的 CORE-108 未纳管 schema。"
       npx tsx scripts/assert-untracked-command-runs-empty.ts
     elif schema_matches "$PRE_COMMITMENT_CUTOVER_SCHEMA"; then
       echo "[migration] 检测到已批准的 CORE-107 未纳管 schema。"
@@ -348,8 +358,8 @@ case "$state" in
         fi
         echo "[migration] 继续中断的当前 schema 接管。"
         resolve_missing_pre_bridge_migrations
-      elif schema_matches "$PRE_COMMITMENT_CUTOVER_SCHEMA" || schema_matches "$PRE_COMMITMENT_SCHEMA" \
-        || schema_matches "$PRE_PARTICIPANT_SCHEMA"; then
+      elif schema_matches "$PRE_SCOPE_SCHEMA" || schema_matches "$PRE_COMMITMENT_CUTOVER_SCHEMA" \
+        || schema_matches "$PRE_COMMITMENT_SCHEMA" || schema_matches "$PRE_PARTICIPANT_SCHEMA"; then
         rollback_incomplete_bridge
         if ! migration_is_applied 20260715010000_hash_command_run_idempotency_keys; then
           npx tsx scripts/assert-untracked-command-runs-empty.ts

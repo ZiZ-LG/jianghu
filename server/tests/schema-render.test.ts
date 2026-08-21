@@ -275,4 +275,34 @@ describe('PostgreSQL schema delivery', () => {
     expect(schemaState).toContain("process.stdout.write('expanded_nullable')");
     expect(sqliteUpgrade).toContain("['tsx', 'scripts/migrate-commitment-fields.ts', '--cutover']");
   });
+
+  it('adds the CORE-109 tenant data-scope policy as an atomic portable expansion', async () => {
+    const migration = await read('prisma/postgres/migrations/20260821040000_add_tenant_data_scope_policy/migration.sql').catch(() => '');
+    const schema = await read('prisma/postgres/schema.prisma');
+    const preScopeSchema = await read('prisma/postgres/legacy/20260821_pre_core109.prisma').catch(() => '');
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+
+    expect(migration.trimStart().startsWith('BEGIN;')).toBe(true);
+    expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(migration).toContain("SET LOCAL lock_timeout = '30s'");
+    expect(migration).toContain("SET LOCAL statement_timeout = '15min'");
+    expect(migration).toContain('LOCK TABLE "Tenant" IN SHARE ROW EXCLUSIVE MODE');
+    expect(migration).toContain(
+      'ADD COLUMN "dataScopePolicy" TEXT NOT NULL DEFAULT \'legacy_tenant_shared\'',
+    );
+    expect(schema).toMatch(
+      /model Tenant \{[^}]*dataScopePolicy\s+String\s+@default\("legacy_tenant_shared"\)/,
+    );
+    expect(preScopeSchema).toContain('model Tenant');
+    expect(preScopeSchema).not.toContain('dataScopePolicy');
+    expect(deployScript).toContain(
+      'PRE_SCOPE_SCHEMA=prisma/postgres/legacy/20260821_pre_core109.prisma',
+    );
+    expect(deployScript).toMatch(
+      /matter_schema_matches_known_state\(\) \{[\s\S]*schema_matches "\$PRE_SCOPE_SCHEMA"[\s\S]*\|\| schema_matches "\$SCHEMA"/,
+    );
+    expect(deployScript).toMatch(
+      /participant_schema_matches_known_state\(\) \{[\s\S]*schema_matches "\$PRE_SCOPE_SCHEMA"[\s\S]*\|\| schema_matches "\$SCHEMA"/,
+    );
+  });
 });

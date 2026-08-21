@@ -18,8 +18,14 @@ export const PERMISSION_KEYS = [
   'data.read_all',
 ] as const;
 
+export const TENANT_DATA_SCOPE_POLICIES = [
+  'legacy_tenant_shared',
+  'scoped',
+] as const;
+
 export const EntitlementKeySchema = z.enum(ENTITLEMENT_KEYS);
 export const PermissionKeySchema = z.enum(PERMISSION_KEYS);
+export const TenantDataScopePolicySchema = z.enum(TENANT_DATA_SCOPE_POLICIES);
 
 const unique = <T>(items: readonly T[]): boolean => new Set(items).size === items.length;
 
@@ -45,6 +51,7 @@ export const CapabilityRequirementSchema = z.object({
 
 export type EntitlementKey = z.infer<typeof EntitlementKeySchema>;
 export type PermissionKey = z.infer<typeof PermissionKeySchema>;
+export type TenantDataScopePolicy = z.infer<typeof TenantDataScopePolicySchema>;
 export type CapabilityPolicy = z.infer<typeof CapabilityPolicySchema>;
 export type CapabilityRequirement = z.infer<typeof CapabilityRequirementSchema>;
 

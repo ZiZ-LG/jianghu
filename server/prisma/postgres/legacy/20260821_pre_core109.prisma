@@ -5,7 +5,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -15,7 +15,6 @@ model Tenant {
   plan               String       @default("free") // free | pro
   subscriptionStatus String       @default("active") // active | past_due | canceled
   seatLimit          Int          @default(50) // 免费多人协作，宽松上限防滥用（无付费墙）
-  dataScopePolicy    String       @default("legacy_tenant_shared") // legacy_tenant_shared | scoped；运行时未知值失败关闭
   createdAt          DateTime     @default(now())
   users              User[]
   accounts           Account[]
