@@ -1,5 +1,5 @@
 import type { Action } from './store';
-import type { AccountState, PipelineStage } from './types';
+import type { AccountState, CommitmentCommand, CommitmentCommandReceipt, PipelineStage } from './types';
 import type { AiContextOptions, ContextManifest } from './aiContext';
 import { toWireAction } from './wireAction';
 
@@ -242,6 +242,10 @@ export const api = {
     commandReq('/api/commands/action-feedback', { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(b) }),
   inboxBatch: (b: { items: Array<{ kind: 'proposal' | 'person' | 'rel' | 'evidence' | 'reminder'; id: string; decision: 'accept' | 'reject'; overrideValue?: string; personOverride?: { name?: string; title?: string }; relOverride?: { layer?: string; label?: string }; direction?: -1 | 0 | 1 }> }, idempotencyKey: string): Promise<{ items: Array<{ kind: string; id: string; status: string }>; replayed: boolean }> =>
     commandReq('/api/commands/inbox-batch', { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(b) }),
+  commitment: (command: CommitmentCommand, idempotencyKey: string): Promise<CommitmentCommandReceipt & { replayed: boolean }> =>
+    commandReq('/api/commands/commitment', {
+      method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(command),
+    }),
   demo: (): Promise<{ ok: true }> => req('/api/demo', { method: 'POST' }),
   archive: (target: 'account' | 'opportunity', id: string, reason: string): Promise<{ ok: true }> =>
     req('/api/archive', { method: 'POST', body: JSON.stringify({ target, id, reason }) }),

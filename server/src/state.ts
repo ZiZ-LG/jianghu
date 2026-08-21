@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { CommitmentV2Schema } from '@jianghu/domain-contracts';
 import { prisma } from './prisma.js';
 import { canReadPrivateBusinessData, visiblePersonLogs, type ReadPrincipal } from './visibility.js';
 import { activePersonWhere } from './activePerson.js';
@@ -82,7 +83,51 @@ function noteView(n: any) {
   return { id: n.id, accountId: n.accountId ?? undefined, opportunityId: n.opportunityId ?? undefined, personId: n.personId ?? undefined, content: n.content, source: n.source || undefined, tags: J(n.tags, []), createdBy: n.createdBy || undefined, createdAt: n.createdAt.toISOString() };
 }
 function planActionView(a: any) {
-  return { id: a.id, accountId: a.accountId, opportunityId: a.opportunityId, gapItem: a.gapItem || undefined, personId: a.personId ?? undefined, title: a.title, scene: a.scene || undefined, scripts: a.scripts || undefined, target: a.target || undefined, ownerId: a.ownerId || undefined, startDate: a.startDate, endDate: a.endDate, half: a.half, done: a.done, doneAt: a.doneAt ?? undefined, draft: !!a.draft, review: a.review || undefined, resources: a.resources || undefined, cautions: a.cautions || undefined, props: a.props || undefined, origin: a.origin, createdBy: a.createdBy || undefined, createdAt: a.createdAt.toISOString() };
+  return {
+    id: a.id, accountId: a.accountId, opportunityId: a.opportunityId, gapItem: a.gapItem || undefined,
+    personId: a.personId ?? undefined, title: a.title, scene: a.scene || undefined,
+    scripts: a.scripts || undefined, target: a.target || undefined, ownerId: a.ownerId || undefined,
+    startDate: a.startDate, endDate: a.endDate, half: a.half, done: a.done, doneAt: a.doneAt ?? undefined,
+    draft: !!a.draft, review: a.review || undefined, resources: a.resources || undefined,
+    cautions: a.cautions || undefined, props: a.props || undefined, origin: a.origin,
+    createdBy: a.createdBy || undefined, createdAt: a.createdAt.toISOString(),
+    kind: a.kind, ownerUserId: a.ownerUserId, executionStatus: a.executionStatus,
+    confirmationStatus: a.confirmationStatus, scheduledAtUtc: a.scheduledAtUtc?.toISOString() ?? null,
+    dueAtUtc: a.dueAtUtc?.toISOString() ?? null, timeZone: a.timeZone, isAllDay: a.isAllDay,
+    localDate: a.localDate, confirmationDueAtUtc: a.confirmationDueAtUtc?.toISOString() ?? null,
+    confirmedAtUtc: a.confirmedAtUtc?.toISOString() ?? null, confirmedByUserId: a.confirmedByUserId,
+    scheduleVersion: a.scheduleVersion, nextCommitmentId: a.nextCommitmentId,
+    source: a.source, sourceRef: a.sourceRef, archivedAt: a.archivedAt?.toISOString() ?? null,
+    version: a.version,
+  };
+}
+function commitmentView(a: any) {
+  const parsed = CommitmentV2Schema.safeParse({
+    id: a.id,
+    customerId: a.accountId,
+    matterId: a.opportunityId,
+    personId: a.personId,
+    title: a.title,
+    kind: a.kind,
+    ownerUserId: a.ownerUserId,
+    executionStatus: a.executionStatus,
+    confirmationStatus: a.confirmationStatus,
+    scheduledAtUtc: a.scheduledAtUtc?.toISOString() ?? null,
+    dueAtUtc: a.dueAtUtc?.toISOString() ?? null,
+    timeZone: a.timeZone,
+    isAllDay: a.isAllDay,
+    localDate: a.localDate,
+    confirmationDueAtUtc: a.confirmationDueAtUtc?.toISOString() ?? null,
+    confirmedAtUtc: a.confirmedAtUtc?.toISOString() ?? null,
+    confirmedByUserId: a.confirmedByUserId,
+    scheduleVersion: a.scheduleVersion,
+    nextCommitmentId: a.nextCommitmentId,
+    source: a.source,
+    sourceRef: a.sourceRef,
+    archivedAt: a.archivedAt?.toISOString() ?? null,
+    version: a.version,
+  });
+  return parsed.success ? parsed.data : null;
 }
 function milestoneView(m: any) {
   return { id: m.id, accountId: m.accountId, opportunityId: m.opportunityId, title: m.title, startDate: m.startDate, endDate: m.endDate, half: m.half, createdAt: m.createdAt.toISOString() };
@@ -269,6 +314,7 @@ export async function assembleState(
   // PlanAction / OppMilestone 同 VisitNote：无 Account relation，单独查后按 accountId 挂载
   const plans = await prisma.planAction.findMany({ where: { tenantId, ...accFilter } });
   const plansByAccount = new Map<string, ReturnType<typeof planActionView>[]>();
+  const commitmentsByAccount = new Map<string, NonNullable<ReturnType<typeof commitmentView>>[]>();
   const planActionLocation = new Map<string, { accountId: string; opportunityId: string }>();
   for (const p of plans) {
     if (inArchivedBranch(p.accountId, p.opportunityId)) continue;
@@ -282,6 +328,16 @@ export async function assembleState(
     const arr = plansByAccount.get(p.accountId) ?? [];
     arr.push(planActionView(p));
     plansByAccount.set(p.accountId, arr);
+    const commitment = commitmentView(p);
+    if (commitment) {
+      const commitments = commitmentsByAccount.get(p.accountId) ?? [];
+      commitments.push(commitment);
+      commitmentsByAccount.set(p.accountId, commitments);
+    } else {
+      // Generic state fails closed for unmigrated/corrupt rows without making
+      // the legacy internal adapter invent fallback Commitment semantics.
+      drops.keep('Commitment', p.id, ['contract_invalid']);
+    }
   }
   const milestones = await prisma.oppMilestone.findMany({ where: { tenantId, ...accFilter } });
   const milestonesByAccount = new Map<string, ReturnType<typeof milestoneView>[]>();
@@ -400,6 +456,7 @@ export async function assembleState(
       visitNotes: visitsByAccount.get(a.id) ?? [],
       notes: notesByAccount.get(a.id) ?? [],
       planActions: plansByAccount.get(a.id) ?? [],
+      commitments: commitmentsByAccount.get(a.id) ?? [],
       milestones: milestonesByAccount.get(a.id) ?? [],
       oppStages: stagesByAccount.get(a.id) ?? [],
       strategyCards: cardsByAccount.get(a.id) ?? [],

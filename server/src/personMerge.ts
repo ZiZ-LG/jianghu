@@ -460,7 +460,10 @@ export async function executePersonMerge(
     burningIssues: await updateMany(tx.burningIssue, { tenantId: ctx.tenantId, personId: source.id }, { personId: target.id }),
     evidenceEvents: await updateMany(tx.evidenceEvent, { tenantId: ctx.tenantId, personId: source.id }, { personId: target.id }),
     notes: await updateMany(tx.note, { tenantId: ctx.tenantId, personId: source.id }, { personId: target.id }),
-    planActions: await updateMany(tx.planAction, { tenantId: ctx.tenantId, personId: source.id }, { personId: target.id }),
+    planActions: await updateMany(tx.planAction, { tenantId: ctx.tenantId, personId: source.id }, {
+      personId: target.id,
+      version: { increment: 1 },
+    }),
     strategyCards: await updateMany(tx.strategyCard, { tenantId: ctx.tenantId, personId: source.id }, { personId: target.id }),
     transcripts: await updateMany(tx.transcript, { tenantId: ctx.tenantId, personId: source.id }, { personId: target.id }),
     advisorMsgs: await updateMany(tx.advisorMsg, { tenantId: ctx.tenantId, personId: source.id }, { personId: target.id }),

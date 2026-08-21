@@ -317,7 +317,7 @@ describe('INT-304 WorkBuddy to decision-loop HTTP journey', () => {
       entityId: fixture.actionFeedback.actionId,
       requestId: expect.any(String),
       sourceRef: firstFeedback.json().evidenceId,
-      changedFields: JSON.stringify(['done', 'doneAt', 'evidenceId']),
+      changedFields: JSON.stringify(['done', 'doneAt', 'executionStatus', 'version', 'evidenceId']),
       metadata: JSON.stringify({ evidenceId: firstFeedback.json().evidenceId }),
     });
     const auditTrail = JSON.stringify({ commandRuns, auditRows });

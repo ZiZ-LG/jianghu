@@ -94,9 +94,14 @@ export async function executeActionFeedback(
   const claimed = await db.planAction.updateMany({
     where: {
       id: input.actionId, tenantId: ctx.tenantId, accountId: input.accountId,
-      opportunityId: input.opportunityId, done: false,
+      opportunityId: input.opportunityId, done: false, executionStatus: 'planned',
     },
-    data: { done: true, doneAt: input.occurredAt },
+    data: {
+      done: true,
+      doneAt: input.occurredAt,
+      executionStatus: 'completed',
+      version: { increment: 1 },
+    },
   });
   if (claimed.count !== 1) throw new ActionAlreadyCompletedError();
   fault(options, 1);
@@ -127,7 +132,9 @@ export async function executeActionFeedback(
     entityId: input.actionId,
     requestId: ctx.requestId ?? null,
     sourceRef: evidenceId ?? null,
-    changedFields: JSON.stringify(evidenceId ? ['done', 'doneAt', 'evidenceId'] : ['done', 'doneAt']),
+    changedFields: JSON.stringify(evidenceId
+      ? ['done', 'doneAt', 'executionStatus', 'version', 'evidenceId']
+      : ['done', 'doneAt', 'executionStatus', 'version']),
     metadata: JSON.stringify(evidenceId ? { evidenceId } : {}),
   } });
   fault(options, 3);

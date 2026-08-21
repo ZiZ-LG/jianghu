@@ -3,6 +3,8 @@ import {
   ACTION_TYPES,
   CRM_COMMAND_TYPES,
   ActionSchema,
+  CommitmentCommandReceiptSchema,
+  CommitmentCommandSchema,
   CommitmentV2Schema,
   CrmCommandSchema,
   CustomerV2Schema,
@@ -212,6 +214,30 @@ describe('neutral CRM V2 contracts', () => {
 });
 
 describe('generic CRM commands', () => {
+  it('routes only Commitment commands and keeps replay receipts free of business text', () => {
+    expect(CommitmentCommandSchema.safeParse({
+      type: 'CREATE_COMMITMENT', commitment: COMMITMENT_CREATE_INPUT,
+    }).success).toBe(true);
+    expect(CommitmentCommandSchema.safeParse({
+      type: 'CREATE_CUSTOMER', customer: { id: NEW_CUSTOMER_ID, name: '远山制造' },
+    }).success).toBe(false);
+    const receipt = {
+      commitmentId: NEW_COMMITMENT_ID,
+      customerId: 'legacy-account-1',
+      matterId: 'legacy-opportunity-1',
+      executionStatus: 'planned',
+      confirmationStatus: 'pending',
+      version: 0,
+      scheduleVersion: 0,
+      nextCommitmentId: null,
+      linkedFromCommitmentId: null,
+      undoable: false,
+      repairCommands: ['RESCHEDULE_COMMITMENT', 'CANCEL_COMMITMENT'],
+    };
+    expect(CommitmentCommandReceiptSchema.safeParse(receipt).success).toBe(true);
+    expect(CommitmentCommandReceiptSchema.safeParse({ ...receipt, title: '不得进入幂等摘要' }).success).toBe(false);
+  });
+
   it('lives beside, rather than widening, the 51-command legacy Action contract', () => {
     expect(ACTION_TYPES).toHaveLength(51);
     expect(ActionSchema.options).toHaveLength(51);

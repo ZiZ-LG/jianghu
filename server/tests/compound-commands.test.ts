@@ -140,7 +140,7 @@ describe('atomic idempotent compound commands', () => {
       entityKind: 'plan_action',
       requestId: 'compound-test',
       sourceRef: null,
-      changedFields: JSON.stringify(['done', 'doneAt']),
+      changedFields: JSON.stringify(['done', 'doneAt', 'executionStatus', 'version']),
       metadata: JSON.stringify({}),
     });
     expect(audits.map((audit) => audit.entityId)).toEqual(['action-audit-flat', 'action-audit-no-person']);
@@ -177,9 +177,14 @@ describe('atomic idempotent compound commands', () => {
     const audit = await test.prisma.auditEvent.findFirstOrThrow({ where: {
       tenantId: test.tenant.id, action: 'action_feedback', entityId: 'action-down',
     } });
+    expect(await test.prisma.planAction.findUniqueOrThrow({ where: { id: 'action-down' } })).toMatchObject({
+      done: true,
+      executionStatus: 'completed',
+      version: 1,
+    });
     expect(audit).toMatchObject({
       sourceRef: evidence.id,
-      changedFields: JSON.stringify(['done', 'doneAt', 'evidenceId']),
+      changedFields: JSON.stringify(['done', 'doneAt', 'executionStatus', 'version', 'evidenceId']),
       metadata: JSON.stringify({ evidenceId: evidence.id }),
     });
     expect(JSON.stringify(audit)).not.toContain('敏感负向行动');

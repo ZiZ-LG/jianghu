@@ -464,3 +464,42 @@ const crmCommandSchemas = [
 export const CrmCommandSchema = z.union(crmCommandSchemas);
 export type CrmCommandInput = z.input<typeof CrmCommandSchema>;
 export type CrmCommand = z.infer<typeof CrmCommandSchema>;
+
+export const COMMITMENT_COMMAND_TYPES = [
+  'CREATE_COMMITMENT', 'RESCHEDULE_COMMITMENT', 'CONFIRM_COMMITMENT',
+  'DECLINE_COMMITMENT', 'COMPLETE_COMMITMENT', 'CANCEL_COMMITMENT',
+  'MARK_COMMITMENT_MISSED', 'CREATE_NEXT_COMMITMENT',
+] as const;
+export type CommitmentCommandType = (typeof COMMITMENT_COMMAND_TYPES)[number];
+export type CommitmentCommand = Extract<CrmCommand, { type: CommitmentCommandType }>;
+
+const commitmentCommandTypes = new Set<string>(COMMITMENT_COMMAND_TYPES);
+export const CommitmentCommandSchema = CrmCommandSchema.refine(
+  (value): value is CommitmentCommand => commitmentCommandTypes.has(value.type),
+  'expected a Commitment command',
+);
+
+export const CommitmentRepairCommandSchema = z.enum([
+  'RESCHEDULE_COMMITMENT', 'CANCEL_COMMITMENT', 'CREATE_NEXT_COMMITMENT',
+]);
+
+/**
+ * A replay-safe command receipt deliberately excludes title/source text. The
+ * client refreshes state for the full DTO, while the command journal stores
+ * only this non-sensitive summary.
+ */
+export const CommitmentCommandReceiptSchema = z.object({
+  commitmentId: id,
+  customerId: id,
+  matterId: id.nullable(),
+  executionStatus: CommitmentExecutionStatusSchema,
+  confirmationStatus: CommitmentConfirmationStatusSchema,
+  version,
+  scheduleVersion: version,
+  nextCommitmentId: id.nullable(),
+  linkedFromCommitmentId: id.nullable(),
+  undoable: z.literal(false),
+  repairCommands: z.array(CommitmentRepairCommandSchema),
+}).strict();
+
+export type CommitmentCommandReceipt = z.infer<typeof CommitmentCommandReceiptSchema>;

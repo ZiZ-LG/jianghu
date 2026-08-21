@@ -576,11 +576,23 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
           origin: current.origin,
         }, ownerUserId ?? null);
         if (action.patch.startDate !== undefined || action.patch.endDate !== undefined) {
-          d.localDate = commitment.localDate;
+          Object.assign(d, {
+            scheduledAtUtc: null,
+            dueAtUtc: null,
+            timeZone: commitment.timeZone,
+            isAllDay: true,
+            localDate: commitment.localDate,
+            confirmationDueAtUtc: null,
+            confirmationStatus: 'not_required',
+            confirmedAtUtc: null,
+            confirmedByUserId: null,
+            scheduleVersion: { increment: 1 },
+          });
         }
         if (action.patch.done !== undefined) d.executionStatus = commitment.executionStatus;
         if (action.patch.ownerId !== undefined) d.ownerUserId = commitment.ownerUserId;
       }
+      d.version = { increment: 1 };
       await db.planAction.updateMany({ where: { id: action.actionId, tenantId, accountId: action.accId }, data: d });
       return;
     }
@@ -634,6 +646,7 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
           done: !!action.done,
           doneAt: action.done ? (action.doneAt ?? businessYmd()) : null,
           executionStatus: action.done ? 'completed' : 'planned',
+          version: { increment: 1 },
         },
       });
       return;

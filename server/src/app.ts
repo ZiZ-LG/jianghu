@@ -33,6 +33,7 @@ import { accessTokenRoutes, mcpAuthenticate } from './accessToken.js';
 import { compoundCommandRoutes } from './mutation/compoundCommands.js';
 import { matterOwnershipRoutes } from './mutation/matterOwnership.js';
 import { matterParticipantRoutes } from './mutation/matterParticipants.js';
+import { commitmentRoutes } from './mutation/commitments.js';
 import { repairRoutes } from './repair.js';
 import { personMergeRoutes } from './personMerge.js';
 
@@ -111,6 +112,7 @@ function registerRoutes(app: FastifyInstance, readinessProbe: ReadinessProbe): v
   compoundCommandRoutes(app);
   matterOwnershipRoutes(app);
   matterParticipantRoutes(app);
+  commitmentRoutes(app);
   repairRoutes(app);
   personMergeRoutes(app);
 

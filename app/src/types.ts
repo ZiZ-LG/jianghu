@@ -2,6 +2,8 @@
 import type { CommitmentV2, JsonValue, MatterV2 } from '@jianghu/domain-contracts';
 export type {
   CapabilityPolicy,
+  CommitmentCommand,
+  CommitmentCommandReceipt,
   CommitmentV2,
   CrmCommand,
   CrmCommandInput,
@@ -391,6 +393,7 @@ export interface Account {
   visitNotes?: VisitNote[]; // 拜访记录（WorkBuddy 同步）
   notes?: Note[]; // 自由文本层：挂在该客户(及其商机/人)的笔记
   planActions?: PlanAction[]; // 商机策划 · 行动计划
+  commitments?: CommitmentV2[]; // 通用 Commitment 投影；正式写入只走幂等命令 API，不进入 legacy undo 栈
   milestones?: OppMilestone[]; // 商机策划 · 里程碑
   oppStages?: OppStage[]; // 商机策划 · 阶段段（年视图）
   strategyCards?: StrategyCard[]; // 策略沙盘 · 策略卡

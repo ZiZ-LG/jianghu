@@ -139,7 +139,16 @@ describe('CRM field authority map', () => {
     ]));
     expect(listCrmFieldConsumers(getCrmFieldAuthority('commitment.record'))).toEqual(expect.arrayContaining([
       'app/src/lib/today.ts', 'server/src/state.ts', 'server/src/mutation/actionScope.ts',
+      'server/src/mutation/commitments.ts',
     ]));
+    expect(getCrmFieldAuthority('commitment.record')).toMatchObject({
+      currentAuthority: { kind: 'core_path', path: 'PlanAction.[generic Commitment fields]' },
+      targetAuthority: { kind: 'core_path', path: 'PlanAction.[generic Commitment fields]' },
+      consumers: {
+        writes: ['server/src/mutation/commitments.ts'],
+        planned: ['CORE-108 legacy consumer cutover and nullable Matter release'],
+      },
+    });
   });
 
   it('returns no authority or consumers for an unregistered logical field', () => {

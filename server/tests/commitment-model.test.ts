@@ -63,7 +63,7 @@ describe('CORE-106 legacy PlanAction mapping', () => {
   });
 });
 
-describe('CORE-106 legacy write adapter', () => {
+describe('CORE-107 legacy write adapter', () => {
   let test: TestContext;
   let ctx: CommandContext;
 
@@ -88,7 +88,7 @@ describe('CORE-106 legacy write adapter', () => {
 
   afterEach(async () => test.cleanup());
 
-  it('keeps shadow fields aligned while the legacy Action path remains authoritative', async () => {
+  it('keeps the same-row Commitment authoritative and invalidates generic CAS on legacy writes', async () => {
     await applyAction(ctx, {
       type: 'ADD_PLAN_ACTION',
       accId: 'commitment-customer',
@@ -116,13 +116,15 @@ describe('CORE-106 legacy write adapter', () => {
     }, test.prisma);
     await expect(test.prisma.planAction.findUniqueOrThrow({
       where: { id: 'commitment-plan-action' },
-    })).resolves.toMatchObject({ localDate: '2026-10-09', executionStatus: 'completed', scheduleVersion: 0 });
+    })).resolves.toMatchObject({
+      localDate: '2026-10-09', executionStatus: 'completed', scheduleVersion: 1, version: 1,
+    });
 
     await applyAction(ctx, {
       type: 'TOGGLE_PLAN_ACTION', accId: 'commitment-customer', actionId: 'commitment-plan-action', done: false,
     }, test.prisma);
     await expect(test.prisma.planAction.findUniqueOrThrow({
       where: { id: 'commitment-plan-action' },
-    })).resolves.toMatchObject({ executionStatus: 'planned', done: false, scheduleVersion: 0 });
+    })).resolves.toMatchObject({ executionStatus: 'planned', done: false, scheduleVersion: 1, version: 2 });
   });
 });

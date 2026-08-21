@@ -324,6 +324,10 @@ describe('INT-302 safe duplicate Person merge', () => {
         const rows = await (model as any).findMany({ where: { tenantId: context.tenant.id } });
         expect(rows).toEqual([expect.objectContaining({ [field]: tree.targetPersonId })]);
       }
+      expect(await context.prisma.planAction.findUniqueOrThrow({ where: { id: 'action-success' } })).toMatchObject({
+        personId: tree.targetPersonId,
+        version: 1,
+      });
       await expect(context.prisma.relSuggestion.findFirstOrThrow({ where: { tenantId: context.tenant.id } })).resolves.toMatchObject({ sourcePersonId: tree.targetPersonId });
       await expect(context.prisma.changeProposal.findMany({ where: { tenantId: context.tenant.id } })).resolves.toEqual([
         expect.objectContaining({ entityId: tree.targetPersonId }), expect.objectContaining({ entityId: tree.targetPersonId }),
