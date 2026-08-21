@@ -102,6 +102,15 @@ describe('CRM field authority map', () => {
   });
 
   it('registers the current critical stage, methodology, and commitment consumers', () => {
+    const lifecycle = getCrmFieldAuthority('matter.lifecycle');
+    expect(lifecycle?.consumers.writes).toEqual(expect.arrayContaining([
+      'server/src/mcp/syncBundle.ts', 'server/src/mutate.ts', 'server/src/repair.ts',
+    ]));
+    expect(lifecycle?.consumers.migrations).toEqual(expect.arrayContaining([
+      'server/prisma/postgres/migrations/20260821000000_expand_matter_fields/migration.sql',
+      'server/scripts/migrate-matter-fields.ts', 'server/scripts/upgrade-sqlite-schema.ts',
+    ]));
+    expect(lifecycle?.consumers.planned).toEqual([]);
     expect(listCrmFieldConsumers(getCrmFieldAuthority('matter.current_stage'))).toEqual(expect.arrayContaining([
       'app/src/wireAction.ts', 'server/src/mutate.ts', 'server/src/repair.ts', 'server/src/mcpServer.ts',
     ]));

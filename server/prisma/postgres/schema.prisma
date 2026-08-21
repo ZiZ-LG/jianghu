@@ -149,6 +149,7 @@ model Opportunity {
   accountId            String
   account              Account        @relation(fields: [accountId], references: [id], onDelete: Cascade)
   name                 String
+  kind                 String         @default("sales_opportunity") // 通用 Matter 类型；开放字符串，未知值必须可读
   customerType         Int
   pipelineStage        String
   engageStage          String
@@ -159,6 +160,12 @@ model Opportunity {
   primaryDPersonId     String?                            // 主拍板人 D；服务端校验同租户/客户/商机当前有效 D
   externalRef          String?                            // 销售包商机锚，跨系统幂等(WorkBuddy)
   status               String         @default("active")  // active/paused/won/lost
+  lifecycleStatus      String         @default("active")  // active/paused/completed/canceled；迁移期为 status 的影子列
+  outcomeKey           String?                            // 开放结果键；销售 won/lost 映射到 completed + outcomeKey
+  priority             String?                            // 通用优先级开放键
+  targetDate           String?                            // 通用目标日 YYYY-MM-DD
+  primaryOwnerUserId   String?                            // 稳定 User.id；CORE-104 确认归属并启用授权
+  activeMethodologyBindingId String?                      // CORE-110 预留的唯一 primary binding 指针
   productSolution      String         @default("")
   competitor           String         @default("")
   competitiveSituation String         @default("")        // 领先/胶着/落后/未识别
@@ -185,6 +192,10 @@ model Opportunity {
   @@unique([tenantId, accountId, externalRef])
   @@index([accountId])
   @@index([tenantId, accountId])
+  @@index([tenantId, kind, lifecycleStatus])
+  @@index([tenantId, primaryOwnerUserId])
+  @@index([tenantId, targetDate])
+  @@index([tenantId, activeMethodologyBindingId])
   @@index([tenantId, archivedAt])
 }
 

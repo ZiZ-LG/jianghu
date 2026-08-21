@@ -92,4 +92,47 @@ describe('PostgreSQL schema delivery', () => {
     expect(dockerfile).toContain('/api/health/ready');
     expect(packageJson.devDependencies?.prisma).toBeTruthy();
   });
+
+  it('delivers the CORE-103 Matter expansion as an atomic, fail-closed PostgreSQL migration', async () => {
+    const migration = await read('prisma/postgres/migrations/20260821000000_expand_matter_fields/migration.sql');
+    const schema = await read('prisma/postgres/schema.prisma');
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const packageJson = JSON.parse(await read('package.json')) as { scripts?: Record<string, string> };
+
+    expect(migration.trimStart().startsWith('BEGIN;')).toBe(true);
+    expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(migration).toContain("SET LOCAL lock_timeout = '30s'");
+    expect(migration).toContain("SET LOCAL statement_timeout = '15min'");
+    expect(migration).toContain('LOCK TABLE "Opportunity" IN SHARE ROW EXCLUSIVE MODE');
+    expect(migration).toContain("NOT IN ('active', 'paused', 'won', 'lost')");
+    expect(migration.indexOf('unsupported legacy Opportunity status'))
+      .toBeLessThan(migration.indexOf('ADD COLUMN "kind"'));
+    for (const column of [
+      'kind', 'lifecycleStatus', 'outcomeKey', 'priority', 'targetDate',
+      'primaryOwnerUserId', 'activeMethodologyBindingId',
+    ]) {
+      expect(migration).toContain(`ADD COLUMN "${column}"`);
+      expect(schema).toContain(`${column}`);
+    }
+    expect(migration).toContain("WHEN 'won' THEN 'completed'");
+    expect(migration).toContain("WHEN 'lost' THEN 'completed'");
+    expect(migration).toContain("WHEN 'won' THEN 'won'");
+    expect(migration).toContain("WHEN 'lost' THEN 'lost'");
+    expect(migration).toContain('WHERE "status" <> \'active\'');
+    expect(migration).toContain('matter lifecycle backfill parity failed');
+    expect(migration).toContain('"Opportunity_tenantId_kind_lifecycleStatus_idx"');
+    expect(migration).toContain('"Opportunity_tenantId_primaryOwnerUserId_idx"');
+
+    expect(packageJson.scripts?.['migrate:matter-report']).toBeTruthy();
+    expect(packageJson.scripts?.['migrate:matter-verify']).toBeTruthy();
+    expect(packageJson.scripts?.['db:push']).toContain('upgrade-sqlite-schema.ts');
+    expect(deployScript).toContain('recover_incomplete_matter_migration');
+    expect(deployScript).toContain('adopt_existing_matter_schema_if_safe');
+    expect(deployScript).toContain('postgres-matter-schema-state.ts');
+    expect(deployScript).toContain('matter_migration_pending=1');
+    expect(deployScript.indexOf('npm run migrate:matter-report'))
+      .toBeLessThan(deployScript.indexOf('prisma migrate deploy'));
+    expect(deployScript.lastIndexOf('npm run migrate:matter-verify'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy'));
+  });
 });

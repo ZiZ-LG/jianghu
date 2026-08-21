@@ -12,6 +12,7 @@ import {
   ScopedNotFoundError,
 } from './mutation/scopeGuards.js';
 import { archiveEntity, restoreEntity, type ArchiveTarget } from './mutation/audit.js';
+import { mapLegacyOpportunityStatus } from './matter/lifecycle.js';
 
 const accountPatchSchema = z.object({
   base: z.object({
@@ -195,6 +196,9 @@ async function repairOpportunity(ctx: CommandContext, id: string, patch: z.infer
     if (approvedPatch.singleSalesGoal !== undefined && approvedPatch.singleSalesGoal !== opportunity.singleSalesGoal) effectivePatch.singleSalesGoal = approvedPatch.singleSalesGoal;
     if (approvedPatch.competitiveSituation !== undefined && approvedPatch.competitiveSituation !== opportunity.competitiveSituation) effectivePatch.competitiveSituation = approvedPatch.competitiveSituation;
     if (Object.keys(effectivePatch).length === 0) return;
+    const matterLifecyclePatch = effectivePatch.status === undefined
+      ? {}
+      : mapLegacyOpportunityStatus(effectivePatch.status);
     const updated = await tx.opportunity.updateMany({
       where: {
         id: opportunity.id,
@@ -203,7 +207,7 @@ async function repairOpportunity(ctx: CommandContext, id: string, patch: z.infer
         archivedAt: null,
         version: baseVersion,
       },
-      data: { ...effectivePatch, version: { increment: 1 } },
+      data: { ...effectivePatch, ...matterLifecyclePatch, version: { increment: 1 } },
     });
     if (updated.count !== 1) throw new VersionConflictError();
     await writeRepairAudit(tx, ctx, {
@@ -211,7 +215,9 @@ async function repairOpportunity(ctx: CommandContext, id: string, patch: z.infer
       entityKind: 'opportunity',
       entityId: opportunity.id,
       sourceRef: opportunity.externalRef,
-      changedFields: Object.keys(effectivePatch),
+      changedFields: effectivePatch.status === undefined
+        ? Object.keys(effectivePatch)
+        : [...Object.keys(effectivePatch), 'lifecycleStatus', 'outcomeKey'],
     });
   });
 }

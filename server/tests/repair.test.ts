@@ -272,6 +272,8 @@ describe('INT-301 minimum data repair', () => {
           name: 'Correct opportunity',
           pipelineStage: '合同谈判',
           status: 'paused',
+          lifecycleStatus: 'paused',
+          outcomeKey: null,
           expectedAmountW: 123.5,
           expectedSignDate: '2026-08-09',
           singleSalesGoal: 'Correct objective',
@@ -288,7 +290,17 @@ describe('INT-301 minimum data repair', () => {
       expect(serialized).not.toContain('Correct objective');
       expect(audits.map((audit) => JSON.parse(audit.changedFields)).sort((a, b) => a.length - b.length)).toEqual([
         ['name', 'customerType', 'primaryOwner', 'primaryOwnerUserId'],
-        ['name', 'pipelineStage', 'status', 'expectedAmountW', 'expectedSignDate', 'singleSalesGoal', 'competitiveSituation'],
+        [
+          'name',
+          'pipelineStage',
+          'status',
+          'expectedAmountW',
+          'expectedSignDate',
+          'singleSalesGoal',
+          'competitiveSituation',
+          'lifecycleStatus',
+          'outcomeKey',
+        ],
       ]);
 
       const rejected = await context.app.inject({

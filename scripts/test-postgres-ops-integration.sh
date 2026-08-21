@@ -22,6 +22,7 @@ export BACKUP_DIR="/tmp/jianghu-int501-ops-${$}"
 export BACKUP_RETENTION_DAYS=14
 export NO_PROXY=127.0.0.1,localhost
 export no_proxy=$NO_PROXY
+expected_migration_count=$(find server/prisma/postgres/migrations -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d '[:space:]')
 
 fresh_project=''
 fresh_root=''
@@ -72,7 +73,12 @@ legacy_table_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -
 docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
   "INSERT INTO \"Tenant\" (id,name) VALUES ('legacy-owner-tenant','Legacy Owner Tenant');
    INSERT INTO \"User\" (id,\"tenantId\",email,\"passwordHash\",name) VALUES ('legacy-owner-user','legacy-owner-tenant','legacy-owner@example.test','unused','Legacy Owner');
-   INSERT INTO \"Account\" (id,\"tenantId\",name,\"customerType\",\"primaryOwner\") VALUES ('legacy-owner-account','legacy-owner-tenant','Legacy Account',1,'Legacy Owner');" >/dev/null
+   INSERT INTO \"Account\" (id,\"tenantId\",name,\"customerType\",\"primaryOwner\") VALUES ('legacy-owner-account','legacy-owner-tenant','Legacy Account',1,'Legacy Owner');
+   INSERT INTO \"Opportunity\" (id,\"tenantId\",\"accountId\",name,\"customerType\",\"pipelineStage\",\"engageStage\",status) VALUES
+     ('legacy-matter-active','legacy-owner-tenant','legacy-owner-account','Active Matter',1,'qualify','discover','active'),
+     ('legacy-matter-paused','legacy-owner-tenant','legacy-owner-account','Paused Matter',1,'qualify','discover','paused'),
+     ('legacy-matter-won','legacy-owner-tenant','legacy-owner-account','Won Matter',1,'qualify','discover','won'),
+     ('legacy-matter-lost','legacy-owner-tenant','legacy-owner-account','Lost Matter',1,'qualify','discover','lost');" >/dev/null
 # Simulate a process kill after the first of the three adoption resolves. The
 # next server start must recognize and complete this partial history.
 docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint npx server \
@@ -89,7 +95,7 @@ done
 [[ "$(docker inspect -f '{{.State.Health.Status}}' "${COMPOSE_PROJECT_NAME}-server-1")" == healthy ]]
 migration_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
   'SELECT count(*) FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL' | tr -d '[:space:]')
-[[ "$migration_count" == 4 ]]
+[[ "$migration_count" == "$expected_migration_count" ]]
 rolled_back_bridge_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
   "SELECT count(*) FROM \"_prisma_migrations\" WHERE migration_name = '20260715030000_adopt_pre_int501_schema' AND rolled_back_at IS NOT NULL" | tr -d '[:space:]')
 [[ "$rolled_back_bridge_count" == 1 ]]
@@ -102,8 +108,80 @@ legacy_bridge_ready=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql 
 legacy_owner_id=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
   "SELECT \"primaryOwnerUserId\" FROM \"Account\" WHERE id = 'legacy-owner-account'" | tr -d '[:space:]')
 [[ "$legacy_owner_id" == legacy-owner-user ]]
+legacy_matter_total=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+  "SELECT count(*) FROM \"Opportunity\" WHERE \"tenantId\" = 'legacy-owner-tenant'" | tr -d '[:space:]')
+legacy_matter_mapping_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+  "SELECT count(*) FROM \"Opportunity\"
+   WHERE \"tenantId\" = 'legacy-owner-tenant'
+     AND kind = 'sales_opportunity'
+     AND ((status = 'active' AND \"lifecycleStatus\" = 'active' AND \"outcomeKey\" IS NULL)
+       OR (status = 'paused' AND \"lifecycleStatus\" = 'paused' AND \"outcomeKey\" IS NULL)
+       OR (status = 'won' AND \"lifecycleStatus\" = 'completed' AND \"outcomeKey\" = 'won')
+       OR (status = 'lost' AND \"lifecycleStatus\" = 'completed' AND \"outcomeKey\" = 'lost'))" | tr -d '[:space:]')
+[[ "$legacy_matter_total" == 4 ]]
+[[ "$legacy_matter_mapping_count" == 4 ]]
 echo "LEGACY_ACCOUNT_OWNER_BACKFILL_OK=1"
 echo "LEGACY_SCHEMA_MIGRATION_PREFLIGHT_OK=1"
+echo "LEGACY_MATTER_STATUS_BACKFILL_OK=1"
+
+# Unknown legacy statuses must fail before the expand migration changes the
+# schema. Repairing the source value must make the same database retryable.
+unknown_matter_db=jianghu_matter_unknown
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$unknown_matter_db"
+POSTGRES_DB="$unknown_matter_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npx prisma db push --schema prisma/postgres/legacy/20260712_pre_int501.prisma --skip-generate' >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$unknown_matter_db" -c \
+  "INSERT INTO \"Tenant\" (id,name) VALUES ('unknown-matter-tenant','Unknown Matter Tenant');
+   INSERT INTO \"Account\" (id,\"tenantId\",name,\"customerType\") VALUES ('unknown-matter-account','unknown-matter-tenant','Unknown Matter Account',1);
+   INSERT INTO \"Opportunity\" (id,\"tenantId\",\"accountId\",name,\"customerType\",\"pipelineStage\",\"engageStage\",status)
+     VALUES ('unknown-matter-opportunity','unknown-matter-tenant','unknown-matter-account','Unknown Matter',1,'qualify','discover','future_status');" >/dev/null
+if POSTGRES_DB="$unknown_matter_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "unknown legacy Matter status unexpectedly migrated" >&2; exit 1
+fi
+matter_columns_after_failure=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$unknown_matter_db" -tAc \
+  "SELECT count(*) FROM information_schema.columns
+   WHERE table_schema = 'public' AND table_name = 'Opportunity'
+     AND column_name IN ('kind','lifecycleStatus','outcomeKey','priority','targetDate','primaryOwnerUserId','activeMethodologyBindingId')" | tr -d '[:space:]')
+[[ "$matter_columns_after_failure" == 0 ]]
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$unknown_matter_db" -c \
+  "INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+     VALUES ('interrupted-matter-before-commit', repeat('0', 64), '20260821000000_expand_matter_fields', CURRENT_TIMESTAMP, 0);
+   UPDATE \"Opportunity\" SET status = 'lost' WHERE id = 'unknown-matter-opportunity';" >/dev/null
+POSTGRES_DB="$unknown_matter_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+unknown_matter_recovered=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$unknown_matter_db" -tAc \
+  "SELECT count(*) FROM \"Opportunity\"
+   WHERE id = 'unknown-matter-opportunity' AND kind = 'sales_opportunity'
+     AND status = 'lost' AND \"lifecycleStatus\" = 'completed' AND \"outcomeKey\" = 'lost'" | tr -d '[:space:]')
+[[ "$unknown_matter_recovered" == 1 ]]
+matter_rolled_back_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$unknown_matter_db" -tAc \
+  "SELECT count(*) FROM \"_prisma_migrations\"
+   WHERE migration_name = '20260821000000_expand_matter_fields' AND rolled_back_at IS NOT NULL" | tr -d '[:space:]')
+[[ "$matter_rolled_back_count" == 1 ]]
+echo "INTERRUPTED_MATTER_BEFORE_COMMIT_RETRY_OK=1"
+
+# Simulate PostgreSQL committing the transaction immediately before Prisma can
+# mark it finished. The schema/parity-gated recovery must adopt it exactly once.
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$unknown_matter_db" -c \
+  "DELETE FROM \"_prisma_migrations\"
+    WHERE migration_name = '20260821000000_expand_matter_fields' AND finished_at IS NOT NULL;
+   INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+     VALUES ('interrupted-matter-after-commit', repeat('0', 64), '20260821000000_expand_matter_fields', CURRENT_TIMESTAMP, 0);" >/dev/null
+POSTGRES_DB="$unknown_matter_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+matter_applied_after_adoption=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$unknown_matter_db" -tAc \
+  "SELECT count(*) FROM \"_prisma_migrations\"
+   WHERE migration_name = '20260821000000_expand_matter_fields'
+     AND finished_at IS NOT NULL AND rolled_back_at IS NULL" | tr -d '[:space:]')
+matter_incomplete_after_adoption=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$unknown_matter_db" -tAc \
+  "SELECT count(*) FROM \"_prisma_migrations\"
+   WHERE migration_name = '20260821000000_expand_matter_fields'
+     AND finished_at IS NULL AND rolled_back_at IS NULL" | tr -d '[:space:]')
+[[ "$matter_applied_after_adoption" == 1 ]]
+[[ "$matter_incomplete_after_adoption" == 0 ]]
+echo "INTERRUPTED_MATTER_AFTER_COMMIT_ADOPTION_OK=1"
+echo "UNKNOWN_MATTER_STATUS_FAIL_CLOSED_RETRY_OK=1"
 
 # A duplicate tenant-local owner name must roll the bridge transaction back.
 # After data repair, the same database must resume and complete safely.
@@ -302,6 +380,14 @@ fresh_backups="$fresh_root-backups"
 fresh_rollbacks="$fresh_root-rollbacks"
 fresh_port=$(( 20000 + RANDOM % 20000 ))
 git clone -q "file://$ROOT_DIR" "$fresh_root/repo"
+# Local pre-commit runs clone HEAD, so overlay the current server snapshot to
+# exercise the exact migration under review. CI normally has no overlay diff.
+tar -cf - --exclude='node_modules' --exclude='dist' --exclude='*.db' server \
+  | tar -xf - -C "$fresh_root/repo"
+deployment_git_in_dir "$fresh_root/repo" -c user.name=CI -c user.email=ci@example.invalid add server
+if ! deployment_git_in_dir "$fresh_root/repo" diff --cached --quiet; then
+  deployment_git_in_dir "$fresh_root/repo" -c user.name=CI -c user.email=ci@example.invalid commit -qm 'current server snapshot'
+fi
 cat > "$fresh_root/repo/.env" <<EOF
 COMPOSE_PROJECT_NAME=$fresh_project
 POSTGRES_USER=jianghu_fresh
@@ -323,7 +409,7 @@ fresh_env=(env -u COMPOSE_PROJECT_NAME -u POSTGRES_USER -u POSTGRES_PASSWORD -u 
 [[ -s "$fresh_backups/.int501-bootstrap-verified" ]]
 fresh_migrations=$(docker compose -p "$fresh_project" exec -T db psql -U jianghu_fresh -d jianghu_fresh -tAc \
   'SELECT count(*) FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL' | tr -d '[:space:]')
-[[ "$fresh_migrations" == 4 ]]
+[[ "$fresh_migrations" == "$expected_migration_count" ]]
 fresh_backup_count=$(find "$fresh_backups" -maxdepth 1 -type d -name 'jianghu-*.backup' | wc -l | tr -d ' ')
 [[ "$fresh_backup_count" == 1 ]]
 echo "FRESH_INSTALL_FIRST_RUN_OK=1"
@@ -331,7 +417,7 @@ echo "FRESH_INSTALL_FIRST_RUN_OK=1"
 "${fresh_env[@]}" bash "$fresh_root/repo/deploy-company-update.sh" >/dev/null
 fresh_migrations_after=$(docker compose -p "$fresh_project" exec -T db psql -U jianghu_fresh -d jianghu_fresh -tAc \
   'SELECT count(*) FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL' | tr -d '[:space:]')
-[[ "$fresh_migrations_after" == 4 ]]
+[[ "$fresh_migrations_after" == "$expected_migration_count" ]]
 fresh_rollback_count=$(find "$fresh_rollbacks" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
 [[ "$fresh_rollback_count" -ge 1 ]]
 echo "FRESH_INSTALL_SECOND_UPDATE_OK=1"

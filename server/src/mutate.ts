@@ -8,6 +8,7 @@ import { isTrustedHumanAssertion, normalizeActionTrust } from './ingestTrust.js'
 import { activePersonWhere } from './activePerson.js';
 import { pickKeyInfluencerKeeper } from './g64111.js';
 import { businessYmd } from './businessDate.js';
+import { mapLegacyOpportunityStatus } from './matter/lifecycle.js';
 
 export type { DbClient } from './mutation/scopeGuards.js';
 
@@ -222,13 +223,15 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
 
     case 'ADD_OPP': {
       const o = action.opp;
+      const status = o.status ?? 'active';
+      const matterLifecycle = mapLegacyOpportunityStatus(status);
       if (o.primaryDPersonId) throw new Error('primary D must be selected from an existing D role');
       await db.opportunity.create({ data: {
         id: o.id, tenantId, accountId: action.accId, name: o.name, customerType: o.customerType,
         pipelineStage: o.pipelineStage, engageStage: o.engageStage, changeMode: o.changeMode ?? null,
         singleSalesGoal: o.singleSalesGoal ?? '', customerBusinessGoal: o.customerBusinessGoal ?? null,
         buyingMotivation: o.buyingMotivation ?? null, c3Items: S(o.c3Items ?? {}), c5Items: S(o.c5Items ?? {}),
-        externalRef: o.externalRef ?? null, status: o.status ?? 'active', productSolution: o.productSolution ?? '',
+        externalRef: o.externalRef ?? null, status, ...matterLifecycle, productSolution: o.productSolution ?? '',
         competitor: o.competitor ?? '', competitiveSituation: o.competitiveSituation ?? '',
         winProbability: o.winProbability ?? 0, expectedSignDate: o.expectedSignDate ?? '',
         expectedAmountW: o.expectedAmountW ?? 0, meta: S(o.meta ?? {}),
@@ -238,6 +241,7 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
     }
     case 'UPDATE_OPP': {
       const d = pick(action.patch, ['name', 'pipelineStage', 'engageStage', 'changeMode', 'singleSalesGoal', 'customerBusinessGoal', 'buyingMotivation', 'primaryDPersonId', 'externalRef', 'status', 'productSolution', 'competitor', 'competitiveSituation', 'winProbability', 'expectedSignDate', 'expectedAmountW']);
+      if (action.patch.status !== undefined) Object.assign(d, mapLegacyOpportunityStatus(action.patch.status));
       if (action.patch.primaryDPersonId) {
         const [person, dRole] = await Promise.all([
           db.person.findFirst({

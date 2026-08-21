@@ -1,5 +1,5 @@
 // 江湖 · 领域类型（对应 docs/产品设计方案.md §3 与 G64111-评分规格.md）
-import type { JsonValue } from '@jianghu/domain-contracts';
+import type { JsonValue, MatterV2 } from '@jianghu/domain-contracts';
 export type {
   CapabilityPolicy,
   CommitmentV2,
@@ -166,6 +166,19 @@ export interface Opportunity {
   evidenceEvents?: EvidenceEvent[]; // 策略引擎证据事件(E2，喂局势分布)
   version?: number;        // 乐观锁版本（后端带出；UPDATE_OPP 时回传作 baseVersion）
 }
+
+/** GET /api/state 在 CORE-103 expand 阶段返回的同行 Matter 投影。 */
+export interface OpportunityMatterState {
+  kind: string;
+  lifecycleStatus: MatterV2['lifecycleStatus'];
+  outcomeKey: string | null;
+  priority: string | null;
+  targetDate: string | null;
+  primaryOwnerUserId: string | null;
+  activeMethodologyBindingId: string | null;
+}
+
+export type OpportunityState = Opportunity & OpportunityMatterState;
 
 /** 策略引擎 · 证据事件（E2）：每条证据喂局势分布 */
 export interface EvidenceEvent {
@@ -361,6 +374,9 @@ export interface Account {
   strategyRisks?: StrategyRisk[]; // 策略沙盘 · 风险/假设
   strategyResources?: StrategyResource[]; // 策略沙盘 · 轻量弹药
 }
+
+/** 云端整树的客户投影；保留 legacy Account/Opportunity 字段供兼容 UI 使用。 */
+export type AccountState = Omit<Account, 'opportunities'> & { opportunities: OpportunityState[] };
 
 // 角色显示色（设计方案 §4.1，5 色 A/D/U/R/C）
 export const ROLE_COLOR: Record<Role, string> = {

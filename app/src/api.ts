@@ -1,5 +1,5 @@
 import type { Action } from './store';
-import type { Account, PipelineStage } from './types';
+import type { AccountState, PipelineStage } from './types';
 import type { AiContextOptions, ContextManifest } from './aiContext';
 import { toWireAction } from './wireAction';
 
@@ -228,7 +228,7 @@ export const api = {
   login: (b: Credentials & { tenantId?: string }): Promise<AuthResult | WorkspaceChoice> =>
     req('/api/auth/login', { method: 'POST', body: JSON.stringify(b) }),
   me: (): Promise<{ user: AuthResult['user']; tenant: AuthResult['tenant'] }> => req('/api/me'),
-  getState: (): Promise<{ accounts: Account[] }> => req('/api/state'),
+  getState: (): Promise<{ accounts: AccountState[] }> => req('/api/state'),
   mutate: (action: Action): Promise<{ ok: true }> => req('/api/mutate', { method: 'POST', body: JSON.stringify({ action: toWireAction(action) }) }),
   // 录入情报：口述文字 → 后端 LLM 抽取 + 双轨落库 → 回执
   voiceExtract: (b: { text: string; accountId?: string; opportunityId?: string; personId?: string; priorText?: string; sourceVisitId?: string }, idempotencyKey: string): Promise<any> =>

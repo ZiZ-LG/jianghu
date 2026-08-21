@@ -175,7 +175,10 @@ describe('WorkBuddy atomic sync bundle', () => {
     expect(opportunity.syncReceipt.created).toContain('opportunity:legacy-opportunity-ref');
     expect(await test.prisma.opportunity.findFirstOrThrow({ where: {
       tenantId: test.tenant.id, externalRef: 'legacy-opportunity-ref',
-    } })).toMatchObject({ status: 'paused', changeMode: 'T', productSolution: '完整方案', expectedAmountW: 123 });
+    } })).toMatchObject({
+      status: 'paused', lifecycleStatus: 'paused', outcomeKey: null,
+      changeMode: 'T', productSolution: '完整方案', expectedAmountW: 123,
+    });
 
     const visit = toolData(await handleMcpBody(ctx, {
       jsonrpc: '2.0', id: 11, method: 'tools/call', params: {

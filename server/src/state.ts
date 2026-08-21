@@ -399,6 +399,9 @@ export async function assembleState(
       strategyResources: resourcesByAccount.get(a.id) ?? [],
       opportunities: a.opportunities.map((o) => ({
         id: o.id, accountId: o.accountId, name: o.name, customerType: o.customerType,
+        kind: o.kind, lifecycleStatus: o.lifecycleStatus, outcomeKey: o.outcomeKey,
+        priority: o.priority, targetDate: o.targetDate, primaryOwnerUserId: o.primaryOwnerUserId,
+        activeMethodologyBindingId: o.activeMethodologyBindingId,
         pipelineStage: o.pipelineStage, engageStage: o.engageStage, changeMode: o.changeMode ?? undefined,
         singleSalesGoal: o.singleSalesGoal, customerBusinessGoal: o.customerBusinessGoal ?? undefined,
         buyingMotivation: o.buyingMotivation ?? undefined,
