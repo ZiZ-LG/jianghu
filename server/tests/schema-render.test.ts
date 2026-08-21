@@ -241,4 +241,38 @@ describe('PostgreSQL schema delivery', () => {
     expect(preCommitment).not.toContain('executionStatus');
     expect(deployScript).toContain('PRE_COMMITMENT_SCHEMA=prisma/postgres/legacy/20260821_pre_core106.prisma');
   });
+
+  it('releases customer-level Commitments only after the CORE-108 cutover preflight', async () => {
+    const migration = await read('prisma/postgres/migrations/20260821030000_release_customer_level_commitments/migration.sql').catch(() => '');
+    const schema = await read('prisma/postgres/schema.prisma');
+    const preCutoverSchema = await read('prisma/postgres/legacy/20260821_pre_core108.prisma');
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const schemaState = await read('scripts/postgres-commitment-schema-state.ts');
+    const sqliteUpgrade = await read('scripts/upgrade-sqlite-schema.ts');
+
+    expect(migration.trimStart().startsWith('BEGIN;')).toBe(true);
+    expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(migration).toContain("SET LOCAL lock_timeout = '30s'");
+    expect(migration).toContain('LOCK TABLE "PlanAction"');
+    expect(migration).toContain('CORE-106-commitment-backfill-v1');
+    expect(migration).toContain('Commitment cutover preflight failed');
+    expect(migration.indexOf('Commitment cutover preflight failed'))
+      .toBeLessThan(migration.indexOf('ALTER COLUMN "opportunityId" DROP NOT NULL'));
+    expect(migration).toContain('ALTER COLUMN "opportunityId" DROP NOT NULL');
+    expect(migration).toContain('CORE-108-commitment-consumer-cutover-v1');
+    expect(schema).toMatch(/model PlanAction \{[^}]*opportunityId\s+String\?/);
+    expect(preCutoverSchema).toMatch(/model PlanAction \{[^}]*opportunityId\s+String\s/);
+    expect(preCutoverSchema).not.toMatch(/model PlanAction \{[^}]*opportunityId\s+String\?/);
+    expect(deployScript).toContain('PRE_COMMITMENT_CUTOVER_SCHEMA=prisma/postgres/legacy/20260821_pre_core108.prisma');
+    expect(deployScript).toContain('COMMITMENT_CUTOVER_MIGRATION=20260821030000_release_customer_level_commitments');
+    expect(deployScript).toContain('recover_incomplete_commitment_cutover_migration');
+    expect(deployScript).toContain('adopt_existing_commitment_cutover_schema_if_safe');
+    expect(deployScript.indexOf('recover_incomplete_commitment_migration'))
+      .toBeLessThan(deployScript.indexOf('recover_incomplete_commitment_cutover_migration'));
+    expect(deployScript.lastIndexOf('migrate:commitment-verify'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy'));
+    expect(schemaState).toContain("process.stdout.write('expanded_required')");
+    expect(schemaState).toContain("process.stdout.write('expanded_nullable')");
+    expect(sqliteUpgrade).toContain("['tsx', 'scripts/migrate-commitment-fields.ts', '--cutover']");
+  });
 });

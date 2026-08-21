@@ -51,12 +51,6 @@ class CommitmentIdConflictError extends Error {
   constructor() { super('跟进承诺标识已存在'); }
 }
 
-class CustomerLevelCommitmentPendingError extends Error {
-  readonly statusCode = 409;
-  readonly code = 'customer_level_commitment_pending_consumer_migration';
-  constructor() { super('客户级跟进将在旧消费者迁移完成后开放'); }
-}
-
 const iso = (value: Date | null): string | null => value?.toISOString() ?? null;
 
 function localParts(instant: string, timeZone: string): { date: string; hour: number } {
@@ -88,7 +82,7 @@ function createData(input: CreateInput, tenantId: string, actorId: string): Pris
     id: input.id,
     tenantId,
     accountId: input.customerId,
-    opportunityId: input.matterId!,
+    opportunityId: input.matterId,
     gapItem: '',
     personId: input.personId,
     title: input.title,
@@ -228,10 +222,7 @@ async function requireCreateScope(
   db: Prisma.TransactionClient,
 ): Promise<void> {
   await lockCustomer(ctx, input.customerId, db);
-  // Approved design Phase 2: the contract is nullable now, but the physical
-  // FK is relaxed only after every CORE-108 legacy consumer is null-safe.
-  if (!input.matterId) throw new CustomerLevelCommitmentPendingError();
-  await lockMatter(ctx, input.customerId, input.matterId, db);
+  if (input.matterId) await lockMatter(ctx, input.customerId, input.matterId, db);
   if (input.personId) await lockPerson(ctx, input.customerId, input.personId, db);
   if (actorRole === 'member' && input.ownerUserId !== ctx.actorId) {
     throw new CommitmentAssignmentPermissionError();
@@ -272,7 +263,7 @@ async function loadCommitment(
   const row = await requireScopedRow(db.planAction.findFirst({
     where: { id: commitmentId, tenantId: ctx.tenantId, accountId: customerId, archivedAt: null },
   }));
-  await lockMatter(ctx, customerId, row.opportunityId, db);
+  if (row.opportunityId) await lockMatter(ctx, customerId, row.opportunityId, db);
   if (row.personId) await lockPerson(ctx, customerId, row.personId, db);
   return row;
 }

@@ -240,7 +240,7 @@ export const api = {
     commandReq('/api/commands/opportunity-skeleton', { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(b) }),
   actionFeedback: (b: {
     accountId: string;
-    opportunityId: string;
+    opportunityId: string | null;
     actionId: string;
     outcome: 'up' | 'flat' | 'down';
     occurredAt: string;

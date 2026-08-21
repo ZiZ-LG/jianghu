@@ -217,16 +217,11 @@ try {
     run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-commitment-fields.ts', '--dry-run'], url);
     commitmentBackfillRequired = true;
   } else {
-    const { hasCommitmentMigrationMarker, verifyCommitmentBackfill } = await import('../src/commitment/migration.js');
+    const { hasCommitmentMigrationMarker } = await import('../src/commitment/migration.js');
     const markerPresent = await hasCommitmentMigrationMarker(prisma);
     if (!markerPresent) {
       run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-commitment-fields.ts', '--dry-run'], url);
       commitmentBackfillRequired = true;
-    } else {
-      const conflicts = await verifyCommitmentBackfill(prisma);
-      if (conflicts.length > 0) {
-        throw new Error(`Commitment legacy shadow parity failed (${conflicts.length} sampled conflicts)`);
-      }
     }
   }
   schemaChanges = state === 'uninitialized' ? true : schemaHasChanges(url);
@@ -252,6 +247,10 @@ if (participantBackfillRequired) {
 if (commitmentBackfillRequired) {
   run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-commitment-fields.ts', '--apply'], url);
 }
+// Prisma db push performs SQLite's table rebuild. Mark the cutover only after
+// that DDL succeeds; a kill between the two is recoverable by rerunning this
+// wrapper against the existing backup and generic integrity preflight.
+run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-commitment-fields.ts', '--cutover'], url);
 run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-commitment-fields.ts', '--verify'], url);
 
 console.log(JSON.stringify({

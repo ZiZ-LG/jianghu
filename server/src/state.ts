@@ -321,13 +321,15 @@ export async function assembleState(
     const reasons: string[] = [];
     if (p.tenantId !== tenantId) reasons.push('tenant_mismatch');
     if (!accountIds.has(p.accountId)) reasons.push('account_mismatch');
-    if (opportunityAccount.get(p.opportunityId) !== p.accountId) reasons.push('opportunity_mismatch');
+    if (p.opportunityId && opportunityAccount.get(p.opportunityId) !== p.accountId) reasons.push('opportunity_mismatch');
     if (p.personId && personAccount.get(p.personId) !== p.accountId) reasons.push('person_mismatch');
     if (!drops.keep('PlanAction', p.id, reasons)) continue;
-    planActionLocation.set(p.id, { accountId: p.accountId, opportunityId: p.opportunityId });
-    const arr = plansByAccount.get(p.accountId) ?? [];
-    arr.push(planActionView(p));
-    plansByAccount.set(p.accountId, arr);
+    if (p.opportunityId) {
+      planActionLocation.set(p.id, { accountId: p.accountId, opportunityId: p.opportunityId });
+      const arr = plansByAccount.get(p.accountId) ?? [];
+      arr.push(planActionView(p));
+      plansByAccount.set(p.accountId, arr);
+    }
     const commitment = commitmentView(p);
     if (commitment) {
       const commitments = commitmentsByAccount.get(p.accountId) ?? [];

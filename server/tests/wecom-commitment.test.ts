@@ -86,4 +86,56 @@ describe('CORE-108 Commitment WeCom calendar consumer', () => {
       await context.cleanup();
     }
   });
+
+  it('syncs a customer-level Commitment with customer context and no fabricated Matter', async () => {
+    const context = await createTestContext();
+    try {
+      const corpId = `corp-${randomUUID()}`;
+      const accountId = 'wecom-customer-level-account';
+      const commitmentId = 'wecom-customer-level-commitment';
+      await context.prisma.weComConfig.create({ data: {
+        tenantId: context.tenant.id, corpId, agentId: '100001', secretEnc: enc('secret'),
+      } });
+      await context.prisma.weComUserBind.create({ data: {
+        id: 'wecom-customer-level-bind', tenantId: context.tenant.id,
+        userId: context.owner.id, wecomUserid: 'wx-customer-owner',
+      } });
+      await context.prisma.account.create({ data: {
+        id: accountId, tenantId: context.tenant.id, name: '企微客户级客户', customerType: 1,
+      } });
+      await context.prisma.planAction.create({ data: {
+        id: commitmentId, tenantId: context.tenant.id, accountId, opportunityId: null,
+        title: '客户级日程', startDate: '1999-01-01', endDate: '1999-01-01',
+        ownerId: 'legacy-owner-must-not-be-used', ownerUserId: context.owner.id,
+        executionStatus: 'planned', confirmationStatus: 'not_required',
+        scheduledAtUtc: new Date('2026-09-12T02:00:00.000Z'),
+        dueAtUtc: new Date('2026-09-12T03:00:00.000Z'),
+        timeZone: 'Asia/Shanghai', isAllDay: false, localDate: null,
+      } });
+
+      outbound.fetch.mockReset();
+      outbound.fetch
+        .mockResolvedValueOnce({ status: 200, json: async () => ({ errcode: 0, access_token: 'customer-token', expires_in: 7200 }) })
+        .mockResolvedValueOnce({ status: 200, json: async () => ({ errcode: 0, schedule_id: 'customer-schedule-id' }) });
+      await syncCommitmentToWeCom(context.tenant.id, commitmentId);
+
+      const addCall = outbound.fetch.mock.calls[1];
+      expect(String(addCall?.[0])).toContain('/cgi-bin/oa/schedule/add');
+      expect(JSON.parse(String(addCall?.[1]?.body))).toMatchObject({
+        schedule: {
+          organizer: 'wx-customer-owner',
+          summary: '客户级日程',
+          description: '客户：企微客户级客户',
+          start_time: Date.parse('2026-09-12T02:00:00.000Z') / 1000,
+          end_time: Date.parse('2026-09-12T03:00:00.000Z') / 1000,
+        },
+      });
+      expect(String(addCall?.[1]?.body)).not.toContain('事项：');
+      await expect(context.prisma.scheduleSync.findUniqueOrThrow({ where: {
+        tenantId_kind_refId: { tenantId: context.tenant.id, kind: 'commitment', refId: commitmentId },
+      } })).resolves.toMatchObject({ wecomScheduleId: 'customer-schedule-id', status: 'synced' });
+    } finally {
+      await context.cleanup();
+    }
+  });
 });

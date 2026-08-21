@@ -3,7 +3,7 @@ import { ACCOUNT_PROFILE_FIELDS, ActionSchema, CommandContextSchema, type Action
 import { prisma } from './prisma.js';
 import { enqueueEnrichJob, enqueueProfileJob } from './jobs.js';
 import { requireActionScope } from './mutation/actionScope.js';
-import { requireScopedRow, type DbClient } from './mutation/scopeGuards.js';
+import { requireScopedRow, ScopedNotFoundError, type DbClient } from './mutation/scopeGuards.js';
 import { isTrustedHumanAssertion, normalizeActionTrust } from './ingestTrust.js';
 import { activePersonWhere } from './activePerson.js';
 import { pickKeyInfluencerKeeper } from './g64111.js';
@@ -601,6 +601,7 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
         where: { id: action.actionId, tenantId, accountId: action.accId },
         select: { opportunityId: true },
       }));
+      if (!planAction.opportunityId) throw new ScopedNotFoundError();
       const [cards, planActions, persons] = await Promise.all([
         db.strategyCard.findMany({
           where: { tenantId, accountId: action.accId, opportunityId: planAction.opportunityId },

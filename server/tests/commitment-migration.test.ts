@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyCommitmentBackfill,
+  COMMITMENT_CUTOVER_KEY,
   COMMITMENT_MIGRATION_KEY,
+  hasCommitmentCutoverMarker,
   inspectCommitmentMigration,
+  isCommitmentMatterNullable,
+  markCommitmentCutover,
   verifyCommitmentBackfill,
+  verifyCurrentCommitmentIntegrity,
 } from '../src/commitment/migration.js';
 import { createTestContext } from './helpers/testApp.js';
 
@@ -132,6 +137,87 @@ describe('CORE-106 Commitment migration', () => {
           actual: '2026-10-09',
         },
       ]);
+    } finally {
+      await context.cleanup();
+    }
+  });
+});
+
+describe('CORE-108 Commitment migration cutover', () => {
+  it('rejects a next Commitment link that escapes the current customer tree', async () => {
+    const context = await createTestContext();
+    try {
+      const first = await seedLegacyTree(context, 'next-first');
+      const second = await seedLegacyTree(context, 'next-second');
+      await context.prisma.planAction.createMany({ data: [{
+        id: 'commitment-cutover-next-source', tenantId: context.tenant.id,
+        accountId: first.accountId, opportunityId: null,
+        title: 'Source', localDate: '2026-10-10', isAllDay: true,
+        timeZone: 'Asia/Shanghai', source: 'manual',
+      }, {
+        id: 'commitment-cutover-next-foreign-customer', tenantId: context.tenant.id,
+        accountId: second.accountId, opportunityId: null,
+        title: 'Wrong customer target', localDate: '2026-10-11', isAllDay: true,
+        timeZone: 'Asia/Shanghai', source: 'manual',
+      }] });
+      await context.prisma.planAction.update({
+        where: { id: 'commitment-cutover-next-source' },
+        data: { nextCommitmentId: 'commitment-cutover-next-foreign-customer' },
+      });
+
+      await expect(verifyCurrentCommitmentIntegrity(context.prisma)).resolves.toEqual([{
+        tenantId: context.tenant.id,
+        id: 'commitment-cutover-next-source',
+        field: 'nextCommitmentId',
+        expected: 'valid',
+        actual: 'commitment-cutover-next-foreign-customer',
+      }]);
+    } finally {
+      await context.cleanup();
+    }
+  });
+
+  it('marks only a nullable, valid generic authority and never compares it back to legacy fields', async () => {
+    const context = await createTestContext();
+    try {
+      const accountId = 'commitment-cutover-account';
+      const commitmentId = 'commitment-cutover-customer-level';
+      await context.prisma.account.create({ data: {
+        id: accountId, tenantId: context.tenant.id, name: 'Cutover customer', customerType: 1,
+      } });
+      await context.prisma.dataMigrationState.create({ data: {
+        key: COMMITMENT_MIGRATION_KEY, details: '{}',
+      } });
+      await context.prisma.planAction.create({ data: {
+        id: commitmentId, tenantId: context.tenant.id, accountId, opportunityId: null,
+        title: 'Generic customer follow-up', ownerId: context.owner.id, ownerUserId: context.owner.id,
+        startDate: '1999-01-01', endDate: '1999-01-01',
+        localDate: '2026-10-10', isAllDay: true, timeZone: 'Asia/Shanghai',
+        executionStatus: 'planned', confirmationStatus: 'not_required', source: 'manual',
+      } });
+
+      await expect(isCommitmentMatterNullable(context.prisma)).resolves.toBe(true);
+      await expect(verifyCurrentCommitmentIntegrity(context.prisma)).resolves.toEqual([]);
+
+      await context.prisma.planAction.update({
+        where: { id: commitmentId }, data: { ownerUserId: 'missing-tenant-user' },
+      });
+      await expect(markCommitmentCutover(context.prisma)).rejects.toThrow('Commitment cutover preflight failed');
+      await expect(context.prisma.dataMigrationState.findUnique({
+        where: { key: COMMITMENT_CUTOVER_KEY },
+      })).resolves.toBeNull();
+
+      await context.prisma.planAction.update({
+        where: { id: commitmentId }, data: {
+          ownerUserId: context.owner.id,
+          // Intentional valid generic/legacy divergence after cutover.
+          localDate: '2026-10-11',
+        },
+      });
+      await expect(markCommitmentCutover(context.prisma)).resolves.toBeUndefined();
+      await expect(hasCommitmentCutoverMarker(context.prisma)).resolves.toBe(true);
+      await expect(verifyCurrentCommitmentIntegrity(context.prisma)).resolves.toEqual([]);
+      await expect(verifyCommitmentBackfill(context.prisma)).resolves.toEqual([]);
     } finally {
       await context.cleanup();
     }

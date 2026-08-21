@@ -120,7 +120,7 @@ describe('CORE-107 Commitment command path', () => {
     }
   });
 
-  it('fails closed for viewer, invalid parentage and the pre-CORE-108 null-Matter gate', async () => {
+  it('fails closed for viewer, invalid parentage and unauthorized assignment', async () => {
     const context = await createTestContext();
     try {
       const tree = await seedTree(context, 'scope');
@@ -159,12 +159,6 @@ describe('CORE-107 Commitment command path', () => {
       });
       expect(wrongPerson.statusCode).toBe(404);
 
-      const customerLevel = await command(context, 'commitment-customer-level-gated', {
-        ...payload,
-        commitment: { ...payload.commitment, id: commitmentId('3'), matterId: null, personId: null },
-      });
-      expect(customerLevel.statusCode).toBe(409);
-      expect(customerLevel.json()).toMatchObject({ code: 'customer_level_commitment_pending_consumer_migration' });
       expect(await context.prisma.planAction.count({ where: { tenantId: context.tenant.id } })).toBe(0);
       expect(await context.prisma.auditEvent.count({
         where: { tenantId: context.tenant.id, entityKind: 'commitment' },

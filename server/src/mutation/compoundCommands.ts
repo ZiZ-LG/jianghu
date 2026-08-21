@@ -45,7 +45,7 @@ export const OpportunitySkeletonCommandSchema = CloneOpportunitySchema.extend({
 
 export const ActionFeedbackCommandSchema = z.object({
   accountId: z.string().min(1),
-  opportunityId: z.string().min(1),
+  opportunityId: z.string().min(1).nullable(),
   actionId: z.string().min(1),
   outcome: z.enum(['up', 'flat', 'down']),
   occurredAt: z.string().min(1),
@@ -120,6 +120,36 @@ export async function executeActionFeedback(
     where: { id: input.actionId, tenantId: ctx.tenantId, accountId: input.accountId, opportunityId: input.opportunityId },
   });
   if (!plan) throw new ScopedNotFoundError();
+  const account = await db.account.findFirst({
+    where: { id: input.accountId, tenantId: ctx.tenantId, archivedAt: null },
+    select: { name: true },
+  });
+  if (!account) throw new ScopedNotFoundError();
+  const accountLock = await db.account.updateMany({
+    where: { id: input.accountId, tenantId: ctx.tenantId, archivedAt: null, name: account.name },
+    data: { name: account.name },
+  });
+  if (accountLock.count !== 1) throw new ScopedNotFoundError();
+  if (input.opportunityId) {
+    const matterLock = await db.opportunity.updateMany({
+      where: {
+        id: input.opportunityId, tenantId: ctx.tenantId, accountId: input.accountId, archivedAt: null,
+        account: { tenantId: ctx.tenantId, archivedAt: null },
+      },
+      data: { version: { increment: 0 } },
+    });
+    if (matterLock.count !== 1) throw new ScopedNotFoundError();
+  }
+  if (plan.personId) {
+    const personLock = await db.person.updateMany({
+      where: {
+        id: plan.personId, tenantId: ctx.tenantId, accountId: input.accountId,
+        archivedAt: null, mergedIntoPersonId: null,
+      },
+      data: { version: { increment: 0 } },
+    });
+    if (personLock.count !== 1) throw new ScopedNotFoundError();
+  }
   if (plan.version !== input.baseVersion || plan.scheduleVersion !== input.expectedScheduleVersion) {
     throw new ActionFeedbackVersionConflictError();
   }
@@ -149,7 +179,7 @@ export async function executeActionFeedback(
   }
   fault(options, 1);
   let evidenceId: string | undefined;
-  if (plan.personId && input.outcome !== 'flat') {
+  if (plan.personId && input.opportunityId && input.outcome !== 'flat') {
     evidenceId = 'ev_action_' + createHash('sha256')
       .update(`${ctx.tenantId}:${input.opportunityId}:${input.actionId}`)
       .digest('hex').slice(0, 16);

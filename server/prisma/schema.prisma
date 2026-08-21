@@ -476,7 +476,7 @@ model PlanAction {
   id            String   @id // act_xxx
   tenantId      String
   accountId     String // 冗余存：客户级日历直接按 accountId 聚合，免 join
-  opportunityId String // 必属某商机
+  opportunityId String? // 通用 Commitment 可仅属客户；legacy PlanAction 入口仍强制销售商机
   gapItem       String   @default("") // 关联 G64111 低分项：C1..C6 | P1..P4 | 1K（空=非补分动作）
   personId      String? // 目标干系人
   title         String

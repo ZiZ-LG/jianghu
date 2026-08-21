@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { CommitmentV2Schema } from '@jianghu/domain-contracts';
 import {
   mapLegacyPlanActionToCommitmentFields,
   type LegacyCommitmentFields,
@@ -7,6 +8,7 @@ import {
 const PAGE_SIZE = 250;
 const LOOKUP_CHUNK_SIZE = 100;
 export const COMMITMENT_MIGRATION_KEY = 'CORE-106-commitment-backfill-v1';
+export const COMMITMENT_CUTOVER_KEY = 'CORE-108-commitment-consumer-cutover-v1';
 
 type CommitmentMigrationDb = PrismaClient | Prisma.TransactionClient;
 
@@ -14,7 +16,7 @@ interface LegacyPlanActionRow {
   id: string;
   tenantId: string;
   accountId: string;
-  opportunityId: string;
+  opportunityId: string | null;
   personId: string | null;
   title: string;
   ownerId: string;
@@ -25,7 +27,8 @@ interface LegacyPlanActionRow {
   createdBy: string;
 }
 
-interface CommitmentCandidate extends LegacyPlanActionRow {
+interface CommitmentCandidate extends Omit<LegacyPlanActionRow, 'opportunityId'> {
+  opportunityId: string;
   fields: LegacyCommitmentFields;
 }
 
@@ -139,7 +142,7 @@ async function inspectCommitmentCandidates(db: CommitmentMigrationDb): Promise<{
       report.sourceRows += rows.length;
 
       const accountIds = [...new Set(rows.map((row) => row.accountId))];
-      const opportunityIds = [...new Set(rows.map((row) => row.opportunityId))];
+      const opportunityIds = [...new Set(rows.flatMap((row) => row.opportunityId ? [row.opportunityId] : []))];
       const personIds = [...new Set(rows.flatMap((row) => row.personId ? [row.personId] : []))];
       const userIds = [...new Set(rows.flatMap((row) => row.ownerId ? [row.ownerId] : []))];
       const [accounts, opportunities, persons, users] = await Promise.all([
@@ -163,6 +166,9 @@ async function inspectCommitmentCandidates(db: CommitmentMigrationDb): Promise<{
 
       for (const row of rows) {
         if (row.tenantId !== tenant.id) throw new Error(`Commitment source escaped tenant scope (${tenant.id})`);
+        // Once CORE-108 is released, customer-level rows are already generic
+        // Commitments and are never candidates for legacy PlanAction backfill.
+        if (!row.opportunityId) continue;
         let reason: CommitmentMigrationInvalidReason | undefined;
         const opportunity = opportunityById.get(row.opportunityId);
         const person = row.personId ? personById.get(row.personId) : undefined;
@@ -188,7 +194,7 @@ async function inspectCommitmentCandidates(db: CommitmentMigrationDb): Promise<{
           continue;
         }
         if (!ownerUserId) report.unassignedOwnerRows += 1;
-        candidates.push({ ...row, fields });
+        candidates.push({ ...row, opportunityId: row.opportunityId, fields });
       }
 
       cursor = rows.at(-1)?.id;
@@ -314,6 +320,177 @@ export async function hasCommitmentMigrationMarker(db: CommitmentMigrationDb): P
   return !!(await db.dataMigrationState.findUnique({
     where: { key: COMMITMENT_MIGRATION_KEY }, select: { key: true },
   }));
+}
+
+export async function hasCommitmentCutoverMarker(db: CommitmentMigrationDb): Promise<boolean> {
+  try {
+    return !!(await db.dataMigrationState.findUnique({
+      where: { key: COMMITMENT_CUTOVER_KEY }, select: { key: true },
+    }));
+  } catch (error) {
+    // Pre-CORE-105 legacy databases do not have DataMigrationState yet. This
+    // is the expected pre-expand state, not evidence of a completed cutover.
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'P2021') return false;
+    throw error;
+  }
+}
+
+export async function isCommitmentMatterNullable(db: CommitmentMigrationDb): Promise<boolean> {
+  if ((process.env.DATABASE_URL ?? '').startsWith('file:')) {
+    const columns = await db.$queryRawUnsafe<Array<{ name: string; notnull: number | bigint }>>(
+      'PRAGMA table_info("PlanAction")',
+    );
+    const opportunityId = columns.find((column) => column.name === 'opportunityId');
+    if (!opportunityId) throw new Error('PlanAction.opportunityId is missing');
+    return Number(opportunityId.notnull) === 0;
+  }
+  const columns = await db.$queryRawUnsafe<Array<{ isNullable: string }>>(`
+    SELECT is_nullable AS "isNullable"
+      FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = 'PlanAction'
+       AND column_name = 'opportunityId'
+  `);
+  if (!columns[0]) throw new Error('PlanAction.opportunityId is missing');
+  return columns[0].isNullable === 'YES';
+}
+
+/**
+ * Post-cutover integrity validates the generic authority itself. It never
+ * compares against legacy dates/status/owner fields, so later valid generic
+ * commands cannot be mistaken for migration drift.
+ */
+export async function verifyCurrentCommitmentIntegrity(
+  db: CommitmentMigrationDb,
+  sampleLimit = 100,
+): Promise<CommitmentParityConflict[]> {
+  const integrity = await inspectIntegrity(db);
+  const tenants = await db.tenant.findMany({ orderBy: { id: 'asc' }, select: { id: true } });
+  const conflicts: CommitmentParityConflict[] = [];
+  let scopedRows = 0;
+  const push = (tenantId: string, id: string, field: string, actual: string | number | boolean | null) => {
+    if (conflicts.length < sampleLimit) conflicts.push({ tenantId, id, field, expected: 'valid', actual });
+  };
+
+  for (const tenant of tenants) {
+    let cursor: string | undefined;
+    while (conflicts.length < sampleLimit) {
+      const rows = await db.planAction.findMany({
+        where: { tenantId: tenant.id },
+        take: PAGE_SIZE,
+        ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+        orderBy: { id: 'asc' },
+        select: {
+          id: true, tenantId: true, accountId: true, opportunityId: true, personId: true,
+          title: true, kind: true, ownerUserId: true, executionStatus: true,
+          confirmationStatus: true, scheduledAtUtc: true, dueAtUtc: true, timeZone: true,
+          isAllDay: true, localDate: true, confirmationDueAtUtc: true, confirmedAtUtc: true,
+          confirmedByUserId: true, scheduleVersion: true, nextCommitmentId: true,
+          source: true, sourceRef: true, archivedAt: true, version: true,
+        },
+      });
+      if (rows.length === 0) break;
+      scopedRows += rows.length;
+
+      const accountIds = [...new Set(rows.map((row) => row.accountId))];
+      const matterIds = [...new Set(rows.flatMap((row) => row.opportunityId ? [row.opportunityId] : []))];
+      const personIds = [...new Set(rows.flatMap((row) => row.personId ? [row.personId] : []))];
+      const nextCommitmentIds = [...new Set(rows.flatMap((row) => row.nextCommitmentId ? [row.nextCommitmentId] : []))];
+      const userIds = [...new Set(rows.flatMap((row) => [row.ownerUserId, row.confirmedByUserId]
+        .filter((id): id is string => !!id)))];
+      const [accounts, matters, persons, users, nextCommitments] = await Promise.all([
+        db.account.findMany({ where: { tenantId: tenant.id, id: { in: accountIds } }, select: { id: true } }),
+        matterIds.length ? db.opportunity.findMany({
+          where: { tenantId: tenant.id, id: { in: matterIds } }, select: { id: true, accountId: true },
+        }) : Promise.resolve([]),
+        personIds.length ? db.person.findMany({
+          where: { tenantId: tenant.id, id: { in: personIds } }, select: { id: true, accountId: true },
+        }) : Promise.resolve([]),
+        userIds.length ? db.user.findMany({
+          where: { tenantId: tenant.id, id: { in: userIds } }, select: { id: true },
+        }) : Promise.resolve([]),
+        nextCommitmentIds.length ? db.planAction.findMany({
+          where: { tenantId: tenant.id, id: { in: nextCommitmentIds } },
+          select: { id: true, accountId: true },
+        }) : Promise.resolve([]),
+      ]);
+      const accountSet = new Set(accounts.map((row) => row.id));
+      const matterById = new Map(matters.map((row) => [row.id, row]));
+      const personById = new Map(persons.map((row) => [row.id, row]));
+      const userSet = new Set(users.map((row) => row.id));
+      const nextCommitmentById = new Map(nextCommitments.map((row) => [row.id, row]));
+
+      for (const row of rows) {
+        if (row.tenantId !== tenant.id) {
+          push(tenant.id, row.id, 'tenantId', row.tenantId);
+          continue;
+        }
+        const matter = row.opportunityId ? matterById.get(row.opportunityId) : undefined;
+        const person = row.personId ? personById.get(row.personId) : undefined;
+        if (!accountSet.has(row.accountId)) push(row.tenantId, row.id, 'customerId', row.accountId);
+        else if (row.opportunityId && (!matter || matter.accountId !== row.accountId)) {
+          push(row.tenantId, row.id, 'matterId', row.opportunityId);
+        } else if (row.personId && (!person || person.accountId !== row.accountId)) {
+          push(row.tenantId, row.id, 'personId', row.personId);
+        } else if (row.ownerUserId && !userSet.has(row.ownerUserId)) {
+          push(row.tenantId, row.id, 'ownerUserId', row.ownerUserId);
+        } else if (row.confirmedByUserId && !userSet.has(row.confirmedByUserId)) {
+          push(row.tenantId, row.id, 'confirmedByUserId', row.confirmedByUserId);
+        } else if (row.nextCommitmentId
+          && nextCommitmentById.get(row.nextCommitmentId)?.accountId !== row.accountId) {
+          push(row.tenantId, row.id, 'nextCommitmentId', row.nextCommitmentId);
+        } else {
+          const parsed = CommitmentV2Schema.safeParse({
+            id: row.id, customerId: row.accountId, matterId: row.opportunityId,
+            personId: row.personId, title: row.title, kind: row.kind,
+            ownerUserId: row.ownerUserId, executionStatus: row.executionStatus,
+            confirmationStatus: row.confirmationStatus,
+            scheduledAtUtc: row.scheduledAtUtc?.toISOString() ?? null,
+            dueAtUtc: row.dueAtUtc?.toISOString() ?? null, timeZone: row.timeZone,
+            isAllDay: row.isAllDay, localDate: row.localDate,
+            confirmationDueAtUtc: row.confirmationDueAtUtc?.toISOString() ?? null,
+            confirmedAtUtc: row.confirmedAtUtc?.toISOString() ?? null,
+            confirmedByUserId: row.confirmedByUserId, scheduleVersion: row.scheduleVersion,
+            nextCommitmentId: row.nextCommitmentId, source: row.source,
+            sourceRef: row.sourceRef, archivedAt: row.archivedAt?.toISOString() ?? null,
+            version: row.version,
+          });
+          if (!parsed.success) push(row.tenantId, row.id, 'generic_contract', 'invalid');
+        }
+        if (conflicts.length >= sampleLimit) break;
+      }
+
+      cursor = rows.at(-1)?.id;
+      if (rows.length < PAGE_SIZE) break;
+    }
+  }
+
+  if (conflicts.length < sampleLimit && (integrity.missingTenantRows > 0 || scopedRows !== integrity.sourceRows)) {
+    push('', '', 'tenantId', null);
+  }
+  return conflicts;
+}
+
+export async function markCommitmentCutover(db: CommitmentMigrationDb): Promise<void> {
+  if (!(await isCommitmentMatterNullable(db))) {
+    throw new Error('PlanAction.opportunityId must be nullable before CORE-108 cutover is marked');
+  }
+  const conflicts = await verifyCurrentCommitmentIntegrity(db);
+  if (conflicts.length > 0) {
+    throw new Error(`Commitment cutover preflight failed (${conflicts.length} sampled conflicts)`);
+  }
+  await db.dataMigrationState.upsert({
+    where: { key: COMMITMENT_CUTOVER_KEY },
+    create: {
+      key: COMMITMENT_CUTOVER_KEY,
+      details: JSON.stringify({
+        authority: 'generic same-row Commitment fields',
+        matter: 'nullable',
+        legacyPlanAction: 'matter-required adapter',
+      }),
+    },
+    update: {},
+  });
 }
 
 export async function verifyCommitmentBackfill(

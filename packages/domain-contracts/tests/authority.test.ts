@@ -145,10 +145,13 @@ describe('CRM field authority map', () => {
       currentAuthority: { kind: 'core_path', path: 'PlanAction.[generic Commitment fields]' },
       targetAuthority: { kind: 'core_path', path: 'PlanAction.[generic Commitment fields]' },
       consumers: {
-        writes: ['server/src/mutation/commitments.ts'],
-        planned: ['CORE-108 legacy consumer cutover and nullable Matter release'],
+        writes: ['server/src/mutation/commitments.ts', 'server/src/mutation/compoundCommands.ts'],
+        planned: [],
       },
     });
+    expect(getCrmFieldAuthority('commitment.record')?.consumers.migrations).toContain(
+      'server/prisma/postgres/migrations/20260821030000_release_customer_level_commitments/migration.sql',
+    );
   });
 
   it('returns no authority or consumers for an unregistered logical field', () => {

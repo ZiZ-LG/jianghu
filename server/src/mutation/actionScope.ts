@@ -105,6 +105,9 @@ async function requirePlanAction(
     where: { id: actionId, tenantId, accountId },
     select: { id: true, opportunityId: true, personId: true },
   }));
+  // Customer-level Commitments are not legacy PlanActions. Every legacy
+  // update/delete/toggle path fails closed before it can touch the same row.
+  if (!row.opportunityId) throw new ScopedNotFoundError();
   await requireOpportunity(db, tenantId, accountId, row.opportunityId);
   if (row.personId) await requirePerson(db, tenantId, accountId, row.personId);
   return row;
