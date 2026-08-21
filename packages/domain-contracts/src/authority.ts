@@ -118,6 +118,30 @@ export const CRM_FIELD_AUTHORITY: CrmAuthorityEntry[] = CrmAuthorityMapSchema.pa
     forbidden: ['Treating won or lost as a generic lifecycle status', 'Fallback reads between status and lifecycleStatus'],
   },
   {
+    logicalField: 'matter.owner',
+    currentAuthority: { kind: 'core_path', path: 'Matter.primaryOwnerUserId' },
+    targetAuthority: { kind: 'core_path', path: 'Matter.primaryOwnerUserId' },
+    consumers: {
+      reads: ['server/src/matter/ownership.ts', 'server/src/state.ts'],
+      writes: ['server/src/mutation/matterOwnership.ts'],
+      adapters: ['app/src/types.ts', 'packages/domain-contracts/src/crm.ts', 'server/src/types.ts'],
+      migrations: [
+        'server/prisma/postgres/migrations/20260821000000_expand_matter_fields/migration.sql',
+        'server/scripts/report-matter-owner-suggestions.ts',
+      ],
+      planned: ['CORE-109 TenantDataScopePolicy and effective-scope resolver'],
+    },
+    shadowComparison: 'Account.primaryOwnerUserId is reported only as an administrator-reviewed suggestion; names are never mapped to Matter ownership.',
+    cutoverCondition: 'Dry-run queue, tenant-local User.id validation, transfer CAS, audit, and immediate revocation of the old owner transfer-command permission all pass.',
+    stopCondition: 'Every Matter owner write uses the transfer command; legacy Account-based read scope remains explicit until CORE-109.',
+    removalPhase: 'No legacy owner field removal; CORE-109 may switch only the scope policy after a separate migration gate.',
+    forbidden: [
+      'Automatically copying Account owner into Matter owner',
+      'Deriving Matter ownership from name, region, or OpportunityMember',
+      'Fallback reads from Account owner when Matter owner is null',
+    ],
+  },
+  {
     logicalField: 'matter.current_stage',
     currentAuthority: { kind: 'legacy_path', path: 'Opportunity.pipelineStage' },
     targetAuthority: { kind: 'methodology_value', path: 'MethodologyStageState' },

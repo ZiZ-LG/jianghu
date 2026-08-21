@@ -6,6 +6,7 @@ import {
   CommitmentV2Schema,
   CrmCommandSchema,
   CustomerV2Schema,
+  MatterOwnerAssignmentReportSchema,
   MatterV2Schema,
 } from '../src/index.js';
 
@@ -205,13 +206,13 @@ describe('generic CRM commands', () => {
     expect(ActionSchema.options).toHaveLength(51);
     expect(CRM_COMMAND_TYPES).toEqual([
       'CREATE_CUSTOMER', 'UPDATE_CUSTOMER', 'ARCHIVE_CUSTOMER', 'RESTORE_CUSTOMER',
-      'CREATE_MATTER', 'UPDATE_MATTER', 'TRANSITION_MATTER_LIFECYCLE', 'REOPEN_MATTER',
+      'CREATE_MATTER', 'UPDATE_MATTER', 'TRANSFER_MATTER_OWNER', 'TRANSITION_MATTER_LIFECYCLE', 'REOPEN_MATTER',
       'ARCHIVE_MATTER', 'RESTORE_MATTER',
       'CREATE_COMMITMENT', 'RESCHEDULE_COMMITMENT', 'CONFIRM_COMMITMENT',
       'DECLINE_COMMITMENT', 'COMPLETE_COMMITMENT', 'CANCEL_COMMITMENT',
       'MARK_COMMITMENT_MISSED', 'CREATE_NEXT_COMMITMENT',
     ]);
-    expect(CrmCommandSchema.options).toHaveLength(18);
+    expect(CrmCommandSchema.options).toHaveLength(19);
   });
 
   it('accepts one real fixture for every generic command', () => {
@@ -222,6 +223,10 @@ describe('generic CRM commands', () => {
       { type: 'RESTORE_CUSTOMER', customerId: 'legacy-account-1', baseVersion: 3 },
       { type: 'CREATE_MATTER', matter: { id: NEW_MATTER_ID, customerId: 'legacy-account-1', title: '第一次需求交流' } },
       { type: 'UPDATE_MATTER', customerId: 'legacy-account-1', matterId: 'legacy-opportunity-1', baseVersion: 1, patch: { title: '方案交流' } },
+      {
+        type: 'TRANSFER_MATTER_OWNER', customerId: 'legacy-account-1', matterId: 'legacy-opportunity-1',
+        baseVersion: 2, fromOwnerUserId: null, toOwnerUserId: 'user-cao',
+      },
       {
         type: 'TRANSITION_MATTER_LIFECYCLE', customerId: 'legacy-account-1', matterId: 'legacy-opportunity-1', baseVersion: 2,
         transition: { from: 'active', to: 'paused', outcomeKey: null, reason: '等待客户预算' },
@@ -337,6 +342,54 @@ describe('generic CRM commands', () => {
         baseVersion: 2, patch: matterPatch,
       }).success).toBe(false);
     }
+  });
+
+  it('requires an explicit owner change and Matter version for ownership transfer', () => {
+    expect(CrmCommandSchema.safeParse({
+      type: 'TRANSFER_MATTER_OWNER', customerId: 'legacy-account-1', matterId: 'legacy-opportunity-1',
+      baseVersion: 2, fromOwnerUserId: null, toOwnerUserId: 'user-cao',
+    }).success).toBe(true);
+    expect(CrmCommandSchema.safeParse({
+      type: 'TRANSFER_MATTER_OWNER', customerId: 'legacy-account-1', matterId: 'legacy-opportunity-1',
+      fromOwnerUserId: null, toOwnerUserId: 'user-cao',
+    }).success).toBe(false);
+    expect(CrmCommandSchema.safeParse({
+      type: 'TRANSFER_MATTER_OWNER', customerId: 'legacy-account-1', matterId: 'legacy-opportunity-1',
+      baseVersion: 2, fromOwnerUserId: 'user-cao', toOwnerUserId: 'user-cao',
+    }).success).toBe(false);
+    expect(CrmCommandSchema.safeParse({
+      type: 'TRANSFER_MATTER_OWNER', customerId: 'legacy-account-1', matterId: 'legacy-opportunity-1',
+      baseVersion: 2, fromOwnerUserId: null, toOwnerUserId: null,
+    }).success).toBe(false);
+  });
+
+  it('publishes an actionable owner queue contract with the transfer CAS version', () => {
+    expect(MatterOwnerAssignmentReportSchema.safeParse({
+      pageMatterCount: 1,
+      pageAssignedCount: 0,
+      pageUnassignedCount: 1,
+      queue: [{
+        tenantId: 'tenant-1', customerId: 'customer-1', matterId: 'matter-1', baseVersion: 4,
+        currentOwnerUserId: null, suggestedOwnerUserId: 'user-1', reason: 'account_owner_suggestion',
+      }],
+      nextCursor: null,
+    }).success).toBe(true);
+    expect(MatterOwnerAssignmentReportSchema.safeParse({
+      pageMatterCount: 1,
+      pageAssignedCount: 0,
+      pageUnassignedCount: 1,
+      queue: [{
+        tenantId: 'tenant-1', customerId: 'customer-1', matterId: 'matter-1',
+        currentOwnerUserId: null, suggestedOwnerUserId: 'user-1', reason: 'account_owner_suggestion',
+      }],
+      nextCursor: null,
+    }).success).toBe(false);
+    expect(MatterOwnerAssignmentReportSchema.safeParse({
+      pageMatterCount: 2, pageAssignedCount: 0, pageUnassignedCount: 1, queue: [], nextCursor: null,
+    }).success).toBe(false);
+    expect(MatterOwnerAssignmentReportSchema.safeParse({
+      pageMatterCount: 1, pageAssignedCount: 0, pageUnassignedCount: 1, queue: [], nextCursor: null,
+    }).success).toBe(false);
   });
 
   it('requires an explicit legal lifecycle transition and an audited reopen reason', () => {

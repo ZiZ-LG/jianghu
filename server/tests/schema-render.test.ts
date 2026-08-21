@@ -135,4 +135,13 @@ describe('PostgreSQL schema delivery', () => {
     expect(deployScript.lastIndexOf('npm run migrate:matter-verify'))
       .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy'));
   });
+
+  it('exposes CORE-104 ownership migration as a dry-run-only report', async () => {
+    const packageJson = JSON.parse(await read('package.json')) as { scripts?: Record<string, string> };
+    const reportScript = await read('scripts/report-matter-owner-suggestions.ts');
+    expect(packageJson.scripts?.['migrate:matter-owner-report']).toBe('tsx scripts/report-matter-owner-suggestions.ts');
+    expect(packageJson.scripts?.['migrate:matter-owner-apply']).toBeUndefined();
+    expect(reportScript).toContain('inspectMatterOwnerAssignments');
+    expect(reportScript).not.toMatch(/\.(create|createMany|update|updateMany|upsert|delete|deleteMany)\s*\(/);
+  });
 });

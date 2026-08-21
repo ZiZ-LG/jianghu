@@ -250,6 +250,69 @@ const matterPatch = matterObject.omit({
 }).partial().strict()
   .refine((value) => Object.keys(value).length > 0, 'matter patch must change at least one field');
 
+export const MatterOwnerTransferCommandSchema = z.object({
+  type: z.literal('TRANSFER_MATTER_OWNER'),
+  customerId: id,
+  matterId: id,
+  baseVersion: version,
+  fromOwnerUserId: id.nullable(),
+  toOwnerUserId: id.nullable(),
+}).strict().refine(
+  (value) => value.fromOwnerUserId !== value.toOwnerUserId,
+  { path: ['toOwnerUserId'], message: 'owner transfer must change the owner' },
+);
+
+export type MatterOwnerTransferCommand = z.infer<typeof MatterOwnerTransferCommandSchema>;
+
+export const MatterOwnerQueueReasonSchema = z.enum([
+  'account_owner_suggestion',
+  'unassigned',
+  'legacy_account_owner_name_only',
+  'duplicate_legacy_account_owner_name',
+  'invalid_account_owner',
+  'invalid_matter_owner',
+  'invalid_customer',
+  'archived_matter',
+  'archived_customer',
+]);
+
+export const MatterOwnerQueueItemSchema = z.object({
+  tenantId: id,
+  customerId: id,
+  matterId: id,
+  baseVersion: version,
+  currentOwnerUserId: id.nullable(),
+  suggestedOwnerUserId: id.nullable(),
+  reason: MatterOwnerQueueReasonSchema,
+}).strict();
+
+export const MatterOwnerAssignmentReportSchema = z.object({
+  pageMatterCount: z.number().int().nonnegative(),
+  pageAssignedCount: z.number().int().nonnegative(),
+  pageUnassignedCount: z.number().int().nonnegative(),
+  queue: z.array(MatterOwnerQueueItemSchema),
+  nextCursor: id.nullable(),
+}).strict().superRefine((value, ctx) => {
+  if (value.pageAssignedCount + value.pageUnassignedCount !== value.pageMatterCount) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['pageMatterCount'],
+      message: 'assigned and queued Matter counts must cover the page exactly',
+    });
+  }
+  if (value.queue.length !== value.pageUnassignedCount) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['queue'],
+      message: 'queue length must match the queued Matter count',
+    });
+  }
+});
+
+export type MatterOwnerQueueReason = z.infer<typeof MatterOwnerQueueReasonSchema>;
+export type MatterOwnerQueueItem = z.infer<typeof MatterOwnerQueueItemSchema>;
+export type MatterOwnerAssignmentReport = z.infer<typeof MatterOwnerAssignmentReportSchema>;
+
 const openMatterLifecycle = z.enum(['active', 'paused']);
 const closedMatterLifecycle = z.enum(['completed', 'canceled']);
 const matterLifecycleTransition = z.object({
@@ -317,7 +380,7 @@ const scheduledCommitmentCommand = {
 
 export const CRM_COMMAND_TYPES = [
   'CREATE_CUSTOMER', 'UPDATE_CUSTOMER', 'ARCHIVE_CUSTOMER', 'RESTORE_CUSTOMER',
-  'CREATE_MATTER', 'UPDATE_MATTER', 'TRANSITION_MATTER_LIFECYCLE', 'REOPEN_MATTER',
+  'CREATE_MATTER', 'UPDATE_MATTER', 'TRANSFER_MATTER_OWNER', 'TRANSITION_MATTER_LIFECYCLE', 'REOPEN_MATTER',
   'ARCHIVE_MATTER', 'RESTORE_MATTER',
   'CREATE_COMMITMENT', 'RESCHEDULE_COMMITMENT', 'CONFIRM_COMMITMENT',
   'DECLINE_COMMITMENT', 'COMPLETE_COMMITMENT', 'CANCEL_COMMITMENT',
@@ -333,6 +396,7 @@ const crmCommandSchemas = [
   command({ type: z.literal('RESTORE_CUSTOMER'), ...versionedEntityCommand }),
   command({ type: z.literal('CREATE_MATTER'), matter: matterCreate }),
   command({ type: z.literal('UPDATE_MATTER'), ...versionedEntityCommand, matterId: id, patch: matterPatch }),
+  MatterOwnerTransferCommandSchema,
   command({
     type: z.literal('TRANSITION_MATTER_LIFECYCLE'),
     ...versionedEntityCommand,

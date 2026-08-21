@@ -25,8 +25,8 @@ const VALID_ENTRY = {
 } as const;
 
 describe('CRM field authority map', () => {
-  it('contains the eleven approved logical fields with classified consumers', () => {
-    expect(CRM_FIELD_AUTHORITY).toHaveLength(11);
+  it('contains the twelve approved logical fields with classified consumers', () => {
+    expect(CRM_FIELD_AUTHORITY).toHaveLength(12);
     for (const entry of CRM_FIELD_AUTHORITY) expect(listCrmFieldConsumers(entry).length).toBeGreaterThan(0);
   });
 
@@ -71,6 +71,10 @@ describe('CRM field authority map', () => {
       currentAuthority: { kind: 'none', path: null },
       targetAuthority: { kind: 'core_path', path: 'StakeholderFocus' },
     });
+    expect(getCrmFieldAuthority('matter.owner')).toMatchObject({
+      currentAuthority: { kind: 'core_path', path: 'Matter.primaryOwnerUserId' },
+      targetAuthority: { kind: 'core_path', path: 'Matter.primaryOwnerUserId' },
+    });
   });
 
   it('registers the exact executable customer.category consumer inventory', () => {
@@ -111,6 +115,10 @@ describe('CRM field authority map', () => {
       'server/scripts/migrate-matter-fields.ts', 'server/scripts/upgrade-sqlite-schema.ts',
     ]));
     expect(lifecycle?.consumers.planned).toEqual([]);
+    expect(listCrmFieldConsumers(getCrmFieldAuthority('matter.owner'))).toEqual(expect.arrayContaining([
+      'server/src/matter/ownership.ts', 'server/src/mutation/matterOwnership.ts',
+      'server/scripts/report-matter-owner-suggestions.ts', 'server/src/state.ts',
+    ]));
     expect(listCrmFieldConsumers(getCrmFieldAuthority('matter.current_stage'))).toEqual(expect.arrayContaining([
       'app/src/wireAction.ts', 'server/src/mutate.ts', 'server/src/repair.ts', 'server/src/mcpServer.ts',
     ]));

@@ -31,6 +31,7 @@ import { pdeRoutes } from './pde/routes.js';
 import { handleMcpBody } from './mcpServer.js';
 import { accessTokenRoutes, mcpAuthenticate } from './accessToken.js';
 import { compoundCommandRoutes } from './mutation/compoundCommands.js';
+import { matterOwnershipRoutes } from './mutation/matterOwnership.js';
 import { repairRoutes } from './repair.js';
 import { personMergeRoutes } from './personMerge.js';
 
@@ -107,6 +108,7 @@ function registerRoutes(app: FastifyInstance, readinessProbe: ReadinessProbe): v
   wecomRoutes(app); // 企微日历：配置/绑定（江湖→企微同步在 mutate 落库后触发）
   pdeRoutes(app); // PDE 决策引擎（M3 评估主链）：ev / intel-priorities / action-ranking / snapshot
   compoundCommandRoutes(app);
+  matterOwnershipRoutes(app);
   repairRoutes(app);
   personMergeRoutes(app);
 

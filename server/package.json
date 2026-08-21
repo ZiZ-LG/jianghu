@@ -18,6 +18,7 @@
     "migrate:matter-report": "tsx scripts/migrate-matter-fields.ts --dry-run",
     "migrate:matter-apply": "tsx scripts/migrate-matter-fields.ts --apply",
     "migrate:matter-verify": "tsx scripts/migrate-matter-fields.ts --verify",
+    "migrate:matter-owner-report": "tsx scripts/report-matter-owner-suggestions.ts",
     "migrate:wecom-bind-report": "tsx scripts/report-wecom-bind-conflicts.ts",
     "migrate:sync-anchor-report": "tsx scripts/report-sync-anchor-conflicts.ts",
     "schema:postgres:render": "node scripts/render-postgres-schema.mjs",
