@@ -1,12 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import {
   METHODOLOGY_COMMAND_TYPES,
+  MethodologyActionTemplateSchema,
   MethodologyBindingSchema,
   MethodologyCommandReceiptSchema,
   MethodologyCommandSchema,
+  MethodologyEvaluationSchema,
+  MethodologyFieldDefinitionSchema,
+  MethodologyMigrationRunSchema,
   MethodologyPackSchema,
   MethodologyPackVersionSchema,
   MethodologyPilotAssignmentSchema,
+  MethodologyRoleAssignmentSchema,
+  MethodologyRoleDefinitionSchema,
+  MethodologyRuleDefinitionSchema,
+  MethodologyStageDefinitionSchema,
+  MethodologyStageStateSchema,
+  MethodologyStorageBindingKindSchema,
+  MethodologyValueSchema,
   MethodologyVersionStatusSchema,
 } from '../src/index.js';
 
@@ -185,6 +196,153 @@ describe('CORE-110 methodology foundation contracts', () => {
     expect(MethodologyCommandReceiptSchema.safeParse({
       ...receipt,
       packName: '不进入幂等摘要',
+    }).success).toBe(false);
+  });
+});
+
+describe('CORE-111 methodology data contracts', () => {
+  const definitionBase = {
+    packId: PACK_ID,
+    versionId: VERSION_ID,
+  };
+  const instanceBase = {
+    matterId: 'matter-1',
+    bindingId: BINDING_ID,
+    packId: PACK_ID,
+    versionId: VERSION_ID,
+  };
+
+  it('requires one explicit storage authority and migration metadata for every legacy field', () => {
+    expect(MethodologyStorageBindingKindSchema.options).toEqual([
+      'core_path', 'methodology_value', 'legacy_path',
+    ]);
+    expect(MethodologyFieldDefinitionSchema.safeParse({
+      id: 'field-current-stage',
+      ...definitionBase,
+      key: 'matter.current_stage',
+      targetKind: 'matter',
+      dataType: 'stage_key',
+      valueDomainJson: JSON.stringify({ values: ['discover', 'validate'] }),
+      required: false,
+      missingValuePolicy: 'unconfigured',
+      storageBindingKind: 'legacy_path',
+      storageBindingPath: 'Opportunity.pipelineStage',
+      legacyStopDate: '2026-12-31',
+      legacyConsumersJson: JSON.stringify(['server/src/state.ts']),
+      position: 0,
+    }).success).toBe(true);
+    expect(MethodologyFieldDefinitionSchema.safeParse({
+      id: 'field-current-stage',
+      ...definitionBase,
+      key: 'matter.current_stage',
+      targetKind: 'matter',
+      dataType: 'stage_key',
+      valueDomainJson: '{}',
+      required: false,
+      missingValuePolicy: 'unconfigured',
+      storageBindingKind: 'legacy_path',
+      storageBindingPath: 'Opportunity.pipelineStage',
+      legacyStopDate: null,
+      legacyConsumersJson: '[]',
+      position: 0,
+    }).success).toBe(false);
+    expect(MethodologyFieldDefinitionSchema.safeParse({
+      id: 'field-note',
+      ...definitionBase,
+      key: 'followup.note',
+      targetKind: 'matter',
+      dataType: 'string',
+      valueDomainJson: {},
+      required: false,
+      missingValuePolicy: 'null',
+      storageBindingKind: 'methodology_value',
+      storageBindingPath: 'MethodologyValue(followup.note)',
+      legacyStopDate: null,
+      legacyConsumersJson: '[]',
+      position: 1,
+    }).success).toBe(false);
+  });
+
+  it('keeps Stage, Role, Rule and Action definitions structured while complex clauses remain JSON strings', () => {
+    expect(MethodologyStageDefinitionSchema.safeParse({
+      id: 'stage-discover', ...definitionBase, key: 'discover', name: '发现', position: 0,
+      entryConditionsJson: '[]', exitConditionsJson: JSON.stringify([{ field: 'need', operator: 'present' }]),
+    }).success).toBe(true);
+    expect(MethodologyRoleDefinitionSchema.safeParse({
+      id: 'role-sponsor', ...definitionBase, key: 'sponsor', name: '发起人', appliesTo: 'person',
+      constraintsJson: '{}', minimumAssignments: 0, maximumAssignments: 2, position: 0,
+    }).success).toBe(true);
+    expect(MethodologyRoleDefinitionSchema.safeParse({
+      id: 'role-invalid', ...definitionBase, key: 'invalid', name: '错误角色', appliesTo: 'person',
+      constraintsJson: '{}', minimumAssignments: 2, maximumAssignments: 1, position: 0,
+    }).success).toBe(false);
+    expect(MethodologyRuleDefinitionSchema.safeParse({
+      id: 'rule-risk', ...definitionBase, key: 'risk', operator: 'weighted_sum',
+      inputRefsJson: JSON.stringify(['field.need']), weightsJson: JSON.stringify({ 'field.need': 1 }),
+      thresholdsJson: JSON.stringify({ high: 0.8 }), outputKey: 'risk.score', position: 0,
+    }).success).toBe(true);
+    expect(MethodologyActionTemplateSchema.safeParse({
+      id: 'action-confirm', ...definitionBase, key: 'confirm-need', gapKey: 'need_missing',
+      title: '确认需求', script: '请补充需求依据', evidenceRequirementsJson: JSON.stringify(['meeting_note']),
+      position: 0,
+    }).success).toBe(true);
+  });
+
+  it('anchors StageState, RoleAssignment and Value to one immutable binding/version snapshot', () => {
+    expect(MethodologyStageStateSchema.safeParse({
+      id: 'stage-state-1', ...instanceBase, stageKey: 'discover',
+      enteredAt: '2026-08-21T22:00:00Z', humanOverride: true, overrideReason: '人工确认',
+      evidenceIdsJson: JSON.stringify(['evidence-1']), updatedByUserId: 'user-owner',
+      updatedAt: '2026-08-21T22:00:00Z',
+    }).success).toBe(true);
+    expect(MethodologyRoleAssignmentSchema.safeParse({
+      id: 'role-assignment-1', ...instanceBase, roleKey: 'sponsor', personId: 'person-1',
+      source: 'manual', reviewStatus: 'confirmed', evidenceIdsJson: '[]',
+      assignedByUserId: 'user-owner', assignedAt: '2026-08-21T22:00:00Z',
+    }).success).toBe(true);
+    expect(MethodologyValueSchema.safeParse({
+      id: 'value-1', ...instanceBase, fieldKey: 'followup.note', targetKind: 'matter', targetId: 'matter-1',
+      normalizedValueJson: JSON.stringify('下一步约见'), source: 'manual', reviewStatus: 'confirmed',
+      evidenceIdsJson: JSON.stringify(['evidence-1']), updatedByUserId: 'user-owner',
+      updatedAt: '2026-08-21T22:00:00Z',
+    }).success).toBe(true);
+    expect(MethodologyValueSchema.safeParse({
+      id: 'value-1', ...instanceBase, fieldKey: 'followup.note', targetKind: 'matter', targetId: 'matter-1',
+      normalizedValueJson: 'not-json', source: 'manual', reviewStatus: 'confirmed',
+      evidenceIdsJson: '[]', updatedByUserId: 'user-owner', updatedAt: '2026-08-21T22:00:00Z',
+    }).success).toBe(false);
+  });
+
+  it('requires replay-complete evaluation snapshots with JSON strings and bidirectional hashes', () => {
+    const evaluation = {
+      id: 'evaluation-1', ...instanceBase, trigger: 'manual', inputsJson: JSON.stringify({ need: true }),
+      resultJson: JSON.stringify({ score: 1 }), evidenceIdsJson: JSON.stringify(['evidence-1']),
+      aclVersion: 1, packVersionKey: '1.0.0', engineRef: 'declarative-v1:1',
+      inputsHash: 'a'.repeat(64), resultHash: 'b'.repeat(64),
+      createdByUserId: 'user-owner', createdAt: '2026-08-21T22:00:00Z',
+    };
+    expect(MethodologyEvaluationSchema.safeParse(evaluation).success).toBe(true);
+    expect(MethodologyEvaluationSchema.safeParse({ ...evaluation, inputsJson: { need: true } }).success).toBe(false);
+    expect(MethodologyEvaluationSchema.safeParse({ ...evaluation, inputsHash: 'A'.repeat(64) }).success).toBe(false);
+  });
+
+  it('models migration dry-run, mapping, conflicts, confirmation, execution and rollback without executing them', () => {
+    const planned = {
+      id: 'migration-run-1', matterId: 'matter-1', sourceBindingId: BINDING_ID,
+      sourcePackId: PACK_ID, sourceVersionId: VERSION_ID,
+      targetPackId: 'pack-target', targetVersionId: 'version-target', matterVersion: 7,
+      status: 'planned', dryRunJson: JSON.stringify({ affected: 1 }), mappingJson: '{}', conflictsJson: '[]',
+      confirmationJson: '{}', executionJson: '{}', rollbackJson: '{}',
+      confirmedByUserId: null, confirmedAt: null, executedByUserId: null, executedAt: null,
+      rolledBackByUserId: null, rolledBackAt: null, createdByUserId: 'user-owner',
+      createdAt: '2026-08-21T22:00:00Z',
+    };
+    expect(MethodologyMigrationRunSchema.safeParse(planned).success).toBe(true);
+    expect(MethodologyMigrationRunSchema.safeParse({
+      ...planned, status: 'confirmed', confirmedByUserId: null, confirmedAt: null,
+    }).success).toBe(false);
+    expect(MethodologyMigrationRunSchema.safeParse({
+      ...planned, dryRunJson: { affected: 1 },
     }).success).toBe(false);
   });
 });
