@@ -25,8 +25,8 @@ const VALID_ENTRY = {
 } as const;
 
 describe('CRM field authority map', () => {
-  it('contains the twelve approved logical fields with classified consumers', () => {
-    expect(CRM_FIELD_AUTHORITY).toHaveLength(12);
+  it('contains the thirteen approved logical fields with classified consumers', () => {
+    expect(CRM_FIELD_AUTHORITY).toHaveLength(13);
     for (const entry of CRM_FIELD_AUTHORITY) expect(listCrmFieldConsumers(entry).length).toBeGreaterThan(0);
   });
 
@@ -151,6 +151,38 @@ describe('CRM field authority map', () => {
     });
     expect(getCrmFieldAuthority('commitment.record')?.consumers.migrations).toContain(
       'server/prisma/postgres/migrations/20260821030000_release_customer_level_commitments/migration.sql',
+    );
+  });
+
+  it('registers the complete effective data-scope authority with no pending consumer', () => {
+    const scope = getCrmFieldAuthority('tenant.data_scope');
+    expect(scope).toMatchObject({
+      currentAuthority: { kind: 'core_path', path: 'Tenant.dataScopePolicy + EffectiveResourceScope' },
+      targetAuthority: { kind: 'core_path', path: 'Tenant.dataScopePolicy + EffectiveResourceScope' },
+      consumers: { writes: [], planned: [] },
+    });
+    expect(scope?.consumers.reads).toEqual(expect.arrayContaining([
+      'server/src/resourceScope.ts',
+      'server/src/state.ts',
+      'server/src/ai.ts',
+      'server/src/strategy.ts',
+      'server/src/advisor.ts',
+      'server/src/pde/assemble.ts',
+      'server/src/pde/routes.ts',
+      'server/src/mcpServer.ts',
+      'server/src/personMerge.ts',
+      'server/src/suggest.ts',
+      'server/src/curated.ts',
+      'server/src/recording.ts',
+      'server/src/jobs.ts',
+      'server/src/repair.ts',
+    ]));
+    expect(scope?.consumers.adapters).toEqual(expect.arrayContaining([
+      'packages/domain-contracts/src/capabilities.ts',
+      'server/src/scope.ts',
+    ]));
+    expect(scope?.consumers.migrations).toContain(
+      'server/prisma/postgres/migrations/20260821040000_add_tenant_data_scope_policy/migration.sql',
     );
   });
 

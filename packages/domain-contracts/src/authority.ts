@@ -142,6 +142,37 @@ export const CRM_FIELD_AUTHORITY: CrmAuthorityEntry[] = CrmAuthorityMapSchema.pa
     ],
   },
   {
+    logicalField: 'tenant.data_scope',
+    currentAuthority: { kind: 'core_path', path: 'Tenant.dataScopePolicy + EffectiveResourceScope' },
+    targetAuthority: { kind: 'core_path', path: 'Tenant.dataScopePolicy + EffectiveResourceScope' },
+    consumers: {
+      reads: [
+        'server/src/resourceScope.ts', 'server/src/state.ts', 'server/src/ai.ts',
+        'server/src/strategy.ts', 'server/src/advisor.ts', 'server/src/pde/assemble.ts',
+        'server/src/pde/routes.ts', 'server/src/mcpServer.ts', 'server/src/personMerge.ts',
+        'server/src/suggest.ts', 'server/src/curated.ts', 'server/src/recording.ts',
+        'server/src/jobs.ts', 'server/src/repair.ts',
+      ],
+      writes: [],
+      adapters: ['packages/domain-contracts/src/capabilities.ts', 'server/src/scope.ts'],
+      migrations: [
+        'server/prisma/postgres/migrations/20260821040000_add_tenant_data_scope_policy/migration.sql',
+        'server/scripts/deploy-postgres-migrations.sh',
+      ],
+      planned: [],
+    },
+    shadowComparison: 'legacy_tenant_shared must preserve owner/admin/member tenant-wide reads and viewer owner scope; scoped fixtures compare state, ID, AI, PDE, MCP, Inbox, curated, transcript, job, and repair results against one EffectiveResourceScope.',
+    cutoverCondition: 'Every named online consumer resolves current tenant policy and current database role before business reads, cross-entry parity and both database migrations pass, and tenant activation remains an explicit separately approved operation.',
+    stopCondition: 'No read surface derives authorization from JWT role, display name, region, OpportunityMember, or an ad-hoc Account query; partial Customer containers expose only id/name/customerType.',
+    removalPhase: 'Permanent G2 authority; future Team/Grant and sensitive-content ACL may only intersect this scope and never replace tenant isolation.',
+    forbidden: [
+      'Falling back to tenant-wide access for an unknown policy, invalid role, or missing actor',
+      'Automatically switching an existing tenant from legacy_tenant_shared to scoped',
+      'Loading a full Customer graph before the effective scope check',
+      'Reverting scoped tenants to pre-CORE-109 code or policy in a way that broadens access',
+    ],
+  },
+  {
     logicalField: 'matter.current_stage',
     currentAuthority: { kind: 'legacy_path', path: 'Opportunity.pipelineStage' },
     targetAuthority: { kind: 'methodology_value', path: 'MethodologyStageState' },
