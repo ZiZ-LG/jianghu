@@ -301,4 +301,50 @@ describe('mutation coordinator', () => {
     await later;
     expect(order).toEqual(['apply:batch', 'recovery:start', 'recovery:end', 'history:later', 'apply:later']);
   });
+
+  it('cancels an old-session single waiting behind a batch before it can touch history or persistence', async () => {
+    const order: string[] = [];
+    let releaseBatch!: () => void;
+    const batchGate = new Promise<void>((resolve) => { releaseBatch = resolve; });
+    const gate = createMutationExecutionGate(async (action) => {
+      if (action.type !== 'UPDATE_PERSON') throw new Error('unexpected action');
+      const name = String(action.patch.name);
+      order.push(`apply:${name}`);
+      if (name === 'batch') await batchGate;
+    });
+
+    const batch = gate.runBatch([personAction('batch')]);
+    await vi.waitFor(() => expect(order).toEqual(['apply:batch']));
+    const oldSingle = gate.run(personAction('old-single'), () => order.push('history:old-single'));
+    gate.reset();
+    const newSingle = gate.run(personAction('new-single'), () => order.push('history:new-single'));
+
+    await newSingle;
+    releaseBatch();
+    await expect(batch).rejects.toMatchObject({ code: 'session_reset' });
+    await expect(oldSingle).rejects.toMatchObject({ code: 'session_reset' });
+    expect(order).toEqual(['apply:batch', 'history:new-single', 'apply:new-single']);
+  });
+
+  it('stops the remainder of an old-session batch and skips recovery after reset', async () => {
+    const order: string[] = [];
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const gate = createMutationExecutionGate(async (action) => {
+      if (action.type !== 'UPDATE_PERSON') throw new Error('unexpected action');
+      const name = String(action.patch.name);
+      order.push(`apply:${name}`);
+      if (name === 'first') await firstGate;
+    });
+
+    const batch = gate.runBatch([personAction('first'), personAction('second')], async () => {
+      order.push('recovery');
+    });
+    await vi.waitFor(() => expect(order).toEqual(['apply:first']));
+    gate.reset();
+    releaseFirst();
+
+    await expect(batch).rejects.toMatchObject({ code: 'session_reset' });
+    expect(order).toEqual(['apply:first']);
+  });
 });

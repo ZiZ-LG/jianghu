@@ -218,12 +218,14 @@ describe('INT-403 AI context minimization', () => {
       expect(source).toContain('api.aiContextManifest(opp.id, contextOptions)');
       expect(source).toContain('<AiContextDisclosure');
       expect(source).toContain('!contextReady');
+      expect(source).toContain('sessionLease.isCurrent()');
       expect(source.match(/setContextManifest\(result\.manifest\)/g)).toHaveLength(1);
       expect(source).not.toContain('setContextManifest(r.manifest)');
     }
-    expect(advisor).toMatch(/api\.aiSimulate\([\s\S]{0,350}if \(!requestIsCurrent\(requestScope\)\) return;/);
-    expect(advisor).toMatch(/api\.advisorActions\([\s\S]{0,350}if \(!requestIsCurrent\(requestScope\)\) return;/);
-    expect(advisor).toMatch(/if \(!requestIsCurrent\(requestScope\)\) return;[\s\S]{0,180}api\.advisorAppend/);
+    expect(advisor).toMatch(/api\.aiSimulate\([\s\S]{0,350}if \(!simulation\.current \|\| !requestIsCurrent\(requestScope\)\) return;/);
+    expect(advisor).toMatch(/api\.advisorActions\([\s\S]{0,350}if \(!suggestions\.current \|\| !requestIsCurrent\(requestScope\)\) return;/);
+    expect(advisor).toMatch(/if \(!requestIsCurrent\(requestScope\)\) return;[\s\S]{0,220}sessionLease\.run\(\(\) => api\.advisorAppend/);
+    expect(advisor).toContain('currentRequestScopeRef.current = null');
     expect(dock).toMatch(/api\.strategySuggest\([\s\S]{0,250}if \(!requestIsCurrent\(requestScope\)\) return;/);
     expect(dock).toMatch(/api\.strategyPrefill\([\s\S]{0,300}if \(!requestIsCurrent\(requestScope\)\) return/);
     expect(dock).toMatch(/api\.milestoneActions\([\s\S]{0,500}if \(!requestIsCurrent\(requestScope\) \|\| !operationIsCurrent\(requestOperation\)\) return;/);

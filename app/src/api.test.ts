@@ -15,8 +15,9 @@ afterEach(() => {
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => { resolve = done; });
-  return { promise, resolve };
+  let reject!: (cause: unknown) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
 }
 
 describe('typed API failures', () => {
@@ -209,6 +210,37 @@ describe('typed API failures', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(((fetchMock.mock.calls[0][1] as RequestInit).headers as Headers).get('Idempotency-Key')).toBe('stable-command-key');
     expect(((fetchMock.mock.calls[1][1] as RequestInit).headers as Headers).get('Idempotency-Key')).toBe('stable-command-key');
+  });
+
+  it('does not retry an old-session command with the new session bearer', async () => {
+    const firstResponse = deferred<Response>();
+    const fetchMock = vi.fn((_url: string, _init?: RequestInit) => firstResponse.promise);
+    vi.stubGlobal('fetch', fetchMock);
+    api.setToken('token-a');
+
+    const pending = api.voiceExtract({ text: 'A 租户口述情报' }, 'voice-session-key');
+    expect(((fetchMock.mock.calls[0][1] as RequestInit).headers as Headers).get('Authorization')).toBe('Bearer token-a');
+
+    api.setToken('token-b');
+    firstResponse.reject(new TypeError('network lost'));
+
+    await expect(pending).rejects.toMatchObject({ code: 'session_reset', retryable: false });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry after a logout/login cycle even if the bearer string is unchanged', async () => {
+    const firstResponse = deferred<Response>();
+    const fetchMock = vi.fn((_url: string, _init?: RequestInit) => firstResponse.promise);
+    vi.stubGlobal('fetch', fetchMock);
+    api.setToken('same-token');
+
+    const pending = api.voiceExtract({ text: '旧会话载荷' }, 'same-token-session-key');
+    api.setToken(null);
+    api.setToken('same-token');
+    firstResponse.reject(new TypeError('network lost'));
+
+    await expect(pending).rejects.toMatchObject({ code: 'session_reset', retryable: false });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('sends the explicit voice capture person context unchanged', async () => {

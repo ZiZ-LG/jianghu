@@ -9,6 +9,7 @@ const BASE = (import.meta as any).env?.VITE_API_URL ?? 'http://localhost:3001';
 const TOKEN_KEY = 'jianghu.token';
 const storage = typeof localStorage !== 'undefined' && typeof localStorage.getItem === 'function' ? localStorage : null;
 let token: string | null = storage?.getItem(TOKEN_KEY) ?? null;
+let tokenGeneration = 0;
 const unauthorizedListeners = new Set<(error: ApiError) => void>();
 
 const bearerTokenFrom = (headers: Headers): string | null => {
@@ -63,6 +64,7 @@ export async function request<T = unknown>(
   opts: RequestInit = {},
   requestOptions: { timeoutMs?: number } = {},
 ): Promise<T> {
+  const requestTokenGeneration = tokenGeneration;
   const headers = new Headers(opts.headers);
   if (!headers.has('Authorization') && token) headers.set('Authorization', `Bearer ${token}`);
   // 仅在确有请求体时声明 JSON content-type，否则 Fastify 会因空 body 报 400。
@@ -88,7 +90,7 @@ export async function request<T = unknown>(
         message: data.error || data.message || `请求失败（HTTP ${res.status}）`,
         retryable: res.status === 408 || res.status === 429 || res.status >= 500,
       });
-      if (res.status === 401 && requestBearerToken === token) {
+      if (res.status === 401 && requestBearerToken === token && requestTokenGeneration === tokenGeneration) {
         unauthorizedListeners.forEach((listener) => listener(error));
       }
       throw error;
@@ -106,11 +108,19 @@ export async function request<T = unknown>(
 
 const req = request;
 const commandReq = async <T>(path: string, opts: RequestInit, requestOptions: { timeoutMs?: number } = {}): Promise<T> => {
-  try { return await request<T>(path, opts, requestOptions); }
+  const commandToken = token;
+  const commandTokenGeneration = tokenGeneration;
+  const headers = new Headers(opts.headers);
+  if (!headers.has('Authorization') && commandToken) headers.set('Authorization', `Bearer ${commandToken}`);
+  const frozenOptions = { ...opts, headers };
+  try { return await request<T>(path, frozenOptions, requestOptions); }
   catch (cause) {
     const error = toApiError(cause);
     if (error.code !== 'network_error' && error.code !== 'timeout') throw error;
-    return request<T>(path, opts, requestOptions); // 同一 opts 保留同一个 Idempotency-Key。
+    if (commandToken !== token || commandTokenGeneration !== tokenGeneration) {
+      throw new ApiError({ code: 'session_reset', message: '会话已切换，已取消旧会话命令重试', retryable: false, cause: error });
+    }
+    return request<T>(path, frozenOptions, requestOptions); // 固定认证头与 Idempotency-Key，重试不得跨会话。
   }
 };
 export const newIdempotencyKey = (): string => crypto.randomUUID();
@@ -204,6 +214,7 @@ export interface PersonMergePreview {
 export const api = {
   getToken: () => token,
   setToken(t: string | null) {
+    tokenGeneration += 1;
     token = t;
     if (t) storage?.setItem(TOKEN_KEY, t);
     else storage?.removeItem(TOKEN_KEY);

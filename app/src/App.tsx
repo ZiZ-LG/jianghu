@@ -5,7 +5,7 @@ import {
   reducer, computeInverse, injectBaseVersion, alignVersionAfterRetry, invalidateHistory, transitionHistory,
   newAccount, newPerson, uid, type Action, type HistoryItem, type HistoryTransitionLock,
 } from './store';
-import { api, isConfirmedAuthFailure, newIdempotencyKey, type AuthResult, type Suggestion } from './api';
+import { api, ApiError, isConfirmedAuthFailure, newIdempotencyKey, type AuthResult, type Suggestion } from './api';
 import { scoreFromDomain } from './lib/g64111';
 import { usePersistentState, useTheme, useViewport } from './ui';
 import { Auth } from './components/Auth';
@@ -18,7 +18,6 @@ import { FocusPanel } from './components/FocusPanel';
 import { EdgeDrawer } from './components/EdgeDrawer';
 import { OpportunityForm } from './components/OpportunityForm';
 import { MdDocPanel } from './components/MdDocPanel';
-import { IntelCapture } from './components/IntelCapture';
 import { NewOpportunityDialog } from './components/NewOpportunityDialog';
 import { layoutSkeleton, type SkeletonRole } from './data/skeletons';
 import { parsePath, buildPath, resolveRoute, type RouteTarget } from './lib/router';
@@ -26,30 +25,32 @@ import { computeGaps } from './lib/gaps';
 import { computeToday, needsYouByAccount } from './lib/today';
 import { GapCards } from './components/GapCards';
 import { nextFreeSlot } from './lib/layout';
-import { TeamBilling } from './components/TeamBilling';
-import { AiSettings } from './components/AiSettings';
-import { WeComSettings } from './components/WeComSettings';
-import { InboxPanel, type InboxBatchItem } from './components/InboxPanel';
+import type { InboxBatchItem } from './components/InboxPanel';
 import { RecordingPanel } from './components/RecordingPanel';
-import { HelpManual } from './components/HelpManual';
-import { McpAccess } from './components/McpAccess';
 import { OverflowMenu } from './components/OverflowMenu';
 import { OrientationGate } from './components/OrientationGate';
 import { Footer } from './components/Footer';
 import { SyncStatus } from './components/SyncStatus';
 import { createCommitScheduler } from './lib/sync/commitScheduler';
 import { createMutationCoordinator, createMutationExecutionGate, entityKeyForAction } from './lib/sync/mutationCoordinator';
-import { RepairPanel, type RepairTarget } from './components/RepairPanel';
 import { localYmd } from './lib/dateYmd';
-import type { VisitCaptureContext } from './lib/sessionLifecycle';
 import { clearStableBatchItemKey, runBatchWithProgress, stableBatchItemKey, type StableBatchKeyCache } from './lib/reviewBatch';
+import { GlobalDialogs, type GlobalInboxProps } from './components/GlobalDialogs';
+import {
+  appShellUiReducer,
+  createInitialAppShellUiState,
+  type SettableGlobalDialog,
+  type RepairTarget,
+} from './lib/appShellUi';
 import {
   clearSessionUi,
-  commitSessionInbox,
-  createSessionInboxGuard,
+  commitSessionValue,
+  createSessionGuard,
+  createSessionLease,
   emptyInbox,
+  runSessionRequest,
   type SessionInbox,
-  type SessionInboxTicket,
+  type SessionTicket,
 } from './lib/sessionLifecycle';
 
 export default function App() {
@@ -60,6 +61,7 @@ export default function App() {
   const [undoHint, setUndoHint] = useState('');
   const [cloudDiscardRevisions, setCloudDiscardRevisions] = useState<Record<string, number>>({});
   const coordinatorResetRef = useRef<() => void>(() => undefined);
+  const executionGateResetRef = useRef<() => void>(() => undefined);
   const schedulerResetRef = useRef<() => void>(() => undefined);
   const schedulerCancelRef = useRef<(entityKey: string) => void>(() => undefined);
   const stateRef = useRef(state);
@@ -69,7 +71,14 @@ export default function App() {
   const historyRevision = useRef(0);
   const historyRecovery = useRef<'refreshed' | 'refresh-failed'>('refreshed');
   const inboxBatchKeys = useRef<StableBatchKeyCache>(new Map());
-  const inboxSessionGuard = useRef(createSessionInboxGuard());
+  const sessionGuard = useRef(createSessionGuard());
+  const [appShellUi, appShellUiDispatch] = useReducer(appShellUiReducer, undefined, createInitialAppShellUiState);
+  const setGlobalDialogOpen = useCallback((dialog: SettableGlobalDialog, open: boolean) => {
+    appShellUiDispatch({ type: 'SET_DIALOG', dialog, open });
+  }, []);
+  const setRepairTarget = useCallback((target: RepairTarget | null) => {
+    appShellUiDispatch({ type: 'SET_REPAIR_TARGET', target });
+  }, []);
   stateRef.current = state;
   // viewer 角色 = 只读投影（契约 v1.0 §二-1）：编辑/录入控件一律不渲染（非置灰）；视图交互全保留
   const readonly = auth?.user.role === 'viewer';
@@ -80,21 +89,14 @@ export default function App() {
   const [visibleLayers, setVisibleLayers] = useState<Set<Layer>>(() => new Set<Layer>(['L1'])); // 关系层级=点亮/熄灭多选(可层叠)
   const toggleLayer = (l: Layer) => setVisibleLayers((s) => { const n = new Set(s); n.has(l) ? n.delete(l) : n.add(l); if (n.size === 0) n.add(l); return n; });
   const [oppFormOpen, setOppFormOpen] = useState(false);
-  const [repairTarget, setRepairTarget] = useState<RepairTarget | null>(null);
   const [mdDocOpen, setMdDocOpen] = useState(false);
-  const [intelOpen, setIntelOpen] = useState(false);
-  const [intelContext, setIntelContext] = useState<VisitCaptureContext | null>(null);
   const [newOppOpen, setNewOppOpen] = useState(false);
-  const [teamOpen, setTeamOpen] = useState(false);
-  const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
-  const [wecomSettingsOpen, setWecomSettingsOpen] = useState(false);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]); // 当前商机的关系候选 → 喂 Canvas 画灰虚线候选边；审核统一走收件箱
   // 审核收件箱（Hub 级聚合，全租户 pending 候选）
-  const [inboxOpen, setInboxOpen] = useState(false);
   const [inbox, setInbox] = useState<SessionInbox>(emptyInbox);
-  const loadInbox = useCallback(async (ticket: SessionInboxTicket = inboxSessionGuard.current.capture()) => {
+  const loadInbox = useCallback(async (ticket: SessionTicket) => {
     try {
-      await commitSessionInbox(inboxSessionGuard.current, ticket, api.inboxList(), api.getToken, setInbox);
+      await commitSessionValue(sessionGuard.current, ticket, api.inboxList, api.getToken, setInbox);
     } catch { /* 角标失败忽略；下次刷新重试 */ }
   }, []);
   const [gapsOpen, setGapsOpen] = useState(false); // M3 缺口刷卡补分（enrichOpen 随重构删 EnrichPanel 移除）
@@ -104,8 +106,6 @@ export default function App() {
   const hubNeedsYou = useMemo(() => needsYouByAccount(state.accounts, inbox, hubTodayYmd), [state.accounts, inbox, hubTodayYmd]);
   const [selfComputeBusy, setSelfComputeBusy] = useState(false); // 江湖自算·补全干系人 进行中
   const [addIntelOpen, setAddIntelOpen] = useState(false); // 🎧 接入录音（P3 文本入口收敛：口述/对话归坞尾「和地图对话」，AddIntel 容器退役）
-  const [helpOpen, setHelpOpen] = useState(false);
-  const [mcpAccessOpen, setMcpAccessOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistentState('jianghu.sidebarCollapsed', false);
   const [theme, toggleTheme] = useTheme();
   // 画布选中模型：单击=选中(节点出锚点/连线出控制点)，双击=打开右侧栏
@@ -155,63 +155,96 @@ export default function App() {
     }
   }, []);
 
+  const refreshState = useCallback(async (ticket: SessionTicket = sessionGuard.current.capture()) => {
+    const result = await runSessionRequest(sessionGuard.current, ticket, api.getState, api.getToken);
+    if (!result.current) return null;
+    stateRef.current = result.value;
+    dispatch({ type: 'HYDRATE', accounts: result.value.accounts });
+    return result.value;
+  }, []);
+  const renderedSessionTicket = sessionGuard.current.capture();
+  const sessionLease = useMemo(
+    () => createSessionLease(sessionGuard.current, renderedSessionTicket, api.getToken),
+    [renderedSessionTicket.generation, renderedSessionTicket.token],
+  );
+  const refreshRenderedState = useCallback(() => {
+    if (!sessionLease.isCurrent()) return Promise.resolve(null);
+    return refreshState(renderedSessionTicket);
+  }, [refreshState, renderedSessionTicket, sessionLease]);
+
   const restoreSession = useCallback(async () => {
     const token = api.getToken();
     if (!token) {
-      inboxSessionGuard.current.begin(null);
+      sessionGuard.current.begin(null);
       setInbox(emptyInbox);
       setBooting(false);
       return;
     }
-    const inboxTicket = inboxSessionGuard.current.begin(token);
+    const sessionTicket = sessionGuard.current.begin(token);
     setInbox(emptyInbox);
     setBooting(true);
     setSyncErr('');
     try {
-      const me = await api.me();
-      const st = await api.getState();
-      stateRef.current = st;
-      dispatch({ type: 'HYDRATE', accounts: st.accounts });
+      const meResult = await runSessionRequest(sessionGuard.current, sessionTicket, api.me, api.getToken);
+      if (!meResult.current) return;
+      const st = await refreshState(sessionTicket);
+      if (!st) return;
+      const me = meResult.value;
       setAuth({ token, user: me.user, tenant: me.tenant });
       applyRoute(st.accounts);
-      if (me.user.role !== 'viewer') void loadInbox(inboxTicket);
+      if (me.user.role !== 'viewer') void loadInbox(sessionTicket);
     } catch (error) {
+      if (!sessionGuard.current.isCurrent(sessionTicket, api.getToken())) return;
       if (isConfirmedAuthFailure(error)) {
         api.setToken(null);
-        inboxSessionGuard.current.begin(null);
+        sessionGuard.current.begin(null);
         setInbox(emptyInbox);
         setAuth(null);
+        stateRef.current = { accounts: [] };
+        dispatch({ type: 'HYDRATE', accounts: [] });
+        setBooting(false);
       } else {
         setSyncErr('暂时无法连接云端，已保留登录状态，请稍后重试。');
       }
-    } finally { setBooting(false); }
-  }, [applyRoute, loadInbox]);
+    } finally {
+      if (sessionGuard.current.isCurrent(sessionTicket, api.getToken())) setBooting(false);
+    }
+  }, [applyRoute, loadInbox, refreshState]);
   // 启动：有 token 则恢复会话 + 拉取云端数据
   useEffect(() => { void restoreSession(); }, [restoreSession]);
 
   const onAuthed = async (res: AuthResult) => {
-    const inboxTicket = inboxSessionGuard.current.begin(res.token);
+    const sessionTicket = sessionGuard.current.begin(res.token);
     setInbox(emptyInbox);
-    const st = await api.getState();
-    stateRef.current = st;
-    dispatch({ type: 'HYDRATE', accounts: st.accounts });
+    const st = await refreshState(sessionTicket);
+    if (!st) return;
     setAuth(res);
     applyRoute(st.accounts);
-    if (res.user.role !== 'viewer') void loadInbox(inboxTicket);
+    if (res.user.role !== 'viewer') void loadInbox(sessionTicket);
   };
   const logout = useCallback(() => {
     coordinatorResetRef.current();
+    executionGateResetRef.current();
     schedulerResetRef.current();
+    invalidateHistory(undoStack.current, redoStack.current);
+    historyRevision.current += 1;
+    historyRecovery.current = 'refreshed';
     const clearedUi = clearSessionUi(inboxBatchKeys.current);
-    inboxSessionGuard.current.begin(null);
-    setIntelOpen(clearedUi.intelOpen);
-    setIntelContext(clearedUi.intelContext);
-    setInboxOpen(clearedUi.inboxOpen);
+    sessionGuard.current.begin(null);
+    appShellUiDispatch({ type: 'RESET_SESSION_TRANSIENT' });
     setInbox(clearedUi.inbox);
     api.setToken(null); setAuth(null); setAccId(null); setOppId(null); setSelectedId(null);
     stateRef.current = { accounts: [] };
     dispatch({ type: 'HYDRATE', accounts: [] });
     setSyncErr(clearedUi.syncErr);
+    setUndoHint('');
+    setSuggestions([]);
+    setSelfComputeBusy(false);
+    setOppFormOpen(false); setMdDocOpen(false); setNewOppOpen(false); setGapsOpen(false); setAddIntelOpen(false);
+    setSelectedEdgeId(null); setDrawerEdgeId(null); setOpenActionId(null);
+    setCloudDiscardRevisions({});
+    setBooting(false);
+    pendingRoute.current = null;
     window.history.replaceState(null, '', '/'); // 登出清 URL，避免登录页残留目标路径造成误解（重新登录会重新解析）
   }, []);
   useEffect(() => api.onUnauthorized(() => logout()), [logout]);
@@ -238,13 +271,10 @@ export default function App() {
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   }, []);
-  const refreshState = useCallback(async () => {
-    const st = await api.getState();
-    stateRef.current = st;
-    dispatch({ type: 'HYDRATE', accounts: st.accounts });
-  }, []);
   const discardToCloudState = useCallback(async (entityKey?: string) => {
-    await refreshState();
+    if (!sessionLease.isCurrent()) return;
+    const refreshed = await refreshState(renderedSessionTicket);
+    if (!refreshed) return;
     invalidateHistory(undoStack.current, redoStack.current);
     historyRevision.current += 1;
     if (entityKey) {
@@ -253,15 +283,17 @@ export default function App() {
         [entityKey]: (revisions[entityKey] ?? 0) + 1,
       }));
     }
-  }, [refreshState]);
+  }, [refreshState, renderedSessionTicket, sessionLease]);
   const coordinator = useMemo(() => createMutationCoordinator(async (action) => {
     await api.mutate(action);
     setSyncErr('');
   }, {
     // 用户选“保留我的值”时只读云端版本号重建 action，不 HYDRATE 覆盖屏幕上的本地草稿。
     prepareConflictRetry: async (action) => {
-      const cloud = await api.getState();
-      return injectBaseVersion(cloud, action);
+      const ticket = sessionGuard.current.capture();
+      const result = await runSessionRequest(sessionGuard.current, ticket, api.getState, api.getToken);
+      if (!result.current) throw new ApiError({ code: 'session_reset', message: '会话已切换', retryable: false });
+      return injectBaseVersion(result.value, action);
     },
     onRetrySuccess: (_originalAction, action, delta) => {
       const aligned = alignVersionAfterRetry(stateRef.current, action, delta);
@@ -281,6 +313,7 @@ export default function App() {
     await coordinator.enqueue(entityKeyForAction(injected), injected);
   }, [coordinator]);
   const executionGate = useMemo(() => createMutationExecutionGate(applyQueuedAction), [applyQueuedAction]);
+  executionGateResetRef.current = executionGate.reset;
   const commitScheduler = useMemo(
     () => createCommitScheduler((_key, action) => executionGate.run(action)),
     [executionGate],
@@ -288,9 +321,13 @@ export default function App() {
   schedulerResetRef.current = commitScheduler.reset;
   schedulerCancelRef.current = commitScheduler.cancel;
   const scheduleDraft = useCallback((action: Action, delayMs = 400) => {
+    if (!sessionLease.isCurrent()) return;
     commitScheduler.schedule(entityKeyForAction(action), action, { delayMs });
-  }, [commitScheduler]);
-  const flushDraft = useCallback((action: Action) => commitScheduler.flush(entityKeyForAction(action)), [commitScheduler]);
+  }, [commitScheduler, sessionLease]);
+  const flushDraft = useCallback((action: Action) => {
+    if (!sessionLease.isCurrent()) return Promise.resolve();
+    return commitScheduler.flush(entityKeyForAction(action));
+  }, [commitScheduler, sessionLease]);
   useEffect(() => () => { void commitScheduler.flushAll().catch(() => undefined); }, [commitScheduler]);
   const recoverHistoryFailure = useCallback(async (failedActions: readonly Action[]) => {
     // 批次可能已部分落库；丢弃两端历史，避免下一次撤销重复已成功的子动作。
@@ -299,30 +336,39 @@ export default function App() {
     const keys = new Set(failedActions.map(entityKeyForAction));
     for (const key of keys) commitScheduler.cancel(key);
     try {
-      await refreshState();
+      const refreshed = await refreshState(renderedSessionTicket);
+      if (!refreshed || !sessionLease.isCurrent()) {
+        throw new ApiError({ code: 'session_reset', message: '会话已切换', retryable: false });
+      }
       historyRecovery.current = 'refreshed';
     } catch (error) {
-      historyRecovery.current = 'refresh-failed';
+      if (sessionLease.isCurrent()) historyRecovery.current = 'refresh-failed';
       // 保留 coordinator 的 failed/conflict Action，网络恢复后仍可重试或查看云端。
       throw error;
     }
+    if (!sessionLease.isCurrent()) throw new ApiError({ code: 'session_reset', message: '会话已切换', retryable: false });
     for (const key of keys) coordinator.dismiss(key);
-  }, [commitScheduler, coordinator, refreshState]);
+  }, [commitScheduler, coordinator, refreshState, renderedSessionTicket, sessionLease]);
   // undo/redo 的失败恢复属于同一批次 barrier；恢复结束前，后续普通写入不会开始。
   const applyBatch = useCallback(
     (actions: readonly Action[]) => executionGate.runBatch(actions, () => recoverHistoryFailure(actions)),
     [executionGate, recoverHistoryFailure],
   );
   // 普通操作真正越过批次 barrier 时，才基于最新 state 计算逆动作并记录历史。
-  const actAsync = useCallback((action: Action): Promise<void> => executionGate.run(action, () => {
-    const inv = computeInverse(action, stateRef.current);
-    if (inv && inv.length) {
-      undoStack.current.push({ redo: [action], undo: inv });
-      if (undoStack.current.length > 10) undoStack.current.shift();
+  const actAsync = useCallback((action: Action): Promise<void> => {
+    if (!sessionLease.isCurrent()) {
+      return Promise.reject(new ApiError({ code: 'session_reset', message: '会话已切换，已忽略旧界面操作', retryable: false }));
     }
-    redoStack.current.length = 0;
-    historyRevision.current += 1;
-  }), [executionGate]);
+    return executionGate.run(action, () => {
+      const inv = computeInverse(action, stateRef.current);
+      if (inv && inv.length) {
+        undoStack.current.push({ redo: [action], undo: inv });
+        if (undoStack.current.length > 10) undoStack.current.shift();
+      }
+      redoStack.current.length = 0;
+      historyRevision.current += 1;
+    });
+  }, [executionGate, sessionLease]);
   const act = useCallback((action: Action) => {
     void actAsync(action).catch(() => { /* SyncStatus 保留失败 action 和重试入口 */ });
   }, [actAsync]);
@@ -333,6 +379,7 @@ export default function App() {
       canMoveToDestination: () => historyRevision.current === revision,
       canRestoreToSource: () => historyRevision.current === revision,
     });
+    if (historyRevision.current !== revision) return;
     if (result === 'empty') { setUndoHint('⊘ 没有可撤销的操作'); return; }
     if (result === 'busy') { setUndoHint('⏳ 撤销/重做正在同步，请稍候'); return; }
     if (result === 'failed') {
@@ -349,6 +396,7 @@ export default function App() {
       lock: historyLock.current,
       canRestoreToSource: () => historyRevision.current === revision,
     });
+    if (historyRevision.current !== revision) return;
     if (result === 'empty') { setUndoHint('⊘ 没有可重做的操作'); return; }
     if (result === 'busy') { setUndoHint('⏳ 撤销/重做正在同步，请稍候'); return; }
     if (result === 'failed') {
@@ -384,9 +432,12 @@ export default function App() {
   useEffect(() => {
     if (!opp) { setPdeFull(null); return; }
     let alive = true;
-    api.pdeEv(opp.id)
-      .then((r) => { if (alive) setPdeFull(r); })
-      .catch(() => { if (alive) setPdeFull(null); });
+    const ticket = sessionGuard.current.capture();
+    void runSessionRequest(sessionGuard.current, ticket, () => api.pdeEv(opp.id), api.getToken)
+      .then((result) => { if (alive && result.current) setPdeFull(result.value); })
+      .catch(() => {
+        if (alive && sessionGuard.current.isCurrent(ticket, api.getToken())) setPdeFull(null);
+      });
     return () => { alive = false; };
   }, [opp?.id, breakdown]);
   const gaps = useMemo(() => (account && opp ? computeGaps(account, opp) : []), [account, opp]);
@@ -399,7 +450,14 @@ export default function App() {
   // 进入某商机时加载已有的 AI 候选关系（pending）
   useEffect(() => {
     if (!opp) { setSuggestions([]); return; }
-    api.suggestList(opp.id).then((r) => setSuggestions(r.suggestions)).catch(() => setSuggestions([]));
+    let alive = true;
+    const ticket = sessionGuard.current.capture();
+    void runSessionRequest(sessionGuard.current, ticket, () => api.suggestList(opp.id), api.getToken)
+      .then((result) => { if (alive && result.current) setSuggestions(result.value.suggestions); })
+      .catch(() => {
+        if (alive && sessionGuard.current.isCurrent(ticket, api.getToken())) setSuggestions([]);
+      });
+    return () => { alive = false; };
   }, [opp?.id]);
 
   const openAccount = (id: string) => {
@@ -427,19 +485,23 @@ export default function App() {
     }
   };
   const loadDemo = async () => {
+    const ticket = sessionGuard.current.capture();
     setSyncErr('');
     const prev = new Set(state.accounts.map((a) => a.id));
     try {
       await api.demo();
-      const st = await api.getState();
-      dispatch({ type: 'HYDRATE', accounts: st.accounts });
+      const st = await refreshState(ticket);
+      if (!st) return;
       const added = st.accounts.find((a) => !prev.has(a.id)) ?? st.accounts[st.accounts.length - 1];
       if (added) { setAccId(added.id); setOppId(added.opportunities[0]?.id ?? null); setSelectedId(null); setVisibleLayers(new Set(['L1'])); }
-    } catch (e: any) { setSyncErr('载入示例失败：' + e.message); }
+    } catch (e: any) {
+      if (sessionGuard.current.isCurrent(ticket, api.getToken())) setSyncErr('载入示例失败：' + e.message);
+    }
   };
   const addOpp = () => { if (account) setNewOppOpen(true); };
   const createOpportunity = async (params: { name: string; fromOppId?: string; personIds: string[]; withEdges: boolean; skeleton?: SkeletonRole[] }) => {
     if (!account) return;
+    const ticket = sessionGuard.current.capture();
     setNewOppOpen(false);
     try {
       const command = await api.opportunitySkeleton({
@@ -448,16 +510,20 @@ export default function App() {
         skeleton: params.skeleton?.length ? layoutSkeleton(params.skeleton) : [],
       }, newIdempotencyKey());
       const { opportunityId } = command;
-      const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts });
+      const st = await refreshState(ticket);
+      if (!st) return;
       setOppId(opportunityId); setSelectedId(null); setVisibleLayers(new Set(['L1']));
-    } catch (e: any) { setSyncErr('新建商机失败：' + e.message); }
+    } catch (e: any) {
+      if (sessionGuard.current.isCurrent(ticket, api.getToken())) setSyncErr('新建商机失败：' + e.message);
+    }
   };
   const archiveAccount = async (id: string, reason: string) => {
+    const ticket = sessionGuard.current.capture();
     try {
       await api.archive('account', id, reason);
-      await refreshState();
+      await refreshState(ticket);
     } catch (e: any) {
-      setSyncErr('归档失败：' + (e?.message || e));
+      if (sessionGuard.current.isCurrent(ticket, api.getToken())) setSyncErr('归档失败：' + (e?.message || e));
     }
   };
   // ── 画布交互：选中 / 打开右侧栏 / 飞书式建点连线 ──
@@ -468,13 +534,16 @@ export default function App() {
   // 画布行动牌就地反馈：标完成 + 态度↑↓ → 录一条互动证据喂策略引擎（复用坞的结果回填飞轮，守铁律②：人当场拍板）
   const actionFeedback = async (actionId: string, outcome: 'up' | 'flat' | 'down') => {
     if (!account || !opp) return;
+    const ticket = sessionGuard.current.capture();
     const a = (account.planActions ?? []).find((x) => x.id === actionId);
     if (!a) return;
     const today = localYmd(new Date());
     try {
       await api.actionFeedback({ accountId: account.id, opportunityId: opp.id, actionId, outcome, occurredAt: today }, newIdempotencyKey());
-      await refreshState();
-    } catch (error: any) { setSyncErr('行动回填失败：' + (error?.message || error)); }
+      await refreshState(ticket);
+    } catch (error: any) {
+      if (sessionGuard.current.isCurrent(ticket, api.getToken())) setSyncErr('行动回填失败：' + (error?.message || error));
+    }
   };
   // 切客户/商机时清空一切选中
   useEffect(() => { setSelectedId(null); setSelectedEdgeId(null); setDrawerEdgeId(null); }, [accId, oppId]);
@@ -530,49 +599,137 @@ export default function App() {
   // 任务真终态由 worker 消费后自然反映到 inbox（下一次 loadInbox 或 hub 刷新）；这里只负责启动+提示。
   const selfCompute = async () => {
     if (!account || selfComputeBusy) return;
+    const ticket = sessionGuard.current.capture();
     setSelfComputeBusy(true);
     try {
       const tasks: string[] = [];
-      const er = await api.enrichEnqueue(account.id, 'auto');
+      const enrichResult = await runSessionRequest(
+        sessionGuard.current,
+        ticket,
+        () => api.enrichEnqueue(account.id, 'auto'),
+        api.getToken,
+      );
+      if (!enrichResult.current) return;
+      const er = enrichResult.value;
       tasks.push(er.enqueued ? '发现干系人' : '发现干系人（进行中）');
       if (opp) {
-        const sr = await api.suggestEnqueue(opp.id);
+        const suggestResult = await runSessionRequest(
+          sessionGuard.current,
+          ticket,
+          () => api.suggestEnqueue(opp.id),
+          api.getToken,
+        );
+        if (!suggestResult.current) return;
+        const sr = suggestResult.value;
         tasks.push(sr.enqueued ? '推断关系' : '推断关系（进行中）');
       }
-      setSyncErr(`🔍 已启动自算·${tasks.join(' + ')}——后台跑，完成后候选进 📥 收件箱`);
-    } catch (e: any) { setSyncErr('自算失败：' + (e?.message || e)); }
-    finally { setSelfComputeBusy(false); }
+      if (sessionGuard.current.isCurrent(ticket, api.getToken())) {
+        setSyncErr(`🔍 已启动自算·${tasks.join(' + ')}——后台跑，完成后候选进 📥 收件箱`);
+      }
+    } catch (e: any) {
+      if (sessionGuard.current.isCurrent(ticket, api.getToken())) setSyncErr('自算失败：' + (e?.message || e));
+    } finally {
+      if (sessionGuard.current.isCurrent(ticket, api.getToken())) setSelfComputeBusy(false);
+    }
   };
 
   // ── 审核收件箱（Hub 级）：复用既有候选采纳/驳回链路；采纳会改对应客户的树 → getState 重拉整树保证跨客户一致 ──
-  const refreshAfterAccept = async () => {
-    try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); } catch { /* 重拉失败下次同步 */ }
-    if (opp) { try { setSuggestions((await api.suggestList(opp.id)).suggestions); } catch { /* 下次同步 */ } } // 采纳/忽略关系候选后刷新画布灰虚线候选边
-    await loadInbox();
+  const refreshAfterAccept = async (ticket: SessionTicket = renderedSessionTicket) => {
+    if (!sessionLease.isCurrent()) return;
+    try { await refreshState(ticket); } catch { /* 重拉失败下次同步 */ }
+    if (!sessionGuard.current.isCurrent(ticket, api.getToken())) return;
+    if (opp) {
+      try {
+        const result = await runSessionRequest(sessionGuard.current, ticket, () => api.suggestList(opp.id), api.getToken);
+        if (result.current) setSuggestions(result.value.suggestions);
+      } catch { /* 下次同步 */ }
+    } // 采纳/忽略关系候选后刷新画布灰虚线候选边
+    await loadInbox(ticket);
   };
-  const inboxAcceptRel = async (id: string, override?: { layer?: string; label?: string }) => { try { await api.suggestAccept(id, override); await refreshAfterAccept(); } catch (e: any) { setSyncErr('采纳失败：' + e.message); throw e; } };
-  const inboxRejectRel = async (id: string) => { try { await api.suggestReject(id); await loadInbox(); } catch (e: any) { setSyncErr('忽略失败：' + e.message); throw e; } };
-  const inboxAcceptPerson = async (id: string, override?: { name?: string; title?: string }) => { try { await api.personSuggestAccept(id, override); await refreshAfterAccept(); } catch (e: any) { setSyncErr('采纳失败：' + e.message); throw e; } };
-  const inboxRejectPerson = async (id: string) => { try { await api.personSuggestReject(id); await loadInbox(); } catch (e: any) { setSyncErr('忽略失败：' + e.message); throw e; } };
-  const inboxAcceptProposal = async (id: string, overrideValue?: string) => { try { await api.proposalAccept(id, overrideValue); await refreshAfterAccept(); } catch (e: any) { setSyncErr('采纳失败：' + e.message); throw e; } };
-  const inboxRejectProposal = async (id: string) => { try { await api.proposalReject(id); await loadInbox(); } catch (e: any) { setSyncErr('忽略失败：' + e.message); throw e; } };
-  const inboxDismissReminder = async (id: string) => { try { await api.reminderDismiss(id); await loadInbox(); } catch (e: any) { setSyncErr('忽略失败：' + e.message); throw e; } };
+  const inboxAcceptRel = async (id: string, override?: { layer?: string; label?: string }) => {
+    const ticket = sessionGuard.current.capture();
+    try { await api.suggestAccept(id, override); await refreshAfterAccept(ticket); }
+    catch (e: any) { if (sessionGuard.current.isCurrent(ticket, api.getToken())) setSyncErr('采纳失败：' + e.message); throw e; }
+  };
+  const inboxRejectRel = async (id: string) => {
+    const ticket = sessionGuard.current.capture();
+    try { await api.suggestReject(id); await loadInbox(ticket); }
+    catch (e: any) { if (sessionGuard.current.isCurrent(ticket, api.getToken())) setSyncErr('忽略失败：' + e.message); throw e; }
+  };
+  const inboxAcceptPerson = async (id: string, override?: { name?: string; title?: string }) => {
+    const ticket = sessionGuard.current.capture();
+    try { await api.personSuggestAccept(id, override); await refreshAfterAccept(ticket); }
+    catch (e: any) { if (sessionGuard.current.isCurrent(ticket, api.getToken())) setSyncErr('采纳失败：' + e.message); throw e; }
+  };
+  const inboxRejectPerson = async (id: string) => {
+    const ticket = sessionGuard.current.capture();
+    try { await api.personSuggestReject(id); await loadInbox(ticket); }
+    catch (e: any) { if (sessionGuard.current.isCurrent(ticket, api.getToken())) setSyncErr('忽略失败：' + e.message); throw e; }
+  };
+  const inboxAcceptProposal = async (id: string, overrideValue?: string) => {
+    const ticket = sessionGuard.current.capture();
+    try { await api.proposalAccept(id, overrideValue); await refreshAfterAccept(ticket); }
+    catch (e: any) { if (sessionGuard.current.isCurrent(ticket, api.getToken())) setSyncErr('采纳失败：' + e.message); throw e; }
+  };
+  const inboxRejectProposal = async (id: string) => {
+    const ticket = sessionGuard.current.capture();
+    try { await api.proposalReject(id); await loadInbox(ticket); }
+    catch (e: any) { if (sessionGuard.current.isCurrent(ticket, api.getToken())) setSyncErr('忽略失败：' + e.message); throw e; }
+  };
+  const inboxDismissReminder = async (id: string) => {
+    const ticket = sessionGuard.current.capture();
+    try { await api.reminderDismiss(id); await loadInbox(ticket); }
+    catch (e: any) { if (sessionGuard.current.isCurrent(ticket, api.getToken())) setSyncErr('忽略失败：' + e.message); throw e; }
+  };
   // M3 证据审核：批准=进 E2 燃料池（重拉整树让背离黄条/立场条立即重算）；拒绝只刷收件箱
   const inboxReviewEvidence = async (id: string, action: 'approve' | 'reject', direction?: -1 | 0 | 1) => {
+    const ticket = sessionGuard.current.capture();
     try {
       await api.evidenceReview(id, action, direction !== undefined ? { direction } : undefined);
-      if (action === 'approve') await refreshAfterAccept(); else await loadInbox();
-    } catch (e: any) { setSyncErr('审核失败：' + e.message); throw e; }
+      if (action === 'approve') await refreshAfterAccept(ticket); else await loadInbox(ticket);
+    } catch (e: any) {
+      if (sessionGuard.current.isCurrent(ticket, api.getToken())) setSyncErr('审核失败：' + e.message);
+      throw e;
+    }
   };
   const inboxBatch = async (items: InboxBatchItem[], onProgress: Parameters<typeof runBatchWithProgress<InboxBatchItem>>[2]) => {
+    const ticket = sessionGuard.current.capture();
     const result = await runBatchWithProgress(items, async (item) => {
       const key = stableBatchItemKey(inboxBatchKeys.current, item, newIdempotencyKey);
-      await api.inboxBatch({ items: [item] }, key);
+      const command = await runSessionRequest(
+        sessionGuard.current,
+        ticket,
+        () => api.inboxBatch({ items: [item] }, key),
+        api.getToken,
+      );
+      if (!command.current) throw new ApiError({ code: 'session_reset', message: '会话已切换', retryable: false });
       clearStableBatchItemKey(inboxBatchKeys.current, item);
-    }, onProgress);
-    if (result.successes.length > 0) await refreshAfterAccept();
-    if (result.failures.length > 0) setSyncErr(`批量审核部分失败：${result.failures.length}/${result.total} 项，请查看失败项后重试。`);
+    }, onProgress, {
+      isCancelled: () => !sessionGuard.current.isCurrent(ticket, api.getToken()),
+      cancellationError: () => new ApiError({ code: 'session_reset', message: '会话已切换，已取消旧会话批量审核', retryable: false }),
+    });
+    if (result.successes.length > 0) await refreshAfterAccept(ticket);
+    if (result.failures.length > 0 && sessionGuard.current.isCurrent(ticket, api.getToken())) {
+      setSyncErr(`批量审核部分失败：${result.failures.length}/${result.total} 项，请查看失败项后重试。`);
+    }
     return result;
+  };
+  const inboxDialogProps: GlobalInboxProps = {
+    rels: inbox.rels,
+    persons: inbox.persons,
+    proposals: inbox.proposals,
+    reminders: inbox.reminders,
+    evidences: inbox.evidences,
+    accounts: state.accounts,
+    onAccept: inboxAcceptRel,
+    onReject: inboxRejectRel,
+    onAcceptPerson: inboxAcceptPerson,
+    onRejectPerson: inboxRejectPerson,
+    onAcceptProposal: inboxAcceptProposal,
+    onRejectProposal: inboxRejectProposal,
+    onDismissReminder: inboxDismissReminder,
+    onReviewEvidence: inboxReviewEvidence,
+    onBatch: inboxBatch,
   };
 
   if (booting) return <div className="boot">加载中…</div>;
@@ -587,6 +744,7 @@ export default function App() {
 
   // ── Hub（手机竖屏时刻流已退役 2026-07-21：竖屏直接进 Hub，横屏提示只在进作战室后）──
   if (!account) {
+    const intelContext = appShellUi.intelContext;
     const captureAccount = intelContext ? state.accounts.find((item) => item.id === intelContext.accId) : undefined;
     const captureOpportunity = captureAccount && intelContext
       ? captureAccount.opportunities.find((item) => item.id === intelContext.oppId)
@@ -600,44 +758,51 @@ export default function App() {
           onArchiveAccount={archiveAccount}
           onRepairAccount={(selectedAccount) => setRepairTarget({ kind: 'account', account: selectedAccount })}
           canRestoreArchives={auth.user.role === 'owner' || auth.user.role === 'admin'}
-          onArchiveRestored={async () => { await refreshState(); }}
+          onArchiveRestored={async () => { await refreshRenderedState(); }}
           tenantName={auth.tenant.name} userName={auth.user.name} plan={auth.tenant.plan}
-          onOpenTeam={() => setTeamOpen(true)} onLogout={logout} onOpenAiSettings={() => setAiSettingsOpen(true)} onOpenWecom={() => setWecomSettingsOpen(true)}
-          theme={theme} onToggleTheme={toggleTheme} onOpenHelp={() => setHelpOpen(true)}
-          onOpenMcpAccess={() => setMcpAccessOpen(true)}
-          onOpenIntel={() => { setIntelContext(null); setIntelOpen(true); }}
-          onIntelDone={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); await loadInbox(); } catch { /* 静默：保存已成功 */ } }}
-          onOpenInbox={() => setInboxOpen(true)} inboxCount={inbox.total} patrol={inbox.patrol}
+          onOpenTeam={() => setGlobalDialogOpen('team', true)} onLogout={logout} onOpenAiSettings={() => setGlobalDialogOpen('aiSettings', true)} onOpenWecom={() => setGlobalDialogOpen('wecomSettings', true)}
+          theme={theme} onToggleTheme={toggleTheme} onOpenHelp={() => setGlobalDialogOpen('help', true)}
+          onOpenMcpAccess={() => setGlobalDialogOpen('mcpAccess', true)}
+          onOpenIntel={() => appShellUiDispatch({ type: 'OPEN_INTEL', context: null })}
+          onIntelDone={async () => { try { await refreshAfterAccept(); } catch { /* 静默：保存已成功 */ } }}
+          onOpenInbox={() => setGlobalDialogOpen('inbox', true)} inboxCount={inbox.total} patrol={inbox.patrol}
         />
         <SyncStatus coordinator={coordinator} onViewCloud={discardToCloudState} />
         {syncErr && <div className="sync-toast">{syncErr}</div>}
-        {inboxOpen && !readonly && <InboxPanel rels={inbox.rels} persons={inbox.persons} proposals={inbox.proposals} accounts={state.accounts} onAccept={inboxAcceptRel} onReject={inboxRejectRel} onAcceptPerson={inboxAcceptPerson} onRejectPerson={inboxRejectPerson} onAcceptProposal={inboxAcceptProposal} onRejectProposal={inboxRejectProposal} reminders={inbox.reminders} onDismissReminder={inboxDismissReminder} evidences={inbox.evidences} onReviewEvidence={inboxReviewEvidence} onBatch={inboxBatch} onClose={() => setInboxOpen(false)} />}
-        {intelOpen && !readonly && (
-          <IntelCapture
-            account={captureAccount}
-            opportunity={captureOpportunity}
-            personId={intelContext?.personId}
-            onClose={() => { setIntelOpen(false); setIntelContext(null); }}
-            onDone={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); } catch { /* 静默：保存已成功，仅刷新失败 */ } }}
-            onEnterAccount={async (id) => {
-              setIntelOpen(false); setIntelContext(null);
+        <GlobalDialogs
+          surface="hub"
+          state={appShellUi}
+          dispatch={appShellUiDispatch}
+          sessionLease={sessionLease}
+          readonly={readonly}
+          role={auth.user.role}
+          accounts={state.accounts}
+          inbox={inboxDialogProps}
+          intel={{
+            account: captureAccount,
+            opportunity: captureOpportunity,
+            personId: intelContext?.personId,
+            onDone: async () => { try { await refreshRenderedState(); } catch { /* 静默：保存已成功，仅刷新失败 */ } },
+            onEnterAccount: async (id) => {
+              if (!sessionLease.isCurrent()) return;
+              const ticket = sessionGuard.current.capture();
               try {
-                const st = await api.getState();
-                dispatch({ type: 'HYDRATE', accounts: st.accounts });
+                const st = await refreshState(ticket);
+                if (!st) return;
                 const a = st.accounts.find((x) => x.id === id);
+                if (!a) return;
                 setAccId(id); setOppId(a?.opportunities[0]?.id ?? null); setSelectedId(null); setVisibleLayers(new Set(['L1']));
-              } catch { setAccId(id); }
-            }}
-          />
-        )}
-        {teamOpen && <TeamBilling role={auth.user.role} onClose={() => setTeamOpen(false)} />}
-        {aiSettingsOpen && <AiSettings role={auth.user.role} onClose={() => setAiSettingsOpen(false)} />}
-        {wecomSettingsOpen && <WeComSettings role={auth.user.role} onClose={() => setWecomSettingsOpen(false)} />}
-        {helpOpen && <HelpManual onClose={() => setHelpOpen(false)} />}
-        {mcpAccessOpen && <McpAccess onClose={() => setMcpAccessOpen(false)} />}
-        {repairTarget && <RepairPanel key={`${repairTarget.kind}:${repairTarget.kind === 'account' ? repairTarget.account.id : repairTarget.kind === 'opportunity' ? repairTarget.opportunity.id : repairTarget.record.id}`}
-          target={repairTarget} accounts={state.accounts} onClose={() => setRepairTarget(null)} onChanged={refreshState}
-          onRefreshError={setSyncErr} onRepairRecord={openRepairRecord} />}
+              } catch {
+                if (sessionGuard.current.isCurrent(ticket, api.getToken()) && stateRef.current.accounts.some((item) => item.id === id)) setAccId(id);
+              }
+            },
+          }}
+          repair={{
+            onChanged: async () => { await refreshRenderedState(); },
+            onRefreshError: (message) => { if (sessionLease.isCurrent()) setSyncErr(message); },
+            onRepairRecord: openRepairRecord,
+          }}
+        />
         <Footer />
       </>
     );
@@ -701,10 +866,11 @@ export default function App() {
                   {!readonly && <button className="btn ghost xs" onClick={() => setRepairTarget({ kind: 'opportunity', account, opportunity: opp })}>🛠️ 溯源/归档</button>}
                   <button className="btn ghost xs" onClick={() => setMdDocOpen(true)} title="客户档案 / 商机档案 / 拜访记录（.md 文档）">📋 作战档案</button>
                   {!readonly && <button className="btn ghost xs" onClick={selfCompute} disabled={selfComputeBusy} title="再跑一遍自算：后台用企查查/AI 发现干系人 + 推断商机内关系 + 补企业背景研究，候选进收件箱人审。建客户已自动跑过一次，这里是「再来一遍」。">{selfComputeBusy ? '⏳ 已启动…' : '↻ 重新补全'}</button>}
-                  {!readonly && <button className="btn ghost xs" onClick={() => setInboxOpen(true)}>📥 收件箱{inbox.total > 0 ? ` (${inbox.total})` : ''}</button>}
+                  {!readonly && <button className="btn ghost xs" onClick={() => setGlobalDialogOpen('inbox', true)}>📥 收件箱{inbox.total > 0 ? ` (${inbox.total})` : ''}</button>}
                   <span style={{ marginLeft: 'auto' }}>
                     <OverflowMenu align="right" label="⚙️" items={[
-                      { label: '❓ 帮助', onClick: () => setHelpOpen(true) },
+                      ...(!readonly ? [{ label: '📆 企微日历', onClick: () => setGlobalDialogOpen('wecomSettings', true) }] : []),
+                      { label: '❓ 帮助', onClick: () => setGlobalDialogOpen('help', true) },
                       { label: theme === 'dark' ? '☀️ 白天模式' : '🌙 黑夜模式', onClick: toggleTheme },
                     ]} />
                   </span>
@@ -718,9 +884,10 @@ export default function App() {
                     { label: '📋 作战档案', onClick: () => setMdDocOpen(true) },
                     ...(!readonly ? [
                       { label: selfComputeBusy ? '⏳ 自算中…' : '↻ 重新补全', onClick: selfCompute },
-                      { label: '📥 收件箱', badge: inbox.total > 0 ? String(inbox.total) : undefined, onClick: () => setInboxOpen(true) },
+                      { label: '📥 收件箱', badge: inbox.total > 0 ? String(inbox.total) : undefined, onClick: () => setGlobalDialogOpen('inbox', true) },
                     ] : []),
-                    { label: '❓ 帮助', onClick: () => setHelpOpen(true) },
+                    ...(!readonly ? [{ label: '📆 企微日历', onClick: () => setGlobalDialogOpen('wecomSettings', true) }] : []),
+                    { label: '❓ 帮助', onClick: () => setGlobalDialogOpen('help', true) },
                     { label: theme === 'dark' ? '☀️ 白天模式' : '🌙 黑夜模式', onClick: toggleTheme },
                   ]} />
                 </>)}
@@ -757,6 +924,7 @@ export default function App() {
       {selectedPerson && opp && breakdown && (
         <FocusPanel key={`focus:${selectedPerson.id}:${cloudDiscardRevisions[`person:${selectedPerson.id}`] ?? 0}`} accId={account.id} oppId={opp.id} account={account} opp={opp} breakdown={breakdown}
           readonly={readonly}
+          sessionLease={sessionLease}
           person={selectedPerson} oppRole={selectedRole} bis={selectedBis} ucvs={selectedUcvs}
           visitNotes={account.visitNotes ?? []} tab={focusTab} onTabChange={setFocusTab} dispatch={act}
           draftDispatch={scheduleDraft} flushDraft={flushDraft} coordinator={coordinator}
@@ -788,10 +956,11 @@ export default function App() {
       {/* viewer：推演坞（策划写作台）整体不渲染——拷问第二屏聚焦权力地图本身 */}
       {opp && !immersive && breakdown && !readonly && (
         <DeliberationDock account={account} opp={opp} breakdown={breakdown} dispatch={act}
+          sessionLease={sessionLease}
           patrol={inbox.patrol} pdeFull={pdeFull} openEngineSignal={engineSignal}
           selectedPersonId={selectedId} onSelectPerson={selectPerson}
           openActionId={openActionId} onActionOpened={() => setOpenActionId(null)}
-          onChatDone={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); await loadInbox(); } catch { /* 静默：保存已成功，仅刷新失败 */ } }} />
+          onChatDone={async () => { try { await refreshAfterAccept(); } catch { /* 静默：保存已成功，仅刷新失败 */ } }} />
       )}
 
       {oppFormOpen && opp && !readonly && (
@@ -800,7 +969,9 @@ export default function App() {
           onSave={async (patch) => {
             await api.repairOpportunity(opp.id, patch);
             setOppFormOpen(false);
-            void refreshState().catch(() => setSyncErr('商机纠错已保存，但刷新失败；请稍后重新进入客户。'));
+            void refreshRenderedState().catch(() => {
+              if (sessionLease.isCurrent()) setSyncErr('商机纠错已保存，但刷新失败；请稍后重新进入客户。');
+            });
           }} />
       )}
       {newOppOpen && !readonly && (
@@ -810,21 +981,27 @@ export default function App() {
       {addIntelOpen && !readonly && (
         <RecordingPanel accountId={account.id} role={auth.user.role}
           onClose={() => setAddIntelOpen(false)}
-          onExtracted={async () => { try { const st = await api.getState(); dispatch({ type: 'HYDRATE', accounts: st.accounts }); await loadInbox(); } catch { /* 静默：保存已成功，仅刷新失败 */ } }} />
+          onExtracted={async () => { try { await refreshAfterAccept(); } catch { /* 静默：保存已成功，仅刷新失败 */ } }} />
       )}
-      {teamOpen && <TeamBilling role={auth.user.role} onClose={() => setTeamOpen(false)} />}
-      {aiSettingsOpen && !readonly && <AiSettings role={auth.user.role} onClose={() => setAiSettingsOpen(false)} />}
-      {helpOpen && <HelpManual onClose={() => setHelpOpen(false)} />}
-      {mcpAccessOpen && !readonly && <McpAccess onClose={() => setMcpAccessOpen(false)} />}
       {gapsOpen && account && opp && breakdown && !readonly && (
         <GapCards account={account} opp={opp} dispatch={act} onClose={() => setGapsOpen(false)} />
       )}
-      {inboxOpen && !readonly && <InboxPanel rels={inbox.rels} persons={inbox.persons} proposals={inbox.proposals} accounts={state.accounts} onAccept={inboxAcceptRel} onReject={inboxRejectRel} onAcceptPerson={inboxAcceptPerson} onRejectPerson={inboxRejectPerson} onAcceptProposal={inboxAcceptProposal} onRejectProposal={inboxRejectProposal} reminders={inbox.reminders} onDismissReminder={inboxDismissReminder} evidences={inbox.evidences} onReviewEvidence={inboxReviewEvidence} onBatch={inboxBatch} onClose={() => setInboxOpen(false)} />}
-      {repairTarget && <RepairPanel key={`${repairTarget.kind}:${repairTarget.kind === 'account' ? repairTarget.account.id : repairTarget.kind === 'opportunity' ? repairTarget.opportunity.id : repairTarget.record.id}`}
-        target={repairTarget} accounts={state.accounts} onClose={() => setRepairTarget(null)} onChanged={refreshState}
-        onRefreshError={setSyncErr}
-        onRepairRecord={openRepairRecord}
-        onEditOpportunity={repairTarget.kind === 'opportunity' ? () => { setRepairTarget(null); setOppFormOpen(true); } : undefined} />}
+      <GlobalDialogs
+        surface="workroom"
+        state={appShellUi}
+        dispatch={appShellUiDispatch}
+        sessionLease={sessionLease}
+        readonly={readonly}
+        role={auth.user.role}
+        accounts={state.accounts}
+        inbox={inboxDialogProps}
+        repair={{
+          onChanged: async () => { await refreshRenderedState(); },
+          onRefreshError: (message) => { if (sessionLease.isCurrent()) setSyncErr(message); },
+          onRepairRecord: openRepairRecord,
+        }}
+        onEditRepairOpportunity={() => setOppFormOpen(true)}
+      />
       <SyncStatus coordinator={coordinator} onViewCloud={discardToCloudState} />
       {syncErr && <div className="sync-toast">{syncErr}</div>}
       {undoHint && <div className="undo-toast">{undoHint}</div>}

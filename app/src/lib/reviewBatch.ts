@@ -6,6 +6,11 @@ export interface BatchProgress<T> {
   failures: Array<BatchFailure<T>>;
 }
 
+export interface BatchRunOptions {
+  isCancelled?: () => boolean;
+  cancellationError?: () => Error;
+}
+
 type BatchLogicalItem = { kind: string; id: string };
 export type StableBatchKeyCache = Map<string, { signature: string; key: string }>;
 
@@ -47,6 +52,7 @@ export async function runBatchWithProgress<T>(
   items: readonly T[],
   process: (item: T) => Promise<void>,
   onProgress: (progress: BatchProgress<T>) => void = () => undefined,
+  options: BatchRunOptions = {},
 ): Promise<BatchProgress<T>> {
   const progress: BatchProgress<T> = {
     total: items.length,
@@ -59,12 +65,20 @@ export async function runBatchWithProgress<T>(
     successes: [...progress.successes],
     failures: [...progress.failures],
   });
+  const abortIfCancelled = () => {
+    if (!options.isCancelled?.()) return;
+    throw options.cancellationError?.() ?? new Error('批处理已取消');
+  };
+  abortIfCancelled();
   publish();
   for (const item of items) {
+    abortIfCancelled();
     try {
       await process(item);
+      abortIfCancelled();
       progress.successes.push(item);
     } catch (cause) {
+      abortIfCancelled();
       progress.failures.push({
         item,
         error: cause instanceof Error ? cause.message : String(cause || '未知错误'),

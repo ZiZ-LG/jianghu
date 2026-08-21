@@ -11,6 +11,7 @@ import { ReadonlyProfile } from './ReadonlyProfile';
 import { AdvisorPanel } from './AdvisorPanel';
 import type { ScoreBreakdown } from '../lib/g64111';
 import { api } from '../api';
+import type { SessionLease } from '../lib/sessionLifecycle';
 import type { MutationCoordinator } from '../lib/sync/mutationCoordinator';
 
 type Tab = 'profile' | 'dynamic' | 'advisor';
@@ -19,7 +20,7 @@ type DynItem = { date: string; title?: string; body: string; source: string; sen
 type StanceDetail = { id: string; pS: number; pN: number; pO: number; n_eff: number };
 
 export function FocusPanel({
-  accId, oppId, account, opp, breakdown, person, oppRole, bis, ucvs, visitNotes, tab, onTabChange, dispatch, draftDispatch, flushDraft, coordinator, onRefresh, onViewCloud, onClose, onRepairRecord, readonly = false,
+  accId, oppId, account, opp, breakdown, person, oppRole, bis, ucvs, visitNotes, tab, onTabChange, dispatch, sessionLease, draftDispatch, flushDraft, coordinator, onRefresh, onViewCloud, onClose, onRepairRecord, readonly = false,
 }: {
   accId: string; oppId: string;
   account: Account; opp: Opportunity; breakdown: ScoreBreakdown;
@@ -27,6 +28,7 @@ export function FocusPanel({
   visitNotes: VisitNote[];
   tab: Tab; onTabChange: (t: Tab) => void;
   dispatch: Dispatch<Action>;
+  sessionLease: SessionLease;
   draftDispatch?: Dispatch<Action>;
   flushDraft?: (action: Action) => void | Promise<void>;
   coordinator?: MutationCoordinator;
@@ -145,7 +147,7 @@ export function FocusPanel({
         )}
 
         {tab === 'advisor' && !readonly && (
-          <AdvisorPanel account={account} opp={opp} breakdown={breakdown} person={person} dispatch={dispatch} />
+          <AdvisorPanel account={account} opp={opp} breakdown={breakdown} person={person} dispatch={dispatch} sessionLease={sessionLease} />
         )}
       </div>
     </div>

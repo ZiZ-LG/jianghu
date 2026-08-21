@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
+import type { SessionLease } from '../lib/sessionLifecycle';
 import { Modal } from './Modal';
 
 const PRESETS = [
@@ -14,7 +15,12 @@ const PRESETS = [
   { id: 'custom', label: '自定义', provider: 'openai-compatible', baseUrl: '', model: '' },
 ];
 
-export function AiSettings({ role, onClose, onSaved }: { role: string; onClose: () => void; onSaved?: () => void }) {
+export function AiSettings({ role, onClose, onSaved, sessionLease }: {
+  role: string;
+  onClose: () => void;
+  onSaved?: () => void;
+  sessionLease: SessionLease;
+}) {
   const canManage = role === 'owner' || role === 'admin';
   const [provider, setProvider] = useState('mock');
   const [baseUrl, setBaseUrl] = useState('');
@@ -24,28 +30,64 @@ export function AiSettings({ role, onClose, onSaved }: { role: string; onClose: 
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const mountedRef = useRef(true);
+  const operationRef = useRef(0);
 
   useEffect(() => {
-    api.aiConfig().then((c) => { setProvider(c.provider); setBaseUrl(c.baseUrl); setModel(c.model); setHasKey(c.hasKey); }).catch(() => {});
-  }, []);
+    mountedRef.current = true;
+    let alive = true;
+    void sessionLease.run(api.aiConfig).then((result) => {
+      if (!alive || !result.current) return;
+      const c = result.value;
+      setProvider(c.provider); setBaseUrl(c.baseUrl); setModel(c.model); setHasKey(c.hasKey);
+    }).catch(() => {});
+    return () => {
+      alive = false;
+      mountedRef.current = false;
+      operationRef.current += 1;
+    };
+  }, [sessionLease]);
 
   const applyPreset = (id: string) => {
     const p = PRESETS.find((x) => x.id === id)!;
     setProvider(p.provider); setBaseUrl(p.baseUrl); setModel(p.model); setMsg(''); setErr('');
   };
-  const doSave = async () => {
-    await api.aiSaveConfig({ provider, baseUrl, model, ...(apiKey ? { apiKey } : {}) });
+  const commitSaved = () => {
     if (apiKey) setHasKey(true);
     setApiKey('');
   };
+  const saveRequest = () => api.aiSaveConfig({ provider, baseUrl, model, ...(apiKey ? { apiKey } : {}) });
+  const operationIsCurrent = (operation: number) => mountedRef.current
+    && operation === operationRef.current
+    && sessionLease.isCurrent();
   const save = async () => {
+    const operation = ++operationRef.current;
     setErr(''); setMsg(''); setBusy(true);
-    try { await doSave(); setMsg('已保存'); onSaved?.(); } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
+    try {
+      const result = await sessionLease.run(saveRequest);
+      if (!result.current || !operationIsCurrent(operation)) return;
+      commitSaved(); setMsg('已保存'); onSaved?.();
+    } catch (e: any) {
+      if (operationIsCurrent(operation)) setErr(e.message);
+    } finally {
+      if (operationIsCurrent(operation)) setBusy(false);
+    }
   };
   const test = async () => {
+    const operation = ++operationRef.current;
     setErr(''); setMsg(''); setBusy(true);
-    try { await doSave(); const r = await api.aiTest(); setMsg('连接正常：' + (r.message || 'ok')); onSaved?.(); }
-    catch (e: any) { setErr('测试失败：' + e.message); } finally { setBusy(false); }
+    try {
+      const saved = await sessionLease.run(saveRequest);
+      if (!saved.current || !operationIsCurrent(operation)) return;
+      commitSaved();
+      const tested = await sessionLease.run(api.aiTest);
+      if (!tested.current || !operationIsCurrent(operation)) return;
+      setMsg('连接正常：' + (tested.value.message || 'ok')); onSaved?.();
+    } catch (e: any) {
+      if (operationIsCurrent(operation)) setErr('测试失败：' + e.message);
+    } finally {
+      if (operationIsCurrent(operation)) setBusy(false);
+    }
   };
 
   const isMock = provider === 'mock';

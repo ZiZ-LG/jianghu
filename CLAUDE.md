@@ -99,13 +99,13 @@ cd packages/pde-kernel && npx tsc --noEmit && npm run test   # 内核类型 + go
 - 优先**复用现有模式与组件**，而不是另起一套。
 - 端口被占：`lsof -ti:3001 | xargs kill -9`（前端 5173 同理）。
 
-## 当前执行基线（2026-07-21）
+## 当前执行基线（2026-08-19）
 
-- 双版本关系：`docs/架构-双版本关系与变更治理v1.md`。
-- 内部版详细计划：`docs/superpowers/plans/2026-07-11-internal-edition-development.md`。
-- 唯一日常状态清单：`docs/内部版开发待办清单v1.md`；代码任务必须引用 `INT-*` ID，同一时间最多一项 `IN_PROGRESS`。
-- 除重大偏差外严格按阶段门执行；重大偏差先暂停、写 ADR、由项目所有者批准，再更新计划和清单。
-- 发布验收执行 `docs/ADR-INT-502-发布验收简化与清库重装.md` 简化口径（2026-07-21 批准）；机制收敛路线见 `docs/架构-收敛路线图v1.md`，未登记 INT 任务前不得动工。
+- 产品路线与能力分层：`docs/ADR-002-商业版单一演进与通用CRM能力分层.md`；`docs/架构-双版本关系与变更治理v1.md` 继续约束共享核心、安全边界、物理隔离和重大偏差治理。
+- 商业持续演进详细计划：`docs/superpowers/plans/2026-08-19-lightweight-personal-crm-commercialization.md`。
+- 唯一日常状态清单：`docs/商业版开发待办清单v1.md`；持续建设代码任务必须引用 `CORE-*` 或 `SAAS-*` ID，同一时间最多一项 `IN_PROGRESS`。
+- `docs/内部版开发待办清单v1.md` 已转维护冻结；只有安全、兼容、恢复或经批准的显式迁移维护，才可另行授权 `INT-*` 任务。`INT-502` 及其发布验收资料仅作 `NO-GO / STOPPED` 历史证据，不再阻塞商业主线。
+- 除重大偏差外严格按商业清单阶段门执行；重大偏差先暂停、写 ADR、由项目所有者批准，再更新计划和清单。
 
 ## /compact 时保留
 

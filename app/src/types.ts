@@ -1,5 +1,15 @@
 // 江湖 · 领域类型（对应 docs/产品设计方案.md §3 与 G64111-评分规格.md）
 import type { JsonValue } from '@jianghu/domain-contracts';
+export type {
+  CapabilityPolicy,
+  CommitmentV2,
+  CrmCommand,
+  CrmCommandInput,
+  CustomerV2,
+  EntitlementKey,
+  MatterV2,
+  PermissionKey,
+} from '@jianghu/domain-contracts';
 import { C3_ITEMS, C5_ITEMS, FAMILY_7Q, canonicalC5Items } from '@jianghu/g64111';
 import type {
   Confidence,

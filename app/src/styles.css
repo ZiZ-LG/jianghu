@@ -718,7 +718,7 @@ html[data-theme="dark"] .landing-tag { background: var(--panel); color: var(--mu
 .ovf { position: relative; display: inline-block; }
 .ovf-pop { position: absolute; top: calc(100% + 6px); z-index: 50; min-width: 184px; padding: 6px;
   background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 34px var(--shadow);
-  display: flex; flex-direction: column; gap: 2px; }
+  display: flex; flex-direction: column; gap: 2px; overflow-y: auto; overscroll-behavior: contain; }
 .ovf-right { right: 0; } .ovf-left { left: 0; }
 .ovf-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%;
   padding: 11px 12px; border-radius: 8px; font-size: 14px; font-weight: 600; color: var(--ink); text-align: left; white-space: nowrap; }
