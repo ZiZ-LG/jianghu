@@ -2,18 +2,19 @@
 
 > **状态：** Approved / Active
 > **日期：** 2026-08-19
+> **最近修订：** 2026-08-21（AI-native CRM 调研后的范围细化）
 > **Epic：** [EPIC-CRM-001 · GitHub #32](https://github.com/ZiZ-LG/jianghu/issues/32)
 > **设计权威：** `docs/designs/jianghu-lightweight-personal-crm-methodology-packs.md`
 > **架构门：** `docs/ADR-002-商业版单一演进与通用CRM能力分层.md`
 > **状态清单：** `docs/商业版开发待办清单v1.md`
-> **代码授权：** 仅 `CORE-101`。其他 CORE/SAAS 任务仍按清单逐项批准，不得并行启动。
+> **执行状态：** `CORE-101/102` 已完成；`CORE-103` 为唯一 READY，当前无 IN_PROGRESS。后续仍按清单单任务执行，本次计划修订不启动代码。
 
 ## 1. 目标结果
 
 把现有“内部复杂销售作战地图”演进为全行业可用的轻量个人 CRM，同时保留三条可选升级路径：
 
 1. **个人核心：** Customer / Matter / Person / Relation / Commitment / Interaction-Evidence；
-2. **复杂销售：** 拜访简报、资料速审、情报、关键人焦点、假设验证与商机组合；
+2. **复杂销售：** 拜访简报、资料速审、情报、关键人焦点、假设验证、可解释关系信号、受控 Agent 与商机组合；
 3. **企业能力：** scoped 团队经营、预测、带教和声明式 MethodologyPack。
 
 第一可交付版本不是“换术语后的旧江湖”，而是能真实复现曹经理漏约会场景的行动闭环：两分钟记下客户和约会，临近时提醒确认，改期后旧提醒失效，完成后创建下一步。
@@ -25,16 +26,32 @@
 | 发布切片 | 包含 Gate | 可观察结果 | 顺序工程量估算 |
 |---|---|---|---:|
 | R1 个人轻量核心 | G0–G3 | 无 WorkBuddy、无 G64111 完成快速记录、确认和关系上下文 | 约 59 工程日 |
-| R2 个人复杂销售 | G4 | 完成简报、妙记速审、情报/假设和 4–5 商机组合 | 约 46 工程日 |
+| R2 个人复杂销售 | G4 | 完成简报、妙记速审、情报/假设、受控 Agent、关系干预和 4–5 商机组合 | 约 52 工程日 |
 | R3 Team | G5 | 曹经理管理两名下属、预测缺口和带教闭环 | 约 23 工程日 |
 | R4 Enterprise | G6 | 第二套非 G64111 方法论可发布、评估、迁移和回滚 | 约 27 工程日 |
 | R5 GA 收缩 | G7 | legacy 消费者清零、恢复演练和套餐连续性 | 约 14 工程日 |
 
 以上是单人串行工程量，不是日历承诺，也不包含外部设计伙伴等待、合规采购和真实租户观察窗口。任何并行都必须先证明不共享 schema、契约或关键文件。
 
+### 2.1 2026-08-21 路线图范围调整
+
+本次调整由本地竞品报告、得到大脑 CRM 笔记和官方产品／仓库交叉调研触发，属于 ADR-002 内的范围细化，不改变 R1 或当前 `CORE-103` 顺序。
+
+| 时段 | 调整 | 取舍与影响 |
+|---|---|---|
+| Now｜G2–G3 | Quick Capture 可把自然语言解析成显式确认草稿；Today 统一输出 reason/source/time/action 解释契约 | 不增加新任务，不改变“待确认／待跟进／已完成”首层结构 |
+| Next｜G4 | 新增 `CORE-206` 受控 Agent Job/Run 基座和 `SAAS-212` 关系信号／干预读模型 | R2 增加约 6 个串行工程日；G5/G6 相应顺延，不并行抢跑 |
+| Next｜G5 | Forecast 增加结构化硬校验、关系／证据软警告和 override 理由；带教引用可下钻干预依据 | 吸收到现有 SAAS-302～305，不增加独立任务 |
+| Later｜G6 | 新方法论版本可对历史已审核 Interaction/Evidence 重新评估并生成新快照 | 吸收到 CORE-405/SAAS-402，不覆盖历史事实或 active binding |
+| Not scheduled | 全量邮箱／日历／微信被动采集、Clay 式名单与外联、完整售后 CRM、企业自定义 Agent Builder、自动外发 | 以明确后置范围抵消新增工作；出现真实付费与权限证据后另做 ADR／路线图决策 |
+
+新增范围的产品标准不是“更多 AI”，而是四项可验证结果：每个干预都能解释并追源；每个 Agent 都有 Job Card 和运行审计；每次正式数据变化仍经用户命令或 Candidate 人审；每次权限撤销和 Job 停用都在下一次运行立即生效。
+
 ## 3. 已验证的当前基线
 
 以下结论来自 2026-08-19 工作区代码盘点，不是历史假设：
+
+截至 2026-08-21，`CORE-101/102` 已按清单完成；下表保留为改造起点证据，文件行号不作为当前实现状态。当前任务状态、验证证据和回滚点只以 `docs/商业版开发待办清单v1.md` 为准。
 
 | 当前事实 | 代码锚点 | 实施含义 |
 |---|---|---|
@@ -60,6 +77,7 @@
 - 新商业接口统一通过 effective-scope resolver，禁止“非 viewer 直接放行”。
 - 敏感资源权限是资源范围之上的第二次相交，不从经理身份推导正文访问。
 - 机器产物不自动成为正式 Person、Relation、Evidence、StakeholderFocus、Interaction 或 Commitment。
+- Agent Job 的动作模式只允许 `read_only | draft | candidate`；不得自动外发、改阶段／Forecast 或直写正式业务对象。
 - 团队聚合只查询正式数据白名单，不先加载敏感正文再丢弃。
 
 ### 4.2 契约与迁移
@@ -113,9 +131,11 @@ flowchart LR
 
 唯一允许进入正式层的入口是用户直接提交的正式命令或 ReviewBatch 采纳事务。AI、连接器、巡检和方法论只能产出原始资料、草稿、候选或建议。
 
+Agent 运行是 Formal／Sales 之上的受控编排层，不成为第二真相源。`AgentJobDefinition` 固定任务、触发器、scope manifest、actionMode、证据要求、预算／超时和版本；`AgentRun` 记录逐次权限版本、输入／输出引用、模型／连接器版本、成本与失败原因。`RelationshipSignal` 和 `InterventionItem` 是可过期、可解释的派生读模型，不是 Relation、Evidence、Forecast 或方法论值。
+
 ## 6. Authority map 初始表
 
-`CORE-102` 必须把下表扩成可机读/可测试清单，并为每项登记消费者、影子比较、切换与停止条件。
+`CORE-102` 已把下表扩为可机读／可测试 authority map。自 `CORE-103` 起，每个迁移任务必须维护对应消费者、影子比较、切换与停止条件，不能只更新本文表格。
 
 | 逻辑字段 | 过渡期来源 | 目标来源 | 禁止事项 |
 |---|---|---|---|
@@ -258,15 +278,15 @@ flowchart LR
 #### SAAS-102｜两分钟快速记录
 
 - **主要文件：** 新 QuickCapture 组件、Commitment API、Customer lookup/create、交互测试。
-- **实现：** 首屏只强制客户、下一步文本、时间；matter/person/确认细节渐进补充；新客户可就地创建。
-- **验收：** 曹经理文案“周四 15:00 与客户交流方案”在两分钟内保存；无 Matter 也成功；失败不丢输入。
+- **实现：** 首屏只强制客户、下一步文本、时间；matter/person/确认细节渐进补充；新客户可就地创建。可选自然语言解析只能生成一张显示目标对象、字段和动作的确认草稿，用户提交后才调用正式命令。
+- **验收：** 曹经理文案“周四 15:00 与客户交流方案”在两分钟内保存；无 Matter 也成功；解析失败不丢输入；草稿未确认时 Customer/Commitment 零变化。
 - **回滚：** 入口 flag 关闭，数据仍是正式 Commitment，不回滚业务记录。
 
 #### SAAS-103｜Today 读模型
 
 - **主要文件：** 服务端 today repository/route、`app/src/lib/today.ts`、CustomerHub/新 Today 页面。
-- **实现：** 首层固定“待确认 / 待跟进 / 已完成”；排序由 confirmationDue、due、overdue 与无下一步驱动；G64111 缺口作为可选 provider，不进入通用排序必需项。
-- **验收：** 同一 resolver 范围；时区边界、全天日期、改期 version、空 matter 测试；来源可下钻。
+- **实现：** 首层固定“待确认 / 待跟进 / 已完成”；排序由 confirmationDue、due、overdue 与无下一步驱动；统一 `InterventionItem` 输出 reasonCode、用户解释、sourceRefs、observedAt、ruleVersion、建议动作和目标。G64111/关系缺口只作为后续可选 provider，不进入通用排序必需项。
+- **验收：** 同一 resolver 范围；时区边界、全天日期、改期 version、空 matter 测试；每项可解释并下钻到有权来源；新增 provider 不改变首层三类。
 
 #### SAAS-104｜确认和改期闭环
 
@@ -318,20 +338,36 @@ flowchart LR
 - **实现：** Candidate 以 sourceArtifactId/reviewBatchId 分组；预审不建 Interaction；采纳时确认活动类型/时间/归属，按 `reviewBatchId + acceptanceVersion` 幂等原子写正式数据和审计。
 - **验收：** 全驳回不建 Interaction；冲突返回逐项结果且未静默部分落库；重试不重复人物/边/Commitment/Interaction。
 
-#### SAAS-202～SAAS-211｜复杂销售工作流
+#### CORE-206｜受控 Agent Job 与运行审计
+
+- **主要文件：** `packages/domain-contracts` Agent 契约、server Agent policy/runner/repository、版本化 migration、预算与权限负向测试。
+- **实现：** 建立 `AgentJobDefinition`、`AgentRun` 和固定内置 Job registry；每个 Job 声明 trigger、scope manifest、`read_only | draft | candidate`、evidence policy、模型／连接器引用、预算、超时、重试和停用。每次运行重新执行 tenant、capability、effective-scope 与 sensitive ACL；candidate 只调用统一 Candidate helper。
+- **验收：** Job 停用和权限撤销在下一次运行立即生效；预算／超时／重试失败关闭；read_only/draft 无正式写路径；candidate 不绕过 ReviewBatch；自动外发、阶段／Forecast 更新和正式对象直写均被拒绝并审计。
+- **回滚：** 关闭 Agent capability 和触发器；保留 AgentRun 最小审计，不回滚已由用户采纳产生的正式业务记录。
+
+#### SAAS-202～SAAS-212｜复杂销售工作流
 
 | ID | 实现重点 | 关键验收 |
 |---|---|---|
-| SAAS-202 | 一张速审单展示来源原句、改前→改后、身份/关系默认不选、编辑与批量采纳 | 审核前正式数据零变化；失败项可重试 |
+| SAAS-202 | `post_meeting_extract` candidate Job 生成分组候选；一张速审单展示来源原句、改前→改后、身份/关系默认不选、编辑与批量采纳 | Job Card/Run 可查看；审核前正式数据零变化；失败项可重试 |
 | SAAS-203 | 飞书妙记链接/OAuth、文件上传接 SourceArtifact → ReviewBatch | 加密、幂等、ACL、抽取、降解/删除全链；不自建 ASR |
 | SAAS-204 | ResearchBriefSnapshot 按主体、来源段、抓取时间、失败/未知项保存 | 多主体未选择不生成确定结论；部分失败保留缺口 |
-| SAAS-205 | 拜访前简报 UI；人编 CuratedSummary 保留，旧 AI 摘要降兼容缓存 | 默认只有一个“拜访简报”权威入口 |
+| SAAS-205 | `pre_meeting_brief` read_only Job 与拜访前简报 UI；人编 CuratedSummary 保留，旧 AI 摘要降兼容缓存 | 默认只有一个简报权威入口；段落有来源／时间／未知项，Job 无正式写入 |
 | SAAS-206 | IntelligenceItem 区分 observed/reported/inferred；StakeholderFocus 独立 | Focus 不读写 primaryD；传闻不伪装 Evidence |
 | SAAS-207 | Hypothesis + Revision + supporting/contradicting EvidenceLink | 历史判断不覆盖；状态只建议、由用户确认 |
 | SAAS-208 | 图上区分正式/候选/推演，假设生成验证 Commitment 与复盘 | 不强化单向确认偏误；显示反证条件 |
-| SAAS-209 | 4–5 Matter 组合按待确认、无下一步、Focus 缺口、情报陈旧和高影响假设排序 | 每项可下钻到正式数据或来源 |
+| SAAS-212 | `relationship_radar` read_only/draft Job；按互动新鲜度、单线联系、角色覆盖、可见暖路径、证据与下一步生成 RelationshipSignal/InterventionItem | 不生成黑盒总分；每项有 reason/source/time/ruleVersion/action；来源不可下钻时不升高严重级别 |
+| SAAS-209 | 4–5 Matter 组合消费统一 InterventionItem，按待确认、无下一步、Focus/关系覆盖缺口、单线风险、情报陈旧和高影响假设排序 | 每项解释“为什么现在”、可下钻有权来源并生成行动草稿 |
 | SAAS-210 | 可选安装 G64111；无方法论销售工作流照常运行 | 两套 fixture 同过；无包不读专有字段 |
-| SAAS-211 | 曹经理完整个人旅程和 G4 安全门 | 真实妙记/文件一次；审核前零写正式；ACL 矩阵全绿 |
+| SAAS-211 | 曹经理完整个人旅程和 G4 安全门 | 真实妙记/文件一次；三类 Job 跑通；审核前零写正式；自动外发／正式越权写为 0；ACL 矩阵全绿 |
+
+三个首发 Job 的动作边界固定如下，不在 G4 开放自定义：
+
+| Job | 触发 | actionMode | 唯一允许输出 |
+|---|---|---|---|
+| `pre_meeting_brief` | 用户请求／获授权资料更新 | read_only | 带来源、时间、未知项的可再生 ResearchBriefSnapshot |
+| `post_meeting_extract` | SourceArtifact 就绪后用户触发或事件排队 | candidate | 统一 Candidate helper 下的 ReviewBatch 候选 |
+| `relationship_radar` | 用户请求／每日受控计划 | read_only/draft | 可解释 RelationshipSignal、InterventionItem 与未提交行动草稿 |
 
 ### G5｜团队经营与带教
 
@@ -345,10 +381,10 @@ flowchart LR
 
 | ID | 实现重点 | 关键验收 |
 |---|---|---|
-| SAAS-302 | RevenueTarget、ForecastEntry、SalesOutcomeRecord；版本和父实体校验 | 预计金额不冒充已签；旧字段只产待确认迁移候选 |
-| SAAS-303 | 固定单币种公式和 ForecastSnapshot 完整输入副本 | 混币/缺金额失败关闭；旧快照可重放 |
-| SAAS-304 | 团队组合与成员下钻 | 目标、已签、commit、best_case、缺口可解释并可追源 |
-| SAAS-305 | CoachingReview/ActionProposal → 接受/编辑/拒绝 → Commitment | AI 不自动发送；下属确认默认生效 |
+| SAAS-302 | RevenueTarget、ForecastEntry、SalesOutcomeRecord；版本和父实体校验；ForecastEvidenceCheck 区分结构硬错误与关系／证据软警告 | 金额／币种／日期错误失败关闭；无下一步、单线联系、关键角色缺口和证据陈旧只告警；用户继续时保存理由，不自动改 Forecast |
+| SAAS-303 | 固定单币种公式和 ForecastSnapshot 完整输入副本，保存校验规则版本、警告和 override 理由 | 混币/缺金额失败关闭；旧快照可重放；当时的警告依据可解释 |
+| SAAS-304 | 团队组合与成员下钻，消费正式可共享的 InterventionItem | 目标、已签、commit、best_case、缺口和关系／证据风险可解释并可追源；不读取敏感正文 |
+| SAAS-305 | CoachingReview/ActionProposal 引用具体差距／信号／来源 → 接受/编辑/拒绝 → Commitment | AI 不自动发送；下属确认默认生效；来源撤销后不泄露正文 |
 | SAAS-306 | entitlement、`commitment.assign`、离队/转移/撤销/降级审计 | 当前访问即时收回，历史快照仍可审计 |
 | CORE-301 | resolver 覆盖 list/ID/search/AI/export/aggregate；正式数据白名单 | 全入口相同结果；敏感 repository 未被聚合调用 |
 | SAAS-307 | 曹经理 + 两名下属 fixture | 区域缺口和一次指导闭环；viewer/跨租户负向测试 |
@@ -374,13 +410,13 @@ gap = max(target - signed - commit, 0)
 | CORE-402 | declarative-v1 规格：AST、类型、missing/null、精度、canonical serialization、错误码与 fixtures | 规格可独立评审；复杂度上限固定 |
 | CORE-403 | declarative-v1 compiler/evaluator：有限操作符、无网络/文件/时间/随机/循环 | 同输入/版本/引擎同结果；超限失败关闭 |
 | CORE-404 | engine registry 统一路由 G64111/declarative-v1 | G64111 不复制公式；现有 fixture/parity 全过 |
-| CORE-405 | Evaluation 保存完整 inputs/result/evidence/ACL/pack/engine/hash | 不依赖哈希猜输入；权限撤销不泄露正文 |
+| CORE-405 | Evaluation 保存完整 inputs/result/evidence/ACL/pack/engine/hash；允许新版本对既有已审核 Interaction/Evidence 生成新的并排快照 | 不依赖哈希猜输入；不覆盖历史事实、旧 Evaluation 或 active binding；权限撤销不泄露正文 |
 | CORE-406 | 迁移 compare/dry-run/COW/idempotent/CAS switch/rollback | 不可映射项人工处理；旧 binding 和快照完整 |
 
 #### SAAS-401～SAAS-403
 
 - **SAAS-401：** 表格式方法论中心，先支持字段、阶段、角色、核对清单和行动模板。
-- **SAAS-402：** 校验、试点、发布、弃用、绑定、评估、迁移和回滚 UI；规则编辑仅在 declarative-v1 规格批准后开放。
+- **SAAS-402：** 校验、试点、发布、弃用、绑定、评估、历史正式证据重评对比、迁移和回滚 UI；新快照默认不切 active binding，规则编辑仅在 declarative-v1 规格批准后开放。
 - **SAAS-403：** 用一个真实非 G64111 方法论 fixture 完整跑通，不修改代码/schema。
 
 ### G7｜兼容层收缩与 GA
@@ -440,10 +476,13 @@ cd server && npx tsc --noEmit && npm test && npm run schema:postgres:check
 - list/ID/search/AI/export/aggregate 同一 scope；
 - SourceArtifact creator、shared reader、reviewer、manager、viewer、撤销；
 - Candidate 批量冲突、重复 key、旧值改变、父实体归档；
+- Agent Job 停用、权限／Grant 撤销、跨租户输入、scope 缓存过期、预算／超时／重试、read_only/draft 正式写入、candidate 绕过 helper、外发与 Forecast／阶段修改；
+- RelationshipSignal 来源不可见／过期、规则版本变化、Matter 转移、single-threaded／coverage/warm-path 边界、无总分与高严重级来源下钻；
 - Commitment 改期并发、旧提醒、全天日期、DST、past_due 不自动 missed；
 - G64111 off 不读 primaryD/ADURC/pipeline/engageStage；
 - PDE off/on 与 G64111 off/on 四组合；
 - Forecast 混币、缺金额、缺日期、已转移 owner、归档 Matter；
+- Forecast 结构硬错误、关系／证据软警告、override 理由、自动改写为零；
 - Methodology published mutation、循环规则、超复杂度、跨租户引用、迁移冲突和回滚。
 
 ## 9. 数据迁移与恢复执行模板
@@ -479,14 +518,17 @@ R2 关注：
 - SourceArtifact 导入到 ReviewBatch 完成的时间；
 - 候选采纳/编辑/驳回分布；
 - 审核前正式数据误写数，目标为 0；
-- 有反证条件和验证 Commitment 的活跃 Hypothesis 比例。
+- 有反证条件和验证 Commitment 的活跃 Hypothesis 比例；
+- 关系信号展开／转 Commitment／忽略／过期分布，高严重级信号来源不可下钻数目标为 0；
+- 三类 Agent Job 成功率、耗时／成本、草稿采用率、Candidate 采纳／编辑／驳回率、停用后误触发数，以及正式越权写入／未授权外发数目标为 0。
 
 R3/R4 关注：
 
 - ForecastSnapshot 可下钻覆盖率和未计入原因；
+- ForecastEvidenceCheck 告警、override 理由和后续结果分布；
 - 指导被接受并转成 Commitment 的比例；
 - 已发布方法论版本、试点到发布转化和迁移冲突解决率；
-- 同版本评估重放差异数，目标为 0。
+- 同版本评估重放差异数目标为 0，新旧版本对同一历史正式证据的并排快照覆盖率。
 
 ## 11. 风险与停止条件
 
@@ -496,18 +538,21 @@ R3/R4 关注：
 - 需要通用核心读取 G64111 专有字段；
 - 新 Team 只能靠 member 租户全读实现；
 - ReviewBatch 无法在单事务内保证不重复和不部分静默提交；
+- 任一 Agent 需要绕过统一 Candidate／正式命令、自动外发、自动改阶段／Forecast 或扩大当前用户 scope 才能成立；
+- 高严重级 RelationshipSignal 无法给出 reason/source/time/ruleVersion，或必须依赖一个不可解释总分；
 - 原始转写或私密材料必须对经理默认开放；
 - migration 无法给出 dry-run、恢复或回滚；
 - declarative evaluator 需要任意代码或隐式当前时间；
 - 跨库一致性只能依赖 PostgreSQL 原生 enum/json；
 - 任一 Gate 预计范围或工期增长超过 30%。
 
-## 12. 首个实现任务的启动口令
+## 12. 当前下一任务与启动边界
 
-只有项目所有者完成以下三项后，才启动 `CORE-101`：
+`CORE-101/102` 已完成，唯一下一依赖任务是 `CORE-103`。启动仍以 `docs/商业版开发待办清单v1.md` 为准，并满足：
 
-1. 明确回复“批准 ADR-002”；
-2. 明确 `INT-502` 的处置；
-3. 明确允许开始 `CORE-101`。
+1. 清单中 `CORE-103` 保持 READY 且无其他 IN_PROGRESS；
+2. 记录 Owner、分支/worktree、开始时间、依赖和回滚点；
+3. 只实施 Opportunity 的 Matter 字段、生命周期／结果映射和版本化 migration，不夹带本次新增的 CORE-206／SAAS-212；
+4. 按 schema 任务要求完成 SQLite/PostgreSQL、dry-run、备份恢复和回滚验证。
 
-即使三项完成，`CORE-101` 也只做 App shell 零行为重构，不同时修改 schema、Candidate、通用 CRM 功能或部署。
+本次 2026-08-21 路线图修订只登记后续范围，不授权开始、并行或提前实现 G4 Agent／关系雷达任务，也不授权 push、merge main 或部署。
