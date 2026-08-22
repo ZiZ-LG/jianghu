@@ -4,8 +4,10 @@
 - **报告日期：** 2026-08-22
 - **起始基线：** `origin/main@0ec73d6fcf9a680efa9475c237dbfcfd1bc1849a`
 - **G2 收口 SHA：** `525b4bbfd07b19949c5dc2101e19954db6dd1c7a`
+- **PR 审计修复：** `3a2853d61bd51ec9769a6e0fb94362beda84d254`（仅 CI 部署夹具）
 - **实施分支：** `codex/g2-core-model-foundation`
 - **最终 main CI：** [GitHub Actions 32554125689](https://github.com/ZiZ-LG/jianghu/actions/runs/32554125689)，精确 SHA，12/12 jobs success
+- **PR 状态：** [#34](https://github.com/ZiZ-LG/jianghu/pull/34) 保持 `OPEN`；最新 head 的远端 CI 在 runner 分配前被 GitHub Actions 付款／预算门阻断，未合并
 - **部署状态：** 未部署；未接触生产数据、生产密钥或生产数据库
 
 ## 1. 决策摘要
@@ -37,7 +39,7 @@ CORE-103～CORE-114 均已在[商业版开发待办清单](商业版开发待办
 | CORE-111 | 方法论 Field/Stage/Role/Rule/Action 定义及实例值、评估、迁移运行基座 | `cc4b6a3`、`f61a4f0`、`3da0ecd`、`2e37d47` |
 | CORE-112 | G64111 storage binding、engineRef、唯一 adapter import 边界与无包 fixture | `54b9171`、`9f8de05`、`5501e87`、`771f2b2` |
 | CORE-113 | PdeDecisionContext、一次性影子迁移、PDE 阶段权威切换与 CI readiness 诊断 | `66d55d4`、`6343aca`、`915e982`、`3af76de` |
-| CORE-114 | G2 跨库、恢复、scope、算法、authority/no-fallback 最终阶段门 | `50dd95d`、`b05a93c`、`525b4bb` |
+| CORE-114 | G2 跨库、恢复、scope、算法、authority/no-fallback 最终阶段门；PR checkout 夹具修复 | `50dd95d`、`b05a93c`、`525b4bb`、`3a2853d` |
 
 每个任务均有包含任务 ID 的独立提交；详细开始时间、Owner、依赖、验证和回滚点见[商业版开发待办清单状态记录](商业版开发待办清单v1.md#8-状态更新记录)。
 
@@ -102,6 +104,8 @@ G2 新增八个版本化 PostgreSQL migration，并由 SQLite 升级脚本提供
 | Dependency audit | 五个工作区 full + production audit 均为 0 vulnerabilities |
 | 静态门 | `git diff --check`、密钥模式扫描、Compose config、shell syntax 均通过 |
 | 远端最终门 | [main Actions 32554125689](https://github.com/ZiZ-LG/jianghu/actions/runs/32554125689)，12/12 success |
+| PR checkout 回归 | `3a2853d` 本地完整运维演练 `POSTGRES_OPS_INTEGRATION_OK=1`；远端精确 head 验证待 GitHub Actions 账单门解除后重跑 |
+| WorkBuddy 离线兼容 | 销售包源码／装配产物 `score.py@6c54d6…` 通过 9/9；Mac mini 已安装副本 `bbe405…` 仍为 8/9，不得启用离线评分 |
 
 CORE-114 还修复了一个测试可重复性问题：跨租户 PDE Evidence fixture 由不存在的 tenantId＋固定 ID 改为真实外部租户＋UUID；同一 SQLite 测试库连续两次 6/6 通过，随后 Server 全量 430 tests 通过。
 
@@ -123,6 +127,7 @@ CORE-114 还修复了一个测试可重复性问题：跨租户 PDE Evidence fix
 | scoped 商业 tenant | 运行语义与测试已具备，但没有生产自动激活入口；启用仍需单独批准和租户级观测 |
 | legacy 消费者 | 明确留给 CORE-501；G3 不得顺手切换或删除 |
 | 企业 authoring/evaluator | G2 只有安全数据基座；G6 前不得开放完整企业 authoring 或 migration executor |
+| WorkBuddy 安装副本 | 交付源码已达 9/9，但 `~/.workbuddy` 仍是 8/9 旧版；更新安装包并重验前，联机只认江湖 MCP 权威分，离线预览保持禁用 |
 | Agent/关系雷达 | CORE-206、SAAS-212 保持 PENDING；本阶段没有提前实施 |
 | 部署 | 未执行；大陆公网仍受 ICP、域名、HTTPS 和生产审批约束 |
 
@@ -130,7 +135,9 @@ G3 只能从 `SAAS-101` 开始，并继续遵守一次一个 `IN_PROGRESS`、先
 
 ## 8. GitHub 交付与用户资料保护
 
-原执行计划要求在 CORE-114 后创建代码 PR 并等待批准。随后项目所有者在本任务中明确要求 `commit+push`、`合并 main`、`修复后合并`，因此实现分支已按授权 fast-forward 到 `main`；没有伪造一个无代码差异的实现 PR。本报告对应的 PR 只用于补齐 post-merge readiness 审计，不重演已经完成的代码合并。
+原执行计划要求在 CORE-114 后创建代码 PR 并等待批准。随后项目所有者在本任务中明确要求 `commit+push`、`合并 main`、`修复后合并`，因此 G2 实现分支已按授权 fast-forward 到 `main`；没有伪造一个无代码差异的实现 PR。[#34](https://github.com/ZiZ-LG/jianghu/pull/34) 原用于补齐 post-merge readiness 审计，不重演已经完成的代码合并。
+
+PR 事件验证暴露了一个 CI 夹具假设：`actions/checkout` 可只提供 detached 的合成 merge commit，而 fresh-install 夹具直接 clone 该工作区后会在无跟踪分支上执行 `git pull --ff-only`。`3a2853d` 只为临时部署仓建立隔离 bare origin 和跟踪分支，生产 `deploy-company-update.sh` 的快进拉取安全门保持不变。本地已重现修复前失败，并以完整 PostgreSQL 运维演练验证修复。PR 最新 head 仍必须在 GitHub runner 上通过全部检查后才能合并；付款／预算门不得当作绿色 CI 的替代证据。
 
 本地 `main`、`origin/main`、实施分支及远端实施分支在 G2 收口时均指向 `525b4bbfd07b19949c5dc2101e19954db6dd1c7a`。主工作区原有未跟踪资料保持未跟踪、未暂存、未提交，尤其包括：
 
