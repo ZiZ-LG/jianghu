@@ -30,6 +30,27 @@ describe('CRM field authority map', () => {
     for (const entry of CRM_FIELD_AUTHORITY) expect(listCrmFieldConsumers(entry).length).toBeGreaterThan(0);
   });
 
+  it('records completed G2 work as complete and routes remaining legacy cutovers to CORE-501', () => {
+    const planned = CRM_FIELD_AUTHORITY.flatMap((entry) => entry.consumers.planned);
+    expect(planned.join('\n')).not.toMatch(/\bCORE-(?:109|111|112|113)\b/);
+    expect(getCrmFieldAuthority('matter.owner')?.consumers.planned).toEqual([]);
+    expect(getCrmFieldAuthority('customer.category')?.consumers.planned).toEqual([
+      'CORE-501 customerType consumer cutover',
+    ]);
+    expect(getCrmFieldAuthority('matter.lifecycle')?.consumers.planned).toEqual([
+      'CORE-501 Opportunity.status consumer cutover',
+    ]);
+    expect(getCrmFieldAuthority('matter.current_stage')?.consumers.planned).toEqual([
+      'CORE-501 pipelineStage consumer cutover',
+    ]);
+    expect(getCrmFieldAuthority('g64111.engage_stage')?.consumers.planned).toEqual([
+      'CORE-501 engageStage consumer cutover',
+    ]);
+    expect(getCrmFieldAuthority('g64111.primary_d')?.consumers.planned).toEqual([
+      'CORE-501 primaryD consumer cutover',
+    ]);
+  });
+
   it('rejects independent malformed entries instead of self-validating the built-in constant', () => {
     expect(CrmAuthorityMapSchema.safeParse([{
       ...VALID_ENTRY,
@@ -78,7 +99,13 @@ describe('CRM field authority map', () => {
   });
 
   it('registers the exact executable customer.category consumer inventory', () => {
-    expect(listCrmFieldConsumers(getCrmFieldAuthority('customer.category')).sort()).toEqual([
+    const category = getCrmFieldAuthority('customer.category');
+    expect([
+      ...(category?.consumers.reads ?? []),
+      ...(category?.consumers.writes ?? []),
+      ...(category?.consumers.adapters ?? []),
+      ...(category?.consumers.migrations ?? []),
+    ].sort()).toEqual([
       'app/src/aiContext.ts',
       'app/src/api.ts',
       'app/src/components/CustomerHub.tsx',
@@ -114,7 +141,7 @@ describe('CRM field authority map', () => {
       'server/prisma/postgres/migrations/20260821000000_expand_matter_fields/migration.sql',
       'server/scripts/migrate-matter-fields.ts', 'server/scripts/upgrade-sqlite-schema.ts',
     ]));
-    expect(lifecycle?.consumers.planned).toEqual([]);
+    expect(lifecycle?.consumers.planned).toEqual(['CORE-501 Opportunity.status consumer cutover']);
     const participants = getCrmFieldAuthority('matter.participants');
     expect(participants).toMatchObject({
       currentAuthority: { kind: 'core_path', path: 'MatterParticipant' },

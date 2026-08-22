@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { getCrmFieldAuthority, listCrmFieldConsumers } from '../src/index.ts';
+import { getCrmFieldAuthority } from '../src/index.ts';
 
 const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
@@ -27,7 +27,12 @@ function findExecutableConsumers(token) {
 
 describe('CRM authority source inventory', () => {
   it('fails when an executable customerType reference is absent from the machine inventory', () => {
-    expect(listCrmFieldConsumers(getCrmFieldAuthority('customer.category')).sort())
-      .toEqual(findExecutableConsumers('customerType'));
+    const authority = getCrmFieldAuthority('customer.category');
+    expect([
+      ...(authority?.consumers.reads ?? []),
+      ...(authority?.consumers.writes ?? []),
+      ...(authority?.consumers.adapters ?? []),
+      ...(authority?.consumers.migrations ?? []),
+    ].sort()).toEqual(findExecutableConsumers('customerType'));
   });
 });

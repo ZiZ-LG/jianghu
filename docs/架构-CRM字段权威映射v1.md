@@ -33,7 +33,7 @@
 |---|---|---|---|---|---|---|
 | `customer.category` | `legacy_path: Account.customerType` | `core_path: Customer.categoryKey` | app store；server state/mutate/voice | 仅由销售 adapter 映射 1..4；通用消费者全部改读 V2 且 dry-run 经审核后切换 | 通用命令和页面不再读写 customerType；G7 在销售 adapter 消费者清零后收缩 | 通用命令要求 1..4；categoryKey 为空时 fallback |
 | `matter.lifecycle` | `legacy_path: Opportunity.status` | `core_path: Matter.lifecycleStatus + Matter.outcomeKey` | app store；server state/mutate/jobs | active/paused/won/lost 逐行影子映射；生命周期、重新打开审计和跨库 parity 通过后切换 | 通用写入只写生命周期与结果；G7 收缩旧 status | 把 won/lost 作为通用状态；两源 fallback |
-| `matter.owner` | `core_path: Matter.primaryOwnerUserId` | `core_path: Matter.primaryOwnerUserId` | server state；owner dry-run；owner-transfer command；CORE-109 resolver | Account.primaryOwnerUserId 只生成管理员待确认建议；同租户稳定 User.id、CAS、审计与转交命令旧 owner 即时撤权测试通过；全局读 scope 另走 CORE-109 | 所有正式 owner 写只走转交命令；scope policy 切换另走 CORE-109 门禁 | 自动复制 Account owner；按姓名／地区／OpportunityMember 推导 Matter owner；Matter owner 为空时 fallback |
+| `matter.owner` | `core_path: Matter.primaryOwnerUserId` | `core_path: Matter.primaryOwnerUserId` | server state；owner dry-run；owner-transfer command；EffectiveResourceScope resolver | Account.primaryOwnerUserId 只生成管理员待确认建议；同租户稳定 User.id、CAS、审计与转交命令旧 owner 即时撤权测试通过；CORE-109 已把读取范围收敛到统一 resolver | 所有正式 owner 写只走转交命令；生产启用 scoped policy 仍需单独批准 | 自动复制 Account owner；按姓名／地区／OpportunityMember 推导 Matter owner；Matter owner 为空时 fallback |
 | `tenant.data_scope` | `core_path: Tenant.dataScopePolicy + EffectiveResourceScope` | 同当前权威 | resolver；state；MCP；AI/strategy；advisor；PDE；Inbox；curated；transcript/job；repair/person merge | legacy owner/admin/member 与 viewer parity、scoped Customer/Matter 集合、owner transfer、角色降级、未知 policy/actor 删除和跨入口 ID parity 全部通过；生产启用 scoped 仍须单独批准 | 所有在线读取先取唯一集合；机器消费者 `planned=[]`；未来 Team/Grant/正文 ACL 只与之取交集 | 未知值回退租户共享；按 JWT 旧角色／姓名／地区／OpportunityMember 授权；partial Customer 返回详情；scoped 租户回滚到旧代码 |
 | `matter.current_stage` | `legacy_path: Opportunity.pipelineStage` | `methodology_value: MethodologyStageState` | AI context；OpportunityForm；server state/AI | 已绑定销售 Matter 做 binding parity；未绑定时明确显示“未配置” | 组合页、通用 UI、AI 不再读 pipelineStage；G7 收缩 | 与 OppStage 或 MethodologyStageState fallback 双读 |
 | `g64111.engage_stage` | `legacy_path: Opportunity.engageStage` | `methodology_value: MethodologyValue(g64111.engage_stage)` | gaps；server AI/WeCom；G64111 engine | 仅 G64111 adapter 比较；fixtures 与 server parity 通过后切换 | 仅 adapter 可读旧字段；G7 在 legacy binding 消费者清零后收缩 | 进入通用 Matter；PDE 继续读取该值 |
@@ -44,6 +44,20 @@
 | `sales.outcome` | `legacy_path: Opportunity.status + expectedAmountW` | `core_path: SalesOutcomeRecord` | server state；G5 forecast assembler | 对 won 行列出缺金额／日期／币种原因，用户确认后写正式结果 | 实绩只读 SalesOutcomeRecord；G7 完成迁移后收缩 | 用 won＋预计金额推断已签；静默接受缺失输入 |
 | `matter.participants` | `core_path: MatterParticipant` | `core_path: MatterParticipant` | app store；server state/mutate/opp/suggest/personMerge | 已按 OppRole＋OpportunityMember 去重并校验 tenant／Matter／Person／Customer 父树；SQLite 备份恢复、PostgreSQL 原子 migration、legacy visibility 与开放 Relation.kind 回归通过 | 通用读写只用 MatterParticipant；OppRole 仅保留方法论角色、OpportunityMember 仅保留旧可见性；G7 再评估旧表收缩 | ADURC 兼任参与关系；OpportunityMember 兼任真相源；切换后 fallback 双读 |
 | `commitment.record` | `core_path: 同一 PlanAction 行的通用 Commitment 字段` | `core_path: 同一 PlanAction 行的通用 Commitment 字段` | 通用 command/state/Today/jobs/patrol/WeCom；旧 App/store/StrategyCard 为销售 Matter adapter | CORE-106 初始 parity、CORE-107 幂等命令与 CORE-108 消费者清单均通过；客户级行只进入 `commitments`，旧 Action/StrategyCard 失败关闭；改期/确认/反馈均使用 version＋scheduleVersion，巡检只写 Reminder | `opportunityId` 已放宽；客户级读写只用通用字段；旧 PlanAction 入口继续强制 Matter 且不能看见/修改客户级行；G7 再收缩旧命令，物理表名可保留 | 新建第二主表；长期双写或 fallback 双读；伪造 Matter；旧 adapter 绕过通用 version；用 createdBy、姓名或旧时段猜测负责人/精确时间 |
+
+### 3.1 CORE-114 消费者剩余项审计
+
+CORE-114 不执行新的权威切换，只把已经完成的 G2 任务从机器清单的 `planned` 中移除，并把仍需清零的 legacy 消费者归到后续唯一任务。每一行仍只有一个 `currentAuthority`；`targetAuthority` 不是运行时备用读取源。
+
+| 逻辑字段 | 当前唯一读取／写入源 | 仍存消费者 | 后续任务 |
+|---|---|---|---|
+| `customer.category` | `Account.customerType` | 已登记的 App／Server 读写、adapter 与 migration | `CORE-501 customerType consumer cutover` |
+| `matter.lifecycle` | `Opportunity.status` | 已登记的状态、AI、PDE、repair 与 migration 消费者 | `CORE-501 Opportunity.status consumer cutover` |
+| `matter.current_stage` | `Opportunity.pipelineStage` | 已登记的组合页、AI、MCP、state、写入与 migration 消费者 | `CORE-501 pipelineStage consumer cutover` |
+| `g64111.engage_stage` | `Opportunity.engageStage` | 已登记的 G64111 页面、服务、adapter、写入与 migration 消费者；PDE 不在其中 | `CORE-501 engageStage consumer cutover` |
+| `g64111.primary_d` | `Opportunity.primaryDPersonId` | 已登记的 G64111 页面、服务、adapter 与写入消费者 | `CORE-501 primaryD consumer cutover` |
+
+`matter.owner`、`tenant.data_scope`、`pde.decision_stage`、`matter.participants`、`commitment.record` 的 G2 建设项均已完成，机器 `planned=[]`。`stakeholder.focus`、`sales.forecast`、`sales.outcome` 的 SAAS-206/208/302/303 属于后续新增能力，不是 G2 fallback；它们保持显式 PENDING，不能被当前 legacy 值自动填充。
 
 ## 4. 切换记录模板
 
