@@ -57,6 +57,7 @@ export async function clearTestTenant(client: PrismaClient, tenantId: string): P
     client.methodologyFieldDefinition.deleteMany({ where: { tenantId } }),
     client.methodologyPackVersion.deleteMany({ where: { tenantId } }),
     client.methodologyPack.deleteMany({ where: { tenantId } }),
+    client.pdeDecisionContext.deleteMany({ where: { tenantId } }),
     client.eVSnapshot.deleteMany({ where: { tenantId } }),
     client.signalCatalog.deleteMany({ where: { tenantId } }),
     client.actionCatalog.deleteMany({ where: { tenantId } }),

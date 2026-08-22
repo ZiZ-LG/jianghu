@@ -444,4 +444,49 @@ describe('PostgreSQL schema delivery', () => {
     expect(packageJson.scripts?.['migrate:methodology-data-report']).toBeTruthy();
     expect(packageJson.scripts?.['migrate:methodology-data-verify']).toBeTruthy();
   });
+
+  it('adds the CORE-113 tenant-scoped PDE decision context with shadow parity and recovery gates', async () => {
+    const migration = await read('prisma/postgres/migrations/20260821070000_add_pde_decision_context/migration.sql').catch(() => '');
+    const schema = await read('prisma/postgres/schema.prisma');
+    const preContextSchema = await read('prisma/postgres/legacy/20260821_pre_core113.prisma').catch(() => '');
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const schemaState = await read('scripts/postgres-pde-context-schema-state.ts').catch(() => '');
+    const migrationScript = await read('scripts/migrate-pde-decision-context.ts').catch(() => '');
+    const sqliteUpgrade = await read('scripts/upgrade-sqlite-schema.ts');
+    const packageJson = JSON.parse(await read('package.json')) as { scripts?: Record<string, string> };
+
+    expect(migration.trimStart().startsWith('BEGIN;')).toBe(true);
+    expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(migration).toContain('LOCK TABLE "Opportunity"');
+    expect(migration).toContain('CREATE TABLE "PdeDecisionContext"');
+    expect(migration).toContain('FOREIGN KEY ("tenantId", "opportunityId")');
+    expect(migration).toContain('FOREIGN KEY ("tenantId", "decisionProfileRef")');
+    expect(migration).toContain("WHEN '预算批复' THEN 'budget_approval'");
+    expect(migration).toContain("ELSE 'initiation'");
+    expect(migration).toContain('PDE decision context backfill parity failed');
+
+    expect(schema).toMatch(/model PdeDecisionContext \{[\s\S]*?stageKey\s+String/);
+    expect(schema).toMatch(/model PdeDecisionContext \{[\s\S]*?decisionProfileRef\s+String\?/);
+    expect(schema).toMatch(/model PdeDecisionContext \{[\s\S]*?@@unique\(\[tenantId, opportunityId\]\)/);
+    expect(preContextSchema).not.toContain('model PdeDecisionContext');
+    expect(preContextSchema).toContain('model MethodologyMigrationRun');
+
+    expect(deployScript).toContain('PRE_PDE_CONTEXT_SCHEMA=prisma/postgres/legacy/20260821_pre_core113.prisma');
+    expect(deployScript).toContain('PDE_CONTEXT_MIGRATION=20260821070000_add_pde_decision_context');
+    expect(deployScript).toContain('recover_incomplete_pde_context_migration');
+    expect(deployScript).toContain('adopt_existing_pde_context_schema_if_safe');
+    expect(deployScript.lastIndexOf('migrate:pde-context-verify'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy'));
+    expect(schemaState).toContain("process.stdout.write('legacy')");
+    expect(schemaState).toContain("process.stdout.write('expanded')");
+    expect(schemaState).toContain("process.stdout.write('partial')");
+    expect(migrationScript).toContain('--dry-run');
+    expect(migrationScript).toContain('--apply');
+    expect(migrationScript).toContain('--verify');
+    expect(sqliteUpgrade).toContain('inspectPdeDecisionContextSchemaState');
+    expect(sqliteUpgrade).toContain("['tsx', 'scripts/migrate-pde-decision-context.ts', '--verify']");
+    expect(packageJson.scripts?.['migrate:pde-context-report']).toBeTruthy();
+    expect(packageJson.scripts?.['migrate:pde-context-apply']).toBeTruthy();
+    expect(packageJson.scripts?.['migrate:pde-context-verify']).toBeTruthy();
+  });
 });

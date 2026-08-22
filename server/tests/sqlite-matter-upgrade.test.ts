@@ -66,6 +66,7 @@ async function createLegacyFixture(databasePath: string, databaseUrl: string): P
 
   const client = new PrismaClient({ datasourceUrl: databaseUrl });
   try {
+    await client.$executeRawUnsafe('DROP TABLE "PdeDecisionContext"');
     for (const table of [...methodologyTables].reverse()) {
       await client.$executeRawUnsafe(`DROP TABLE "${table}"`);
     }
@@ -194,7 +195,7 @@ async function createLegacyFixture(databasePath: string, databaseUrl: string): P
   }
 }
 
-describe('CORE-103/105/106/108/109/110 SQLite schema upgrade', () => {
+describe('CORE-103/105/106/108/109/110/111/113 SQLite schema upgrade', () => {
   it('initializes a fresh SQLite database through the standard db:push wrapper', async () => {
     const directory = await mkdtemp(resolve('prisma/.matter-fresh-test-'));
     const relativeDirectory = basename(directory);
@@ -233,6 +234,10 @@ describe('CORE-103/105/106/108/109/110 SQLite schema upgrade', () => {
       await expect(client.methodologyPackVersion.count()).resolves.toBe(0);
       await expect(client.methodologyBinding.count()).resolves.toBe(0);
       await expect(client.methodologyPilotAssignment.count()).resolves.toBe(0);
+      await expect(client.pdeDecisionContext.count()).resolves.toBe(0);
+      await expect(client.dataMigrationState.findUnique({
+        where: { key: 'CORE-113-pde-decision-context-shadow-v1' },
+      })).resolves.toMatchObject({ key: 'CORE-113-pde-decision-context-shadow-v1' });
       await expect(readdir(join(directory, 'backups'))).rejects.toThrow();
     } finally {
       await client?.$disconnect();
@@ -307,6 +312,15 @@ describe('CORE-103/105/106/108/109/110 SQLite schema upgrade', () => {
       ]);
       await expect(listMethodologyTables(upgradedClient)).resolves.toHaveLength(methodologyTables.length);
       await expect(upgradedClient.methodologyBinding.count()).resolves.toBe(0);
+      await expect(upgradedClient.pdeDecisionContext.findMany({
+        orderBy: { opportunityId: 'asc' },
+        select: { opportunityId: true, stageKey: true, decisionProfileRef: true, source: true },
+      })).resolves.toEqual([
+        { opportunityId: 'sqlite-upgrade-active', stageKey: 'initiation', decisionProfileRef: null, source: 'legacy_shadow' },
+        { opportunityId: 'sqlite-upgrade-lost', stageKey: 'initiation', decisionProfileRef: null, source: 'legacy_shadow' },
+        { opportunityId: 'sqlite-upgrade-paused', stageKey: 'initiation', decisionProfileRef: null, source: 'legacy_shadow' },
+        { opportunityId: 'sqlite-upgrade-won', stageKey: 'initiation', decisionProfileRef: null, source: 'legacy_shadow' },
+      ]);
       const upgradedPlanColumns = await upgradedClient.$queryRawUnsafe<Array<{ name: string; notnull: number }>>(
         'PRAGMA table_info("PlanAction")',
       );
@@ -353,6 +367,10 @@ describe('CORE-103/105/106/108/109/110 SQLite schema upgrade', () => {
       );
       expect(restoredParticipantTables).toEqual([]);
       await expect(listMethodologyTables(restoredClient)).resolves.toEqual([]);
+      const restoredPdeContextTables = await restoredClient.$queryRawUnsafe<Array<{ name: string }>>(
+        `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'PdeDecisionContext'`,
+      );
+      expect(restoredPdeContextTables).toEqual([]);
       const restoredStatuses = await restoredClient.$queryRawUnsafe<Array<{ status: string }>>(
         'SELECT status FROM "Opportunity" ORDER BY status',
       );
@@ -382,6 +400,7 @@ describe('CORE-103/105/106/108/109/110 SQLite schema upgrade', () => {
         select: { status: true, lifecycleStatus: true, outcomeKey: true },
       })).resolves.toEqual({ status: 'won', lifecycleStatus: 'active', outcomeKey: null });
       await expect(client.matterParticipant.count()).resolves.toBe(0);
+      await expect(client.pdeDecisionContext.count()).resolves.toBe(0);
       await client.$disconnect();
       client = null;
 
@@ -397,6 +416,7 @@ describe('CORE-103/105/106/108/109/110 SQLite schema upgrade', () => {
       const backups = (await readdir(join(directory, 'backups'))).filter((name) => name.endsWith('.bak'));
       expect(backups).toHaveLength(1);
       await expect(client.matterParticipant.count()).resolves.toBe(2);
+      await expect(client.pdeDecisionContext.count()).resolves.toBe(4);
       await expect(client.planAction.findUniqueOrThrow({
         where: { id: 'sqlite-upgrade-action-planned' },
         select: { localDate: true, executionStatus: true, source: true },
@@ -589,6 +609,33 @@ describe('CORE-103/105/106/108/109/110 SQLite schema upgrade', () => {
       expect(failed.status).not.toBe(0);
       expect(`${failed.stdout}\n${failed.stderr}`).toContain(
         'partial methodology data foundation detected; restore the latest backup before retrying',
+      );
+    } finally {
+      await client?.$disconnect();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('fails closed when only part of the PDE decision context schema exists', async () => {
+    const directory = await mkdtemp(resolve('prisma/.pde-context-partial-test-'));
+    const relativeDirectory = basename(directory);
+    const databaseUrl = `file:./${relativeDirectory}/partial.db`;
+    let client: PrismaClient | null = null;
+    try {
+      run(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], databaseUrl);
+      client = new PrismaClient({ datasourceUrl: databaseUrl });
+      await client.$executeRawUnsafe('ALTER TABLE "PdeDecisionContext" DROP COLUMN "source"');
+      await client.$disconnect();
+      client = null;
+
+      const failed = spawnSync(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], {
+        cwd: serverRoot,
+        encoding: 'utf8',
+        env: { ...process.env, DATABASE_URL: databaseUrl, JIANGHU_SKIP_PRISMA_GENERATE: '1' },
+      });
+      expect(failed.status).not.toBe(0);
+      expect(`${failed.stdout}\n${failed.stderr}`).toContain(
+        'partial PDE decision context detected; restore the latest backup before retrying',
       );
     } finally {
       await client?.$disconnect();

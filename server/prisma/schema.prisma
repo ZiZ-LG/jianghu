@@ -199,6 +199,7 @@ model Opportunity {
   methodologyValues          MethodologyValue[]
   methodologyEvaluations     MethodologyEvaluation[]
   methodologyMigrationRuns   MethodologyMigrationRun[]
+  pdeDecisionContext         PdeDecisionContext?
 
   @@unique([tenantId, id])
   @@unique([tenantId, accountId, externalRef])
@@ -274,7 +275,7 @@ model MethodologyBinding {
   versionId          String
   methodologyVersion MethodologyPackVersion       @relation(fields: [tenantId, packId, versionId], references: [tenantId, packId, id], onDelete: Restrict)
   decisionProfileRef String?
-  decisionProfile    IndustryPack?                @relation(fields: [decisionProfileRef], references: [id], onDelete: Restrict)
+  decisionProfile    IndustryPack?                @relation("MethodologyDecisionProfile", fields: [decisionProfileRef], references: [id], onDelete: Restrict)
   createdByUserId    String
   createdAt          DateTime                     @default(now())
   pilotBaselineFor   MethodologyPilotAssignment[] @relation("MethodologyPilotBaseline")
@@ -1259,7 +1260,27 @@ model ScoringItemState {
   @@index([tenantId, opportunityId])
 }
 
-// 商机级 PDE 配置（彩池/成本/竞争系数；stage 用 Opportunity.engageStage 映射，不重复存）
+// PDE 决策上下文是独立于任何方法论包的显式输入权威。解绑 G64111 不得删除本行。
+model PdeDecisionContext {
+  id                 String        @id
+  tenantId           String
+  opportunityId      String
+  opportunity        Opportunity   @relation(fields: [tenantId, opportunityId], references: [tenantId, id], onDelete: Restrict)
+  stageKey           String
+  decisionProfileRef String?
+  decisionProfile    IndustryPack? @relation("PdeDecisionProfile", fields: [tenantId, decisionProfileRef], references: [tenantId, id], onDelete: Restrict)
+  source             String        @default("legacy_shadow")
+  version            Int           @default(0)
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, opportunityId])
+  @@index([tenantId, decisionProfileRef])
+  @@index([tenantId, stageKey])
+}
+
+// 商机级 PDE 配置（彩池/成本/竞争系数；stage 由 PdeDecisionContext 独立保存）
 model DealPdeConfig {
   id              String   @id // pde_xxx
   tenantId        String
@@ -1283,8 +1304,10 @@ model IndustryPack {
   payload             String               @default("{}") // 五个 seed 文件的合并快照（JSON 文本）
   active              Boolean              @default(true)
   createdAt           DateTime             @default(now())
-  methodologyBindings MethodologyBinding[]
+  methodologyBindings MethodologyBinding[] @relation("MethodologyDecisionProfile")
+  pdeDecisionContexts PdeDecisionContext[] @relation("PdeDecisionProfile")
 
+  @@unique([tenantId, id])
   @@unique([tenantId, packKey, schemaVersion])
 }
 

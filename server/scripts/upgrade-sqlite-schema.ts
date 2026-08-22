@@ -7,6 +7,7 @@ type ParticipantSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial
 type CommitmentSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
 type MethodologySchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
 type MethodologyDataSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
+type PdeDecisionContextSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
 
 const MATTER_COLUMNS = [
   'kind',
@@ -182,6 +183,29 @@ async function inspectMethodologyDataSchemaState(prisma: {
   return 'partial';
 }
 
+async function inspectPdeDecisionContextSchemaState(prisma: {
+  $queryRawUnsafe<T>(query: string): Promise<T>;
+}): Promise<PdeDecisionContextSchemaState> {
+  const baseTables = await prisma.$queryRawUnsafe<Array<{ name: string }>>(
+    `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'Opportunity'`,
+  );
+  if (baseTables.length === 0) return 'uninitialized';
+  const tables = await prisma.$queryRawUnsafe<Array<{ name: string }>>(
+    `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'PdeDecisionContext'`,
+  );
+  if (tables.length === 0) return 'legacy';
+  const columns = await prisma.$queryRawUnsafe<Array<{ name: string }>>(
+    `PRAGMA table_info("PdeDecisionContext")`,
+  );
+  const expected = new Set([
+    'id', 'tenantId', 'opportunityId', 'stageKey', 'decisionProfileRef',
+    'source', 'version', 'createdAt', 'updatedAt',
+  ]);
+  return columns.length === expected.size && columns.every((column) => expected.has(column.name))
+    ? 'expanded'
+    : 'partial';
+}
+
 async function createConsistentBackup(
   prisma: { $executeRawUnsafe(query: string): Promise<number> },
   databasePath: string,
@@ -206,6 +230,7 @@ let participantState: ParticipantSchemaState;
 let commitmentState: CommitmentSchemaState;
 let methodologyState: MethodologySchemaState;
 let methodologyDataState: MethodologyDataSchemaState;
+let pdeDecisionContextState: PdeDecisionContextSchemaState;
 let backupPath: string | null = null;
 let schemaChanges = false;
 let matterBackfillRequired = false;
@@ -213,6 +238,8 @@ let participantBackfillRequired = false;
 let commitmentBackfillRequired = false;
 let methodologyExpansionRequired = false;
 let methodologyDataExpansionRequired = false;
+let pdeDecisionContextExpansionRequired = false;
+let pdeDecisionContextBackfillRequired = false;
 
 try {
   state = await inspectSchemaState(prisma);
@@ -220,6 +247,7 @@ try {
   commitmentState = await inspectCommitmentSchemaState(prisma);
   methodologyState = await inspectMethodologySchemaState(prisma);
   methodologyDataState = await inspectMethodologyDataSchemaState(prisma);
+  pdeDecisionContextState = await inspectPdeDecisionContextSchemaState(prisma);
   if (state === 'partial') {
     throw new Error('partial Matter column expansion detected; restore the latest backup before retrying');
   }
@@ -234,6 +262,9 @@ try {
   }
   if (methodologyDataState === 'partial') {
     throw new Error('partial methodology data foundation detected; restore the latest backup before retrying');
+  }
+  if (pdeDecisionContextState === 'partial') {
+    throw new Error('partial PDE decision context detected; restore the latest backup before retrying');
   }
   if (state === 'legacy') {
     run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-matter-fields.ts', '--dry-run'], url);
@@ -310,8 +341,22 @@ try {
   } else {
     run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/check-methodology-data.ts', '--verify'], url);
   }
+  if (pdeDecisionContextState === 'uninitialized') {
+    pdeDecisionContextExpansionRequired = true;
+    pdeDecisionContextBackfillRequired = true;
+  } else if (pdeDecisionContextState === 'legacy') {
+    run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-pde-decision-context.ts', '--dry-run'], url);
+    pdeDecisionContextExpansionRequired = true;
+    pdeDecisionContextBackfillRequired = true;
+  } else {
+    const { hasPdeDecisionContextMigrationMarker } = await import('../src/pde/decisionContextMigration.js');
+    if (!(await hasPdeDecisionContextMigrationMarker(prisma))) {
+      run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-pde-decision-context.ts', '--dry-run'], url);
+      pdeDecisionContextBackfillRequired = true;
+    }
+  }
   schemaChanges = state === 'uninitialized' ? true : schemaHasChanges(url);
-  if (state !== 'uninitialized' && (schemaChanges || matterBackfillRequired || participantBackfillRequired || commitmentBackfillRequired || methodologyExpansionRequired || methodologyDataExpansionRequired)) {
+  if (state !== 'uninitialized' && (schemaChanges || matterBackfillRequired || participantBackfillRequired || commitmentBackfillRequired || methodologyExpansionRequired || methodologyDataExpansionRequired || pdeDecisionContextExpansionRequired || pdeDecisionContextBackfillRequired)) {
     backupPath = await createConsistentBackup(prisma, databasePath);
   }
 } finally {
@@ -340,6 +385,10 @@ run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-c
 run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-commitment-fields.ts', '--verify'], url);
 run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/check-methodology-foundation.ts', '--verify'], url);
 run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/check-methodology-data.ts', '--verify'], url);
+if (pdeDecisionContextBackfillRequired) {
+  run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-pde-decision-context.ts', '--apply'], url);
+}
+run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-pde-decision-context.ts', '--verify'], url);
 
 console.log(JSON.stringify({
   ok: true,
@@ -348,11 +397,14 @@ console.log(JSON.stringify({
   commitmentStateBefore: commitmentState,
   methodologyStateBefore: methodologyState,
   methodologyDataStateBefore: methodologyDataState,
+  pdeDecisionContextStateBefore: pdeDecisionContextState,
   schemaChanges,
   matterBackfillRequired,
   participantBackfillRequired,
   commitmentBackfillRequired,
   methodologyExpansionRequired,
   methodologyDataExpansionRequired,
+  pdeDecisionContextExpansionRequired,
+  pdeDecisionContextBackfillRequired,
   backupPath,
 }, null, 2));

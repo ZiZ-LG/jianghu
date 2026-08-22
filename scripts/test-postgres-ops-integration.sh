@@ -423,6 +423,78 @@ methodology_data_incomplete_after_adoption=$(docker compose -p "$COMPOSE_PROJECT
 [[ "$methodology_data_incomplete_after_adoption" == 0 ]]
 echo "INTERRUPTED_METHODOLOGY_DATA_AFTER_COMMIT_ADOPTION_OK=1"
 
+# CORE-113 materializes the legacy PDE stage shadow in the same PostgreSQL
+# transaction as its tenant-scoped context table. Exercise rollback/replay and
+# commit-before-history adoption from the exact pre-CORE-113 schema.
+pde_context_db=jianghu_pde_context
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$pde_context_db"
+POSTGRES_DB="$pde_context_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npx prisma db push --schema prisma/postgres/legacy/20260821_pre_core113.prisma --skip-generate' >/dev/null
+POSTGRES_DB="$pde_context_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint npx server \
+  prisma migrate resolve --applied 20260715000000_baseline \
+  --schema prisma/postgres/schema.prisma >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$pde_context_db" -c \
+  "INSERT INTO \"DataMigrationState\" (key, details) VALUES
+     ('CORE-105-matter-participant-backfill-v1', '{}'),
+     ('CORE-106-commitment-backfill-v1', '{}'),
+     ('CORE-108-commitment-consumer-cutover-v1', '{}');
+   INSERT INTO \"Tenant\" (id,name) VALUES
+     ('pde-context-tenant','PDE Context Tenant'),
+     ('pde-context-foreign','PDE Context Foreign');
+   INSERT INTO \"Account\" (id,\"tenantId\",name,\"customerType\") VALUES
+     ('pde-context-account','pde-context-tenant','PDE Account',1),
+     ('pde-context-foreign-account','pde-context-foreign','Foreign PDE Account',1);
+   INSERT INTO \"Opportunity\"
+     (id,\"tenantId\",\"accountId\",name,\"customerType\",\"pipelineStage\",\"engageStage\") VALUES
+     ('pde-context-known','pde-context-tenant','pde-context-account','Known',1,'线索','预算批复'),
+     ('pde-context-unknown','pde-context-tenant','pde-context-account','Unknown',1,'legacy','discover'),
+     ('pde-context-foreign-matter','pde-context-foreign','pde-context-foreign-account','Foreign',1,'线索','招采执行');
+   INSERT INTO \"IndustryPack\"
+     (id,\"tenantId\",\"packKey\",\"schemaVersion\",payload,active) VALUES
+     ('pde-context-profile','pde-context-tenant','digital-energy','1.1','{}',true);
+   INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+   VALUES ('int-pde-context-before-commit', repeat('0', 64),
+     '20260821070000_add_pde_decision_context', CURRENT_TIMESTAMP, 0);" >/dev/null
+POSTGRES_DB="$pde_context_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+pde_context_rows_after_retry=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$pde_context_db" -tAc \
+  "SELECT count(*) FROM \"PdeDecisionContext\"" | tr -d '[:space:]')
+pde_context_parity_after_retry=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$pde_context_db" -tAc \
+  "SELECT count(*) FROM \"PdeDecisionContext\"
+    WHERE (\"opportunityId\" = 'pde-context-known' AND \"stageKey\" = 'budget_approval' AND \"decisionProfileRef\" = 'pde-context-profile')
+       OR (\"opportunityId\" = 'pde-context-unknown' AND \"stageKey\" = 'initiation' AND \"decisionProfileRef\" = 'pde-context-profile')
+       OR (\"opportunityId\" = 'pde-context-foreign-matter' AND \"stageKey\" = 'tender_execution' AND \"decisionProfileRef\" IS NULL)" | tr -d '[:space:]')
+pde_context_marker_after_retry=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$pde_context_db" -tAc \
+  "SELECT count(*) FROM \"DataMigrationState\" WHERE key = 'CORE-113-pde-decision-context-shadow-v1'" | tr -d '[:space:]')
+pde_context_rolled_back_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$pde_context_db" -tAc \
+  "SELECT count(*) FROM \"_prisma_migrations\"
+   WHERE migration_name = '20260821070000_add_pde_decision_context' AND rolled_back_at IS NOT NULL" | tr -d '[:space:]')
+[[ "$pde_context_rows_after_retry" == 3 ]]
+[[ "$pde_context_parity_after_retry" == 3 ]]
+[[ "$pde_context_marker_after_retry" == 1 ]]
+[[ "$pde_context_rolled_back_count" == 1 ]]
+echo "INTERRUPTED_PDE_CONTEXT_BEFORE_COMMIT_RETRY_OK=1"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$pde_context_db" -c \
+  "DELETE FROM \"_prisma_migrations\"
+    WHERE migration_name = '20260821070000_add_pde_decision_context' AND finished_at IS NOT NULL;
+   INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+   VALUES ('int-pde-context-after-commit', repeat('0', 64),
+     '20260821070000_add_pde_decision_context', CURRENT_TIMESTAMP, 0);" >/dev/null
+POSTGRES_DB="$pde_context_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+pde_context_applied_after_adoption=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$pde_context_db" -tAc \
+  "SELECT count(*) FROM \"_prisma_migrations\"
+   WHERE migration_name = '20260821070000_add_pde_decision_context'
+     AND finished_at IS NOT NULL AND rolled_back_at IS NULL" | tr -d '[:space:]')
+pde_context_incomplete_after_adoption=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$pde_context_db" -tAc \
+  "SELECT count(*) FROM \"_prisma_migrations\"
+   WHERE migration_name = '20260821070000_add_pde_decision_context'
+     AND finished_at IS NULL AND rolled_back_at IS NULL" | tr -d '[:space:]')
+[[ "$pde_context_applied_after_adoption" == 1 ]]
+[[ "$pde_context_incomplete_after_adoption" == 0 ]]
+echo "INTERRUPTED_PDE_CONTEXT_AFTER_COMMIT_ADOPTION_OK=1"
+
 # A duplicate tenant-local owner name must roll the bridge transaction back.
 # After data repair, the same database must resume and complete safely.
 ambiguous_db=jianghu_owner_ambiguous

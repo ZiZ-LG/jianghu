@@ -9,6 +9,7 @@ PRE_COMMITMENT_CUTOVER_SCHEMA=prisma/postgres/legacy/20260821_pre_core108.prisma
 PRE_SCOPE_SCHEMA=prisma/postgres/legacy/20260821_pre_core109.prisma
 PRE_METHODOLOGY_SCHEMA=prisma/postgres/legacy/20260821_pre_core110.prisma
 PRE_METHODOLOGY_DATA_SCHEMA=prisma/postgres/legacy/20260821_pre_core111.prisma
+PRE_PDE_CONTEXT_SCHEMA=prisma/postgres/legacy/20260821_pre_core113.prisma
 PRE_BRIDGE_MIGRATIONS='20260715000000_baseline 20260715010000_hash_command_run_idempotency_keys 20260715020000_add_person_created_at'
 BRIDGE_MIGRATION=20260715030000_adopt_pre_int501_schema
 MATTER_MIGRATION=20260821000000_expand_matter_fields
@@ -18,6 +19,7 @@ COMMITMENT_CUTOVER_MIGRATION=20260821030000_release_customer_level_commitments
 SCOPE_MIGRATION=20260821040000_add_tenant_data_scope_policy
 METHODOLOGY_MIGRATION=20260821050000_add_methodology_foundation
 METHODOLOGY_DATA_MIGRATION=20260821060000_add_methodology_data_foundation
+PDE_CONTEXT_MIGRATION=20260821070000_add_pde_decision_context
 
 wait_for_migration_state() {
   i=0
@@ -49,29 +51,36 @@ matter_schema_matches_known_state() {
   schema_matches "$PRE_PARTICIPANT_SCHEMA" || schema_matches "$PRE_COMMITMENT_SCHEMA" \
     || schema_matches "$PRE_COMMITMENT_CUTOVER_SCHEMA" || schema_matches "$PRE_SCOPE_SCHEMA" \
     || schema_matches "$PRE_METHODOLOGY_SCHEMA" || schema_matches "$PRE_METHODOLOGY_DATA_SCHEMA" \
+    || schema_matches "$PRE_PDE_CONTEXT_SCHEMA" \
     || schema_matches "$SCHEMA"
 }
 
 participant_schema_matches_known_state() {
   schema_matches "$PRE_COMMITMENT_SCHEMA" || schema_matches "$PRE_COMMITMENT_CUTOVER_SCHEMA" \
     || schema_matches "$PRE_SCOPE_SCHEMA" || schema_matches "$PRE_METHODOLOGY_SCHEMA" \
-    || schema_matches "$PRE_METHODOLOGY_DATA_SCHEMA" \
+    || schema_matches "$PRE_METHODOLOGY_DATA_SCHEMA" || schema_matches "$PRE_PDE_CONTEXT_SCHEMA" \
     || schema_matches "$SCHEMA"
 }
 
 commitment_cutover_schema_matches_known_state() {
   schema_matches "$PRE_SCOPE_SCHEMA" || schema_matches "$PRE_METHODOLOGY_SCHEMA" \
-    || schema_matches "$PRE_METHODOLOGY_DATA_SCHEMA" \
+    || schema_matches "$PRE_METHODOLOGY_DATA_SCHEMA" || schema_matches "$PRE_PDE_CONTEXT_SCHEMA" \
     || schema_matches "$SCHEMA"
 }
 
 scope_schema_matches_known_state() {
   schema_matches "$PRE_METHODOLOGY_SCHEMA" || schema_matches "$PRE_METHODOLOGY_DATA_SCHEMA" \
+    || schema_matches "$PRE_PDE_CONTEXT_SCHEMA" \
     || schema_matches "$SCHEMA"
 }
 
 methodology_schema_matches_known_state() {
-  schema_matches "$PRE_METHODOLOGY_DATA_SCHEMA" || schema_matches "$SCHEMA"
+  schema_matches "$PRE_METHODOLOGY_DATA_SCHEMA" || schema_matches "$PRE_PDE_CONTEXT_SCHEMA" \
+    || schema_matches "$SCHEMA"
+}
+
+methodology_data_schema_matches_known_state() {
+  schema_matches "$PRE_PDE_CONTEXT_SCHEMA" || schema_matches "$SCHEMA"
 }
 
 refresh_applied_migrations() {
@@ -450,7 +459,7 @@ recover_incomplete_methodology_data_migration() {
     expanded)
       echo "[migration] 检测到已提交但未完成登记的方法论数据事务，验证后接管。"
       npm run migrate:methodology-data-verify
-      if ! schema_matches "$SCHEMA"; then
+      if ! methodology_data_schema_matches_known_state; then
         echo "[migration] 方法论数据 schema 已扩展但与当前模型不一致，拒绝接管：" >&2
         cat /tmp/postgres-schema-drift.log >&2
         exit 1
@@ -475,7 +484,7 @@ adopt_existing_methodology_data_schema_if_safe() {
     expanded)
       echo "[migration] 检测到未登记但完整的方法论数据 schema，验证后接管。"
       npm run migrate:methodology-data-verify
-      if ! schema_matches "$SCHEMA"; then
+      if ! methodology_data_schema_matches_known_state; then
         echo "[migration] 未登记方法论数据 schema 与当前模型不一致，拒绝接管：" >&2
         cat /tmp/postgres-schema-drift.log >&2
         exit 1
@@ -489,11 +498,67 @@ adopt_existing_methodology_data_schema_if_safe() {
   esac
 }
 
+recover_incomplete_pde_context_migration() {
+  incomplete_migrations=$(npx tsx scripts/list-incomplete-postgres-migrations.ts)
+  if ! printf '%s\n' "$incomplete_migrations" | grep -Fxq "$PDE_CONTEXT_MIGRATION"; then
+    return 0
+  fi
+  pde_context_schema_state=$(npx tsx scripts/postgres-pde-context-schema-state.ts)
+  case "$pde_context_schema_state" in
+    legacy)
+      echo "[migration] 检测到中断且已由 PostgreSQL 回滚的 PDE 决策上下文事务，登记后安全重放。"
+      npx prisma migrate resolve --rolled-back "$PDE_CONTEXT_MIGRATION" --schema "$SCHEMA"
+      ;;
+    expanded)
+      echo "[migration] 检测到已提交但未完成登记的 PDE 决策上下文事务，验证后接管。"
+      npm run migrate:pde-context-verify
+      if ! schema_matches "$SCHEMA"; then
+        echo "[migration] PDE 决策上下文 schema 已扩展但与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$PDE_CONTEXT_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] PDE 决策上下文 migration 留下部分 schema，必须从认证备份恢复后再试。" >&2
+      exit 1
+      ;;
+  esac
+}
+
+adopt_existing_pde_context_schema_if_safe() {
+  refresh_applied_migrations
+  if migration_is_applied "$PDE_CONTEXT_MIGRATION"; then
+    return 0
+  fi
+  pde_context_schema_state=$(npx tsx scripts/postgres-pde-context-schema-state.ts)
+  case "$pde_context_schema_state" in
+    legacy) return 0 ;;
+    expanded)
+      echo "[migration] 检测到未登记但完整的 PDE 决策上下文 schema，验证后接管。"
+      npm run migrate:pde-context-verify
+      if ! schema_matches "$SCHEMA"; then
+        echo "[migration] 未登记 PDE 决策上下文 schema 与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$PDE_CONTEXT_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] 检测到未登记的部分 PDE 决策上下文 schema，拒绝继续。" >&2
+      exit 1
+      ;;
+  esac
+}
+
 state=$(wait_for_migration_state)
 case "$state" in
   untracked)
     if schema_matches "$SCHEMA"; then
       echo "[migration] 检测到与当前模型一致的未纳管 schema。"
+      npx tsx scripts/assert-untracked-command-runs-empty.ts
+    elif schema_matches "$PRE_PDE_CONTEXT_SCHEMA"; then
+      echo "[migration] 检测到已批准的 CORE-112 未纳管 schema。"
       npx tsx scripts/assert-untracked-command-runs-empty.ts
     elif schema_matches "$PRE_METHODOLOGY_DATA_SCHEMA"; then
       echo "[migration] 检测到已批准的 CORE-110 未纳管 schema。"
@@ -540,7 +605,8 @@ case "$state" in
         fi
         echo "[migration] 继续中断的当前 schema 接管。"
         resolve_missing_pre_bridge_migrations
-      elif schema_matches "$PRE_METHODOLOGY_DATA_SCHEMA" || schema_matches "$PRE_METHODOLOGY_SCHEMA" \
+      elif schema_matches "$PRE_PDE_CONTEXT_SCHEMA" || schema_matches "$PRE_METHODOLOGY_DATA_SCHEMA" \
+        || schema_matches "$PRE_METHODOLOGY_SCHEMA" \
         || schema_matches "$PRE_SCOPE_SCHEMA" \
         || schema_matches "$PRE_COMMITMENT_CUTOVER_SCHEMA" \
         || schema_matches "$PRE_COMMITMENT_SCHEMA" || schema_matches "$PRE_PARTICIPANT_SCHEMA"; then
@@ -571,6 +637,8 @@ recover_incomplete_methodology_migration
 adopt_existing_methodology_schema_if_safe
 recover_incomplete_methodology_data_migration
 adopt_existing_methodology_data_schema_if_safe
+recover_incomplete_pde_context_migration
+adopt_existing_pde_context_schema_if_safe
 refresh_applied_migrations
 matter_migration_pending=0
 if ! migration_is_applied "$MATTER_MIGRATION"; then
@@ -621,6 +689,13 @@ if ! migration_is_applied "$METHODOLOGY_DATA_MIGRATION"; then
   fi
 fi
 
+pde_context_migration_pending=0
+if ! migration_is_applied "$PDE_CONTEXT_MIGRATION"; then
+  pde_context_migration_pending=1
+  echo "[migration] 在 PDE 决策上下文扩展前执行 legacy 阶段影子映射预演…"
+  npm run migrate:pde-context-report
+fi
+
 echo "[migration] 在唯一索引迁移前执行同步锚与企微绑定冲突扫描…"
 npm run migrate:sync-anchor-report
 npm run migrate:wecom-bind-report
@@ -651,6 +726,11 @@ fi
 if [ "$methodology_data_migration_pending" -eq 1 ]; then
   echo "[migration] 校验方法论定义、实例目标、评估快照与迁移记录…"
   npm run migrate:methodology-data-verify
+fi
+
+if [ "$pde_context_migration_pending" -eq 1 ]; then
+  echo "[migration] 校验 PDE 决策上下文租户父树、profile 与影子迁移完整性…"
+  npm run migrate:pde-context-verify
 fi
 
 if ! schema_matches "$SCHEMA"; then
