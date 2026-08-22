@@ -703,8 +703,18 @@ fresh_root=$(mktemp -d "/tmp/jianghu-fresh-install.${$}.XXXXXX")
 fresh_project="jianghu_fresh_${$}"
 fresh_backups="$fresh_root-backups"
 fresh_rollbacks="$fresh_root-rollbacks"
+fresh_origin="$fresh_root/origin.git"
+fresh_branch='ci-deploy-fixture'
 fresh_port=$(( 20000 + RANDOM % 20000 ))
 git clone -q "file://$ROOT_DIR" "$fresh_root/repo"
+# pull_request checkouts can expose only a detached synthetic merge commit.
+# Give the deployment fixture its own tracked branch and isolated origin so
+# deploy-company-update.sh exercises the production pull gate deterministically.
+git init --bare -q "$fresh_origin"
+deployment_git_in_dir "$fresh_root/repo" switch -q -C "$fresh_branch"
+deployment_git_in_dir "$fresh_root/repo" remote set-url origin "file://$fresh_origin"
+deployment_git_in_dir "$fresh_root/repo" push -qu -u origin "$fresh_branch"
+[[ "$(deployment_git_in_dir "$fresh_root/repo" rev-parse --abbrev-ref '@{upstream}')" == "origin/$fresh_branch" ]]
 # Local pre-commit runs clone HEAD, so overlay the current server snapshot to
 # exercise the exact migration under review. CI normally has no overlay diff.
 tar -cf - --exclude='node_modules' --exclude='dist' --exclude='*.db' server \
