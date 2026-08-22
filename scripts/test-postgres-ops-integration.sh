@@ -62,6 +62,23 @@ wait_for_postgres_ready() {
   return 1
 }
 
+wait_for_server_healthy() {
+  local container_name="${COMPOSE_PROJECT_NAME}-server-1"
+  local status=''
+  local state=''
+  for _ in $(seq 1 180); do
+    status=$(docker inspect -f '{{.State.Health.Status}}' "$container_name" 2>/dev/null || true)
+    [[ "$status" == healthy ]] && return 0
+    state=$(docker inspect -f '{{.State.Status}}' "$container_name" 2>/dev/null || true)
+    [[ "$state" == exited || "$state" == dead ]] && break
+    sleep 1
+  done
+  echo "server did not become healthy (state=${state:-missing}, health=${status:-missing})" >&2
+  docker compose -p "$COMPOSE_PROJECT_NAME" ps >&2 || true
+  docker compose -p "$COMPOSE_PROJECT_NAME" logs --no-color --tail=300 db server >&2 || true
+  return 1
+}
+
 docker compose -p "$COMPOSE_PROJECT_NAME" build server >/dev/null
 docker compose -p "$COMPOSE_PROJECT_NAME" up -d db >/dev/null
 wait_for_postgres_ready
@@ -92,11 +109,7 @@ docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U 
   "INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
    VALUES ('interrupted-bridge-fixture', repeat('0', 64), '20260715030000_adopt_pre_int501_schema', CURRENT_TIMESTAMP, 0);" >/dev/null
 docker compose -p "$COMPOSE_PROJECT_NAME" up -d server >/dev/null
-for _ in $(seq 1 60); do
-  [[ "$(docker inspect -f '{{.State.Health.Status}}' "${COMPOSE_PROJECT_NAME}-server-1" 2>/dev/null || true)" == healthy ]] && break
-  sleep 1
-done
-[[ "$(docker inspect -f '{{.State.Health.Status}}' "${COMPOSE_PROJECT_NAME}-server-1")" == healthy ]]
+wait_for_server_healthy
 migration_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
   'SELECT count(*) FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL' | tr -d '[:space:]')
 [[ "$migration_count" == "$expected_migration_count" ]]
