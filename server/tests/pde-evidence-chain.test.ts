@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { createTestContext, type TestContext } from './helpers/testApp.js';
 import { loadSeeds } from '../src/pde/pack.js';
@@ -102,7 +103,18 @@ describe('approved Evidence -> PDE -> durable evidence_review snapshot', () => {
 
       await addEvidence(context, deal, 'ev-pending', 'pending_review', 1);
       await addEvidence(context, deal, 'ev-rejected', 'rejected', -1);
-      await addEvidence(context, deal, 'ev-other-tenant', 'approved', 1, 'tenant-out-of-scope');
+      const foreignSuffix = randomUUID();
+      const foreignTenant = await context.prisma.tenant.create({
+        data: { id: `tenant-pde-evidence-${foreignSuffix}`, name: 'Foreign PDE evidence tenant' },
+      });
+      await addEvidence(
+        context,
+        deal,
+        `ev-other-tenant-${foreignSuffix}`,
+        'approved',
+        1,
+        foreignTenant.id,
+      );
       expect(await getPwin(context, deal.opportunityId)).toBeCloseTo(baseline, 9);
 
       await addEvidence(context, deal, 'ev-approved-positive', 'approved', 1);
