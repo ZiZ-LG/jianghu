@@ -1,7 +1,8 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { G64111_ENGINE_REF } from '../src/methodology/g64111Manifest.js';
+import { G64111_RUNTIME_CONFIG } from '../src/g64111.js';
+import { G64111_DEFINITION_MANIFEST, G64111_ENGINE_REF } from '../src/methodology/g64111Manifest.js';
 
 const repositoryRoot = resolve('..');
 
@@ -25,6 +26,23 @@ describe('CORE-112 G64111 dependency boundary', () => {
       'utf8',
     )) as { version: string };
     expect(G64111_ENGINE_REF).toBe(`g64111:${packageJson.version}`);
+    expect(G64111_RUNTIME_CONFIG.engineRef).toBe(G64111_ENGINE_REF);
+    const appAdapter = await readFile(resolve(repositoryRoot, 'app/src/lib/g64111.ts'), 'utf8');
+    expect(appAdapter).toContain(`export const G64111_ENGINE_REF = '${G64111_ENGINE_REF}'`);
+  });
+
+  it('keeps both adapters aligned with every materialized legacy_path binding', async () => {
+    expect(G64111_RUNTIME_CONFIG.storageBindings).toEqual(
+      G64111_DEFINITION_MANIFEST.fields.map((field) => ({
+        key: field.key,
+        storageBindingKind: field.storageBindingKind,
+        storageBindingPath: field.storageBindingPath,
+      })),
+    );
+    const appAdapter = await readFile(resolve(repositoryRoot, 'app/src/lib/g64111.ts'), 'utf8');
+    for (const field of G64111_DEFINITION_MANIFEST.fields) {
+      expect(appAdapter).toContain(`legacyPath('${field.key}', '${field.storageBindingPath}')`);
+    }
   });
 
   it('allows production code to import the shared engine only through the app/server adapters', async () => {

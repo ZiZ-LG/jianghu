@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { createG64111Adapter } from '../src/g64111.js';
 import { createTestContext, type TestContext } from './helpers/testApp.js';
 
 const PACK_ID = 'methodologypack_11111111111111111111111111111111';
@@ -240,6 +241,14 @@ describe('CORE-110 methodology command path', () => {
         const consumers = JSON.parse(field.legacyConsumersJson) as unknown;
         return Array.isArray(consumers) && consumers.length > 0;
       })).toBe(true);
+      expect(createG64111Adapter({
+        engineRef: version.engineRef,
+        storageBindings: fields.map((field) => ({
+          key: field.key,
+          storageBindingKind: field.storageBindingKind,
+          storageBindingPath: field.storageBindingPath,
+        })),
+      }).engineRef).toBe(version.engineRef);
 
       const roles = await context.prisma.methodologyRoleDefinition.findMany({
         where: { tenantId: context.tenant.id, packId: G64111_PACK_ID, versionId: G64111_VERSION_ID },
