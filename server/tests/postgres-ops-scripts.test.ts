@@ -385,6 +385,8 @@ describe('PostgreSQL restore safety', () => {
     expect(drill).toContain('LEGACY_ACCOUNT_OWNER_BACKFILL_OK=1');
     expect(drill).toContain('METHODOLOGY_POINTER_FAIL_CLOSED_RETRY_OK=1');
     expect(drill).toContain('INTERRUPTED_METHODOLOGY_AFTER_COMMIT_ADOPTION_OK=1');
+    expect(drill).toContain('INTERRUPTED_METHODOLOGY_DATA_BEFORE_COMMIT_RETRY_OK=1');
+    expect(drill).toContain('INTERRUPTED_METHODOLOGY_DATA_AFTER_COMMIT_ADOPTION_OK=1');
     expect(drill).toContain('INTERRUPTED_SCOPE_AFTER_COMMIT_ADOPTION_OK=1');
   });
 });

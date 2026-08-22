@@ -7,12 +7,25 @@ import { describe, expect, it } from 'vitest';
 const serverRoot = resolve('.');
 const prismaBin = resolve('node_modules/.bin/prisma');
 const tsxBin = resolve('node_modules/.bin/tsx');
-const methodologyTables = [
+const methodologyFoundationTables = [
   'MethodologyPack',
   'MethodologyPackVersion',
   'MethodologyBinding',
   'MethodologyPilotAssignment',
 ] as const;
+const methodologyDataTables = [
+  'MethodologyFieldDefinition',
+  'MethodologyStageDefinition',
+  'MethodologyRoleDefinition',
+  'MethodologyRuleDefinition',
+  'MethodologyActionTemplate',
+  'MethodologyStageState',
+  'MethodologyRoleAssignment',
+  'MethodologyValue',
+  'MethodologyEvaluation',
+  'MethodologyMigrationRun',
+] as const;
+const methodologyTables = [...methodologyFoundationTables, ...methodologyDataTables] as const;
 
 function run(command: string, args: string[], databaseUrl: string) {
   const result = spawnSync(command, args, {
@@ -34,7 +47,12 @@ async function listMethodologyTables(client: {
       WHERE type = 'table'
         AND name IN (
           'MethodologyPack', 'MethodologyPackVersion',
-          'MethodologyBinding', 'MethodologyPilotAssignment'
+          'MethodologyBinding', 'MethodologyPilotAssignment',
+          'MethodologyFieldDefinition', 'MethodologyStageDefinition',
+          'MethodologyRoleDefinition', 'MethodologyRuleDefinition',
+          'MethodologyActionTemplate', 'MethodologyStageState',
+          'MethodologyRoleAssignment', 'MethodologyValue',
+          'MethodologyEvaluation', 'MethodologyMigrationRun'
         )
       ORDER BY name`,
   );
@@ -527,6 +545,9 @@ describe('CORE-103/105/106/108/109/110 SQLite schema upgrade', () => {
     try {
       run(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], databaseUrl);
       client = new PrismaClient({ datasourceUrl: databaseUrl });
+      for (const table of [...methodologyDataTables].reverse()) {
+        await client.$executeRawUnsafe(`DROP TABLE "${table}"`);
+      }
       for (const table of ['MethodologyPilotAssignment', 'MethodologyBinding', 'MethodologyPackVersion']) {
         await client.$executeRawUnsafe(`DROP TABLE "${table}"`);
       }
@@ -541,6 +562,33 @@ describe('CORE-103/105/106/108/109/110 SQLite schema upgrade', () => {
       expect(failed.status).not.toBe(0);
       expect(`${failed.stdout}\n${failed.stderr}`).toContain(
         'partial methodology foundation detected; restore the latest backup before retrying',
+      );
+    } finally {
+      await client?.$disconnect();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('fails closed when only part of the methodology data schema exists', async () => {
+    const directory = await mkdtemp(resolve('prisma/.methodology-data-partial-test-'));
+    const relativeDirectory = basename(directory);
+    const databaseUrl = `file:./${relativeDirectory}/partial.db`;
+    let client: PrismaClient | null = null;
+    try {
+      run(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], databaseUrl);
+      client = new PrismaClient({ datasourceUrl: databaseUrl });
+      await client.$executeRawUnsafe('DROP TABLE "MethodologyEvaluation"');
+      await client.$disconnect();
+      client = null;
+
+      const failed = spawnSync(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], {
+        cwd: serverRoot,
+        encoding: 'utf8',
+        env: { ...process.env, DATABASE_URL: databaseUrl, JIANGHU_SKIP_PRISMA_GENERATE: '1' },
+      });
+      expect(failed.status).not.toBe(0);
+      expect(`${failed.stdout}\n${failed.stderr}`).toContain(
+        'partial methodology data foundation detected; restore the latest backup before retrying',
       );
     } finally {
       await client?.$disconnect();

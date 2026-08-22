@@ -368,6 +368,61 @@ methodology_incomplete_after_adoption=$(docker compose -p "$COMPOSE_PROJECT_NAME
 [[ "$methodology_incomplete_after_adoption" == 0 ]]
 echo "INTERRUPTED_METHODOLOGY_AFTER_COMMIT_ADOPTION_OK=1"
 
+# CORE-111 is expand-only, but a kill can still happen before PostgreSQL commits
+# or after commit and before Prisma records success. Exercise both states from
+# the exact pre-CORE-111 schema so partial adoption can never be guessed.
+methodology_data_db=jianghu_methodology_data
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$methodology_data_db"
+POSTGRES_DB="$methodology_data_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npx prisma db push --schema prisma/postgres/legacy/20260821_pre_core111.prisma --skip-generate' >/dev/null
+POSTGRES_DB="$methodology_data_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint npx server \
+  prisma migrate resolve --applied 20260715000000_baseline \
+  --schema prisma/postgres/schema.prisma >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$methodology_data_db" -c \
+  "INSERT INTO \"DataMigrationState\" (key, details) VALUES
+     ('CORE-105-matter-participant-backfill-v1', '{}'),
+     ('CORE-106-commitment-backfill-v1', '{}'),
+     ('CORE-108-commitment-consumer-cutover-v1', '{}');
+   INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+   VALUES ('int-methodology-data-before-commit', repeat('0', 64),
+     '20260821060000_add_methodology_data_foundation', CURRENT_TIMESTAMP, 0);" >/dev/null
+POSTGRES_DB="$methodology_data_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+methodology_data_tables_after_retry=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$methodology_data_db" -tAc \
+  "SELECT count(*) FROM information_schema.tables
+   WHERE table_schema = 'public'
+     AND table_name IN (
+       'MethodologyFieldDefinition','MethodologyStageDefinition','MethodologyRoleDefinition',
+       'MethodologyRuleDefinition','MethodologyActionTemplate','MethodologyStageState',
+       'MethodologyRoleAssignment','MethodologyValue','MethodologyEvaluation','MethodologyMigrationRun'
+     )" | tr -d '[:space:]')
+methodology_data_rolled_back_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$methodology_data_db" -tAc \
+  "SELECT count(*) FROM \"_prisma_migrations\"
+   WHERE migration_name = '20260821060000_add_methodology_data_foundation' AND rolled_back_at IS NOT NULL" | tr -d '[:space:]')
+[[ "$methodology_data_tables_after_retry" == 10 ]]
+[[ "$methodology_data_rolled_back_count" == 1 ]]
+echo "INTERRUPTED_METHODOLOGY_DATA_BEFORE_COMMIT_RETRY_OK=1"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$methodology_data_db" -c \
+  "DELETE FROM \"_prisma_migrations\"
+    WHERE migration_name = '20260821060000_add_methodology_data_foundation' AND finished_at IS NOT NULL;
+   INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+   VALUES ('int-methodology-data-after-commit', repeat('0', 64),
+     '20260821060000_add_methodology_data_foundation', CURRENT_TIMESTAMP, 0);" >/dev/null
+POSTGRES_DB="$methodology_data_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+methodology_data_applied_after_adoption=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$methodology_data_db" -tAc \
+  "SELECT count(*) FROM \"_prisma_migrations\"
+   WHERE migration_name = '20260821060000_add_methodology_data_foundation'
+     AND finished_at IS NOT NULL AND rolled_back_at IS NULL" | tr -d '[:space:]')
+methodology_data_incomplete_after_adoption=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$methodology_data_db" -tAc \
+  "SELECT count(*) FROM \"_prisma_migrations\"
+   WHERE migration_name = '20260821060000_add_methodology_data_foundation'
+     AND finished_at IS NULL AND rolled_back_at IS NULL" | tr -d '[:space:]')
+[[ "$methodology_data_applied_after_adoption" == 1 ]]
+[[ "$methodology_data_incomplete_after_adoption" == 0 ]]
+echo "INTERRUPTED_METHODOLOGY_DATA_AFTER_COMMIT_ADOPTION_OK=1"
+
 # A duplicate tenant-local owner name must roll the bridge transaction back.
 # After data repair, the same database must resume and complete safely.
 ambiguous_db=jianghu_owner_ambiguous

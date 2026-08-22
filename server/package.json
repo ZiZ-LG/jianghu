@@ -26,6 +26,8 @@
     "migrate:commitment-verify": "tsx scripts/migrate-commitment-fields.ts --verify",
     "migrate:methodology-report": "tsx scripts/check-methodology-foundation.ts --preflight",
     "migrate:methodology-verify": "tsx scripts/check-methodology-foundation.ts --verify",
+    "migrate:methodology-data-report": "tsx scripts/check-methodology-data.ts --preflight",
+    "migrate:methodology-data-verify": "tsx scripts/check-methodology-data.ts --verify",
     "migrate:matter-owner-report": "tsx scripts/report-matter-owner-suggestions.ts",
     "migrate:wecom-bind-report": "tsx scripts/report-wecom-bind-conflicts.ts",
     "migrate:sync-anchor-report": "tsx scripts/report-sync-anchor-conflicts.ts",

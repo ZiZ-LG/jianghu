@@ -115,29 +115,28 @@ model Account {
 }
 
 model Person {
-  id                 String                      @id
+  id                 String              @id
   tenantId           String
   accountId          String
-  account            Account                     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  account            Account             @relation(fields: [accountId], references: [id], onDelete: Cascade)
   name               String
   title              String
-  orgLevel           Int                         @default(3)
-  isCompetitor       Boolean                     @default(false)
+  orgLevel           Int                 @default(3)
+  isCompetitor       Boolean             @default(false)
   avatarUrl          String?
   coachLevel         Int?
   color              String? // 节点高亮色（手动样式）
-  x                  Float                       @default(300)
-  y                  Float                       @default(240)
-  form               String                      @default("{}") // JSON
-  logs               String                      @default("[]") // JSON
-  version            Int                         @default(0) // 乐观锁：内容编辑并发冲突检测（UPDATE_PERSON）
+  x                  Float               @default(300)
+  y                  Float               @default(240)
+  form               String              @default("{}") // JSON
+  logs               String              @default("[]") // JSON
+  version            Int                 @default(0) // 乐观锁：内容编辑并发冲突检测（UPDATE_PERSON）
   archivedAt         DateTime?
   archivedBy         String?
-  archiveReason      String                      @default("")
+  archiveReason      String              @default("")
   mergedIntoPersonId String?
-  createdAt          DateTime                    @default(now()) // INT-502：正式人物创建基数，用于重复实体率受控观察
+  createdAt          DateTime            @default(now()) // INT-502：正式人物创建基数，用于重复实体率受控观察
   matterParticipants MatterParticipant[]
-  methodologyRoles   MethodologyRoleAssignment[]
 
   @@unique([tenantId, id])
   @@index([accountId])
@@ -194,11 +193,6 @@ model Opportunity {
   participants               MatterParticipant[]
   methodologyBindings        MethodologyBinding[]
   methodologyPilots          MethodologyPilotAssignment[]
-  methodologyStageStates     MethodologyStageState[]
-  methodologyRoleAssignments MethodologyRoleAssignment[]
-  methodologyValues          MethodologyValue[]
-  methodologyEvaluations     MethodologyEvaluation[]
-  methodologyMigrationRuns   MethodologyMigrationRun[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, accountId, externalRef])
@@ -250,12 +244,6 @@ model MethodologyPackVersion {
   publishedAt        DateTime?
   bindings           MethodologyBinding[]
   pilotAssignments   MethodologyPilotAssignment[]
-  fieldDefinitions   MethodologyFieldDefinition[]
-  stageDefinitions   MethodologyStageDefinition[]
-  roleDefinitions    MethodologyRoleDefinition[]
-  ruleDefinitions    MethodologyRuleDefinition[]
-  actionTemplates    MethodologyActionTemplate[]
-  targetMigrations   MethodologyMigrationRun[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, packId, id])
@@ -278,14 +266,8 @@ model MethodologyBinding {
   createdByUserId    String
   createdAt          DateTime                     @default(now())
   pilotBaselineFor   MethodologyPilotAssignment[] @relation("MethodologyPilotBaseline")
-  stageState         MethodologyStageState?
-  roleAssignments    MethodologyRoleAssignment[]
-  values             MethodologyValue[]
-  evaluations        MethodologyEvaluation[]
-  sourceMigrations   MethodologyMigrationRun[]
 
   @@unique([tenantId, id])
-  @@unique([tenantId, opportunityId, id, packId, versionId])
   @@index([tenantId, opportunityId, createdAt])
   @@index([tenantId, packId, versionId])
   @@index([tenantId, decisionProfileRef])
@@ -312,247 +294,6 @@ model MethodologyPilotAssignment {
   @@index([tenantId, opportunityId, status])
   @@index([tenantId, candidatePackId, candidateVersionId, status])
   @@index([tenantId, baselineBindingId])
-}
-
-// 方法论版本的结构化字段定义。每个逻辑字段必须唯一声明一个权威存储来源。
-model MethodologyFieldDefinition {
-  id                  String                 @id
-  tenantId            String
-  packId              String
-  versionId           String
-  methodologyVersion  MethodologyPackVersion @relation(fields: [tenantId, packId, versionId], references: [tenantId, packId, id], onDelete: Restrict)
-  key                 String
-  targetKind          String
-  dataType            String
-  valueDomainJson     String                 @default("{}")
-  required            Boolean                @default(false)
-  missingValuePolicy  String
-  storageBindingKind  String
-  storageBindingPath  String
-  legacyStopDate      String?
-  legacyConsumersJson String                 @default("[]")
-  position            Int                    @default(0)
-  values              MethodologyValue[]
-
-  @@unique([tenantId, id])
-  @@unique([tenantId, packId, versionId, key])
-  @@unique([tenantId, packId, versionId, storageBindingKind, storageBindingPath])
-  @@index([tenantId, packId, versionId, position])
-}
-
-model MethodologyStageDefinition {
-  id                  String                  @id
-  tenantId            String
-  packId              String
-  versionId           String
-  methodologyVersion  MethodologyPackVersion  @relation(fields: [tenantId, packId, versionId], references: [tenantId, packId, id], onDelete: Restrict)
-  key                 String
-  name                String
-  position            Int                     @default(0)
-  entryConditionsJson String                  @default("[]")
-  exitConditionsJson  String                  @default("[]")
-  states              MethodologyStageState[]
-
-  @@unique([tenantId, id])
-  @@unique([tenantId, packId, versionId, key])
-  @@index([tenantId, packId, versionId, position])
-}
-
-model MethodologyRoleDefinition {
-  id                 String                      @id
-  tenantId           String
-  packId             String
-  versionId          String
-  methodologyVersion MethodologyPackVersion      @relation(fields: [tenantId, packId, versionId], references: [tenantId, packId, id], onDelete: Restrict)
-  key                String
-  name               String
-  appliesTo          String                      @default("person")
-  constraintsJson    String                      @default("{}")
-  minimumAssignments Int                         @default(0)
-  maximumAssignments Int                         @default(1)
-  position           Int                         @default(0)
-  assignments        MethodologyRoleAssignment[]
-
-  @@unique([tenantId, id])
-  @@unique([tenantId, packId, versionId, key])
-  @@index([tenantId, packId, versionId, position])
-}
-
-model MethodologyRuleDefinition {
-  id                 String                 @id
-  tenantId           String
-  packId             String
-  versionId          String
-  methodologyVersion MethodologyPackVersion @relation(fields: [tenantId, packId, versionId], references: [tenantId, packId, id], onDelete: Restrict)
-  key                String
-  operator           String
-  inputRefsJson      String                 @default("[]")
-  weightsJson        String                 @default("{}")
-  thresholdsJson     String                 @default("{}")
-  outputKey          String
-  position           Int                    @default(0)
-
-  @@unique([tenantId, id])
-  @@unique([tenantId, packId, versionId, key])
-  @@index([tenantId, packId, versionId, position])
-}
-
-model MethodologyActionTemplate {
-  id                       String                 @id
-  tenantId                 String
-  packId                   String
-  versionId                String
-  methodologyVersion       MethodologyPackVersion @relation(fields: [tenantId, packId, versionId], references: [tenantId, packId, id], onDelete: Restrict)
-  key                      String
-  gapKey                   String
-  title                    String
-  script                   String                 @default("")
-  evidenceRequirementsJson String                 @default("[]")
-  position                 Int                    @default(0)
-
-  @@unique([tenantId, id])
-  @@unique([tenantId, packId, versionId, key])
-  @@index([tenantId, packId, versionId, position])
-}
-
-// 实例行重复携带 Matter/binding/version 锚，并通过组合外键防止跨租户、跨 Matter 或跨版本串写。
-model MethodologyStageState {
-  id              String                     @id
-  tenantId        String
-  opportunityId   String
-  opportunity     Opportunity                @relation(fields: [tenantId, opportunityId], references: [tenantId, id], onDelete: Restrict)
-  bindingId       String
-  packId          String
-  versionId       String
-  binding         MethodologyBinding         @relation(fields: [tenantId, opportunityId, bindingId, packId, versionId], references: [tenantId, opportunityId, id, packId, versionId], onDelete: Restrict)
-  stageKey        String
-  stageDefinition MethodologyStageDefinition @relation(fields: [tenantId, packId, versionId, stageKey], references: [tenantId, packId, versionId, key], onDelete: Restrict)
-  enteredAt       DateTime                   @default(now())
-  humanOverride   Boolean                    @default(false)
-  overrideReason  String?
-  evidenceIdsJson String                     @default("[]")
-  updatedByUserId String
-  updatedAt       DateTime                   @updatedAt
-
-  @@unique([tenantId, id])
-  @@unique([tenantId, opportunityId, bindingId, packId, versionId])
-  @@index([tenantId, bindingId])
-  @@index([tenantId, opportunityId, versionId])
-  @@index([tenantId, packId, versionId, stageKey])
-}
-
-model MethodologyRoleAssignment {
-  id               String                    @id
-  tenantId         String
-  opportunityId    String
-  opportunity      Opportunity               @relation(fields: [tenantId, opportunityId], references: [tenantId, id], onDelete: Restrict)
-  bindingId        String
-  packId           String
-  versionId        String
-  binding          MethodologyBinding        @relation(fields: [tenantId, opportunityId, bindingId, packId, versionId], references: [tenantId, opportunityId, id, packId, versionId], onDelete: Restrict)
-  roleKey          String
-  roleDefinition   MethodologyRoleDefinition @relation(fields: [tenantId, packId, versionId, roleKey], references: [tenantId, packId, versionId, key], onDelete: Restrict)
-  personId         String
-  person           Person                    @relation(fields: [tenantId, personId], references: [tenantId, id], onDelete: Restrict)
-  source           String
-  reviewStatus     String                    @default("pending")
-  evidenceIdsJson  String                    @default("[]")
-  assignedByUserId String
-  assignedAt       DateTime                  @default(now())
-
-  @@unique([tenantId, id])
-  @@unique([tenantId, bindingId, roleKey, personId])
-  @@index([tenantId, opportunityId, versionId])
-  @@index([tenantId, packId, versionId, roleKey])
-  @@index([tenantId, personId])
-}
-
-model MethodologyValue {
-  id                  String                     @id
-  tenantId            String
-  opportunityId       String
-  opportunity         Opportunity                @relation(fields: [tenantId, opportunityId], references: [tenantId, id], onDelete: Restrict)
-  bindingId           String
-  packId              String
-  versionId           String
-  binding             MethodologyBinding         @relation(fields: [tenantId, opportunityId, bindingId, packId, versionId], references: [tenantId, opportunityId, id, packId, versionId], onDelete: Restrict)
-  fieldKey            String
-  fieldDefinition     MethodologyFieldDefinition @relation(fields: [tenantId, packId, versionId, fieldKey], references: [tenantId, packId, versionId, key], onDelete: Restrict)
-  targetKind          String
-  targetId            String
-  normalizedValueJson String
-  source              String
-  reviewStatus        String                     @default("pending")
-  evidenceIdsJson     String                     @default("[]")
-  updatedByUserId     String
-  updatedAt           DateTime                   @updatedAt
-
-  @@unique([tenantId, id])
-  @@unique([tenantId, bindingId, fieldKey, targetKind, targetId])
-  @@index([tenantId, opportunityId, versionId])
-  @@index([tenantId, packId, versionId, fieldKey])
-  @@index([tenantId, targetKind, targetId])
-}
-
-model MethodologyEvaluation {
-  id              String             @id
-  tenantId        String
-  opportunityId   String
-  opportunity     Opportunity        @relation(fields: [tenantId, opportunityId], references: [tenantId, id], onDelete: Restrict)
-  bindingId       String
-  packId          String
-  versionId       String
-  binding         MethodologyBinding @relation(fields: [tenantId, opportunityId, bindingId, packId, versionId], references: [tenantId, opportunityId, id, packId, versionId], onDelete: Restrict)
-  trigger         String
-  inputsJson      String             @default("{}")
-  resultJson      String             @default("{}")
-  evidenceIdsJson String             @default("[]")
-  aclVersion      Int                @default(0)
-  packVersionKey  String
-  engineRef       String
-  inputsHash      String
-  resultHash      String
-  createdByUserId String
-  createdAt       DateTime           @default(now())
-
-  @@unique([tenantId, id])
-  @@index([tenantId, opportunityId, bindingId, createdAt])
-  @@index([tenantId, packId, versionId, createdAt])
-}
-
-model MethodologyMigrationRun {
-  id                 String                 @id
-  tenantId           String
-  opportunityId      String
-  opportunity        Opportunity            @relation(fields: [tenantId, opportunityId], references: [tenantId, id], onDelete: Restrict)
-  sourceBindingId    String
-  sourcePackId       String
-  sourceVersionId    String
-  sourceBinding      MethodologyBinding     @relation(fields: [tenantId, opportunityId, sourceBindingId, sourcePackId, sourceVersionId], references: [tenantId, opportunityId, id, packId, versionId], onDelete: Restrict)
-  targetPackId       String
-  targetVersionId    String
-  targetVersion      MethodologyPackVersion @relation(fields: [tenantId, targetPackId, targetVersionId], references: [tenantId, packId, id], onDelete: Restrict)
-  matterVersion      Int
-  status             String                 @default("planned")
-  dryRunJson         String                 @default("{}")
-  mappingJson        String                 @default("{}")
-  conflictsJson      String                 @default("[]")
-  confirmationJson   String                 @default("{}")
-  executionJson      String                 @default("{}")
-  rollbackJson       String                 @default("{}")
-  confirmedByUserId  String?
-  confirmedAt        DateTime?
-  executedByUserId   String?
-  executedAt         DateTime?
-  rolledBackByUserId String?
-  rolledBackAt       DateTime?
-  createdByUserId    String
-  createdAt          DateTime               @default(now())
-
-  @@unique([tenantId, id])
-  @@index([tenantId, opportunityId, createdAt])
-  @@index([tenantId, sourceBindingId])
-  @@index([tenantId, targetPackId, targetVersionId, status])
 }
 
 // 只记录命令元数据与变更字段名，不复制 FORM/BI/日志/会议正文等敏感业务内容。

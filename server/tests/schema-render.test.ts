@@ -373,4 +373,75 @@ describe('PostgreSQL schema delivery', () => {
     expect(packageJson.scripts?.['migrate:methodology-report']).toBeTruthy();
     expect(packageJson.scripts?.['migrate:methodology-verify']).toBeTruthy();
   });
+
+  it('adds the CORE-111 methodology data foundation with portable snapshots and recoverable deployment', async () => {
+    const migration = await read('prisma/postgres/migrations/20260821060000_add_methodology_data_foundation/migration.sql').catch(() => '');
+    const schema = await read('prisma/postgres/schema.prisma');
+    const preDataSchema = await read('prisma/postgres/legacy/20260821_pre_core111.prisma').catch(() => '');
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const schemaState = await read('scripts/postgres-methodology-data-schema-state.ts').catch(() => '');
+    const integrity = await read('scripts/check-methodology-data.ts').catch(() => '');
+    const sqliteUpgrade = await read('scripts/upgrade-sqlite-schema.ts');
+    const packageJson = JSON.parse(await read('package.json')) as { scripts?: Record<string, string> };
+
+    expect(migration.trimStart().startsWith('BEGIN;')).toBe(true);
+    expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(migration).toContain("SET LOCAL lock_timeout = '30s'");
+    expect(migration).toContain("SET LOCAL statement_timeout = '15min'");
+    expect(migration).toContain('LOCK TABLE "MethodologyPackVersion"');
+    expect(migration).toContain('LOCK TABLE "MethodologyBinding"');
+
+    const models = [
+      'MethodologyFieldDefinition',
+      'MethodologyStageDefinition',
+      'MethodologyRoleDefinition',
+      'MethodologyRuleDefinition',
+      'MethodologyActionTemplate',
+      'MethodologyStageState',
+      'MethodologyRoleAssignment',
+      'MethodologyValue',
+      'MethodologyEvaluation',
+      'MethodologyMigrationRun',
+    ];
+    for (const model of models) {
+      expect(migration).toContain(`CREATE TABLE "${model}"`);
+      expect(schema).toContain(`model ${model}`);
+      expect(preDataSchema).not.toContain(`model ${model}`);
+    }
+    expect(preDataSchema).toContain('model MethodologyPackVersion');
+    expect(preDataSchema).toContain('model MethodologyBinding');
+
+    expect(schema).toMatch(/model MethodologyFieldDefinition \{[\s\S]*?storageBindingKind\s+String/);
+    expect(schema).toMatch(/model MethodologyFieldDefinition \{[\s\S]*?storageBindingPath\s+String/);
+    expect(schema).toMatch(/@@unique\(\[tenantId, packId, versionId, storageBindingKind, storageBindingPath\]\)/);
+    expect(schema).toMatch(/model MethodologyStageState \{[\s\S]*?binding\s+MethodologyBinding/);
+    expect(schema).toMatch(/model MethodologyRoleAssignment \{[\s\S]*?person\s+Person/);
+    expect(schema).toMatch(/model MethodologyValue \{[\s\S]*?normalizedValueJson\s+String/);
+    expect(schema).toMatch(/model MethodologyEvaluation \{[\s\S]*?inputsJson\s+String[\s\S]*?resultJson\s+String/);
+    expect(schema).toMatch(/model MethodologyMigrationRun \{[\s\S]*?dryRunJson\s+String[\s\S]*?rollbackJson\s+String/);
+    expect(schema).not.toMatch(/^\s*\w+\s+Json[?\[\]]*/m);
+    expect(schema).not.toMatch(/^enum\s+/m);
+
+    expect(migration).toContain('FOREIGN KEY ("tenantId", "opportunityId", "bindingId", "packId", "versionId")');
+    expect(migration).toContain('FOREIGN KEY ("tenantId", "packId", "versionId", "fieldKey")');
+    expect(migration).toContain('FOREIGN KEY ("tenantId", "packId", "versionId", "stageKey")');
+    expect(migration).toContain('FOREIGN KEY ("tenantId", "packId", "versionId", "roleKey")');
+    expect(migration).toContain('FOREIGN KEY ("tenantId", "personId")');
+
+    expect(deployScript).toContain('PRE_METHODOLOGY_DATA_SCHEMA=prisma/postgres/legacy/20260821_pre_core111.prisma');
+    expect(deployScript).toContain('METHODOLOGY_DATA_MIGRATION=20260821060000_add_methodology_data_foundation');
+    expect(deployScript).toContain('recover_incomplete_methodology_data_migration');
+    expect(deployScript).toContain('adopt_existing_methodology_data_schema_if_safe');
+    expect(deployScript.lastIndexOf('migrate:methodology-data-verify'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy'));
+    expect(schemaState).toContain("process.stdout.write('legacy')");
+    expect(schemaState).toContain("process.stdout.write('expanded')");
+    expect(schemaState).toContain("process.stdout.write('partial')");
+    expect(integrity).toContain('methodology data integrity failed');
+    expect(integrity).toContain('invalidMethodologyValueTargets');
+    expect(sqliteUpgrade).toContain('inspectMethodologyDataSchemaState');
+    expect(sqliteUpgrade).toContain("['tsx', 'scripts/check-methodology-data.ts', '--verify']");
+    expect(packageJson.scripts?.['migrate:methodology-data-report']).toBeTruthy();
+    expect(packageJson.scripts?.['migrate:methodology-data-verify']).toBeTruthy();
+  });
 });
