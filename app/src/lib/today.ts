@@ -1,8 +1,7 @@
 // P5 「今日三件事」+ Hub 客户卡「需要你」角标。
-// 三源聚合：①通用 Commitment（最急）②巡检提醒（warn 优先）③各商机最大缺口性价比项。
+// 通用聚合：① Commitment（最急）②巡检提醒。方法论扩展通过 additionalItems 显式注入。
 import type { Account } from '../types';
 import type { CommitmentV2 } from '@jianghu/domain-contracts';
-import { computeGaps } from './gaps';
 import { localYmd } from './dateYmd';
 
 export interface TodayItem {
@@ -48,9 +47,15 @@ function currentCommitment(commitment: CommitmentV2): boolean {
     && commitment.archivedAt === null;
 }
 
-/** 今日三件事：三源打分混排取 top（默认 3 件）。today 传 YYYY-MM-DD，便于测试。 */
-export function computeToday(accounts: Account[], reminders: ReminderLite[], today: string, max = 3): TodayItem[] {
-  const items: TodayItem[] = [];
+/** 今日三件事：通用来源与显式扩展混排取 top（默认 3 件）。today 传 YYYY-MM-DD，便于测试。 */
+export function computeToday(
+  accounts: Account[],
+  reminders: ReminderLite[],
+  today: string,
+  max = 3,
+  additionalItems: readonly TodayItem[] = [],
+): TodayItem[] {
+  const items: TodayItem[] = [...additionalItems];
   const directDueCommitmentIds = new Set<string>();
   // ① Commitment：只读通用字段，不从 legacy PlanAction fallback。
   for (const a of accounts) {
@@ -77,14 +82,6 @@ export function computeToday(accounts: Account[], reminders: ReminderLite[], tod
   for (const r of reminders) {
     if (r.kind === 'commitment_due' && r.entityId && directDueCommitmentIds.has(r.entityId)) continue;
     items.push({ icon: '🔔', text: r.title, sub: [r.accountName, r.oppName].filter(Boolean).join(' · '), accId: r.accountId, prio: r.severity === 'warn' ? 300 : 500 });
-  }
-  // ③ 缺口：每个活跃商机取性价比最高一条（computeGaps 已按 deficit 降序），问句 framing 优先
-  for (const a of accounts) {
-    for (const o of a.opportunities) {
-      if (o.status && o.status !== 'active') continue;
-      const g = computeGaps(a, o)[0];
-      if (g) items.push({ icon: '🎒', text: g.ask ?? g.title, sub: `${a.name} · ${o.name}`, accId: a.id, prio: 400 - g.deficit });
-    }
   }
   return items.sort((x, y) => x.prio - y.prio).slice(0, max);
 }

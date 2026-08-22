@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CommitmentV2 } from '@jianghu/domain-contracts';
 import { computeToday, needsYouByAccount } from './today';
+import { computeG64111Today } from './g64111Today';
 import { seedAccount } from '../data/seed';
 import { newPlanAction } from '../store';
 import type { Account } from '../types';
@@ -47,6 +48,19 @@ function accWith(items: CommitmentSeed[]): Account {
 }
 
 describe('today · generic Commitment consumer', () => {
+  it('G64111 未安装时只返回通用提醒，不隐式计算销售方法论缺口', () => {
+    const account = accWith([]);
+    const out = computeToday([account], [{
+      accountId: account.id,
+      accountName: account.name,
+      title: '通用提醒',
+      severity: 'warn',
+    }], TODAY, 10);
+
+    expect(out.map((item) => item.text)).toEqual(['通用提醒']);
+    expect(out.some((item) => item.icon === '🎒')).toBe(false);
+  });
+
   it('逾期 Commitment 排最前，越久越靠前', () => {
     const account = accWith([
       { title: '拜访 A', localDate: '2026-06-30' },
@@ -87,14 +101,14 @@ describe('today · generic Commitment consumer', () => {
       { accountId: account.id, accountName: account.name, title: '商机停滞 8 天', severity: 'warn' },
       { accountId: account.id, accountName: account.name, title: '一条 info 提醒', severity: 'info' },
     ];
-    const all = computeToday([account], reminders, TODAY, 10);
+    const all = computeG64111Today([account], reminders, TODAY, 10);
     const iWarn = all.findIndex((item) => item.text === '商机停滞 8 天');
     const iGap = all.findIndex((item) => item.icon === '🎒');
     const iInfo = all.findIndex((item) => item.text === '一条 info 提醒');
     expect(iWarn).toBe(0);
     expect(iGap).toBeGreaterThan(iWarn);
     expect(iInfo).toBeGreaterThan(iGap);
-    expect(computeToday([account], reminders, TODAY)).toHaveLength(3);
+    expect(computeG64111Today([account], reminders, TODAY)).toHaveLength(3);
   });
 
   it('今天到期的 Commitment 压过 warn 提醒', () => {

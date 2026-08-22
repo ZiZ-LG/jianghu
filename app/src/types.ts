@@ -12,7 +12,7 @@ export type {
   MatterV2,
   PermissionKey,
 } from '@jianghu/domain-contracts';
-import { C3_ITEMS, C5_ITEMS, FAMILY_7Q, canonicalC5Items } from '@jianghu/g64111';
+import { C3_ITEMS, C5_ITEMS, FAMILY_7Q, canonicalC5Items } from './lib/g64111';
 import type {
   Confidence,
   EngageStage,
@@ -20,9 +20,9 @@ import type {
   ProcurementType,
   Role,
   Sentiment,
-} from '@jianghu/g64111';
+} from './lib/g64111';
 
-export { C3_ITEMS, C5_ITEMS, FAMILY_7Q, pickKeyInfluencerKeeper, readC5Item } from '@jianghu/g64111';
+export { C3_ITEMS, C5_ITEMS, FAMILY_7Q, pickKeyInfluencerKeeper, readC5Item } from './lib/g64111';
 export type { Confidence, EngageStage, ProcurementStatus, ProcurementType, Role, Sentiment };
 
 export type C5ItemKey = (typeof C5_ITEMS)[number];

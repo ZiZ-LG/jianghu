@@ -22,7 +22,8 @@ import { NewOpportunityDialog } from './components/NewOpportunityDialog';
 import { layoutSkeleton, type SkeletonRole } from './data/skeletons';
 import { parsePath, buildPath, resolveRoute, type RouteTarget } from './lib/router';
 import { computeGaps } from './lib/gaps';
-import { computeToday, needsYouByAccount } from './lib/today';
+import { needsYouByAccount } from './lib/today';
+import { computeG64111Today } from './lib/g64111Today';
 import { GapCards } from './components/GapCards';
 import { nextFreeSlot } from './lib/layout';
 import type { InboxBatchItem } from './components/InboxPanel';
@@ -102,7 +103,7 @@ export default function App() {
   const [gapsOpen, setGapsOpen] = useState(false); // M3 缺口刷卡补分（enrichOpen 随重构删 EnrichPanel 移除）
   // P5 Hub 今日一屏：三源聚合「今日三件事」+ 客户卡「需要你」角标（纯前端零 schema）
   const hubTodayYmd = localYmd(new Date());
-  const hubToday = useMemo(() => computeToday(state.accounts, inbox.reminders, hubTodayYmd), [state.accounts, inbox.reminders, hubTodayYmd]);
+  const hubToday = useMemo(() => computeG64111Today(state.accounts, inbox.reminders, hubTodayYmd), [state.accounts, inbox.reminders, hubTodayYmd]);
   const hubNeedsYou = useMemo(() => needsYouByAccount(state.accounts, inbox, hubTodayYmd), [state.accounts, inbox, hubTodayYmd]);
   const [selfComputeBusy, setSelfComputeBusy] = useState(false); // 江湖自算·补全干系人 进行中
   const [addIntelOpen, setAddIntelOpen] = useState(false); // 🎧 接入录音（P3 文本入口收敛：口述/对话归坞尾「和地图对话」，AddIntel 容器退役）
