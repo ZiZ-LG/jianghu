@@ -80,6 +80,10 @@ describe('INT-107 stable ownership and sensitive read ACL', () => {
         ]),
       } });
       await context.prisma.opportunity.create({ data: { id: 'opp-acl', tenantId: context.tenant.id, accountId: 'acc-acl', name: 'O', customerType: 1, pipelineStage: 'x', engageStage: 'x' } });
+      await context.prisma.pdeDecisionContext.create({ data: {
+        id: 'pde-context-acl', tenantId: context.tenant.id, opportunityId: 'opp-acl',
+        stageKey: 'initiation', source: 'legacy_shadow',
+      } });
       await context.prisma.oppRole.create({ data: { tenantId: context.tenant.id, opportunityId: 'opp-acl', personId: 'person-acl', role: 'D', sentiment: 'plus', confidence: '明确' } });
       await context.prisma.burningIssue.createMany({ data: [
         { id: 'bi-private', tenantId: context.tenant.id, opportunityId: 'opp-acl', personId: 'person-acl', description: 'private', category: 'x', isPrivate: true, confidence: '明确' },

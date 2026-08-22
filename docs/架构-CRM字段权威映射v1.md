@@ -13,7 +13,7 @@
 3. 切换前必须清点机器权威中的完整消费者清单，并区分 `reads / writes / adapters / migrations / planned`；影子比较和 `cutoverCondition` 均通过后才可切换。切换后必须执行 `stopCondition`，停止旧路径的新写入或非 adapter 读取。
 4. `legacy_path` 只服务兼容和迁移。只有消费者为零、跨库恢复通过且存在回滚点时，才进入 `removalPhase`。
 5. 修改映射必须同时修改机器权威、契约测试和本审计视图；重大边界变化先提交 ADR。
-6. 本任务只登记权威，不切换数据库字段、API 或运行时读写路径。
+6. 映射登记本身不构成切换；只有完成阶段门并在第 4 节留下消费者、验证与回滚证据后，才可把 `currentAuthority` 改为目标路径。
 7. `migrations` 分类只表示需要治理的可执行入口，不构成运行授权。`server/scripts/migrate-adurc-v1.1.ts` 当前包含未按 tenant 过滤的存量更新，保持禁止执行；只有完成 tenant-scoped 改写、迁移测试并取得显式批准后才能启用。
 
 ## 2. 来源类型
@@ -37,7 +37,7 @@
 | `tenant.data_scope` | `core_path: Tenant.dataScopePolicy + EffectiveResourceScope` | 同当前权威 | resolver；state；MCP；AI/strategy；advisor；PDE；Inbox；curated；transcript/job；repair/person merge | legacy owner/admin/member 与 viewer parity、scoped Customer/Matter 集合、owner transfer、角色降级、未知 policy/actor 删除和跨入口 ID parity 全部通过；生产启用 scoped 仍须单独批准 | 所有在线读取先取唯一集合；机器消费者 `planned=[]`；未来 Team/Grant/正文 ACL 只与之取交集 | 未知值回退租户共享；按 JWT 旧角色／姓名／地区／OpportunityMember 授权；partial Customer 返回详情；scoped 租户回滚到旧代码 |
 | `matter.current_stage` | `legacy_path: Opportunity.pipelineStage` | `methodology_value: MethodologyStageState` | AI context；OpportunityForm；server state/AI | 已绑定销售 Matter 做 binding parity；未绑定时明确显示“未配置” | 组合页、通用 UI、AI 不再读 pipelineStage；G7 收缩 | 与 OppStage 或 MethodologyStageState fallback 双读 |
 | `g64111.engage_stage` | `legacy_path: Opportunity.engageStage` | `methodology_value: MethodologyValue(g64111.engage_stage)` | gaps；server AI/WeCom；G64111 engine | 仅 G64111 adapter 比较；fixtures 与 server parity 通过后切换 | 仅 adapter 可读旧字段；G7 在 legacy binding 消费者清零后收缩 | 进入通用 Matter；PDE 继续读取该值 |
-| `pde.decision_stage` | `legacy_path: Opportunity.engageStage` | `core_path: PdeDecisionContext.stageKey` | app PDE adapter；server PDE assembler | 不改 oracle/golden，显式上下文与旧输入影子比较 | CORE-113 切换后 assembler 只读 decisionProfileRef/context；G7 移除旧读 | 从 MethodologyValue 推导；切换后继续读 engageStage |
+| `pde.decision_stage` | `core_path: PdeDecisionContext.stageKey` | 同当前权威 | context access layer；server PDE assembler/routes；全部 Matter 创建入口 | legacy 仅执行一次映射；冲突失败关闭；跨库恢复、kernel golden/property、快照重放与消费者检查通过 | assembler 只读 context；可见 Matter 缺 context 返回 `pde_context_uninitialized`；机器 `planned=[]` | 从 MethodologyValue/engageStage 推导；缺 context 时 fallback |
 | `g64111.primary_d` | `legacy_path: Opportunity.primaryDPersonId` | `methodology_value: MethodologyRoleAssignment(g64111:D)` | gaps/Sidebar；server AI/PDE | 仅 G64111 adapter 比较角色；评分 parity 通过后切换 | 非 adapter 消费者为零；G7 收缩 | 当作通用关键人；解绑方法论时删除通用 Focus |
 | `stakeholder.focus` | `none` | `core_path: StakeholderFocus` | SAAS-206 命令；关系图投影 | 不把旧 primaryD 自动提升；理由、证据、权限和用户确认测试通过后建立 | 通用消费者永不 fallback 到主 D；无 legacy 删除 | 由评分自动创建；生命周期绑定方法论包 |
 | `sales.forecast` | `legacy_path: expectedAmountW + winProbability + expectedSignDate` | `core_path: ForecastEntry` | OpportunityForm；server state/PDE | 只生成待确认迁移候选；币种、周期、类别和金额均确认且快照可重放后切换 | 团队预测只读 ForecastEntry；G7 清零旧消费 | 预计金额冒充已签；概率隐式变成预测类别 |
@@ -55,9 +55,12 @@
 | 2026-08-21 | `matter.participants` | `OppRole + OpportunityMember` → `MatterParticipant` | 通用读仅 `app/src/store.ts`、`server/src/state.ts`；所有在线写显式落 MatterParticipant；旧表消费者只保留方法论／可见性语义 | `matter-participant.test.ts`、`sqlite-matter-upgrade.test.ts`、`schema-render.test.ts`、`actions.test.ts`；PostgreSQL 单事务 migration，SQLite 写前备份与中断恢复 | `53e1331`；`20260821010000_expand_matter_participants_relations`；回滚不删除已生成的 MatterParticipant 数据 |
 | 2026-08-21 | `commitment.record` | `legacy_path: PlanAction` → `core_path: 同行 Commitment 字段` | 新通用写入 `server/src/mutation/commitments.ts` 与受检反馈事务；通用读为 state/Today/jobs/patrol/WeCom；旧 App/store/StrategyCard 仅保留 Matter-required adapter；机器 `planned` 消费者已清零 | CORE-106 初始 parity；CORE-107 命令/CAS/审计；CORE-108 客户级 state、旧路径失败关闭、提醒终止、无伪造 Evidence、企微客户上下文、SQLite 备份/中断恢复与 PostgreSQL 原子 nullable migration | `5edef534` 为通用切换前点；CORE-108 分消费者提交 `c0a5653`、`622c31f`、nullable cutover `ca53efc`。若已有空 Matter 行，回滚仅关闭入口并保留 nullable 数据，禁止强制 `SET NOT NULL` 或删除业务行 |
 | 2026-08-21 | `tenant.data_scope` | ad-hoc tenant-wide/viewer 分支 → `Tenant.dataScopePolicy + EffectiveResourceScope` | [CORE-109 effective-scope 消费者清单](CORE-109-effective-scope消费者清单.md) 覆盖 resolver、legacy adapter、state、MCP、AI/strategy、advisor、PDE、Inbox、curated、transcript/job、repair/person merge；机器 `planned=[]`；专用 export/search 明确 absent | policy contract/migration、resolver matrix、partial Customer state 与跨入口 parity；owner transfer/角色降级不换 JWT 即时收权；SQLite/PostgreSQL 与全量 server 回归 | `050f439` 为 CORE-109 前点。仅当 scoped 租户为零才可回退应用；一旦启用 scoped 必须停止入口并前向修复，保留列与 migration，禁止改回 legacy 扩权 |
+| 2026-08-21 | `pde.decision_stage` | `Opportunity.engageStage` → `PdeDecisionContext.stageKey` | server assembler 已无 `engageStage`/`STAGE_MAP`；app PDE adapter 不属于服务端决策阶段消费者；新建、克隆、MCP 同步与 demo 入口均显式创建 context；机器 `planned=[]` | `pde-decision-context.test.ts` 覆盖缺失失败关闭、阶段独立、CAS/幂等、即时角色降级、租户包隔离、快照精确重放与 migration marker；SQLite 中断恢复、PostgreSQL 原子迁移、PDE kernel golden/property、G64111 parity 与全量 server 回归 | `66d55d4` 为运行时切换前点；保留 `20260821070000_add_pde_decision_context` 和已生成 context。回滚只能关闭 PDE 入口并前向修复，禁止恢复到 legacy fallback 或删除 context/快照 |
 
 `CORE-102` 仅建立映射，没有发生权威切换。
 
 `CORE-106` 完成 Expand + 初始 Migrate，`CORE-107` 把新通用读写切到同一行的 Commitment 字段，`CORE-108` 清零受影响消费者并完成 Contract：物理 `opportunityId` 允许为空。客户级 Commitment 不进入 legacy `planActions`，旧 PlanAction 与 StrategyCard 路径必须失败关闭；旧字段只作为销售 Matter 兼容投影继续存在，不能成为通用命令或 migration 校验的 fallback。任何回滚都不得虚构 Matter、删除客户级业务行或在存在空值时恢复非空约束。
 
 `CORE-109` 把 Customer/Matter 可见性从分散的 tenant-wide/viewer 判断收敛为唯一 resolver。存量租户仍默认 `legacy_tenant_shared`，因此没有自动缩权或扩权；`scoped` 只具备经测试的运行语义，没有生产切换入口。详细消费者、停机条件和不可扩权回滚规则见 [CORE-109 effective-scope 消费者清单](CORE-109-effective-scope消费者清单.md)。
+
+`CORE-113` 把 PDE 决策阶段从 G64111 的 `engageStage` 独立出来。`engageStage` 仍由 G64111 adapter 用于其名义分 C4 兼容，不能再驱动 PDE kernel 的 `Deal.stage`；PDE 只接受 `PdeDecisionContext.stageKey`，缺失或非法均失败关闭。`decisionProfileRef=null` 明确表示租户内置行业包，显式引用则必须是同租户、启用且可解析的 `IndustryPack`。阶段／参数包变更只允许走带幂等键、version CAS、当前数据库角色复核、快照和审计的人工命令。

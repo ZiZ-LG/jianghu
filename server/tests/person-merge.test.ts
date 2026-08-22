@@ -5,6 +5,7 @@ import { createTestContext } from './helpers/testApp.js';
 import { executePersonMerge } from '../src/personMerge.js';
 import type { CommandContext } from '@jianghu/domain-contracts';
 import { assembleDeal } from '../src/pde/assemble.js';
+import { createPdeDecisionContext } from '../src/pde/context.js';
 import { handleMcpBody } from '../src/mcpServer.js';
 import { resolveScopedRelSuggestions } from '../src/suggestionScope.js';
 
@@ -366,9 +367,13 @@ describe('INT-302 safe duplicate Person merge', () => {
         id: 'archived-source-pde-role', tenantId: context.tenant.id, opportunityId: tree.secondOpportunityId,
         personId: tree.sourcePersonId, role: 'U', sentiment: 'plus', confidence: '明确',
       } });
+      const decisionContext = await createPdeDecisionContext(context.prisma, {
+        tenantId: context.tenant.id,
+        opportunityId: tree.secondOpportunityId,
+      });
       const pde = await assembleDeal(context.tenant.id, tree.secondOpportunityId, {
         scoringSchema: { items: [] }, signalCatalog: { deltaAlphaMap: {} },
-      }, 'test-pack', context.prisma);
+      }, 'test-pack', decisionContext, context.prisma);
       expect(pde?.deal.stakeholders.map((stakeholder) => stakeholder.id)).not.toContain(tree.sourcePersonId);
 
       const mcp = await handleMcpBody({

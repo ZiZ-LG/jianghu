@@ -3,6 +3,7 @@
 // ③ 赢面永不裸出（响应恒带 confidenceFlag）④ inputsJson 完整留痕（DECISIONS#4，未来校准训练集）。
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
+import { ActorRoleSchema, type CommandContext } from '@jianghu/domain-contracts';
 import {
   actionDeltaEV, CRED, evaluate, recommend, voiCComp, voiStance, weightedScore,
   type ActionDelta, type Cred, type Deal, type EvalResult, type KernelAction, type Mark,
@@ -11,11 +12,21 @@ import {
 import { prisma } from '../prisma.js';
 import { denyViewer, viewerCanReadOpp } from '../scope.js';
 import { assembleDeal, CONF2CRED, CRED2CONF, MARK2SENT, SENT2MARK, type AssembledPde } from './assemble.js';
-import { ensureIndustryPack, PACK_KEY } from './pack.js';
+import { PdeDecisionProfileUnavailableError, resolveIndustryPack } from './pack.js';
 import { z } from 'zod';
 import type { DbClient } from '../mutation/scopeGuards.js';
+import { ScopedNotFoundError } from '../mutation/scopeGuards.js';
+import { runCommand } from '../mutation/commandRunner.js';
 import type { ReadPrincipal } from '../visibility.js';
 import { resolveEffectiveResourceScope } from '../resourceScope.js';
+import {
+  PDE_STAGE_KEYS,
+  PdeContextInvalidError,
+  PdeContextUninitializedError,
+  PdeContextVersionConflictError,
+  PdeContextWriteForbiddenError,
+  readPdeDecisionContext,
+} from './context.js';
 
 const STAGE_ORDER: Stage[] = ['initiation', 'feasibility', 'budget_approval', 'tender_design', 'tender_execution'];
 
@@ -99,6 +110,7 @@ interface PdeComputation {
   confidenceFlag: string;
   s741: { posture: string; plays: string[] } | null;
   packId: string;
+  packKey: string;
   packSchemaVersion: string;
   signalCatalogSchemaVersion: string;
 }
@@ -112,8 +124,36 @@ export async function computePde(tenantId: string, oppId: string, db: DbClient =
     if (!scope.canReadMatter(oppId)) return null;
     currentPrincipal = { tenantId, userId: scope.actorUserId, role: scope.actorRole };
   }
-  const { seeds, packId, packSchemaVersion, signalCatalogSchemaVersion } = await ensureIndustryPack(tenantId, db);
-  const asm = await assembleDeal(tenantId, oppId, seeds, packId, db, currentPrincipal);
+  const decisionContext = await readPdeDecisionContext(db, tenantId, oppId);
+  if (!decisionContext) {
+    const visibleMatter = await db.opportunity.findFirst({
+      where: {
+        id: oppId,
+        tenantId,
+        archivedAt: null,
+        account: { tenantId, archivedAt: null },
+      },
+      select: { id: true },
+    });
+    if (visibleMatter) throw new PdeContextUninitializedError();
+    return null;
+  }
+  const {
+    seeds,
+    packId,
+    packKey,
+    packSchemaVersion,
+    signalCatalogSchemaVersion,
+  } = await resolveIndustryPack(tenantId, decisionContext.decisionProfileRef, db);
+  const asm = await assembleDeal(
+    tenantId,
+    oppId,
+    seeds,
+    packId,
+    decisionContext,
+    db,
+    currentPrincipal,
+  );
   if (!asm) return null;
   const catalog = await db.actionCatalog.findMany({ where: { tenantId, packId } });
   const ev = evaluate(asm.deal);
@@ -129,7 +169,7 @@ export async function computePde(tenantId: string, oppId: string, db: DbClient =
   if (asm.potSource === 'missing') flags.push('no_pot');
   return {
     asm, seeds, ev, score, actions, recommendation, confidenceFlag: flags.join(','),
-    s741: strategy741Label(seeds, score), packId, packSchemaVersion, signalCatalogSchemaVersion,
+    s741: strategy741Label(seeds, score), packId, packKey, packSchemaVersion, signalCatalogSchemaVersion,
   };
 }
 
@@ -154,10 +194,17 @@ export async function createPdeSnapshot(
           evidence: c.asm.evidence,
           metadata: {
             activePackId: c.packId,
-            industryPack: { packKey: PACK_KEY, schemaVersion: c.packSchemaVersion },
+            industryPack: { packKey: c.packKey, schemaVersion: c.packSchemaVersion },
             signalCatalog: { schema: 'signal-catalog', version: c.signalCatalogSchemaVersion },
+            pdeDecisionContext: {
+              id: c.asm.decisionContext.id,
+              stageKey: c.asm.decisionContext.stageKey,
+              decisionProfileRef: c.asm.decisionContext.decisionProfileRef,
+              source: c.asm.decisionContext.source,
+              version: c.asm.decisionContext.version,
+            },
           },
-          packKey: PACK_KEY,
+          packKey: c.packKey,
           paramsSchemaVersion: c.seeds.params.schemaVersion,
         }),
         resultJson: JSON.stringify({ eval: c.ev, score: c.score, recommendation: c.recommendation, confidenceFlag: c.confidenceFlag }),
@@ -174,13 +221,240 @@ export async function takePdeSnapshot(tenantId: string, oppId: string, trigger: 
   try { return await createPdeSnapshot(prisma, tenantId, oppId, trigger, createdBy); } catch { return null; }
 }
 
+const PdeContextUpdateSchema = z.object({
+  stageKey: z.enum(PDE_STAGE_KEYS),
+  decisionProfileRef: z.string().min(1).nullable(),
+  baseVersion: z.number().int().nonnegative(),
+}).strict();
+
+type PdeContextUpdateInput = z.infer<typeof PdeContextUpdateSchema>;
+type PdeContextUpdateReceipt = {
+  stageKey: Stage;
+  decisionProfileRef: string | null;
+  version: number;
+  changed: boolean;
+  snapshotId: string | null;
+};
+
+async function executePdeContextUpdate(
+  ctx: CommandContext,
+  opportunityId: string,
+  input: PdeContextUpdateInput,
+  db: DbClient,
+): Promise<PdeContextUpdateReceipt> {
+  const scope = await resolveEffectiveResourceScope(db, {
+    tenantId: ctx.tenantId,
+    userId: ctx.actorId,
+    role: ctx.actorRole,
+  });
+  if (scope.actorRole === 'viewer') throw new PdeContextWriteForbiddenError();
+  if (!scope.canReadMatter(opportunityId)) throw new ScopedNotFoundError();
+
+  const actorLock = await db.user.updateMany({
+    where: { id: ctx.actorId, tenantId: ctx.tenantId, role: scope.actorRole },
+    data: { role: scope.actorRole },
+  });
+  if (actorLock.count !== 1) throw new PdeContextWriteForbiddenError();
+
+  const matter = await db.opportunity.findFirst({
+    where: {
+      id: opportunityId,
+      tenantId: ctx.tenantId,
+      archivedAt: null,
+      account: { tenantId: ctx.tenantId, archivedAt: null },
+    },
+    select: { id: true, accountId: true, version: true, primaryOwnerUserId: true },
+  });
+  if (!matter) throw new ScopedNotFoundError();
+  const account = await db.account.findFirst({
+    where: { id: matter.accountId, tenantId: ctx.tenantId, archivedAt: null },
+    select: { name: true, primaryOwnerUserId: true },
+  });
+  if (!account) throw new ScopedNotFoundError();
+  const accountLock = await db.account.updateMany({
+    where: {
+      id: matter.accountId,
+      tenantId: ctx.tenantId,
+      archivedAt: null,
+      name: account.name,
+      primaryOwnerUserId: account.primaryOwnerUserId,
+    },
+    data: { name: account.name },
+  });
+  if (accountLock.count !== 1) throw new ScopedNotFoundError();
+  const matterLock = await db.opportunity.updateMany({
+    where: {
+      id: opportunityId,
+      tenantId: ctx.tenantId,
+      accountId: matter.accountId,
+      archivedAt: null,
+      version: matter.version,
+      primaryOwnerUserId: matter.primaryOwnerUserId,
+      account: { tenantId: ctx.tenantId, archivedAt: null },
+    },
+    data: { version: { increment: 0 } },
+  });
+  if (matterLock.count !== 1) throw new ScopedNotFoundError();
+
+  const existing = await readPdeDecisionContext(db, ctx.tenantId, opportunityId);
+  if (!existing) throw new PdeContextUninitializedError();
+  if (existing.version !== input.baseVersion) throw new PdeContextVersionConflictError();
+  if (input.decisionProfileRef) {
+    await resolveIndustryPack(ctx.tenantId, input.decisionProfileRef, db);
+  }
+
+  if (
+    existing.stageKey === input.stageKey
+    && existing.decisionProfileRef === input.decisionProfileRef
+  ) {
+    return {
+      stageKey: existing.stageKey,
+      decisionProfileRef: existing.decisionProfileRef,
+      version: existing.version,
+      changed: false,
+      snapshotId: null,
+    };
+  }
+
+  const updated = await db.pdeDecisionContext.updateMany({
+    where: {
+      id: existing.id,
+      tenantId: ctx.tenantId,
+      opportunityId,
+      version: input.baseVersion,
+    },
+    data: {
+      stageKey: input.stageKey,
+      decisionProfileRef: input.decisionProfileRef,
+      source: 'manual',
+      version: { increment: 1 },
+    },
+  });
+  if (updated.count !== 1) throw new PdeContextVersionConflictError();
+
+  const snapshotId = await createPdeSnapshot(
+    db,
+    ctx.tenantId,
+    opportunityId,
+    'pde_context_changed',
+    ctx.actorId,
+  );
+  await db.auditEvent.create({ data: {
+    id: `audit_${randomUUID()}`,
+    tenantId: ctx.tenantId,
+    actorId: ctx.actorId,
+    channel: ctx.channel,
+    action: 'pde_context_updated',
+    entityKind: 'pde_decision_context',
+    entityId: opportunityId,
+    requestId: ctx.requestId ?? null,
+    sourceRef: snapshotId,
+    changedFields: JSON.stringify(['stageKey', 'decisionProfileRef', 'source', 'version']),
+    metadata: JSON.stringify({
+      contextId: existing.id,
+      previous: {
+        stageKey: existing.stageKey,
+        decisionProfileRef: existing.decisionProfileRef,
+        version: existing.version,
+      },
+      next: {
+        stageKey: input.stageKey,
+        decisionProfileRef: input.decisionProfileRef,
+        version: existing.version + 1,
+      },
+      snapshotId,
+    }),
+  } });
+  return {
+    stageKey: input.stageKey,
+    decisionProfileRef: input.decisionProfileRef,
+    version: existing.version + 1,
+    changed: true,
+    snapshotId,
+  };
+}
+
+function readIdempotencyKey(req: any, reply: any): string | undefined {
+  const value = req.headers['idempotency-key'];
+  if (typeof value !== 'string' || value.trim().length < 8 || value.length > 200) {
+    reply.code(400).send({ error: '缺少有效的 Idempotency-Key' });
+    return undefined;
+  }
+  return value;
+}
+
+function sendPdeError(req: any, reply: any, error: unknown) {
+  if (error instanceof ScopedNotFoundError || (error as any)?.scopedNotFound === true) {
+    return reply.code(404).send({ error: 'PDE 资源不存在或无权限' });
+  }
+  if (
+    error instanceof PdeContextUninitializedError
+    || error instanceof PdeContextInvalidError
+    || error instanceof PdeContextVersionConflictError
+    || error instanceof PdeContextWriteForbiddenError
+    || error instanceof PdeDecisionProfileUnavailableError
+  ) {
+    return reply.code(error.statusCode).send({ code: error.code, error: error.message });
+  }
+  const known = error && typeof error === 'object'
+    ? error as { statusCode?: unknown; code?: unknown; message?: unknown }
+    : {};
+  if (typeof known.statusCode === 'number' && [400, 403, 409, 503].includes(known.statusCode)) {
+    return reply.code(known.statusCode).send({
+      ...(typeof known.code === 'string' ? { code: known.code } : {}),
+      error: typeof known.message === 'string' ? known.message : 'PDE 请求失败',
+    });
+  }
+  req.log.warn(error);
+  return reply.code(500).send({ error: 'PDE 请求失败' });
+}
+
 export function pdeRoutes(app: FastifyInstance) {
   const principalOf = (req: any): ReadPrincipal => ({ tenantId: req.user.tenantId, userId: req.user.userId, role: req.user.role });
+  const computeForRequest = async (req: any, reply: any): Promise<PdeComputation | null> => {
+    try {
+      return await computePde(req.user.tenantId, req.params.oppId, prisma, principalOf(req));
+    } catch (error) {
+      sendPdeError(req, reply, error);
+      return null;
+    }
+  };
+
+  app.put('/api/pde/:oppId/context', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    const key = readIdempotencyKey(req, reply);
+    if (!key) return;
+    const parsed = PdeContextUpdateSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'PDE 决策上下文参数无效' });
+    const ctx: CommandContext = {
+      tenantId: req.user.tenantId,
+      actorId: req.user.userId,
+      actorRole: ActorRoleSchema.parse(req.user.role),
+      channel: 'web',
+      requestId: req.id,
+      assertionMode: 'user_asserted',
+    };
+    try {
+      const command = await runCommand<PdeContextUpdateReceipt>(
+        ctx,
+        {
+          kind: 'pde_decision_context',
+          idempotencyKey: key,
+          payload: { opportunityId: req.params.oppId, ...parsed.data },
+        },
+        (tx) => executePdeContextUpdate(ctx, req.params.oppId, parsed.data, tx),
+        prisma,
+      );
+      return { ...command.result, replayed: command.replayed };
+    } catch (error) {
+      return sendPdeError(req, reply, error);
+    }
+  });
+
   // 牌局评估：赢面（带置信）+ 双轨分 + 四动作建议
   app.get('/api/pde/:oppId/ev', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (!(await viewerCanReadOpp(req, reply, req.params.oppId))) return; // viewer 归属校验（契约 v1.0 §四）
-    const c = await computePde(req.user.tenantId, req.params.oppId, prisma, principalOf(req));
-    if (!c) return reply.code(404).send({ error: '商机不存在' });
+    const c = await computeForRequest(req, reply);
+    if (!c) return reply.sent ? undefined : reply.code(404).send({ error: '商机不存在' });
     return {
       opportunity: c.asm.opp,
       pwin: c.ev.pwin, pwin_raw: c.ev.pwin_raw, gate: c.ev.gate, S: c.ev.S,
@@ -197,8 +471,8 @@ export function pdeRoutes(app: FastifyInstance) {
   // 情报作战清单（VoI 排序·拜访卡引擎）：立场未知/低可信干系人 + 竞争系数未实测，各挂 info 动作
   app.get('/api/pde/:oppId/intel-priorities', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (!(await viewerCanReadOpp(req, reply, req.params.oppId))) return; // viewer 归属校验（契约 v1.0 §四）
-    const c = await computePde(req.user.tenantId, req.params.oppId, prisma, principalOf(req));
-    if (!c) return reply.code(404).send({ error: '商机不存在' });
+    const c = await computeForRequest(req, reply);
+    if (!c) return reply.sent ? undefined : reply.code(404).send({ error: '商机不存在' });
     const catalog = await prisma.actionCatalog.findMany({ where: { tenantId: req.user.tenantId, packId: c.packId } });
     const hangable = catalog.map((row) => {
       let targets: string[] = []; let effect: any = {};
@@ -238,8 +512,8 @@ export function pdeRoutes(app: FastifyInstance) {
   // 行动排序（ΔEV·坞行动列/今日一屏引擎）：relationship 动作实例化，含 741 子策略标签
   app.get('/api/pde/:oppId/action-ranking', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (!(await viewerCanReadOpp(req, reply, req.params.oppId))) return; // viewer 归属校验（契约 v1.0 §四）
-    const c = await computePde(req.user.tenantId, req.params.oppId, prisma, principalOf(req));
-    if (!c) return reply.code(404).send({ error: '商机不存在' });
+    const c = await computeForRequest(req, reply);
+    if (!c) return reply.sent ? undefined : reply.code(404).send({ error: '商机不存在' });
     return {
       actions: c.actions.map((a) => ({
         actionKey: a.actionKey, title: a.title, personId: a.personId, personName: a.personName,
@@ -277,8 +551,8 @@ export function pdeRoutes(app: FastifyInstance) {
       })).max(30),
     }).safeParse(req.body ?? {});
     if (!p.success) return reply.code(400).send({ error: '参数无效' });
-    const c = await computePde(req.user.tenantId, req.params.oppId, prisma, principalOf(req));
-    if (!c) return reply.code(404).send({ error: '商机不存在' });
+    const c = await computeForRequest(req, reply);
+    if (!c) return reply.sent ? undefined : reply.code(404).send({ error: '商机不存在' });
 
     const ovById = new Map(p.data.overrides.map((o) => [o.personId, o]));
     const hypoDeal = {

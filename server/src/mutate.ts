@@ -10,6 +10,7 @@ import { pickKeyInfluencerKeeper } from './g64111.js';
 import { businessYmd } from './businessDate.js';
 import { mapLegacyOpportunityStatus } from './matter/lifecycle.js';
 import { mapLegacyPlanActionToCommitmentFields } from './commitment/legacy.js';
+import { createPdeDecisionContext } from './pde/context.js';
 
 export type { DbClient } from './mutation/scopeGuards.js';
 
@@ -87,7 +88,6 @@ async function lockedUpdate(opts: {
 
 export type PostCommitEffect =
   | { type: 'account_created'; tenantId: string; accountId: string }
-  | { type: 'opportunity_stage_changed'; tenantId: string; opportunityId: string }
   | undefined;
 
 function isTopLevelClient(db: DbClient): db is PrismaClient {
@@ -132,11 +132,7 @@ export async function runPostCommitEffect(effect: PostCommitEffect): Promise<voi
   if (effect.type === 'account_created') {
     try { await enqueueEnrichJob(effect.tenantId, effect.accountId, 'auto'); } catch { /* 超上限等，忽略 */ }
     try { await enqueueProfileJob(effect.tenantId, effect.accountId); } catch { /* 超上限等，忽略 */ }
-    return;
   }
-  void import('./pde/routes.js')
-    .then(({ takePdeSnapshot }) => takePdeSnapshot(effect.tenantId, effect.opportunityId, 'stage_gate'))
-    .catch(() => {});
 }
 
 
@@ -238,6 +234,7 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
         expectedAmountW: o.expectedAmountW ?? 0, meta: S(o.meta ?? {}),
         memberScoped: o.memberScoped ?? false,
       } });
+      await createPdeDecisionContext(db, { tenantId, opportunityId: o.id });
       return;
     }
     case 'UPDATE_OPP': {
@@ -259,18 +256,12 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
       if (action.patch?.c3Items !== undefined) d.c3Items = S(action.patch.c3Items);
       if (action.patch?.c5Items !== undefined) d.c5Items = S(action.patch.c5Items);
       if (action.patch?.meta !== undefined) d.meta = S(action.patch.meta);
-      // M3 stage-gate（K7）：介入阶段实际推进时强制落 PDE 快照留痕。先取旧值比对，写成功后 fire-and-forget（失败静默不阻塞更新）
-      const stageChanging = d.engageStage !== undefined
-        ? (await db.opportunity.findFirst({ where: { id: action.oppId, tenantId, accountId: action.accId }, select: { engageStage: true } }))?.engageStage !== d.engageStage
-        : false;
       await lockedUpdate({
         baseVersion: action.baseVersion,
         update: (vw) => db.opportunity.updateMany({ where: { id: action.oppId, tenantId, accountId: action.accId, ...vw }, data: { ...d, version: { increment: 1 } } }),
         exists: async () => !!(await db.opportunity.findFirst({ where: { id: action.oppId, tenantId, accountId: action.accId }, select: { id: true } })),
       });
-      return stageChanging
-        ? { type: 'opportunity_stage_changed', tenantId, opportunityId: action.oppId }
-        : undefined;
+      return;
     }
     case 'DELETE_OPP':
       throw new Error('hard delete disabled; use archive');

@@ -233,9 +233,6 @@ export async function executeInboxBatch(
       if (item.decision === 'accept') {
         const outcome = await acceptProposalInTransaction(ctx, item.id, item.overrideValue, db as any);
         status = outcome.result;
-        if (outcome.effect?.type === 'opportunity_stage_changed') {
-          await createPdeSnapshot(db, ctx.tenantId, outcome.effect.opportunityId, 'stage_gate', ctx.actorId);
-        }
       } else status = await rejectProposalInTransaction(ctx.tenantId, item.id, db as any);
     } else if (item.kind === 'person') {
       if (item.decision === 'accept') {

@@ -11,6 +11,7 @@ import type { DbClient } from './mutate.js';
 import { ScopedNotFoundError } from './mutation/scopeGuards.js';
 import { activePersonWhere } from './activePerson.js';
 import { pickKeyInfluencerKeeper } from './g64111.js';
+import { createPdeDecisionContext } from './pde/context.js';
 
 export const CloneOpportunitySchema = z.object({
   accountId: z.string().min(1),
@@ -39,6 +40,7 @@ export async function cloneOpportunityInTransaction(
     id: oppId, tenantId, accountId, name: name.slice(0, 100), customerType: acc.customerType,
     pipelineStage: '线索', engageStage: '需求调研立项', memberScoped: true,
   } });
+  await createPdeDecisionContext(db, { tenantId, opportunityId: oppId });
   for (const pid of validIds) {
     await db.opportunityMember.create({ data: { tenantId, opportunityId: oppId, personId: pid } });
     await db.matterParticipant.create({ data: { tenantId, accountId, opportunityId: oppId, personId: pid } });

@@ -1,17 +1,12 @@
 import { createHash } from 'node:crypto';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import type { Stage } from 'pde-kernel';
+import { PDE_STAGE_KEYS } from './context.js';
 
 type MigrationDb = PrismaClient | Prisma.TransactionClient;
 
 export const PDE_DECISION_CONTEXT_MIGRATION_KEY = 'CORE-113-pde-decision-context-shadow-v1';
-export const PDE_STAGE_KEYS = [
-  'initiation',
-  'feasibility',
-  'budget_approval',
-  'tender_design',
-  'tender_execution',
-] as const satisfies readonly Stage[];
+export { PDE_STAGE_KEYS } from './context.js';
 
 const LEGACY_STAGE_MAP: Readonly<Record<string, Stage>> = Object.freeze({
   需求调研立项: 'initiation',
@@ -289,12 +284,22 @@ export async function backfillPdeDecisionContexts(
 
 export async function verifyPdeDecisionContextIntegrity(db: MigrationDb): Promise<{
   markerPresent: boolean;
+  missingContexts: number;
   invalidContexts: number;
   invalidParents: number;
   invalidDecisionProfiles: number;
 }> {
   const markerPresent = await hasPdeDecisionContextMigrationMarker(db);
-  const [invalidParentsRow, invalidProfilesRow] = await Promise.all([
+  const [missingContextsRow, invalidParentsRow, invalidProfilesRow] = await Promise.all([
+    db.$queryRawUnsafe<CountRow[]>(`
+      SELECT COUNT(*) AS "count"
+        FROM "Opportunity" AS matter
+       WHERE NOT EXISTS (
+         SELECT 1 FROM "PdeDecisionContext" AS context
+          WHERE context."opportunityId" = matter.id
+            AND context."tenantId" = matter."tenantId"
+       )
+    `),
     db.$queryRawUnsafe<CountRow[]>(`
       SELECT COUNT(*) AS "count"
         FROM "PdeDecisionContext" AS context
@@ -322,15 +327,23 @@ export async function verifyPdeDecisionContextIntegrity(db: MigrationDb): Promis
   const invalidContexts = contexts.filter((context) => !stageKeys.has(context.stageKey)
     || !['legacy_shadow', 'manual', 'system_default'].includes(context.source)
     || context.version < 0).length;
+  const missingContexts = count(missingContextsRow[0]?.count);
   const invalidParents = count(invalidParentsRow[0]?.count);
   const invalidDecisionProfiles = count(invalidProfilesRow[0]?.count);
-  if (!markerPresent || invalidContexts > 0 || invalidParents > 0 || invalidDecisionProfiles > 0) {
+  if (
+    !markerPresent
+    || missingContexts > 0
+    || invalidContexts > 0
+    || invalidParents > 0
+    || invalidDecisionProfiles > 0
+  ) {
     throw new Error(`PDE decision context integrity failed: ${JSON.stringify({
       markerPresent,
+      missingContexts,
       invalidContexts,
       invalidParents,
       invalidDecisionProfiles,
     })}`);
   }
-  return { markerPresent, invalidContexts, invalidParents, invalidDecisionProfiles };
+  return { markerPresent, missingContexts, invalidContexts, invalidParents, invalidDecisionProfiles };
 }

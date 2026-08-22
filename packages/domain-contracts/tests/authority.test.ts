@@ -64,7 +64,7 @@ describe('CRM field authority map', () => {
       targetAuthority: { kind: 'methodology_value', path: 'MethodologyValue(g64111.engage_stage)' },
     });
     expect(getCrmFieldAuthority('pde.decision_stage')).toMatchObject({
-      currentAuthority: { kind: 'legacy_path', path: 'Opportunity.engageStage' },
+      currentAuthority: { kind: 'core_path', path: 'PdeDecisionContext.stageKey' },
       targetAuthority: { kind: 'core_path', path: 'PdeDecisionContext.stageKey' },
     });
     expect(getCrmFieldAuthority('stakeholder.focus')).toMatchObject({
@@ -137,6 +137,31 @@ describe('CRM field authority map', () => {
       'server/src/mutate.ts', 'server/src/state.ts', 'server/src/wecom.ts',
       'server/src/mcpServer.ts', 'server/src/personMerge.ts',
     ]));
+    const engageStage = getCrmFieldAuthority('g64111.engage_stage');
+    expect(engageStage?.consumers.adapters).toEqual(expect.arrayContaining([
+      'app/src/lib/g64111.ts', 'server/src/g64111.ts',
+    ]));
+    expect(engageStage?.consumers.reads).not.toContain('server/src/pde/assemble.ts');
+    const pdeStage = getCrmFieldAuthority('pde.decision_stage');
+    expect(pdeStage).toMatchObject({
+      currentAuthority: { kind: 'core_path', path: 'PdeDecisionContext.stageKey' },
+      targetAuthority: { kind: 'core_path', path: 'PdeDecisionContext.stageKey' },
+      consumers: {
+        reads: ['server/src/pde/assemble.ts'],
+        adapters: ['server/src/pde/context.ts'],
+        planned: [],
+      },
+    });
+    expect(pdeStage?.consumers.writes).toEqual(expect.arrayContaining([
+      'server/src/mcp/syncBundle.ts', 'server/src/mutate.ts', 'server/src/opp.ts',
+      'server/src/pde/routes.ts', 'server/src/seed-demo.ts',
+    ]));
+    expect(pdeStage?.consumers.migrations).toEqual(expect.arrayContaining([
+      'server/prisma/postgres/migrations/20260821070000_add_pde_decision_context/migration.sql',
+      'server/scripts/migrate-pde-decision-context.ts', 'server/scripts/upgrade-sqlite-schema.ts',
+      'server/src/pde/decisionContextMigration.ts',
+    ]));
+    expect(listCrmFieldConsumers(pdeStage)).not.toContain('app/src/lib/pde/adapter.ts');
     expect(listCrmFieldConsumers(getCrmFieldAuthority('commitment.record'))).toEqual(expect.arrayContaining([
       'app/src/lib/today.ts', 'server/src/state.ts', 'server/src/mutation/actionScope.ts',
       'server/src/mutation/commitments.ts',

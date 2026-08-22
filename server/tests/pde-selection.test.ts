@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { assembleDeal } from '../src/pde/assemble.js';
+import { createPdeDecisionContext } from '../src/pde/context.js';
 import { createTestContext } from './helpers/testApp.js';
 
 describe('PDE P4 selection compatibility', () => {
@@ -17,6 +18,10 @@ describe('PDE P4 selection compatibility', () => {
           pipelineStage: '线索', engageStage: '需求调研立项',
         },
       });
+      const decisionContext = await createPdeDecisionContext(context.prisma, {
+        tenantId: context.tenant.id,
+        opportunityId,
+      });
       await context.prisma.person.createMany({
         data: ['d-illegal', 'z-legal', 'a-legal'].map((id) => ({
           id, tenantId: context.tenant.id, accountId, name: id, title: '虚构岗位',
@@ -32,7 +37,7 @@ describe('PDE P4 selection compatibility', () => {
 
       const assembled = await assembleDeal(context.tenant.id, opportunityId, {
         scoringSchema: { items: [] }, signalCatalog: { deltaAlphaMap: {} },
-      }, 'test-pack', context.prisma);
+      }, 'test-pack', decisionContext, context.prisma);
       const slots = new Map(assembled?.deal.stakeholders.map((stakeholder) => [stakeholder.id, stakeholder.slots]));
 
       expect(slots.get('a-legal')).toContain('KEY_INFLUENCER');

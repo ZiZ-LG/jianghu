@@ -8,15 +8,17 @@ import type { DbClient } from '../mutation/scopeGuards.js';
 import type { ReadPrincipal } from '../visibility.js';
 import { activePersonWhere } from '../activePerson.js';
 import { resolveEffectiveResourceScope } from '../resourceScope.js';
+import {
+  PdeContextInvalidError,
+  parsePdeStageKey,
+  type PdeDecisionContextAuthority,
+} from './context.js';
 
 // ── 值域映射（江湖 ↔ 内核）──
 export const SENT2MARK: Record<string, Mark> = { star: 'star', plus: 'plus', neutral: 'eq', unknown: 'unk', minus: 'minus', x: 'x' };
 export const MARK2SENT: Record<Mark, string> = { star: 'star', plus: 'plus', eq: 'neutral', unk: 'unknown', minus: 'minus', x: 'x' };
 export const CONF2CRED: Record<string, Cred> = { 共识: 'consensus', 明确: 'explicit', 推理: 'inference', 不清: 'unclear' };
 export const CRED2CONF: Record<Cred, string> = { consensus: '共识', explicit: '明确', inference: '推理', unclear: '不清' };
-export const STAGE_MAP: Record<string, Stage> = {
-  需求调研立项: 'initiation', 方案可研: 'feasibility', 预算批复: 'budget_approval', 招标论证: 'tender_design', 招采执行: 'tender_execution',
-};
 const PROC2SLOT: Record<string, Slot> = { purchasing: 'PROC_MGMT', agency: 'PROC_AGENT', ownerRep: 'OWNER_REP' };
 const ROLE2SLOT: Record<string, Slot> = { A: 'A', D: 'D', U: 'MEMBER', R: 'MEMBER', C: 'MEMBER' };
 
@@ -30,7 +32,8 @@ export interface AssembledPde {
   itemVolatility: Record<string, Volatility>;
   itemConfidence: Record<string, Cred>; // itemKey → 映射后可信度（默认 explicit·实现决策：温和上线不轰炸 CHECK）
   evidence: ApprovedEvidenceAggregate; // 快照重放所需：参与计算的 Evidence IDs + 每人聚合 alpha
-  opp: { id: string; name: string; engageStage: string };
+  decisionContext: PdeDecisionContextAuthority;
+  opp: { id: string; name: string };
 }
 
 /** 从江湖库组装一个 kernel Deal（按 tenantId 严格隔离）。opp 不存在返回 null。 */
@@ -39,9 +42,13 @@ export async function assembleDeal(
   oppId: string,
   seeds: any,
   packId: string,
+  decisionContext: PdeDecisionContextAuthority,
   db: DbClient = prisma,
   principal?: ReadPrincipal,
 ): Promise<AssembledPde | null> {
+  if (decisionContext.tenantId !== tenantId || decisionContext.opportunityId !== oppId) {
+    throw new PdeContextInvalidError();
+  }
   let currentPrincipal = principal;
   let canReadFullAccount = true;
   let effectiveScope: Awaited<ReturnType<typeof resolveEffectiveResourceScope>> | null = null;
@@ -124,9 +131,9 @@ export async function assembleDeal(
   const visibleBiIds = new Set(visibleBis.map((b) => b.id));
   const visibleUcvs = opp.ucvs.filter((u) => visibleBiIds.has(u.targetBiId));
   const opportunity = {
-    primaryDPersonId: opp.primaryDPersonId,
-    engageStage: opp.engageStage,
-    c3Items: J(opp.c3Items, {}), c5Items: J(opp.c5Items, {}),
+    ...opp,
+    c3Items: J(opp.c3Items, {}),
+    c5Items: J(opp.c5Items, {}),
     roles: opp.roles.map((r) => ({
       personId: r.personId, role: r.role as any, sentiment: r.sentiment as any, confidence: r.confidence as any,
       isKeyInfluencer: r.isKeyInfluencer, procurementType: (r.procurementType ?? undefined) as any, procurementStatus: (r.procurementStatus ?? undefined) as any,
@@ -155,11 +162,21 @@ export async function assembleDeal(
   // 3) 彩池与阶段
   const potSource = cfg?.potValue != null ? 'pde_config' : opp.expectedAmountW > 0 ? 'expected_amount' : 'missing';
   const pot = cfg?.potValue ?? (opp.expectedAmountW > 0 ? opp.expectedAmountW : 0);
-  const stage: Stage = STAGE_MAP[opp.engageStage] ?? 'initiation';
+  const stage: Stage = parsePdeStageKey(decisionContext.stageKey);
 
   const deal: Deal = {
     id: opp.id, pot, planned_cost: cfg?.plannedCost ?? 0, stage,
     c_comp: cfg?.cComp ?? 1.0, stakeholders, items,
   };
-  return { deal, potSource, stage, personName, itemVolatility, itemConfidence, evidence, opp: { id: opp.id, name: opp.name, engageStage: opp.engageStage } };
+  return {
+    deal,
+    potSource,
+    stage,
+    personName,
+    itemVolatility,
+    itemConfidence,
+    evidence,
+    decisionContext,
+    opp: { id: opp.id, name: opp.name },
+  };
 }

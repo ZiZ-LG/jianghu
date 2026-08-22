@@ -60,7 +60,8 @@ export const G64111_DEFINITION_MANIFEST = Object.freeze({
     legacyField('g64111.engage_stage', 'Opportunity.engageStage', 2, {
       dataType: 'engine_key',
       valueDomain: { source: `${G64111_ENGINE_REF}#EngageStage` },
-      legacyConsumersJson: pdeConsumers,
+      // CORE-113 decoupled PDE decision stage. This legacy value now serves only the G64111 scoring boundary.
+      legacyConsumersJson: engineConsumers,
     }),
     legacyField('g64111.c3_items', 'Opportunity.c3Items', 3, {
       valueDomain: { source: `${G64111_ENGINE_REF}#C3_ITEMS`, valueType: 'boolean' },

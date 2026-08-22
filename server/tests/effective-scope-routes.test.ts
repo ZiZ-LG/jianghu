@@ -151,6 +151,11 @@ describe('CORE-109 effective scope parity across read surfaces', () => {
           primaryOwnerUserId: other.user.id,
         },
       ] });
+      await context.prisma.pdeDecisionContext.createMany({ data: [
+        { id: 'scope-routes-pde-full', tenantId, opportunityId: fullMatterId, stageKey: 'initiation', source: 'legacy_shadow' },
+        { id: 'scope-routes-pde-direct', tenantId, opportunityId: directMatterId, stageKey: 'initiation', source: 'legacy_shadow' },
+        { id: 'scope-routes-pde-hidden', tenantId, opportunityId: hiddenMatterId, stageKey: 'initiation', source: 'legacy_shadow' },
+      ] });
       await context.prisma.person.createMany({ data: [
         { id: fullPersonId, tenantId, accountId: fullAccountId, name: 'FULL_PERSON_VISIBLE', title: 'Full' },
         { id: fullSecondPersonId, tenantId, accountId: fullAccountId, name: 'FULL_SECOND_PERSON_VISIBLE', title: 'Full second' },

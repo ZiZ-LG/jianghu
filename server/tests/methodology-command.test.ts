@@ -241,6 +241,15 @@ describe('CORE-110 methodology command path', () => {
         const consumers = JSON.parse(field.legacyConsumersJson) as unknown;
         return Array.isArray(consumers) && consumers.length > 0;
       })).toBe(true);
+      const engageStageConsumers = JSON.parse(
+        fields.find((field) => field.key === 'g64111.engage_stage')!.legacyConsumersJson,
+      ) as string[];
+      expect(engageStageConsumers).toEqual(expect.arrayContaining([
+        'app:g64111-adapter',
+        'server:g64111-adapter',
+      ]));
+      expect(engageStageConsumers).not.toContain('app:pde-adapter:CORE-113');
+      expect(engageStageConsumers).not.toContain('server:pde-assembler:CORE-113');
       expect(createG64111Adapter({
         engineRef: version.engineRef,
         storageBindings: fields.map((field) => ({

@@ -16,6 +16,13 @@ async function seedDeal(context: TestContext, suffix: string) {
       customerType: 2, pipelineStage: '推进', engageStage: '预算批复', expectedAmountW: 100,
     },
   });
+  await context.prisma.pdeDecisionContext.create({ data: {
+    id: `context-pde-${suffix}`,
+    tenantId: context.tenant.id,
+    opportunityId,
+    stageKey: 'budget_approval',
+    source: 'legacy_shadow',
+  } });
   await context.prisma.person.create({
     data: { id: personId, tenantId: context.tenant.id, accountId, name: `Stakeholder ${suffix}`, title: '决策人' },
   });

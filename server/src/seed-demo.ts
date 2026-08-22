@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { prisma } from './prisma.js';
 import { shiftBusinessYmd } from './businessDate.js';
 import { mapLegacyPlanActionToCommitmentFields } from './commitment/legacy.js';
+import { createPdeDecisionContext } from './pde/context.js';
 
 /** 为某租户创建一份演示数据（西部电力建设集团风光储项目）。每次调用用独立 id 前缀，避免冲突。 */
 export async function createDemoForTenant(tenantId: string): Promise<void> {
@@ -57,6 +58,12 @@ export async function createDemoForTenant(tenantId: string): Promise<void> {
     c5Items: S({ '竞标方名单/家数': true, 招标参数: true, 评标规则: false, 甲方项目代表: true, 招标代理机构: false }),
     expectedSignDate: ymd(120), expectedAmountW: 2000,
   } });
+  await createPdeDecisionContext(prisma, {
+    tenantId,
+    opportunityId: oppId,
+    stageKey: 'feasibility',
+    source: 'manual',
+  });
 
   await prisma.edge.createMany({ data: edgeRows });
 

@@ -10,6 +10,7 @@ import { enqueueEnrichJob, enqueueProfileJob, enqueueSuggestJob } from '../jobs.
 import { replayReceipt, type StoredSyncReceipt, type SyncReceipt } from './syncReceipt.js';
 import { activePersonWhere } from '../activePerson.js';
 import { mapLegacyOpportunityStatus } from '../matter/lifecycle.js';
+import { createPdeDecisionContext } from '../pde/context.js';
 
 const OPAQUE_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:#/-]*$/;
 const OpaqueRefSchema = z.string().trim().min(1).max(80).regex(OPAQUE_REF_PATTERN, 'ref must be an opaque identifier without names or free text');
@@ -307,6 +308,10 @@ async function executeBundle(
         c3Items: JSON.stringify(fact.c3Items ?? {}), c5Items: JSON.stringify(fact.c5Items ?? {}),
         meta: JSON.stringify({ ...(fact.meta ?? {}), _mcpOrigin: { source: 'mcp', syncRunId, needsReview: true } }),
       } });
+      await createPdeDecisionContext(db, {
+        tenantId: ctx.tenantId,
+        opportunityId: opportunity.id,
+      });
       try { await enqueueSuggestJob(ctx.tenantId, account.id, opportunity.id, db); }
       catch { receipt.skipped.push({ ref: `job:suggest:${opportunity.id}`, reason: 'queue unavailable' }); }
       receipt.created.push(`opportunity:${fact.externalRef}`);
