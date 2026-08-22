@@ -1,6 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { G64111_ENGINE_REF } from '../src/methodology/g64111Manifest.js';
 
 const repositoryRoot = resolve('..');
 
@@ -18,6 +19,14 @@ async function sourceFiles(directory: string): Promise<string[]> {
 }
 
 describe('CORE-112 G64111 dependency boundary', () => {
+  it('pins the adapter engineRef to the shared package version', async () => {
+    const packageJson = JSON.parse(await readFile(
+      resolve(repositoryRoot, 'packages/g64111/package.json'),
+      'utf8',
+    )) as { version: string };
+    expect(G64111_ENGINE_REF).toBe(`g64111:${packageJson.version}`);
+  });
+
   it('allows production code to import the shared engine only through the app/server adapters', async () => {
     const roots = [resolve(repositoryRoot, 'app/src'), resolve(repositoryRoot, 'server/src')];
     const allowed = new Set([

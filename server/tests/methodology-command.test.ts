@@ -6,6 +6,8 @@ const PACK_ID = 'methodologypack_11111111111111111111111111111111';
 const VERSION_ID = 'methodologyversion_22222222222222222222222222222222';
 const BINDING_ID = 'methodologybinding_33333333333333333333333333333333';
 const PILOT_ID = 'methodologypilot_44444444444444444444444444444444';
+const G64111_PACK_ID = 'methodologypack_64111641116411164111641116411164';
+const G64111_VERSION_ID = 'methodologyversion_64111641116411164111641116411164';
 
 const auth = (token: string, key: string) => ({
   authorization: `Bearer ${token}`,
@@ -31,6 +33,13 @@ const materializePayload = (packId = PACK_ID, versionId = VERSION_ID) => ({
   templateKey: 'general-followup',
   packId,
   versionId,
+});
+
+const materializeG64111Payload = () => ({
+  type: 'MATERIALIZE_BUILTIN_METHODOLOGY',
+  templateKey: 'g64111',
+  packId: G64111_PACK_ID,
+  versionId: G64111_VERSION_ID,
 });
 
 async function seedMatter(context: TestContext, suffix: string) {
@@ -173,6 +182,79 @@ describe('CORE-110 methodology command path', () => {
       expect(await context.prisma.auditEvent.count({
         where: { tenantId: context.tenant.id, action: 'methodology_template_materialized' },
       })).toBe(1);
+    } finally {
+      await context.cleanup();
+    }
+  });
+
+  it('materializes G64111 as one published definition snapshot without copying engine formulas', async () => {
+    const context = await createTestContext();
+    try {
+      const response = await command(context, 'methodology-g64111-materialize', materializeG64111Payload());
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json()).toEqual({
+        action: 'template_materialized',
+        packId: G64111_PACK_ID,
+        versionId: G64111_VERSION_ID,
+        replayed: false,
+      });
+
+      const pack = await context.prisma.methodologyPack.findUniqueOrThrow({ where: { id: G64111_PACK_ID } });
+      const version = await context.prisma.methodologyPackVersion.findUniqueOrThrow({
+        where: { id: G64111_VERSION_ID },
+      });
+      expect(pack).toMatchObject({
+        tenantId: context.tenant.id,
+        key: 'platform.g64111',
+        name: 'G64111 趋赢力',
+        sourceTemplateRef: 'builtin:g64111:1',
+        currentPublishedVersionId: G64111_VERSION_ID,
+      });
+      expect(version).toMatchObject({
+        tenantId: context.tenant.id,
+        packId: G64111_PACK_ID,
+        versionKey: '1.0.0',
+        status: 'published',
+        engineRef: 'g64111:0.1.0',
+        sourceTemplateRef: 'builtin:g64111:1',
+        publishedByUserId: context.owner.id,
+      });
+
+      const fields = await context.prisma.methodologyFieldDefinition.findMany({
+        where: { tenantId: context.tenant.id, packId: G64111_PACK_ID, versionId: G64111_VERSION_ID },
+        orderBy: { position: 'asc' },
+      });
+      expect(fields.map((field) => [field.key, field.storageBindingKind, field.storageBindingPath])).toEqual([
+        ['g64111.primary_d', 'legacy_path', 'Opportunity.primaryDPersonId'],
+        ['g64111.pipeline_stage', 'legacy_path', 'Opportunity.pipelineStage'],
+        ['g64111.engage_stage', 'legacy_path', 'Opportunity.engageStage'],
+        ['g64111.c3_items', 'legacy_path', 'Opportunity.c3Items'],
+        ['g64111.c5_items', 'legacy_path', 'Opportunity.c5Items'],
+        ['g64111.roles', 'legacy_path', 'OppRole[]'],
+        ['g64111.burning_issues', 'legacy_path', 'BurningIssue[]'],
+        ['g64111.unique_value_claims', 'legacy_path', 'UCV[]'],
+        ['g64111.person_form_family7', 'legacy_path', 'Person.form.family7'],
+      ]);
+      expect(fields.every((field) => field.legacyStopDate === '2026-12-31')).toBe(true);
+      expect(fields.every((field) => {
+        const consumers = JSON.parse(field.legacyConsumersJson) as unknown;
+        return Array.isArray(consumers) && consumers.length > 0;
+      })).toBe(true);
+
+      const roles = await context.prisma.methodologyRoleDefinition.findMany({
+        where: { tenantId: context.tenant.id, packId: G64111_PACK_ID, versionId: G64111_VERSION_ID },
+        orderBy: { position: 'asc' },
+      });
+      expect(roles.map((role) => role.key)).toEqual(['A', 'D', 'U', 'R', 'C']);
+      expect(await context.prisma.methodologyStageDefinition.count({
+        where: { tenantId: context.tenant.id, packId: G64111_PACK_ID, versionId: G64111_VERSION_ID },
+      })).toBe(7);
+      expect(await context.prisma.methodologyRuleDefinition.count({
+        where: { tenantId: context.tenant.id, packId: G64111_PACK_ID, versionId: G64111_VERSION_ID },
+      })).toBe(0);
+      expect(await context.prisma.methodologyActionTemplate.count({
+        where: { tenantId: context.tenant.id, packId: G64111_PACK_ID, versionId: G64111_VERSION_ID },
+      })).toBe(0);
     } finally {
       await context.cleanup();
     }

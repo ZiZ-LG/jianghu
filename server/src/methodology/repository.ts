@@ -4,6 +4,7 @@ import {
   MethodologyEvaluationSchema,
   MethodologyFieldDefinitionSchema,
   MethodologyMigrationRunSchema,
+  MethodologyPackVersionSchema,
   MethodologyRoleAssignmentSchema,
   MethodologyRoleDefinitionSchema,
   MethodologyRuleDefinitionSchema,
@@ -60,6 +61,15 @@ export interface MethodologyDefinitionSetInput {
   roles: MethodologyRoleDefinition[];
   rules: MethodologyRuleDefinition[];
   actions: MethodologyActionTemplate[];
+}
+
+export interface PublishedBuiltinMethodologySnapshotInput extends MethodologyDefinitionSetInput {
+  versionKey: string;
+  engineRef: string;
+  contentHash: string;
+  learningContentRef: string | null;
+  sourceTemplateRef: string;
+  publishedAt: string;
 }
 
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/);
@@ -131,6 +141,51 @@ function assertDefinitionIdentity(
 ): void {
   if (definition.packId !== packId || definition.versionId !== versionId) {
     throw new ScopedNotFoundError();
+  }
+}
+
+function parseDefinitionSet(input: MethodologyDefinitionSetInput): MethodologyDefinitionSetInput {
+  const parsed: MethodologyDefinitionSetInput = {
+    packId: input.packId,
+    versionId: input.versionId,
+    fields: input.fields.map((item) => MethodologyFieldDefinitionSchema.parse(item)),
+    stages: input.stages.map((item) => MethodologyStageDefinitionSchema.parse(item)),
+    roles: input.roles.map((item) => MethodologyRoleDefinitionSchema.parse(item)),
+    rules: input.rules.map((item) => MethodologyRuleDefinitionSchema.parse(item)),
+    actions: input.actions.map((item) => MethodologyActionTemplateSchema.parse(item)),
+  };
+  for (const definition of [
+    ...parsed.fields,
+    ...parsed.stages,
+    ...parsed.roles,
+    ...parsed.rules,
+    ...parsed.actions,
+  ]) {
+    assertDefinitionIdentity(definition, input.packId, input.versionId);
+  }
+  return parsed;
+}
+
+async function insertDefinitionSet(
+  ctx: MethodologyRepositoryContext,
+  input: MethodologyDefinitionSetInput,
+  db: Db,
+): Promise<void> {
+  const withTenant = <T extends object>(item: T) => ({ tenantId: ctx.tenantId, ...item });
+  if (input.fields.length > 0) {
+    await db.methodologyFieldDefinition.createMany({ data: input.fields.map(withTenant) });
+  }
+  if (input.stages.length > 0) {
+    await db.methodologyStageDefinition.createMany({ data: input.stages.map(withTenant) });
+  }
+  if (input.roles.length > 0) {
+    await db.methodologyRoleDefinition.createMany({ data: input.roles.map(withTenant) });
+  }
+  if (input.rules.length > 0) {
+    await db.methodologyRuleDefinition.createMany({ data: input.rules.map(withTenant) });
+  }
+  if (input.actions.length > 0) {
+    await db.methodologyActionTemplate.createMany({ data: input.actions.map(withTenant) });
   }
 }
 
@@ -237,34 +292,91 @@ export async function createMethodologyDefinitionSet(
   input: MethodologyDefinitionSetInput,
   db: Db,
 ): Promise<void> {
-  const fields = input.fields.map((item) => MethodologyFieldDefinitionSchema.parse(item));
-  const stages = input.stages.map((item) => MethodologyStageDefinitionSchema.parse(item));
-  const roles = input.roles.map((item) => MethodologyRoleDefinitionSchema.parse(item));
-  const rules = input.rules.map((item) => MethodologyRuleDefinitionSchema.parse(item));
-  const actions = input.actions.map((item) => MethodologyActionTemplateSchema.parse(item));
-  const definitions = [...fields, ...stages, ...roles, ...rules, ...actions];
-  for (const definition of definitions) {
-    assertDefinitionIdentity(definition, input.packId, input.versionId);
-  }
-
+  const parsed = parseDefinitionSet(input);
   await assertActor(ctx, db);
   await lockDraftVersion(ctx, input.packId, input.versionId, db);
-  const withTenant = <T extends object>(item: T) => ({ tenantId: ctx.tenantId, ...item });
-  if (fields.length > 0) {
-    await db.methodologyFieldDefinition.createMany({ data: fields.map(withTenant) });
-  }
-  if (stages.length > 0) {
-    await db.methodologyStageDefinition.createMany({ data: stages.map(withTenant) });
-  }
-  if (roles.length > 0) {
-    await db.methodologyRoleDefinition.createMany({ data: roles.map(withTenant) });
-  }
-  if (rules.length > 0) {
-    await db.methodologyRuleDefinition.createMany({ data: rules.map(withTenant) });
-  }
-  if (actions.length > 0) {
-    await db.methodologyActionTemplate.createMany({ data: actions.map(withTenant) });
-  }
+  await insertDefinitionSet(ctx, parsed, db);
+}
+
+/**
+ * Atomically freezes one code-owned built-in manifest. This is intentionally
+ * narrower than enterprise authoring/publishing: callers cannot publish a
+ * draft or mutate a released version through this path.
+ */
+export async function createPublishedBuiltinMethodologySnapshot(
+  ctx: MethodologyRepositoryContext,
+  rawInput: PublishedBuiltinMethodologySnapshotInput,
+  db: Db,
+): Promise<void> {
+  if (!rawInput.sourceTemplateRef.startsWith('builtin:')) throw new ScopedNotFoundError();
+  const definitions = parseDefinitionSet(rawInput);
+  const version = MethodologyPackVersionSchema.parse({
+    id: rawInput.versionId,
+    packId: rawInput.packId,
+    versionKey: rawInput.versionKey,
+    status: 'published',
+    engineRef: rawInput.engineRef,
+    contentHash: rawInput.contentHash,
+    learningContentRef: rawInput.learningContentRef,
+    sourceTemplateRef: rawInput.sourceTemplateRef,
+    createdByUserId: ctx.actorId,
+    createdAt: rawInput.publishedAt,
+    publishedByUserId: ctx.actorId,
+    publishedAt: rawInput.publishedAt,
+  });
+
+  await assertActor(ctx, db);
+  const pack = await db.methodologyPack.findFirst({
+    where: {
+      id: rawInput.packId,
+      tenantId: ctx.tenantId,
+      sourceTemplateRef: rawInput.sourceTemplateRef,
+      currentPublishedVersionId: null,
+      archivedAt: null,
+    },
+    select: { id: true },
+  });
+  if (!pack) throw new ScopedNotFoundError();
+  const locked = await db.methodologyPack.updateMany({
+    where: {
+      id: rawInput.packId,
+      tenantId: ctx.tenantId,
+      sourceTemplateRef: rawInput.sourceTemplateRef,
+      currentPublishedVersionId: null,
+      archivedAt: null,
+    },
+    data: { version: { increment: 0 } },
+  });
+  if (locked.count !== 1) throw new MethodologyDataConflictError();
+
+  const publishedAt = new Date(version.publishedAt!);
+  await db.methodologyPackVersion.create({ data: {
+    id: version.id,
+    tenantId: ctx.tenantId,
+    packId: version.packId,
+    versionKey: version.versionKey,
+    status: version.status,
+    engineRef: version.engineRef,
+    contentHash: version.contentHash,
+    learningContentRef: version.learningContentRef,
+    sourceTemplateRef: version.sourceTemplateRef,
+    createdByUserId: version.createdByUserId,
+    createdAt: new Date(version.createdAt),
+    publishedByUserId: version.publishedByUserId,
+    publishedAt,
+  } });
+  await insertDefinitionSet(ctx, definitions, db);
+  const pointed = await db.methodologyPack.updateMany({
+    where: {
+      id: rawInput.packId,
+      tenantId: ctx.tenantId,
+      sourceTemplateRef: rawInput.sourceTemplateRef,
+      currentPublishedVersionId: null,
+      archivedAt: null,
+    },
+    data: { currentPublishedVersionId: rawInput.versionId },
+  });
+  if (pointed.count !== 1) throw new MethodologyDataConflictError();
 }
 
 export async function updateDraftMethodologyVersion(

@@ -13,7 +13,8 @@ import {
 import { prisma } from '../prisma.js';
 import { runCommand } from '../mutation/commandRunner.js';
 import { ScopedNotFoundError } from '../mutation/scopeGuards.js';
-import { findBuiltinMethodologyTemplate } from './templates.js';
+import { createPublishedBuiltinMethodologySnapshot } from './repository.js';
+import { findBuiltinMethodologyTemplate, instantiateBuiltinMethodologyDefinitions } from './templates.js';
 
 class MethodologyPermissionError extends Error {
   readonly statusCode = 403;
@@ -173,31 +174,26 @@ async function materializeBuiltin(
     key: template.packKey,
     name: template.name,
     sourceTemplateRef: template.sourceTemplateRef,
-    currentPublishedVersionId: input.versionId,
+    currentPublishedVersionId: null,
     version: 0,
     createdByUserId: ctx.actorId,
     createdAt: now,
   } });
-  await db.methodologyPackVersion.create({ data: {
-    id: input.versionId,
-    tenantId: ctx.tenantId,
-    packId: input.packId,
+  const definitions = instantiateBuiltinMethodologyDefinitions(template, input.packId, input.versionId);
+  await createPublishedBuiltinMethodologySnapshot({ tenantId: ctx.tenantId, actorId: ctx.actorId }, {
+    ...definitions,
     versionKey: template.versionKey,
-    status: 'published',
     engineRef: template.engineRef,
     contentHash: template.contentHash,
     learningContentRef: template.learningContentRef,
     sourceTemplateRef: template.sourceTemplateRef,
-    createdByUserId: ctx.actorId,
-    createdAt: now,
-    publishedByUserId: ctx.actorId,
-    publishedAt: now,
-  } });
+    publishedAt: now.toISOString(),
+  }, db);
   await writeAudit(ctx, db, {
     action: 'methodology_template_materialized',
     entityKind: 'methodology_pack',
     entityId: input.packId,
-    changedFields: ['pack', 'publishedVersion'],
+    changedFields: ['pack', 'publishedVersion', 'definitions'],
     metadata: {
       templateKey: input.templateKey,
       versionId: input.versionId,
