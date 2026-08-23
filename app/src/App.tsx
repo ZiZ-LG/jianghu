@@ -39,6 +39,7 @@ import { clearStableBatchItemKey, runBatchWithProgress, stableBatchItemKey, type
 import { capabilityPolicyAllows, type ProductAccess } from '@jianghu/domain-contracts';
 import { GlobalDialogs, type GlobalInboxProps } from './components/GlobalDialogs';
 import { CommercialShell } from './components/CommercialShell';
+import { InternalRootAdapter } from './components/InternalRootAdapter';
 import { resolveProductRoute } from './lib/productRoutes';
 import { selectAppRootSurface } from './lib/appProductShell';
 import {
@@ -863,7 +864,7 @@ export default function App() {
       ? captureAccount.opportunities.find((item) => item.id === intelContext.oppId)
       : undefined;
     return (
-      <>
+      <InternalRootAdapter access={auth.product}>
         <CustomerHub
           accounts={state.accounts} onOpen={openAccount} onCreate={createAccount} onLoadDemo={loadDemo}
           readonly={readonly}
@@ -917,7 +918,7 @@ export default function App() {
           }}
         />
         <Footer />
-      </>
+      </InternalRootAdapter>
     );
   }
 
