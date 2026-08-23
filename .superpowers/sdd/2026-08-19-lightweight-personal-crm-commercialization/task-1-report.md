@@ -3,6 +3,7 @@
 ## 状态
 
 - 实现候选已完成并就地提交；`SAAS-101` 仍保持 `IN_PROGRESS`。
+- 实现提交：`50a74d5c77a5656e026af6bed41f40a6e56d78f5`。
 - 未启动 `SAAS-102+`、G4、Agent、Candidate、关系雷达、定价／支付、部署或 canary。
 - 未 merge、未 push、未修改 schema / migration / 运行数据。
 - 控制器仍需在宿主权限下复验完整 Server suite，再决定是否关闭任务。
