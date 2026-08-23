@@ -11,6 +11,10 @@ import {
   type CommitmentCommandReceipt,
 } from '@jianghu/domain-contracts';
 import { prisma } from '../prisma.js';
+import {
+  resolveEffectiveResourceScope,
+  type EffectiveResourceScope,
+} from '../resourceScope.js';
 import { syncCommitmentToWeCom } from '../wecom.js';
 import { runCommand } from './commandRunner.js';
 import {
@@ -220,7 +224,17 @@ async function requireCreateScope(
   actorRole: Exclude<CommandContext['actorRole'], 'viewer'>,
   input: CreateInput,
   db: Prisma.TransactionClient,
+  scope: EffectiveResourceScope,
 ): Promise<void> {
+  if (!scope.canReadAccountContainer(input.customerId)) throw new ScopedNotFoundError();
+  if (input.matterId === null) {
+    if (!scope.canReadAccountData(input.customerId)) throw new ScopedNotFoundError();
+  } else if (!scope.canReadMatter(input.matterId)) {
+    throw new ScopedNotFoundError();
+  }
+  if (input.personId !== null && !scope.canReadAccountData(input.customerId)) {
+    throw new ScopedNotFoundError();
+  }
   await lockCustomer(ctx, input.customerId, db);
   if (input.matterId) await lockMatter(ctx, input.customerId, input.matterId, db);
   if (input.personId) await lockPerson(ctx, input.customerId, input.personId, db);
@@ -240,8 +254,9 @@ async function insertCommitment(
   actorRole: Exclude<CommandContext['actorRole'], 'viewer'>,
   input: CreateInput,
   db: Prisma.TransactionClient,
+  scope: EffectiveResourceScope,
 ): Promise<PlanAction> {
-  await requireCreateScope(ctx, actorRole, input, db);
+  await requireCreateScope(ctx, actorRole, input, db, scope);
   await ensureNewId(input, db);
   try {
     return await db.planAction.create({ data: createData(input, ctx.tenantId, ctx.actorId) });
@@ -258,11 +273,19 @@ async function loadCommitment(
   customerId: string,
   commitmentId: string,
   db: Prisma.TransactionClient,
+  scope: EffectiveResourceScope,
 ): Promise<PlanAction> {
-  await lockCustomer(ctx, customerId, db);
   const row = await requireScopedRow(db.planAction.findFirst({
     where: { id: commitmentId, tenantId: ctx.tenantId, accountId: customerId, archivedAt: null },
   }));
+  if (!scope.canReadAccountContainer(customerId)) throw new ScopedNotFoundError();
+  if (row.opportunityId) {
+    if (!scope.canReadMatter(row.opportunityId)) throw new ScopedNotFoundError();
+  } else if (!scope.canReadAccountData(customerId)) {
+    throw new ScopedNotFoundError();
+  }
+  if (row.personId && !scope.canReadAccountData(customerId)) throw new ScopedNotFoundError();
+  await lockCustomer(ctx, customerId, db);
   if (row.opportunityId) await lockMatter(ctx, customerId, row.opportunityId, db);
   if (row.personId) await lockPerson(ctx, customerId, row.personId, db);
   return row;
@@ -372,9 +395,14 @@ export async function executeCommitmentCommand(
   CommandContextSchema.parse(ctx);
   const input = CommitmentCommandSchema.parse(rawInput) as CommitmentCommand;
   const actorRole = await lockWritableActor(ctx, db);
+  const scope = await resolveEffectiveResourceScope(db, {
+    tenantId: ctx.tenantId,
+    userId: ctx.actorId,
+    role: actorRole,
+  });
 
   if (input.type === 'CREATE_COMMITMENT') {
-    const row = await insertCommitment(ctx, actorRole, input.commitment, db);
+    const row = await insertCommitment(ctx, actorRole, input.commitment, db, scope);
     await audit(ctx, 'commitment_created', row.id,
       ['kind', 'ownerUserId', 'executionStatus', 'confirmationStatus', 'schedule', 'source', 'version'],
       {
@@ -388,12 +416,16 @@ export async function executeCommitmentCommand(
 
   if (input.type === 'CREATE_NEXT_COMMITMENT') {
     const previous = await loadCommitment(
-      ctx, input.commitment.customerId, input.previousCommitmentId, db,
+      ctx, input.commitment.customerId, input.previousCommitmentId, db, scope,
     );
     if (previous.version !== input.expectedPreviousVersion) throw new CommitmentVersionConflictError();
     if (previous.executionStatus !== 'completed') throw new CommitmentStateConflictError('只有已完成的承诺可以关联下一步');
     if (previous.nextCommitmentId) throw new CommitmentStateConflictError('该承诺已经关联下一步');
-    const next = await insertCommitment(ctx, actorRole, input.commitment, db);
+    if (input.commitment.customerId !== previous.accountId
+      || input.commitment.matterId !== previous.opportunityId) {
+      throw new CommitmentStateConflictError('下一步必须属于同一客户和事项');
+    }
+    const next = await insertCommitment(ctx, actorRole, input.commitment, db, scope);
     const linked = await db.planAction.updateMany({
       where: {
         id: previous.id, tenantId: ctx.tenantId, accountId: previous.accountId,
@@ -416,7 +448,7 @@ export async function executeCommitmentCommand(
     return receipt(next, previous.id);
   }
 
-  const row = await loadCommitment(ctx, input.customerId, input.commitmentId, db);
+  const row = await loadCommitment(ctx, input.customerId, input.commitmentId, db, scope);
   requireCas(row, input.baseVersion, input.expectedScheduleVersion);
 
   if (input.type === 'RESCHEDULE_COMMITMENT') {

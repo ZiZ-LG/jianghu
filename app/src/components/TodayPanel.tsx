@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type {
   InterventionItem,
   InterventionSourceRef,
@@ -6,6 +6,15 @@ import type {
   TodaySourceView,
 } from '@jianghu/domain-contracts';
 import { api, toApiError } from '../api';
+import {
+  availableTodayCommitmentActions,
+  buildTodayCommitmentActionDraft,
+  saveAndRefreshTodayCommitmentActionDraft,
+  type BuildTodayCommitmentActionInput,
+  type TodayCommitmentAction,
+  type TodayCommitmentActionDraft,
+} from '../lib/commitmentActions';
+import { CommitmentActionEditor } from './CommitmentActionEditor';
 
 export type TodayPanelState =
   | { status: 'loading' }
@@ -58,13 +67,18 @@ function displayInstant(value: string, timeZone?: string): string {
 
 function InterventionCard({
   item,
+  readonly,
+  onAction,
   onOpenSource,
 }: {
   item: InterventionItem;
+  readonly: boolean;
+  onAction?: (item: InterventionItem, action: TodayCommitmentAction, origin: HTMLButtonElement) => void;
   onOpenSource: (source: InterventionSourceRef) => void;
 }) {
   const headingId = useId();
   const itemTimeZone = 'timeZone' in item.time ? item.time.timeZone : undefined;
+  const actions = readonly ? [] : availableTodayCommitmentActions(item);
   return (
     <article
       className="today-item"
@@ -122,6 +136,22 @@ function InterventionCard({
       </details>
       <div className="today-suggestion">
         <span>建议：{item.suggestedAction.label}</span>
+        {actions.length > 0 && onAction ? (
+          <div className="today-action-list" role="group" aria-label={`${item.title} 可执行操作`}>
+            {actions.map((action) => (
+              <button
+                key={action.kind}
+                type="button"
+                className={`btn sm ${action.danger ? 'ghost danger-text' : 'ghost'}`}
+                data-today-action={action.kind}
+                data-today-command={action.commandType}
+                onClick={(event) => onAction(item, action, event.currentTarget)}
+              >
+                {action.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
       </div>
     </article>
   );
@@ -129,9 +159,13 @@ function InterventionCard({
 
 export function TodayView({
   model,
+  readonly = false,
+  onAction,
   onOpenSource,
 }: {
   model: TodayReadModel;
+  readonly?: boolean;
+  onAction?: (item: InterventionItem, action: TodayCommitmentAction, origin: HTMLButtonElement) => void;
   onOpenSource: (source: InterventionSourceRef) => void;
 }) {
   return (
@@ -161,6 +195,8 @@ export function TodayView({
                     <InterventionCard
                       key={item.id}
                       item={item}
+                      readonly={readonly}
+                      onAction={onAction}
                       onOpenSource={onOpenSource}
                     />
                   ))}
@@ -176,10 +212,14 @@ export function TodayView({
 
 export function TodayPanelStateView({
   state,
+  readonly = false,
+  onAction,
   onRetry,
   onOpenSource,
 }: {
   state: TodayPanelState;
+  readonly?: boolean;
+  onAction?: (item: InterventionItem, action: TodayCommitmentAction, origin: HTMLButtonElement) => void;
   onRetry: () => void;
   onOpenSource: (source: InterventionSourceRef) => void;
 }) {
@@ -201,6 +241,8 @@ export function TodayPanelStateView({
   return (
     <TodayView
       model={state.model}
+      readonly={readonly}
+      onAction={onAction}
       onOpenSource={onOpenSource}
     />
   );
@@ -245,26 +287,97 @@ function TodaySourceInspector({ state, onClose }: { state: TodaySourceState; onC
   );
 }
 
-export function TodayPanel() {
+type ActiveTodayAction = {
+  item: InterventionItem;
+  action: TodayCommitmentAction;
+  origin: HTMLButtonElement;
+  draft?: TodayCommitmentActionDraft;
+};
+
+function containsExactRevision(model: TodayReadModel, item: InterventionItem): boolean {
+  return model.sections.some((section) => section.items.some((candidate) => (
+    candidate.target.entityKind === item.target.entityKind
+    && candidate.target.entityId === item.target.entityId
+    && candidate.target.version === item.target.version
+    && candidate.target.scheduleVersion === item.target.scheduleVersion
+  )));
+}
+
+export function TodayPanel({
+  actorUserId,
+  readonly,
+  onDataChanged,
+}: {
+  actorUserId: string;
+  readonly: boolean;
+  onDataChanged: () => Promise<unknown>;
+}) {
   const [state, setState] = useState<TodayPanelState>({ status: 'loading' });
-  const [attempt, setAttempt] = useState(0);
   const [sourceState, setSourceState] = useState<TodaySourceState>({ status: 'idle' });
+  const [activeAction, setActiveAction] = useState<ActiveTodayAction | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const activeActionRef = useRef<ActiveTodayAction | null>(null);
+  const savingRef = useRef(false);
   const sourceRequest = useRef(0);
+  const todayRequest = useRef(0);
+  const onDataChangedRef = useRef(onDataChanged);
 
   useEffect(() => {
-    let current = true;
-    void api.today().then(
-      (model) => { if (current) setState({ status: 'ready', model }); },
-      (cause) => { if (current) setState({ status: 'error', message: toApiError(cause).message }); },
-    );
-    return () => { current = false; };
-  }, [attempt]);
+    onDataChangedRef.current = onDataChanged;
+  }, [onDataChanged]);
+
+  const closeAction = useCallback((notice?: string) => {
+    const origin = activeActionRef.current?.origin ?? null;
+    activeActionRef.current = null;
+    setActiveAction(null);
+    setActionError(null);
+    if (notice !== undefined) setActionNotice(notice);
+    queueMicrotask(() => {
+      const focusTarget = origin?.isConnected ? origin : panelRef.current;
+      focusTarget?.focus();
+    });
+  }, []);
+
+  const loadToday = useCallback(async ({
+    invalidateActive = true,
+    showLoading = false,
+  }: {
+    invalidateActive?: boolean;
+    showLoading?: boolean;
+  } = {}) => {
+    const request = todayRequest.current + 1;
+    todayRequest.current = request;
+    if (showLoading) setState({ status: 'loading' });
+    try {
+      const model = await api.today();
+      if (todayRequest.current !== request) return model;
+      setState({ status: 'ready', model });
+      const active = activeActionRef.current;
+      if (invalidateActive && active && !savingRef.current && !containsExactRevision(model, active.item)) {
+        closeAction('记录已更新，请重新选择操作');
+      }
+      return model;
+    } catch (cause) {
+      if (todayRequest.current === request) {
+        setState({ status: 'error', message: toApiError(cause).message });
+      }
+      throw cause;
+    }
+  }, [closeAction]);
+
+  useEffect(() => {
+    void loadToday({ invalidateActive: false }).catch(() => undefined);
+    return () => { todayRequest.current += 1; };
+  }, [loadToday]);
 
   useEffect(() => {
     const refresh = () => {
       sourceRequest.current += 1;
       setSourceState({ status: 'idle' });
-      setAttempt((value) => value + 1);
+      void loadToday().catch(() => undefined);
     };
     const refreshWhenVisible = () => {
       if (document.visibilityState === 'visible') refresh();
@@ -277,11 +390,15 @@ export function TodayPanel() {
       document.removeEventListener('visibilitychange', refreshWhenVisible);
       window.clearInterval(interval);
     };
-  }, []);
+  }, [loadToday]);
 
   useEffect(() => () => {
     sourceRequest.current += 1;
   }, []);
+
+  useEffect(() => {
+    if (readonly && activeActionRef.current) closeAction();
+  }, [closeAction, readonly]);
 
   const openSource = (sourceRef: InterventionSourceRef) => {
     const request = sourceRequest.current + 1;
@@ -297,18 +414,109 @@ export function TodayPanel() {
     );
   };
 
+  const openAction = (
+    item: InterventionItem,
+    action: TodayCommitmentAction,
+    origin: HTMLButtonElement,
+  ) => {
+    const next = { item, action, origin };
+    activeActionRef.current = next;
+    setActiveAction(next);
+    setActionError(null);
+    setActionNotice(null);
+  };
+
+  const discardFailedDraft = () => {
+    const current = activeActionRef.current;
+    if (current?.draft) {
+      const next = { item: current.item, action: current.action, origin: current.origin };
+      activeActionRef.current = next;
+      setActiveAction(next);
+    }
+    setActionError(null);
+  };
+
+  const submitAction = (input: BuildTodayCommitmentActionInput) => {
+    const current = activeActionRef.current;
+    if (!current || savingRef.current) return;
+    if (input.item.id !== current.item.id || input.kind !== current.action.kind) {
+      setActionError('当前操作与提醒不匹配，请关闭后重新选择');
+      return;
+    }
+    let draft = current.draft;
+    try {
+      if (!draft) {
+        draft = buildTodayCommitmentActionDraft(input);
+        const next = { ...current, draft };
+        activeActionRef.current = next;
+        setActiveAction(next);
+      }
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : '操作内容无效，请检查后重试');
+      return;
+    }
+
+    savingRef.current = true;
+    setSaving(true);
+    setActionError(null);
+    void saveAndRefreshTodayCommitmentActionDraft(
+      draft,
+      api.commitment,
+      () => loadToday({ invalidateActive: false }),
+      () => Promise.resolve(onDataChangedRef.current()),
+    ).then((result) => {
+      const fullyRefreshed = result.todayRefreshed && result.stateRefreshed;
+      closeAction(fullyRefreshed
+        ? `${draft!.action.label}已保存。`
+        : `${draft!.action.label}已保存，但部分页面刷新失败，请手动刷新。`);
+    }).catch((cause) => {
+      const error = toApiError(cause);
+      setActionError(error.message);
+      if (error.status === 409) {
+        void loadToday().then(() => {
+          if (!activeActionRef.current) setActionNotice(error.message);
+        }).catch(() => {
+          setActionNotice(`${error.message}；刷新失败，请手动重试。`);
+        });
+      }
+    }).finally(() => {
+      savingRef.current = false;
+      setSaving(false);
+    });
+  };
+
   return (
-    <>
+    <div
+      ref={panelRef}
+      className="today-panel"
+      data-today-readonly={readonly}
+      tabIndex={-1}
+    >
+      {actionNotice ? <p className="today-action-notice" role="status" aria-live="polite">{actionNotice}</p> : null}
       <TodayPanelStateView
         state={state}
+        readonly={readonly}
+        onAction={openAction}
         onRetry={() => {
           sourceRequest.current += 1;
           setSourceState({ status: 'idle' });
-          setState({ status: 'loading' });
-          setAttempt((value) => value + 1);
+          void loadToday({ showLoading: true }).catch(() => undefined);
         }}
         onOpenSource={openSource}
       />
+      {activeAction ? (
+        <CommitmentActionEditor
+          key={`${activeAction.item.id}:${activeAction.action.kind}`}
+          item={activeAction.item}
+          action={activeAction.action}
+          actorUserId={actorUserId}
+          saving={saving}
+          error={actionError}
+          onCancel={() => closeAction()}
+          onInputChanged={discardFailedDraft}
+          onSubmit={submitAction}
+        />
+      ) : null}
       <TodaySourceInspector
         state={sourceState}
         onClose={() => {
@@ -316,6 +524,6 @@ export function TodayPanel() {
           setSourceState({ status: 'idle' });
         }}
       />
-    </>
+    </div>
   );
 }

@@ -10,6 +10,8 @@ import * as TodayComponents from './TodayPanel';
 type TodayViewComponent = (props: {
   model: TodayReadModel;
   onOpenSource: (source: TodayReadModel['sections'][number]['items'][number]['sourceRefs'][number]) => void;
+  readonly?: boolean;
+  onAction?: (...args: never[]) => void;
 }) => ReturnType<typeof createElement>;
 
 type TodayPanelStateViewComponent = (props: {
@@ -39,7 +41,7 @@ describe('SAAS-103 Today surface', () => {
     expect(html).not.toContain('当前关注');
   });
 
-  it('renders three fixed sections and explains each item without exposing SAAS-104 mutations', () => {
+  it('renders three fixed sections, exact-revision actions, and readonly suppression', () => {
     const TodayView = Reflect.get(TodayComponents, 'TodayView') as TodayViewComponent | undefined;
     expect(TodayView, 'TodayView must be exported').toBeDefined();
 
@@ -108,6 +110,8 @@ describe('SAAS-103 Today surface', () => {
     const html = renderToStaticMarkup(createElement(TodayView!, {
       model,
       onOpenSource: () => undefined,
+      readonly: false,
+      onAction: () => undefined,
     }));
 
     expect([...html.matchAll(/data-today-section="([^"]+)"/g)].map((match) => match[1])).toEqual([
@@ -120,7 +124,11 @@ describe('SAAS-103 Today surface', () => {
     expect(html).toContain('core.today.v1');
     expect(html).toContain('commitment-1 · v2 · schedule 3');
     expect(html).not.toContain('data-today-command="CREATE_COMMITMENT"');
-    expect(html).not.toContain('data-today-command="CONFIRM_COMMITMENT"');
+    expect(html).toContain('data-today-action="confirm"');
+    expect(html).toContain('data-today-command="CONFIRM_COMMITMENT"');
+    expect(html).toContain('data-today-action="reschedule"');
+    expect(html).toContain('data-today-action="complete"');
+    expect(html).not.toContain('data-today-action="mark_missed"');
     expect(html).toContain('data-today-source="commitment"');
     expect(html).toContain('data-source-version="2"');
     expect(html).toContain('<h3');
@@ -130,5 +138,13 @@ describe('SAAS-103 Today surface', () => {
 
     expect(html).toContain('建议：补一个下一步');
     expect(Reflect.get(TodayComponents, 'TODAY_REFRESH_INTERVAL_MS')).toBeLessThanOrEqual(60_000);
+
+    const readonlyHtml = renderToStaticMarkup(createElement(TodayView!, {
+      model,
+      onOpenSource: () => undefined,
+      readonly: true,
+      onAction: () => undefined,
+    }));
+    expect(readonlyHtml).not.toContain('data-today-action=');
   });
 });

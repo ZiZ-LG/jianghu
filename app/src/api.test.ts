@@ -301,6 +301,52 @@ describe('typed API failures', () => {
     }
   });
 
+  it('rejects malformed or command-mismatched Commitment success receipts', async () => {
+    const payload = {
+      type: 'CONFIRM_COMMITMENT' as const,
+      customerId: 'customer-1',
+      commitmentId: 'commitment_00000000000000000000000000000001',
+      baseVersion: 2,
+      expectedScheduleVersion: 3,
+      confirmedAtUtc: '2026-08-23T19:00:00.000Z',
+    };
+    const validReceipt = {
+      commitmentId: payload.commitmentId,
+      customerId: payload.customerId,
+      matterId: 'matter-1',
+      executionStatus: 'planned',
+      confirmationStatus: 'confirmed',
+      version: 3,
+      scheduleVersion: 3,
+      nextCommitmentId: null,
+      linkedFromCommitmentId: null,
+      undoable: false,
+      repairCommands: ['RESCHEDULE_COMMITMENT', 'CANCEL_COMMITMENT'],
+      replayed: false,
+    };
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(response(200, { ...validReceipt, replayed: undefined }))
+      .mockResolvedValueOnce(response(200, {
+        ...validReceipt,
+        commitmentId: 'commitment_99999999999999999999999999999999',
+      }))
+      .mockResolvedValueOnce(response(200, { ...validReceipt, version: 2 }))
+      .mockResolvedValueOnce(response(200, { ...validReceipt, scheduleVersion: 4 })));
+
+    await expect(api.commitment(payload, 'commitment-missing-replayed')).rejects.toMatchObject({
+      code: 'invalid_response', retryable: false,
+    });
+    await expect(api.commitment(payload, 'commitment-wrong-target')).rejects.toMatchObject({
+      code: 'invalid_response', retryable: false,
+    });
+    await expect(api.commitment(payload, 'commitment-wrong-version')).rejects.toMatchObject({
+      code: 'invalid_response', retryable: false,
+    });
+    await expect(api.commitment(payload, 'commitment-wrong-schedule-version')).rejects.toMatchObject({
+      code: 'invalid_response', retryable: false,
+    });
+  });
+
   it('sends the atomic Quick Capture command with one frozen key across network retry', async () => {
     const fetchMock = vi.fn()
       .mockRejectedValueOnce(new TypeError('network lost'))

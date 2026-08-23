@@ -29,6 +29,49 @@ describe('SAAS-103 Today read model', () => {
     }
   });
 
+  it('prioritizes an overdue event outcome over its stale pending-confirmation reminder without writing missed', async () => {
+    const context = await createTestContext({ productAccess: { edition: 'commercial' } });
+    try {
+      await context.prisma.account.create({ data: {
+        id: 'today-overdue-pending-customer', tenantId: context.tenant.id,
+        name: '逾期确认客户', primaryOwnerUserId: context.owner.id,
+      } });
+      await context.prisma.opportunity.create({ data: {
+        id: 'today-overdue-pending-matter', tenantId: context.tenant.id,
+        accountId: 'today-overdue-pending-customer', name: '逾期确认事项',
+        customerType: 1, pipelineStage: 'lead', engageStage: 'discover',
+        lifecycleStatus: 'active', primaryOwnerUserId: context.owner.id,
+      } });
+      await context.prisma.planAction.create({ data: {
+        id: 'today-overdue-pending-commitment', tenantId: context.tenant.id,
+        accountId: 'today-overdue-pending-customer', opportunityId: 'today-overdue-pending-matter',
+        title: '已经发生但仍待确认的会议', kind: 'meeting', ownerUserId: context.owner.id,
+        executionStatus: 'planned', confirmationStatus: 'pending',
+        scheduledAtUtc: new Date('2026-08-23T17:00:00Z'),
+        confirmationDueAtUtc: new Date('2026-08-23T16:00:00Z'),
+        timeZone: 'America/Los_Angeles', isAllDay: false, source: 'manual',
+      } });
+
+      const model = await buildTodayReadModel({
+        tenantId: context.tenant.id, userId: context.owner.id, role: 'owner',
+      }, new Date('2026-08-23T19:00:00Z'), context.prisma);
+
+      expect(model.sections[0].items).toEqual([]);
+      expect(model.sections[1].items).toEqual([
+        expect.objectContaining({
+          reasonCode: 'commitment_due',
+          time: expect.objectContaining({ relation: 'overdue' }),
+          target: expect.objectContaining({ commitmentId: 'today-overdue-pending-commitment' }),
+        }),
+      ]);
+      expect(await context.prisma.planAction.findUniqueOrThrow({
+        where: { id: 'today-overdue-pending-commitment' },
+      })).toMatchObject({ executionStatus: 'planned', confirmationStatus: 'pending' });
+    } finally {
+      await context.cleanup();
+    }
+  });
+
   it('drills into only the exact current source revision inside the live effective scope', async () => {
     const context = await createTestContext({ productAccess: { edition: 'commercial' } });
     try {

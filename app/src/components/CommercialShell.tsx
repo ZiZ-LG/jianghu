@@ -34,7 +34,11 @@ function ProductPanel({
   onQuickCaptureSaved: () => Promise<unknown>;
 }) {
   if (id === 'today') {
-    return <TodayPanel />;
+    return <TodayPanel
+      actorUserId={actorUserId}
+      readonly={readonly}
+      onDataChanged={onQuickCaptureSaved}
+    />;
   }
   const matters = accounts.flatMap((account) => account.opportunities.map((matter) => ({ account, matter })));
   if (id === 'customers') {

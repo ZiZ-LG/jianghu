@@ -4,12 +4,12 @@ import { createElement } from 'react';
 import { assembleProductAccess } from '@jianghu/domain-contracts';
 import { CommercialShell } from './CommercialShell';
 
-const renderShell = (pathname: string, enabledEntitlements?: string[]) => renderToStaticMarkup(createElement(CommercialShell, {
+const renderShell = (pathname: string, enabledEntitlements?: string[], readonly = false) => renderToStaticMarkup(createElement(CommercialShell, {
   access: assembleProductAccess({ edition: 'commercial', ...(enabledEntitlements ? { enabledEntitlements } : {}) }),
   pathname,
   accounts: [],
   actorUserId: 'user-cao',
-  readonly: false,
+  readonly,
   onNavigate: () => undefined,
   onOpenLegacy: () => undefined,
   onOpenTeam: () => undefined,
@@ -28,7 +28,9 @@ describe('CommercialShell', () => {
 
     const todayHtml = renderShell('/today');
     expect(todayHtml).toContain('data-today-state="loading"');
+    expect(todayHtml).toContain('data-today-readonly="false"');
     expect(todayHtml).not.toContain('commercial-shell-summary');
+    expect(renderShell('/today', undefined, true)).toContain('data-today-readonly="true"');
 
     for (const path of ['/customers', '/matters']) {
       const routeHtml = renderShell(path);

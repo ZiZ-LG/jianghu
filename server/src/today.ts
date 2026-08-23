@@ -398,7 +398,14 @@ export async function buildTodayReadModel(
 
     if (isActionablePlannedCommitment(commitment)) {
       if (commitment.matterId) mattersWithPlanned.add(commitment.matterId);
-      if (commitment.confirmationStatus === 'pending' && commitment.confirmationDueAtUtc) {
+      const eventAt = commitment.dueAtUtc ?? commitment.scheduledAtUtc;
+      const eventTime = commitment.isAllDay && commitment.localDate
+        ? localDateTime(commitment.localDate, now, commitment.timeZone)
+        : eventAt ? instantTime(new Date(eventAt), now, commitment.timeZone) : null;
+      const eventIsOverdue = eventTime?.relation === 'overdue';
+      if (!eventIsOverdue
+        && commitment.confirmationStatus === 'pending'
+        && commitment.confirmationDueAtUtc) {
         const deadline = new Date(commitment.confirmationDueAtUtc);
         const time = instantTime(deadline, now, commitment.timeZone, '确认');
         if (!time) continue;
@@ -427,10 +434,7 @@ export async function buildTodayReadModel(
         continue;
       }
 
-      const eventAt = commitment.dueAtUtc ?? commitment.scheduledAtUtc;
-      const time = commitment.isAllDay && commitment.localDate
-        ? localDateTime(commitment.localDate, now, commitment.timeZone)
-        : eventAt ? instantTime(new Date(eventAt), now, commitment.timeZone) : null;
+      const time = eventTime;
       if (!time) continue;
       const eventSortAt = eventAt ? Date.parse(eventAt) : Date.parse(`${commitment.localDate}T00:00:00Z`);
       const group = time.relation === 'overdue' ? 0 : time.relation === 'due' ? 2 : 3;

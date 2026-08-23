@@ -3,6 +3,7 @@ import type { AccountState, CommitmentCommand, CommitmentCommandReceipt, Pipelin
 import type { AiContextOptions, ContextManifest } from './aiContext';
 import { toWireAction } from './wireAction';
 import {
+  CommitmentCommandReceiptSchema,
   QuickCaptureCommandReceiptSchema,
   TodayReadModelSchema,
   TodaySourceViewSchema,
@@ -142,6 +143,13 @@ const invalidQuickCaptureResponse = (cause?: unknown): ApiError => new ApiError(
   cause,
 });
 
+const invalidCommitmentResponse = (cause?: unknown): ApiError => new ApiError({
+  code: 'invalid_response',
+  message: '服务返回的下一步操作结果无效，请刷新后确认正式记录。',
+  retryable: false,
+  cause,
+});
+
 const invalidTodayResponse = (cause?: unknown): ApiError => new ApiError({
   code: 'invalid_response',
   message: '服务返回的今日干预数据无效，请刷新后重试。',
@@ -190,6 +198,70 @@ function parseQuickCaptureResponse(
     || parsed.data.commitment.customerId !== expectedCustomerId
     || parsed.data.commitment.matterId !== expectedMatterId) {
     throw invalidQuickCaptureResponse();
+  }
+  return { ...parsed.data, replayed };
+}
+
+function receiptMatchesCommitmentCommand(
+  receipt: CommitmentCommandReceipt,
+  command: CommitmentCommand,
+): boolean {
+  if (command.type === 'CREATE_COMMITMENT') {
+    return receipt.commitmentId === command.commitment.id
+      && receipt.customerId === command.commitment.customerId
+      && receipt.matterId === command.commitment.matterId
+      && receipt.executionStatus === 'planned'
+      && receipt.confirmationStatus === command.commitment.confirmationStatus
+      && receipt.version === 0
+      && receipt.scheduleVersion === 0
+      && receipt.nextCommitmentId === null
+      && receipt.linkedFromCommitmentId === null;
+  }
+  if (command.type === 'CREATE_NEXT_COMMITMENT') {
+    return receipt.commitmentId === command.commitment.id
+      && receipt.customerId === command.commitment.customerId
+      && receipt.matterId === command.commitment.matterId
+      && receipt.executionStatus === 'planned'
+      && receipt.confirmationStatus === command.commitment.confirmationStatus
+      && receipt.version === 0
+      && receipt.scheduleVersion === 0
+      && receipt.nextCommitmentId === null
+      && receipt.linkedFromCommitmentId === command.previousCommitmentId;
+  }
+  if (receipt.commitmentId !== command.commitmentId
+    || receipt.customerId !== command.customerId
+    || receipt.version !== command.baseVersion + 1
+    || receipt.scheduleVersion !== command.expectedScheduleVersion
+      + (command.type === 'RESCHEDULE_COMMITMENT' ? 1 : 0)
+    || receipt.linkedFromCommitmentId !== null) {
+    return false;
+  }
+  if (command.type === 'RESCHEDULE_COMMITMENT') {
+    return receipt.executionStatus === 'planned'
+      && receipt.confirmationStatus === (command.schedule.requiresConfirmation ? 'pending' : 'not_required');
+  }
+  if (command.type === 'CONFIRM_COMMITMENT') {
+    return receipt.executionStatus === 'planned' && receipt.confirmationStatus === 'confirmed';
+  }
+  if (command.type === 'DECLINE_COMMITMENT') {
+    return receipt.executionStatus === 'planned' && receipt.confirmationStatus === 'declined';
+  }
+  if (command.type === 'COMPLETE_COMMITMENT') return receipt.executionStatus === 'completed';
+  if (command.type === 'CANCEL_COMMITMENT') return receipt.executionStatus === 'canceled';
+  return receipt.executionStatus === 'missed';
+}
+
+function parseCommitmentResponse(
+  raw: unknown,
+  command: CommitmentCommand,
+): CommitmentCommandReceipt & { replayed: boolean } {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw invalidCommitmentResponse();
+  const { replayed, ...receiptValue } = raw as Record<string, unknown>;
+  if (typeof replayed !== 'boolean') throw invalidCommitmentResponse();
+  const parsed = CommitmentCommandReceiptSchema.safeParse(receiptValue);
+  if (!parsed.success) throw invalidCommitmentResponse(parsed.error);
+  if (!receiptMatchesCommitmentCommand(parsed.data, command)) {
+    throw invalidCommitmentResponse(new Error('Commitment command receipt mismatch'));
   }
   return { ...parsed.data, replayed };
 }
@@ -326,10 +398,10 @@ export const api = {
     commandReq('/api/commands/action-feedback', { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(b) }),
   inboxBatch: (b: { items: Array<{ kind: 'proposal' | 'person' | 'rel' | 'evidence' | 'reminder'; id: string; decision: 'accept' | 'reject'; overrideValue?: string; personOverride?: { name?: string; title?: string }; relOverride?: { layer?: string; label?: string }; direction?: -1 | 0 | 1 }> }, idempotencyKey: string): Promise<{ items: Array<{ kind: string; id: string; status: string }>; replayed: boolean }> =>
     commandReq('/api/commands/inbox-batch', { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(b) }),
-  commitment: (command: CommitmentCommand, idempotencyKey: string): Promise<CommitmentCommandReceipt & { replayed: boolean }> =>
-    commandReq('/api/commands/commitment', {
+  commitment: async (command: CommitmentCommand, idempotencyKey: string): Promise<CommitmentCommandReceipt & { replayed: boolean }> =>
+    parseCommitmentResponse(await commandReq<unknown>('/api/commands/commitment', {
       method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(command),
-    }),
+    }), command),
   quickCapture: async (command: QuickCaptureCommand, idempotencyKey: string): Promise<QuickCaptureCommandReceipt & { replayed: boolean }> => {
     const raw = await commandReq<unknown>('/api/commands/quick-capture', {
       method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(command),

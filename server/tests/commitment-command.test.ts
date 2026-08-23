@@ -168,6 +168,77 @@ describe('CORE-107 Commitment command path', () => {
     }
   });
 
+  it('fails closed when a scoped member forges an in-tenant Customer or Commitment id', async () => {
+    const context = await createTestContext();
+    try {
+      const tree = await seedTree(context, 'effective-scope');
+      const existingId = commitmentId('d');
+      expect((await command(
+        context,
+        'commitment-effective-scope-seed',
+        timedCreate(tree, context.owner.id, existingId),
+      )).statusCode).toBe(200);
+
+      const member = await context.prisma.user.create({ data: {
+        tenantId: context.tenant.id,
+        email: `scoped-member-${randomUUID()}@example.test`,
+        passwordHash: 'unused',
+        name: 'Scoped Member',
+        role: 'member',
+      } });
+      await context.prisma.tenant.update({
+        where: { id: context.tenant.id },
+        data: { dataScopePolicy: 'scoped' },
+      });
+      const memberToken = context.app.jwt.sign({
+        userId: member.id, tenantId: context.tenant.id, role: 'member',
+      });
+
+      const forgedCreate = timedCreate(tree, member.id, commitmentId('e'));
+      const createAttempt = await command(
+        context, 'commitment-effective-scope-create-denied', forgedCreate, memberToken,
+      );
+      const confirmAttempt = await command(context, 'commitment-effective-scope-update-denied', {
+        type: 'CONFIRM_COMMITMENT',
+        customerId: tree.customerId,
+        commitmentId: existingId,
+        baseVersion: 0,
+        expectedScheduleVersion: 0,
+        confirmedAtUtc: '2026-09-09T03:00:00Z',
+      }, memberToken);
+
+      expect(createAttempt.statusCode, createAttempt.body).toBe(404);
+      expect(confirmAttempt.statusCode, confirmAttempt.body).toBe(404);
+      expect(await context.prisma.planAction.count({ where: { tenantId: context.tenant.id } })).toBe(1);
+      expect(await context.prisma.auditEvent.count({
+        where: { tenantId: context.tenant.id, actorId: member.id, entityKind: 'commitment' },
+      })).toBe(0);
+
+      await context.prisma.opportunity.update({
+        where: { id: tree.matterId },
+        data: { primaryOwnerUserId: member.id },
+      });
+      const allowedPayload = timedCreate(tree, member.id, commitmentId('f'));
+      allowedPayload.commitment.personId = null;
+      const allowedCreate = await command(
+        context, 'commitment-effective-scope-create-allowed', allowedPayload, memberToken,
+      );
+      expect(allowedCreate.statusCode, allowedCreate.body).toBe(200);
+      const allowedConfirm = await command(context, 'commitment-effective-scope-update-allowed', {
+        type: 'CONFIRM_COMMITMENT', customerId: tree.customerId,
+        commitmentId: allowedPayload.commitment.id,
+        baseVersion: 0, expectedScheduleVersion: 0,
+        confirmedAtUtc: '2026-09-09T03:00:00Z',
+      }, memberToken);
+      expect(allowedConfirm.statusCode, allowedConfirm.body).toBe(200);
+      expect(await context.prisma.auditEvent.count({
+        where: { tenantId: context.tenant.id, actorId: member.id, entityKind: 'commitment' },
+      })).toBe(2);
+    } finally {
+      await context.cleanup();
+    }
+  });
+
   it('uses version and schedule CAS, keeps the ID on reschedule, and records stale confirmation metadata', async () => {
     const context = await createTestContext();
     try {
@@ -300,6 +371,23 @@ describe('CORE-107 Commitment command path', () => {
       next.title = '形成下一步行动';
       next.confirmationStatus = 'not_required';
       next.confirmationDueAtUtc = null;
+      await context.prisma.opportunity.create({ data: {
+        id: 'commitment-next-other-matter', tenantId: context.tenant.id,
+        accountId: tree.customerId, name: '同客户的其他事项', customerType: 1,
+        pipelineStage: '线索', engageStage: '需求调研立项', memberScoped: true,
+      } });
+      const wrongMatter = await command(context, 'commitment-create-next-wrong-matter', {
+        type: 'CREATE_NEXT_COMMITMENT', previousCommitmentId: completedId,
+        expectedPreviousVersion: 1,
+        commitment: {
+          ...next,
+          id: commitmentId('0'),
+          matterId: 'commitment-next-other-matter',
+          personId: null,
+        },
+      });
+      expect(wrongMatter.statusCode).toBe(409);
+      expect(wrongMatter.json()).toMatchObject({ code: 'commitment_state_conflict' });
       const createNextPayload = {
         type: 'CREATE_NEXT_COMMITMENT', previousCommitmentId: completedId,
         expectedPreviousVersion: 1, commitment: next,

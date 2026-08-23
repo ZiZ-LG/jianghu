@@ -113,6 +113,34 @@ button.commercial-shell-row:hover { background: var(--hover); }
 .today-technical-details { margin-top: 10px; color: var(--muted); font-size: 14px; }
 .today-technical-details > summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
 .today-suggestion { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--ink-2); font-size: 15px; }
+.today-panel { min-width: 0; }
+.today-action-list { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+.today-action-list .btn { min-height: 44px; }
+.today-action-list .danger-text { color: var(--danger); border-color: var(--danger); }
+.today-action-notice { margin-bottom: 12px; padding: 10px 12px; border: 1px solid var(--accent); border-radius: 9px; color: var(--accent-ink); background: var(--accent-soft); overflow-wrap: anywhere; }
+.today-action-overlay { position: fixed; inset: 0; z-index: 100; padding: 24px; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 78%, transparent); }
+.today-action-editor { width: min(620px, 100%); max-height: calc(100vh - 48px); overflow: auto; padding: 20px; border: 1px solid var(--line); border-radius: 14px; display: grid; gap: 13px; color: var(--ink); background: var(--panel); box-shadow: 0 20px 60px var(--shadow); }
+.today-action-editor:focus { outline: 3px solid var(--accent-soft); border-color: var(--accent); }
+.today-action-editor > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.today-action-editor h3 { margin: 2px 0 0; font-size: 20px; }
+.today-action-kicker { color: var(--accent-ink); font-size: 12px; font-weight: 800; letter-spacing: .04em; }
+.today-action-target { color: var(--ink-2); overflow-wrap: anywhere; }
+.today-action-revision { padding: 9px 10px; border-radius: 8px; color: var(--muted); background: var(--panel-2); font-size: 13px; overflow-wrap: anywhere; }
+.today-action-editor form, .today-action-editor fieldset, .today-action-schedule { min-inline-size: 0; display: grid; gap: 12px; }
+.today-action-editor fieldset { margin: 0; padding: 0; border: 0; }
+.today-action-editor legend { margin-bottom: 8px; color: var(--ink-2); font-size: 14px; font-weight: 800; }
+.today-action-editor label:not(.today-action-check) { min-width: 0; display: grid; gap: 6px; color: var(--ink-2); font-size: 14px; font-weight: 700; }
+.today-action-editor input:not([type="checkbox"]), .today-action-editor textarea, .today-action-editor select { width: 100%; min-height: 44px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--panel); font: inherit; font-size: 16px; }
+.today-action-editor textarea { resize: vertical; }
+.today-action-editor input:focus, .today-action-editor textarea:focus, .today-action-editor select:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+.today-action-editor small { color: var(--muted); font-size: 12px; font-weight: 500; }
+.today-action-check { min-height: 44px; display: flex; align-items: center; gap: 9px; color: var(--ink-2); font-size: 14px; }
+.today-action-check input { width: 18px; height: 18px; flex: 0 0 auto; accent-color: var(--accent); }
+.today-action-error { padding: 10px 12px; border: 1px solid var(--danger); border-radius: 8px; color: var(--danger); background: var(--panel); overflow-wrap: anywhere; }
+.today-action-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.today-action-buttons .btn { min-height: 44px; }
+.btn.danger { border-color: var(--danger); color: var(--danger); background: var(--panel); }
+.btn.danger:hover { background: var(--hover); }
 .today-source-inspector { position: fixed; right: 24px; bottom: 24px; z-index: 80; width: min(440px, calc(100vw - 48px)); max-height: min(360px, calc(100vh - 48px)); overflow: auto; padding: 14px; border: 1px solid var(--accent); border-radius: 12px; display: flex; align-items: center; justify-content: space-between; gap: 14px; color: var(--ink); background: var(--panel); box-shadow: 0 18px 50px rgba(0, 0, 0, .18); }
 .today-source-inspector.error { border-color: var(--danger); color: var(--danger); }
 .today-source-inspector > div { min-width: 0; display: grid; gap: 4px; }
@@ -149,6 +177,11 @@ button.commercial-shell-row:hover { background: var(--hover); }
   .commercial-shell-header, .commercial-shell-nav { padding-left: 14px; padding-right: 14px; }
   .commercial-shell-panel { margin-top: 14px; padding: 18px; }
   .today-item-header, .today-suggestion, .today-source-inspector { align-items: stretch; flex-direction: column; }
+  .today-action-list { width: 100%; display: grid; grid-template-columns: 1fr; }
+  .today-action-overlay { padding: 12px; align-items: end; }
+  .today-action-editor { width: 100%; max-height: calc(100vh - 24px); padding: 16px; border-radius: 12px; }
+  .today-action-editor > header { align-items: stretch; flex-direction: column-reverse; }
+  .today-action-editor > header .btn, .today-action-buttons .btn { width: 100%; }
   .today-source-inspector { right: 12px; bottom: 12px; width: calc(100vw - 24px); max-height: calc(100vh - 24px); }
   .today-time { align-self: flex-start; max-width: 100%; }
   .today-suggestion .btn { width: 100%; min-height: 44px; }
