@@ -210,7 +210,6 @@ docs/content/
 - Modify: `app/src/components/StephenSite.test.ts`
 - Create: `app/stephen/src/domain.ts`
 - Create: `app/stephen/src/content/validate.ts`
-- Create: `app/stephen/src/content/validate.test.ts`
 
 **Interfaces:**
 - Consumes: 从 `f4ef4a9` 选择性迁移的 `app/public/stephen/index.html`、`app/src/components/StephenSite.test.ts` 与 `deploy/stephen.nginx.conf`
@@ -218,7 +217,7 @@ docs/content/
 
 - [ ] **Step 1: Write the failing legacy preservation test**
 
-  在 `StephenSite.test.ts` 增加断言：新站必须保留 `/fieldbook/` 链接，旧手册必须保留 8 个模块、32 个术语、45 项任务、22 道销售题、6 道管理题及备案/生态入口。测试同时锁定新路径 `1/7/30/90` 与旧手册路径 `3/7/14/30`，不得互相改写。
+  先用现有 `app/public/stephen/index.html` 锁定旧手册源：必须保留 8 个模块、32 个术语、45 项任务、22 道销售题、6 道管理题及备案/生态入口。内容契约同时锁定新路径 `1/7/30/90` 与旧手册路径 `3/7/14/30`，不得互相改写；目标 `/fieldbook/` 路径的失败测试和迁移留在 Task 2，保证两个任务都能独立 RED → GREEN。
 
 - [ ] **Step 2: Write the failing content validation tests**
 
@@ -244,9 +243,9 @@ docs/content/
 
 - [ ] **Step 3: Run the tests and verify RED**
 
-  Run: `cd app && npm test -- src/components/StephenSite.test.ts stephen/src/content/validate.test.ts`
+  Run: `cd app && npm test -- src/components/StephenSite.test.ts`
 
-  Expected: FAIL because the typed contract, validator and `/fieldbook/` route do not exist.
+  Expected: FAIL because the typed contract and validator do not exist;既有旧手册源完整性断言继续 PASS。
 
 - [ ] **Step 4: Implement the minimal domain contract and validator**
 
@@ -254,7 +253,7 @@ docs/content/
 
 - [ ] **Step 5: Run the targeted tests and commit**
 
-  Run: `cd app && npm test -- src/components/StephenSite.test.ts stephen/src/content/validate.test.ts`
+  Run: `cd app && npm test -- src/components/StephenSite.test.ts`
 
   Expected: PASS.
 
@@ -278,7 +277,7 @@ docs/content/
 
 - [ ] **Step 1: Add failing shell and build-contract assertions**
 
-  先断言独立配置、双语外壳、四个一级入口、`/fieldbook/` 入口和构建脚本必须存在；断言既有 `build` 精确保持 `vite build`，没有 `build:main`，lockfile 与 `app/vite.config.ts` 不得改变。运行测试并观察因这些新文件/脚本尚不存在而 RED。
+  先断言独立配置、双语外壳、四个一级入口、`/fieldbook/` 入口和目标旧手册必须存在，并在目标文件上重复 8/32/45/22/6 与备案/生态入口完整性断言；断言既有 `build` 精确保持 `vite build`，没有 `build:main`，lockfile 与 `app/vite.config.ts` 不得改变。运行测试并观察因这些新文件/脚本尚不存在而 RED。
 
 - [ ] **Step 2: Configure an isolated Stephen build**
 
