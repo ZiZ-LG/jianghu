@@ -177,6 +177,7 @@ export function customerRoutes(app: FastifyInstance, policy: CapabilityPolicy): 
     if (!parsed.success) return reply.code(400).send({ error: '客户参数无效或命令尚未支持' });
     const input = parsed.data;
     const ctx = commandContext(req);
+    if (ctx.actorRole === 'viewer') return sendError(req, reply, new CustomerPermissionError());
     try {
       const result = await runCommand<CustomerCommandReceipt>(
         ctx,

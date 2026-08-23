@@ -132,6 +132,32 @@ describe('CORE-115 create-only Customer command', () => {
     }
   });
 
+  it('rechecks the current database role before returning an idempotent replay', async () => {
+    const context = await createTestContext({ productAccess: { edition: 'commercial' } });
+    try {
+      const member = await createUser(context, 'member');
+      const payload = createPayload(customerId('demoted-replay'));
+      const key = 'customer-demoted-replay-stable';
+      const first = await command(context, key, payload, member.token);
+      expect(first.statusCode, first.body).toBe(200);
+
+      await context.prisma.user.update({ where: { id: member.user.id }, data: { role: 'viewer' } });
+      const replay = await command(context, key, payload, member.token);
+
+      expect(replay.statusCode, replay.body).toBe(403);
+      expect(replay.json()).toMatchObject({ code: 'customer_write_forbidden' });
+      expect(await context.prisma.account.count({ where: { id: payload.customer.id } })).toBe(1);
+      expect(await context.prisma.auditEvent.count({ where: {
+        tenantId: context.tenant.id, entityId: payload.customer.id, action: 'customer_created',
+      } })).toBe(1);
+      expect(await context.prisma.commandRun.count({ where: {
+        tenantId: context.tenant.id, actorId: member.user.id, kind: 'customer',
+      } })).toBe(1);
+    } finally {
+      await context.cleanup();
+    }
+  });
+
   it('returns the same generic conflict for same-tenant and cross-tenant duplicate ids', async () => {
     const context = await createTestContext({ productAccess: { edition: 'commercial' } });
     try {
