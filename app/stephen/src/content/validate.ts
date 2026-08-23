@@ -4,6 +4,7 @@ import {
   type EvidenceRef,
   type KnowledgeItem,
   type LocalizedText,
+  type SeedCandidate,
 } from '../domain';
 
 function requireText(value: unknown, message: string): asserts value is string {
@@ -50,7 +51,7 @@ function validateEvidence(evidence: EvidenceRef) {
   }
 }
 
-function validateItem(item: KnowledgeItem) {
+function validateItemFields(item: KnowledgeItem) {
   requireText(item.id, 'item id is required');
   requireText(item.slug, 'item slug is required');
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(item.slug)) {
@@ -82,10 +83,6 @@ function validateItem(item: KnowledgeItem) {
   requireText(item.audit.ruleVersion, 'audit ruleVersion is required');
   requireText(item.audit.releaseVersion, 'audit releaseVersion is required');
 
-  if (item.editorialStatus !== 'approved') {
-    throw new Error('public collection contains non-approved item');
-  }
-
   if (item.publicationMode === 'allowlisted_low_risk_auto') {
     if (item.seedContent) {
       throw new Error('seed content requires manual approval');
@@ -102,12 +99,12 @@ function validateItem(item: KnowledgeItem) {
   }
 }
 
-export function validateKnowledgeItems(items: readonly KnowledgeItem[]) {
+function validateUniqueItems(items: readonly KnowledgeItem[]) {
   const ids = new Set<string>();
   const slugs = new Set<string>();
 
   for (const item of items) {
-    validateItem(item);
+    validateItemFields(item);
     if (ids.has(item.id)) {
       throw new Error(`duplicate item id: ${item.id}`);
     }
@@ -116,5 +113,35 @@ export function validateKnowledgeItems(items: readonly KnowledgeItem[]) {
     }
     ids.add(item.id);
     slugs.add(item.slug);
+  }
+}
+
+export function validateKnowledgeItems(items: readonly KnowledgeItem[]) {
+  validateUniqueItems(items);
+  if (items.some((item) => item.editorialStatus !== 'approved')) {
+    throw new Error('public collection contains non-approved item');
+  }
+}
+
+export function validateSeedCandidates(items: readonly SeedCandidate[]) {
+  validateUniqueItems(items);
+
+  for (const item of items) {
+    if (!item.seedContent || item.editorialStatus !== 'candidate') {
+      throw new Error('seed review collection requires candidate seed content');
+    }
+    if (item.publicationMode !== 'manual') {
+      throw new Error('seed content requires manual approval');
+    }
+    if (item.review.status !== 'pending_owner_review') {
+      throw new Error('seed candidate is not pending owner review');
+    }
+    validateIsoDate(item.review.verifiedAt, 'review verifiedAt');
+    if (item.tags.length === 0) {
+      throw new Error('seed candidate tags must not be empty');
+    }
+    if (item.evidence.some((evidence) => !evidence.allowlisted)) {
+      throw new Error('seed candidate evidence must be allowlisted');
+    }
   }
 }

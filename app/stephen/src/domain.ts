@@ -66,6 +66,7 @@ export interface EvidenceRef {
   readonly level: EvidenceLevel;
   readonly language: 'zh' | 'en';
   readonly allowlisted: boolean;
+  readonly dateBasis?: 'published' | 'last_updated' | 'observed';
 }
 
 export interface PublicationAudit {
@@ -107,12 +108,43 @@ export interface KnowledgeItem {
   readonly audit: PublicationAudit;
 }
 
+export type SeedContentCategory =
+  | 'ai_technology'
+  | 'enterprise_sales_method'
+  | 'ai_role_change'
+  | 'org_adoption';
+
+export interface SeedReview {
+  readonly status: 'pending_owner_review' | 'approved' | 'changes_requested';
+  readonly verifiedAt: string;
+  readonly changeWindow: 'within_30_days' | 'within_90_days' | 'evergreen';
+  readonly factType:
+    | 'official_fact'
+    | 'company_claim'
+    | 'research_finding'
+    | 'editorial_inference';
+  readonly verificationNotes: string;
+}
+
+export interface SeedCandidate extends KnowledgeItem {
+  readonly seedCategory: SeedContentCategory;
+  readonly originalTitle?: string;
+  readonly tags: readonly string[];
+  readonly toolIds: readonly string[];
+  readonly review: SeedReview;
+}
+
 export interface KnowledgeTopic {
   readonly slug: string;
   readonly title: LocalizedText;
   readonly summary: LocalizedText;
   readonly domains: readonly KnowledgeDomain[];
   readonly itemIds: readonly string[];
+  readonly problemDefinition: LocalizedText;
+  readonly keyChanges: LocalizedText;
+  readonly salesJudgment: LocalizedText;
+  readonly roleOrgImpact: LocalizedText;
+  readonly toolIds: readonly string[];
 }
 
 export interface KnowledgeTool {
@@ -121,6 +153,11 @@ export interface KnowledgeTool {
   readonly scenario: LocalizedText;
   readonly estimatedMinutes: number;
   readonly outputFormat: 'markdown';
+  readonly inputPrompts: readonly LocalizedText[];
+  readonly templateMarkdown: string;
+  readonly exampleMarkdown: string;
+  readonly completionCriteria: readonly LocalizedText[];
+  readonly safetyNote: LocalizedText;
 }
 
 export interface ToolMaterial {

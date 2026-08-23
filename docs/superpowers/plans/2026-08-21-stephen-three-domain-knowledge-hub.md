@@ -343,17 +343,17 @@ docs/content/
 
 **Interfaces:**
 - Consumes: Task 1 contract and validator
-- Produces: `knowledgeItems`、`knowledgeTopics`、`knowledgeTools`、`sourceRegistry`
+- Produces: `seedCandidates`（终审候选）、空的 `approvedKnowledgeItems`（终审后才写入）、`knowledgeTopics`、`knowledgeTools`、`sourceRegistry`
 
-- [ ] **Step 1: Write the failing editorial fixture tests**
+- [x] **Step 1: Write the failing editorial fixture tests**
 
-  首批公开集合必须至少包含 30 条内容、6 个交叉专题和 8 个可执行工具；三个领域各至少 10 条，至少 12 条内容同时命中两个领域，所有最新条目必须有发布时间和一手或多源证据。
+  首批终审候选集合必须包含 30 条内容、6 个交叉专题和 8 个可执行工具；三个领域各至少 10 条，至少 12 条内容同时命中两个领域，所有最新条目必须有发布时间和一手或多源证据。项目所有者终审前，公开集合必须保持为空。
 
 - [x] **Step 2: Define the source registry**
 
   每个信源记录 `id`、`name`、`homepage`、`kind`、`authority`、`language`、`cadence`、`redistributionPolicy`、`active`。第一批只启用官方产品/研究、招聘页、公开研究机构、可信商业媒体和明确署名的一线实践者。
 
-- [ ] **Step 3: Author the first review collection**
+- [x] **Step 3: Author the first review collection**
 
   先完成首批 30 条候选及逐条核验材料，比例固定为：10 条 AI 技术解释/更新、8 条复杂销售方法、6 条 AI 岗位变化、6 条组织转型与采用；至少 12 条包含“下一步行动”和配套工具链接。30 条内容、6 个专题和 8 个工具必须有完整中文；英文正文可缺省并明确标记，不阻塞该任务。全部候选完成后集中生成一次“30 条内容终审包”交项目所有者批量审核；审核前保持 `candidate`，不得伪装成 `approved` 或进入生产公开集合。等待审核时继续执行所有不依赖终审的页面、工具、测试与文档。
 
@@ -361,7 +361,7 @@ docs/content/
 
   编辑政策必须写明：事实与推断分离、一手优先、双源校验条件、摘要长度、链接失效处理、纠错删除流程、AI 生成标识、商业授权边界和每季度失效审查。
 
-- [ ] **Step 5: Test and commit**
+- [x] **Step 5: Test and commit**
 
   Run: `cd app && npx vitest run --root stephen src/content/content.test.ts`
 
@@ -370,6 +370,8 @@ docs/content/
   Commit: `content(stephen): seed three-domain knowledge collection`
 
   Source-governance evidence（2026-08-23）：已通过项目规定的 `/browse` 实时打开并核验 10 个公开信源；登记文件、编辑与版权规则已建立；Stephen 独立测试必须使用 `npx vitest run --root stephen ...`，因为 CRM 主 Vitest 配置仅包含 `app/src/**/*.test.ts`。
+
+  Seed-review evidence（2026-08-23）：先写入 30/6/8 规模、分类配比、三域覆盖、时效窗口、信源引用和候选/公开集合隔离断言并得到缺少 `items.ts` 的预期 RED；随后完成 30 条候选、6 个专题、8 个工具和 `docs/content/stephen-seed-review-package.md`。独立内容测试 5/5 通过，Stephen TypeScript 检查通过；全部种子仍为 `candidate + manual + pending_owner_review`，`approvedKnowledgeItems` 仍为空，等待项目所有者整批终审，不构成 SAAS-602 最终批准。
 
 ### Task 4: SAAS-602 实现今日、雷达、专题、工具与详情页
 
@@ -388,7 +390,7 @@ docs/content/
 - Create: `app/stephen/src/navigation.test.ts`
 
 **Interfaces:**
-- Consumes: Task 3 public collections
+- Consumes: Task 3 review candidates for non-production preview；正式公开构建只消费项目所有者批准后的 public collection
 - Produces: stable paths `/`、`/radar/`、`/topics/:slug/`、`/tools/`、`/roles/`、`/learn/`、`/items/:slug/`
 
 - [ ] **Step 1: Write navigation and selection tests**
