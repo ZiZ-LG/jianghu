@@ -2,12 +2,12 @@
 
 > **状态：** Approved / Active
 > **日期：** 2026-08-19
-> **最近修订：** 2026-08-23（ADR-003 批准 G3 Customer 最小前置修复）
+> **最近修订：** 2026-08-23（CORE-115 阶段门通过，SAAS-102 恢复）
 > **Epic：** [EPIC-CRM-001 · GitHub #32](https://github.com/ZiZ-LG/jianghu/issues/32)
 > **设计权威：** `docs/designs/jianghu-lightweight-personal-crm-methodology-packs.md`
 > **架构门：** `docs/ADR-002-商业版单一演进与通用CRM能力分层.md`；`docs/ADR-003-G3前置Customer分类权威与创建命令.md`
 > **状态清单：** `docs/商业版开发待办清单v1.md`
-> **执行状态：** 以商业清单为准；当前唯一 `IN_PROGRESS` 为 `CORE-115`，`SAAS-102` 在其远端阶段门通过后恢复。
+> **执行状态：** 以商业清单为准；CRM 当前唯一 `IN_PROGRESS` 为 `SAAS-102`。在项目所有者批准的双 worktree 例外下，“自我修养”可独立执行 `SAAS-601`；两线不修改同一契约、schema 或共享运行文件。
 
 ## 1. 目标结果
 
