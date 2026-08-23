@@ -1,0 +1,3209 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="面向中高级销售与销售管理者的行业通用 AI 销售学习、面试准备与模拟问答手册。">
+  <meta name="color-scheme" content="light dark">
+  <title>AI 销售的自我修养｜行业通用面试学习版</title>
+  <link rel="canonical" href="https://stephen.lake2ocean.top/">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700;800;900&family=Noto+Serif+SC:wght@600;700;900&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --paper: #f5f1e8;
+      --paper-2: #ece7dc;
+      --ink: #1c211f;
+      --muted: #646a65;
+      --line: #c9c5ba;
+      --line-strong: #989b93;
+      --white: #fffdf8;
+      --teal: #0d6b61;
+      --teal-dark: #08483f;
+      --teal-soft: #dce9e4;
+      --amber: #ba7626;
+      --amber-soft: #f1dfc7;
+      --red: #9f443a;
+      --red-soft: #f2ded8;
+      --nav-width: 244px;
+      --content-max: 1120px;
+      --radius-sm: 5px;
+      --radius-md: 10px;
+      --space-1: 6px;
+      --space-2: 10px;
+      --space-3: 16px;
+      --space-4: 24px;
+      --space-5: 36px;
+      --space-6: 52px;
+      --space-7: 76px;
+      --sans: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+      --serif: "Noto Serif SC", "Songti SC", "STSong", serif;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      html:not([data-theme="light"]) {
+        --paper: #171b1a;
+        --paper-2: #202523;
+        --ink: #edf0eb;
+        --muted: #aab1ab;
+        --line: #3b423f;
+        --line-strong: #6b756f;
+        --white: #222826;
+        --teal: #65b9a8;
+        --teal-dark: #b3e0d5;
+        --teal-soft: #233d37;
+        --amber: #dda85e;
+        --amber-soft: #463725;
+        --red: #e08b80;
+        --red-soft: #472d2a;
+      }
+    }
+
+    html[data-theme="dark"] {
+      --paper: #171b1a;
+      --paper-2: #202523;
+      --ink: #edf0eb;
+      --muted: #aab1ab;
+      --line: #3b423f;
+      --line-strong: #6b756f;
+      --white: #222826;
+      --teal: #65b9a8;
+      --teal-dark: #b3e0d5;
+      --teal-soft: #233d37;
+      --amber: #dda85e;
+      --amber-soft: #463725;
+      --red: #e08b80;
+      --red-soft: #472d2a;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+      background: var(--paper);
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: var(--sans);
+      font-size: 16px;
+      line-height: 1.75;
+      text-rendering: optimizeLegibility;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    button,
+    summary,
+    a,
+    input[type="checkbox"] {
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    a {
+      color: inherit;
+    }
+
+    button {
+      color: inherit;
+    }
+
+    :focus-visible {
+      outline: 3px solid var(--amber);
+      outline-offset: 3px;
+    }
+
+    ::selection {
+      color: var(--white);
+      background: var(--teal);
+    }
+
+    .skip-link {
+      position: fixed;
+      top: 8px;
+      left: 8px;
+      z-index: 100;
+      transform: translateY(-160%);
+      padding: 10px 14px;
+      color: #fff;
+      background: #111;
+      text-decoration: none;
+    }
+
+    .skip-link:focus {
+      transform: translateY(0);
+    }
+
+    .reading-progress {
+      position: fixed;
+      inset: 0 0 auto 0;
+      z-index: 90;
+      height: 3px;
+      background: transparent;
+    }
+
+    .reading-progress span {
+      display: block;
+      width: 0;
+      height: 100%;
+      background: var(--amber);
+    }
+
+    .shell {
+      display: grid;
+      grid-template-columns: var(--nav-width) minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 0;
+      align-self: start;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      padding: 28px 20px 20px;
+      color: #edf2ee;
+      background: #18231f;
+      border-right: 1px solid #35423d;
+      overflow-y: auto;
+    }
+
+    .brand {
+      display: grid;
+      grid-template-columns: 44px 1fr;
+      gap: 13px;
+      align-items: start;
+      padding-bottom: 24px;
+      border-bottom: 1px solid #43514b;
+    }
+
+    .brand-mark {
+      display: grid;
+      place-items: center;
+      width: 44px;
+      height: 44px;
+      color: #18231f;
+      background: #e2b36e;
+      border-radius: 50%;
+      font-family: var(--serif);
+      font-size: 24px;
+      font-weight: 900;
+    }
+
+    .brand strong {
+      display: block;
+      font-family: var(--serif);
+      font-size: 16px;
+      line-height: 1.45;
+      letter-spacing: .03em;
+    }
+
+    .brand small {
+      display: block;
+      margin-top: 6px;
+      color: #aebbb5;
+      font-size: 10px;
+      line-height: 1.5;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .chapter-nav {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      margin: 26px 0;
+    }
+
+    .chapter-nav a {
+      display: grid;
+      grid-template-columns: 28px 1fr;
+      gap: 9px;
+      align-items: center;
+      min-height: 40px;
+      padding: 8px 9px;
+      color: #afbbb6;
+      border-left: 2px solid transparent;
+      font-size: 13px;
+      text-decoration: none;
+      transition: color .2s ease, background .2s ease, border-color .2s ease;
+    }
+
+    .chapter-nav a:hover,
+    .chapter-nav a[aria-current="true"] {
+      color: #fff;
+      background: #24332d;
+      border-left-color: #e2b36e;
+    }
+
+    .chapter-nav b {
+      color: #7f8f88;
+      font-size: 10px;
+      letter-spacing: .1em;
+    }
+
+    .ecosystem-nav {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 16px;
+    }
+
+    .ecosystem-nav a {
+      display: grid;
+      place-items: center;
+      min-height: 38px;
+      padding: 7px 8px;
+      color: #dce6e1;
+      border: 1px solid #43514b;
+      border-radius: var(--radius-sm);
+      font-size: 11px;
+      line-height: 1.35;
+      text-align: center;
+      text-decoration: none;
+    }
+
+    .ecosystem-nav a:hover {
+      color: #fff;
+      background: #24332d;
+      border-color: #e2b36e;
+    }
+
+    .side-tools {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: auto;
+      padding-top: 18px;
+      border-top: 1px solid #43514b;
+    }
+
+    .tool-button {
+      min-height: 42px;
+      color: #e6ece8;
+      background: transparent;
+      border: 1px solid #55655e;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+    }
+
+    .tool-button:hover {
+      background: #2c3c35;
+    }
+
+    .main {
+      min-width: 0;
+    }
+
+    .noscript {
+      padding: 14px 28px;
+      color: #2e2518;
+      background: #f3cf91;
+      border-bottom: 1px solid #c99443;
+      font-weight: 600;
+    }
+
+    .hero,
+    .section,
+    .footer {
+      width: min(100%, var(--content-max));
+      margin: 0 auto;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.28fr) minmax(290px, .72fr);
+      min-height: 690px;
+      border-right: 1px solid var(--line);
+      border-left: 1px solid var(--line);
+    }
+
+    .hero-copy {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: clamp(48px, 7vw, 92px) clamp(28px, 6vw, 76px) 48px;
+      border-right: 1px solid var(--line);
+    }
+
+    .eyebrow,
+    .section-index {
+      color: var(--teal);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+    }
+
+    h1,
+    h2 {
+      margin: 0;
+      font-family: var(--serif);
+      font-weight: 900;
+      letter-spacing: -.04em;
+    }
+
+    h1 {
+      margin-top: 24px;
+      font-size: clamp(58px, 8.2vw, 110px);
+      line-height: .98;
+    }
+
+    h1 em {
+      color: var(--teal);
+      font-style: normal;
+    }
+
+    .hero-lede {
+      max-width: 730px;
+      margin: 30px 0 0;
+      color: var(--muted);
+      font-size: clamp(18px, 2.1vw, 25px);
+      line-height: 1.65;
+    }
+
+    .hero-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 38px;
+    }
+
+    .meta-chip,
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 4px 10px;
+      color: var(--teal-dark);
+      background: var(--teal-soft);
+      border: 1px solid color-mix(in srgb, var(--teal) 32%, var(--line));
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .hero-panel {
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      padding: 44px 34px;
+      color: #f2f5f1;
+      background: #0f5b52;
+    }
+
+    .hero-panel-label {
+      margin-bottom: auto;
+      color: #b7d6cd;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .17em;
+      text-transform: uppercase;
+    }
+
+    .hero-stat {
+      padding: 22px 0;
+      border-top: 1px solid #43847a;
+    }
+
+    .hero-stat strong,
+    .hero-stat span {
+      display: block;
+    }
+
+    .hero-stat strong {
+      font-family: var(--serif);
+      font-size: 23px;
+    }
+
+    .hero-stat span {
+      margin-top: 4px;
+      color: #cce1db;
+      font-size: 13px;
+    }
+
+    .section {
+      padding: clamp(60px, 8vw, 104px) clamp(26px, 6vw, 76px);
+      border: 1px solid var(--line);
+      border-bottom: 0;
+      scroll-margin-top: 12px;
+    }
+
+    .section-head {
+      display: grid;
+      grid-template-columns: minmax(240px, .72fr) minmax(320px, 1.28fr);
+      gap: 50px;
+      align-items: end;
+      margin-bottom: 48px;
+    }
+
+    h2 {
+      margin-top: 12px;
+      font-size: clamp(38px, 5vw, 66px);
+      line-height: 1.1;
+    }
+
+    .section-intro {
+      margin: 0;
+      color: var(--muted);
+      font-size: 18px;
+      line-height: 1.85;
+    }
+
+    h3,
+    h4,
+    p {
+      margin-top: 0;
+    }
+
+    h3 {
+      margin-bottom: 12px;
+      font-size: 21px;
+      line-height: 1.45;
+    }
+
+    h4 {
+      margin-bottom: 8px;
+      font-size: 15px;
+    }
+
+    .thesis {
+      padding: 40px 0;
+      border-top: 1px solid var(--line-strong);
+      border-bottom: 1px solid var(--line-strong);
+    }
+
+    blockquote {
+      max-width: 920px;
+      margin: 0;
+      font-family: var(--serif);
+      font-size: clamp(28px, 4vw, 46px);
+      font-weight: 700;
+      line-height: 1.55;
+      letter-spacing: -.02em;
+    }
+
+    .editable-label {
+      display: inline-block;
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    [contenteditable="true"] {
+      border-bottom: 1px dashed var(--amber);
+      overflow: visible;
+    }
+
+    .shift-list {
+      margin-top: 42px;
+    }
+
+    .shift-row {
+      display: grid;
+      grid-template-columns: 42px 1fr 34px 1.25fr;
+      gap: 18px;
+      align-items: center;
+      min-height: 78px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .shift-number {
+      color: var(--amber);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .shift-old {
+      color: var(--muted);
+      text-decoration: line-through;
+      text-decoration-color: color-mix(in srgb, var(--red) 55%, transparent);
+    }
+
+    .shift-arrow {
+      color: var(--line-strong);
+      text-align: center;
+    }
+
+    .shift-new {
+      font-weight: 700;
+    }
+
+    .role-note,
+    .source-note,
+    .warning,
+    .coach-note {
+      margin-top: 30px;
+      padding: 18px 20px;
+      background: var(--amber-soft);
+      border-left: 4px solid var(--amber);
+      font-size: 14px;
+    }
+
+    .principle-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1px;
+      margin-top: 46px;
+      background: var(--line);
+      border: 1px solid var(--line);
+    }
+
+    .principle {
+      min-height: 210px;
+      padding: 28px;
+      background: var(--white);
+    }
+
+    .principle b {
+      display: block;
+      margin-bottom: 16px;
+      color: var(--teal);
+      font-size: 11px;
+      letter-spacing: .14em;
+    }
+
+    .principle p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .tabs,
+    .segmented {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 28px;
+    }
+
+    .tab-button,
+    .segment-button,
+    .filter-button,
+    .primary-button,
+    .quiet-button {
+      min-height: 44px;
+      padding: 9px 16px;
+      background: transparent;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    .tab-button[aria-selected="true"],
+    .segment-button[aria-pressed="true"],
+    .filter-button[aria-pressed="true"],
+    .primary-button {
+      color: #fff;
+      background: var(--teal);
+      border-color: var(--teal);
+    }
+
+    .tab-button:hover,
+    .segment-button:hover,
+    .filter-button:hover,
+    .quiet-button:hover {
+      border-color: var(--teal);
+    }
+
+    .profile-header {
+      display: grid;
+      grid-template-columns: .68fr 1.32fr;
+      gap: 34px;
+      margin-bottom: 24px;
+      padding: 28px;
+      background: var(--teal-soft);
+      border-top: 4px solid var(--teal);
+    }
+
+    .profile-header strong {
+      display: block;
+      font-family: var(--serif);
+      font-size: 26px;
+      line-height: 1.4;
+    }
+
+    .profile-header p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .competency-list {
+      border-top: 1px solid var(--line-strong);
+    }
+
+    details {
+      background: var(--white);
+      border-bottom: 1px solid var(--line);
+    }
+
+    details > summary {
+      position: relative;
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr) auto;
+      gap: 14px;
+      align-items: center;
+      min-height: 76px;
+      padding: 17px 18px;
+      list-style: none;
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    details > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    details > summary::after {
+      content: "+";
+      color: var(--teal);
+      font-size: 24px;
+      font-weight: 400;
+    }
+
+    details[open] > summary::after {
+      content: "−";
+    }
+
+    details > summary:hover {
+      background: color-mix(in srgb, var(--teal-soft) 55%, transparent);
+    }
+
+    .summary-index {
+      color: var(--amber);
+      font-size: 11px;
+      letter-spacing: .1em;
+    }
+
+    .summary-sub {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .details-body {
+      padding: 0 18px 26px 74px;
+    }
+
+    .standard-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .standard-block {
+      padding-top: 14px;
+      border-top: 2px solid var(--line);
+    }
+
+    .standard-block h4 {
+      color: var(--teal);
+      font-size: 12px;
+      letter-spacing: .08em;
+    }
+
+    .block-label {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--teal);
+      font-size: 12px;
+      letter-spacing: .08em;
+    }
+
+    .standard-block p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .syllabus-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .module {
+      border: 1px solid var(--line);
+    }
+
+    .module > summary {
+      grid-template-columns: 42px minmax(0, 1fr) auto;
+      min-height: 96px;
+    }
+
+    .module-level {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .lesson-path {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+
+    .lesson-step {
+      display: grid;
+      grid-template-columns: 104px 1fr;
+      gap: 14px;
+      padding: 12px 0;
+      border-top: 1px solid var(--line);
+    }
+
+    .lesson-step strong {
+      color: var(--teal);
+      font-size: 12px;
+    }
+
+    .lesson-step p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .glossary-tools,
+    .question-tools {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin-top: 36px;
+    }
+
+    .search-input {
+      width: 100%;
+      min-height: 48px;
+      padding: 10px 14px;
+      color: var(--ink);
+      background: var(--white);
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius-sm);
+    }
+
+    .count-label {
+      flex: 0 0 auto;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .glossary {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1px;
+      margin-top: 16px;
+      background: var(--line);
+      border: 1px solid var(--line);
+    }
+
+    .glossary article {
+      min-height: 150px;
+      padding: 20px;
+      background: var(--white);
+    }
+
+    .glossary h3 {
+      margin-bottom: 8px;
+      color: var(--teal);
+      font-size: 16px;
+    }
+
+    .glossary p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .prep-layout {
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      gap: 28px;
+      align-items: start;
+    }
+
+    .prep-sidebar {
+      position: sticky;
+      top: 26px;
+      padding: 22px;
+      background: var(--teal-soft);
+      border-top: 4px solid var(--teal);
+    }
+
+    .prep-sidebar h3 {
+      font-family: var(--serif);
+    }
+
+    .prep-sidebar p {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .plan-progress {
+      margin-top: 22px;
+    }
+
+    .plan-progress strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+
+    .progress-track {
+      height: 8px;
+      background: color-mix(in srgb, var(--teal) 12%, var(--white));
+      border: 1px solid color-mix(in srgb, var(--teal) 26%, var(--line));
+      overflow: hidden;
+    }
+
+    .progress-track span {
+      display: block;
+      width: 0;
+      height: 100%;
+      background: var(--teal);
+      transition: width .25s ease;
+    }
+
+    .prep-note {
+      margin: 18px 0 0;
+      padding-top: 16px;
+      border-top: 1px solid color-mix(in srgb, var(--teal) 35%, var(--line));
+      font-size: 12px;
+    }
+
+    .roadmap {
+      display: grid;
+      gap: 12px;
+    }
+
+    .task-card {
+      background: var(--white);
+      border: 1px solid var(--line);
+      border-left: 5px solid var(--line-strong);
+    }
+
+    .task-card[data-done="true"] {
+      border-left-color: var(--teal);
+    }
+
+    .task-head {
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: start;
+      padding: 18px;
+    }
+
+    .task-head input {
+      width: 22px;
+      height: 22px;
+      margin-top: 3px;
+      accent-color: var(--teal);
+      cursor: pointer;
+    }
+
+    .task-head label {
+      min-height: 44px;
+      cursor: pointer;
+    }
+
+    .task-head h3 {
+      margin: 0;
+      font-size: 18px;
+    }
+
+    .task-head small {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+    }
+
+    .task-time {
+      color: var(--amber);
+      font-size: 11px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .task-content {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1px;
+      background: var(--line);
+      border-top: 1px solid var(--line);
+    }
+
+    .task-content div {
+      padding: 16px;
+      background: var(--paper);
+    }
+
+    .task-content strong {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--teal);
+      font-size: 12px;
+    }
+
+    .task-content p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .framework-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .framework {
+      padding: 28px;
+      background: var(--white);
+      border-top: 4px solid var(--teal);
+    }
+
+    .framework > span {
+      color: var(--amber);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .12em;
+    }
+
+    .framework ol {
+      padding-left: 22px;
+      margin-bottom: 0;
+    }
+
+    .framework li {
+      margin: 10px 0;
+    }
+
+    .answer-template {
+      margin-top: 28px;
+      padding: 28px;
+      background: var(--paper-2);
+      border: 1px solid var(--line);
+    }
+
+    .answer-template header {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+
+    .answer-template h3 {
+      margin: 0;
+    }
+
+    .personal-draft {
+      min-height: 150px;
+      margin: 0;
+      padding: 18px;
+      background: var(--white);
+      border: 1px dashed var(--amber);
+      line-height: 1.9;
+    }
+
+    .story-bank {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 28px;
+    }
+
+    .story-card {
+      padding: 20px;
+      background: var(--white);
+      border: 1px solid var(--line);
+    }
+
+    .story-card strong {
+      display: block;
+      margin-bottom: 10px;
+      color: var(--teal);
+    }
+
+    .story-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .question-control-panel {
+      padding: 20px;
+      background: var(--paper-2);
+      border: 1px solid var(--line);
+    }
+
+    .question-control-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin-top: 12px;
+    }
+
+    .question-control-row:first-child {
+      margin-top: 0;
+    }
+
+    .question-control-row > strong {
+      min-width: 82px;
+      font-size: 12px;
+    }
+
+    .filter-button {
+      min-height: 44px;
+      padding: 6px 11px;
+      font-size: 12px;
+    }
+
+    .question-list {
+      margin-top: 18px;
+      border-top: 1px solid var(--line-strong);
+    }
+
+    .question-item > summary {
+      grid-template-columns: 52px minmax(0, 1fr) auto;
+      min-height: 84px;
+    }
+
+    .question-code {
+      color: var(--amber);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .question-title {
+      font-size: 16px;
+    }
+
+    .question-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 7px;
+    }
+
+    .question-meta span {
+      padding: 2px 7px;
+      color: var(--muted);
+      background: var(--paper-2);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      font-size: 10px;
+    }
+
+    .question-body {
+      padding: 0 18px 28px 70px;
+    }
+
+    .interviewer-intent {
+      margin-bottom: 20px;
+      padding: 14px 16px;
+      background: var(--teal-soft);
+      border-left: 3px solid var(--teal);
+      font-size: 14px;
+    }
+
+    .sample-answer {
+      padding: 22px;
+      background: var(--paper);
+      border: 1px solid var(--line);
+    }
+
+    .sample-answer h4 {
+      color: var(--teal);
+    }
+
+    .sample-answer p {
+      margin: 0;
+      line-height: 1.9;
+    }
+
+    .answer-review {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-top: 16px;
+    }
+
+    .answer-review div {
+      padding-top: 12px;
+      border-top: 2px solid var(--line);
+    }
+
+    .answer-review strong {
+      color: var(--teal);
+      font-size: 12px;
+    }
+
+    .answer-review p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .mock-panel {
+      display: grid;
+      grid-template-columns: 180px minmax(0, 1fr);
+      margin-top: 34px;
+      border: 1px solid var(--line-strong);
+    }
+
+    .mock-aside {
+      padding: 24px;
+      color: #eff5f1;
+      background: var(--teal-dark);
+    }
+
+    .mock-aside strong {
+      display: block;
+      margin-bottom: 12px;
+      font-family: var(--serif);
+      font-size: 22px;
+    }
+
+    .mock-aside p {
+      color: color-mix(in srgb, #fff 70%, var(--teal-dark));
+      font-size: 12px;
+    }
+
+    .mock-content {
+      padding: 28px;
+      background: var(--white);
+    }
+
+    .mock-content h3 {
+      font-size: 24px;
+    }
+
+    .mock-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 20px;
+    }
+
+    .mock-answer {
+      display: none;
+      margin-top: 20px;
+      padding-top: 20px;
+      border-top: 1px solid var(--line);
+    }
+
+    .mock-answer[data-open="true"] {
+      display: block;
+    }
+
+    .day-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .day-card {
+      padding: 24px;
+      background: var(--white);
+      border-top: 4px solid var(--line-strong);
+    }
+
+    .day-card:first-child {
+      border-top-color: var(--teal);
+    }
+
+    .day-card ul,
+    .question-to-ask ul {
+      padding-left: 20px;
+      margin-bottom: 0;
+    }
+
+    .day-card li,
+    .question-to-ask li {
+      margin: 8px 0;
+    }
+
+    .question-to-ask {
+      margin-top: 24px;
+      padding: 26px;
+      background: var(--paper-2);
+      border: 1px solid var(--line);
+    }
+
+    .future-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1px;
+      background: var(--line);
+      border: 1px solid var(--line);
+    }
+
+    .future-row {
+      position: relative;
+      min-height: 220px;
+      padding: 26px;
+      background: var(--white);
+    }
+
+    .future-row time {
+      color: var(--amber);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .12em;
+    }
+
+    .future-row h3 {
+      margin-top: 16px;
+    }
+
+    .future-row p {
+      margin: 0 0 34px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .confidence {
+      position: absolute;
+      right: 22px;
+      bottom: 20px;
+      color: var(--teal);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .sources {
+      border-top: 1px solid var(--line-strong);
+    }
+
+    .source {
+      display: grid;
+      grid-template-columns: 48px 120px minmax(0, 1fr) 92px;
+      gap: 14px;
+      align-items: center;
+      min-height: 76px;
+      padding: 14px 8px;
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
+    }
+
+    .source-code {
+      color: var(--amber);
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    .source span:nth-child(3) {
+      color: var(--muted);
+    }
+
+    .source a {
+      color: var(--teal);
+      font-weight: 700;
+      text-align: right;
+      text-decoration: none;
+    }
+
+    .source a:hover {
+      text-decoration: underline;
+    }
+
+    .footer {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 28px;
+      align-items: center;
+      padding: 36px clamp(26px, 6vw, 76px);
+      color: var(--muted);
+      border: 1px solid var(--line);
+      font-size: 12px;
+    }
+
+    .footer strong {
+      color: var(--ink);
+      font-size: 14px;
+    }
+
+    .footer-links,
+    .footer-legal {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .footer a {
+      color: var(--teal-dark);
+      text-underline-offset: 3px;
+    }
+
+    .empty-state {
+      padding: 30px;
+      color: var(--muted);
+      background: var(--white);
+      border: 1px solid var(--line);
+      text-align: center;
+    }
+
+    @media (min-width: 1440px) {
+      :root {
+        --content-max: 1180px;
+      }
+
+      .hero-copy {
+        padding-left: 86px;
+        padding-right: 86px;
+      }
+    }
+
+    @media (max-width: 1024px) {
+      :root {
+        --nav-width: 210px;
+      }
+
+      .hero {
+        grid-template-columns: 1fr;
+      }
+
+      .hero-copy {
+        min-height: 610px;
+        border-right: 0;
+      }
+
+      .hero-panel {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0 24px;
+      }
+
+      .hero-panel-label {
+        grid-column: 1 / -1;
+        margin-bottom: 18px;
+      }
+
+      .section-head,
+      .profile-header {
+        grid-template-columns: 1fr;
+        gap: 22px;
+      }
+
+      .prep-layout {
+        grid-template-columns: 240px minmax(0, 1fr);
+      }
+
+      .standard-grid,
+      .task-content {
+        grid-template-columns: 1fr;
+      }
+
+      .glossary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 768px) {
+      .shell {
+        display: block;
+      }
+
+      .sidebar {
+        position: sticky;
+        top: 0;
+        z-index: 70;
+        display: grid;
+        grid-template-columns: minmax(190px, auto) minmax(0, 1fr) auto;
+        gap: 14px;
+        align-items: center;
+        width: 100%;
+        height: auto;
+        padding: 10px 12px;
+        overflow: visible;
+      }
+
+      .brand {
+        grid-template-columns: 36px 1fr;
+        gap: 9px;
+        padding: 0;
+        border: 0;
+      }
+
+      .brand-mark {
+        width: 36px;
+        height: 36px;
+        font-size: 20px;
+      }
+
+      .brand strong {
+        font-size: 12px;
+        line-height: 1.3;
+      }
+
+      .brand small {
+        display: none;
+      }
+
+      .chapter-nav {
+        flex-direction: row;
+        gap: 4px;
+        margin: 0;
+        overflow-x: auto;
+        scrollbar-width: thin;
+      }
+
+      .chapter-nav a {
+        display: block;
+        min-width: max-content;
+        min-height: 44px;
+        padding: 9px 11px;
+        border: 0;
+        border-bottom: 2px solid transparent;
+      }
+
+      .chapter-nav a[aria-current="true"] {
+        border-bottom-color: #e2b36e;
+      }
+
+      .chapter-nav b {
+        display: none;
+      }
+
+      .ecosystem-nav {
+        display: none;
+      }
+
+      .side-tools {
+        display: flex;
+        gap: 5px;
+        margin: 0;
+        padding: 0;
+        border: 0;
+      }
+
+      .tool-button {
+        width: 48px;
+        min-height: 44px;
+        padding: 4px;
+        font-size: 11px;
+      }
+
+      .hero,
+      .section,
+      .footer {
+        border-right: 0;
+        border-left: 0;
+      }
+
+      .hero-copy {
+        min-height: 570px;
+        padding: 54px 24px 34px;
+      }
+
+      h1 {
+        font-size: clamp(54px, 14vw, 86px);
+      }
+
+      .section {
+        padding: 64px 24px;
+      }
+
+      .section-head {
+        margin-bottom: 36px;
+      }
+
+      .shift-row {
+        grid-template-columns: 34px 1fr;
+        gap: 4px 12px;
+        padding: 15px 0;
+      }
+
+      .shift-arrow {
+        display: none;
+      }
+
+      .shift-new {
+        grid-column: 2;
+      }
+
+      .principle-grid,
+      .syllabus-grid,
+      .framework-grid,
+      .story-bank,
+      .day-grid,
+      .future-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .prep-layout {
+        grid-template-columns: 1fr;
+      }
+
+      .prep-sidebar {
+        position: relative;
+        top: 0;
+      }
+
+      .details-body,
+      .question-body {
+        padding-left: 18px;
+      }
+
+      .lesson-step {
+        grid-template-columns: 1fr;
+        gap: 4px;
+      }
+
+      .mock-panel {
+        grid-template-columns: 1fr;
+      }
+
+      .source {
+        grid-template-columns: 42px 1fr auto;
+      }
+
+      .source span:nth-child(3) {
+        grid-column: 2 / -1;
+      }
+
+      .footer {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+    }
+
+    @media (max-width: 480px) {
+      body {
+        font-size: 15px;
+      }
+
+      .sidebar {
+        grid-template-columns: auto 1fr auto;
+      }
+
+      .brand strong {
+        display: none;
+      }
+
+      .hero-copy {
+        min-height: 540px;
+      }
+
+      .hero-panel {
+        grid-template-columns: 1fr;
+        padding: 28px 24px;
+      }
+
+      .hero-stat {
+        padding: 16px 0;
+      }
+
+      .hero-meta {
+        gap: 6px;
+      }
+
+      .section {
+        padding: 54px 18px;
+      }
+
+      .section-intro {
+        font-size: 16px;
+      }
+
+      .profile-header,
+      .principle,
+      .framework,
+      .day-card {
+        padding: 20px;
+      }
+
+      details > summary {
+        grid-template-columns: 34px minmax(0, 1fr) auto;
+        padding-right: 12px;
+        padding-left: 12px;
+      }
+
+      .glossary {
+        grid-template-columns: 1fr;
+      }
+
+      .task-head {
+        grid-template-columns: 30px minmax(0, 1fr);
+      }
+
+      .task-time {
+        grid-column: 2;
+      }
+
+      .question-item > summary {
+        grid-template-columns: 42px minmax(0, 1fr) auto;
+      }
+
+      .answer-review {
+        grid-template-columns: 1fr;
+      }
+
+      .answer-template header,
+      .glossary-tools,
+      .question-tools {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .source {
+        grid-template-columns: 38px 1fr;
+      }
+
+      .source a {
+        grid-column: 2;
+        text-align: left;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        transition-duration: .01ms !important;
+        animation-duration: .01ms !important;
+      }
+    }
+
+    @media print {
+      :root {
+        --paper: #fff;
+        --paper-2: #f5f5f5;
+        --ink: #111;
+        --muted: #444;
+        --line: #bbb;
+        --line-strong: #777;
+        --white: #fff;
+        --teal: #145f56;
+        --teal-dark: #145f56;
+        --teal-soft: #eef4f2;
+        --amber: #8b5a1d;
+        --amber-soft: #f7efe2;
+      }
+
+      @page {
+        size: A4;
+        margin: 13mm;
+      }
+
+      body {
+        font-size: 10pt;
+      }
+
+      .reading-progress,
+      .sidebar,
+      .mock-panel,
+      .question-control-panel,
+      .glossary-tools,
+      .tabs,
+      .segmented,
+      .quiet-button,
+      .primary-button {
+        display: none !important;
+      }
+
+      .shell {
+        display: block;
+      }
+
+      .hero,
+      .section,
+      .footer {
+        width: 100%;
+        max-width: none;
+      }
+
+      .hero {
+        min-height: auto;
+      }
+
+      .hero-copy,
+      .section {
+        padding: 18mm 12mm;
+      }
+
+      .hero-panel {
+        color: #111;
+        background: #eee;
+      }
+
+      .section {
+        break-before: page;
+        border: 0;
+      }
+
+      details {
+        break-inside: avoid;
+      }
+
+      details > * {
+        display: block !important;
+      }
+
+      a {
+        color: #111;
+        text-decoration: none;
+      }
+
+      a[href^="http"]::after {
+        content: " (" attr(href) ")";
+        font-size: 7pt;
+        word-break: break-all;
+      }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到正文</a>
+  <div class="reading-progress" aria-hidden="true"><span id="readingProgress"></span></div>
+
+  <div class="shell">
+    <aside class="sidebar" aria-label="手册目录与工具">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">修</span>
+        <div>
+          <strong>AI 销售的<br>自我修养</strong>
+          <small>行业通用 · 面试学习版</small>
+        </div>
+      </div>
+      <nav class="ecosystem-nav" aria-label="江湖产品导航">
+        <a href="https://lake2ocean.top" rel="noreferrer noopener">江湖首页</a>
+        <a href="https://crm.lake2ocean.top" rel="noreferrer noopener">江湖 CRM</a>
+      </nav>
+      <nav class="chapter-nav" aria-label="章节目录">
+        <a href="#definition"><b>01</b><span>岗位重构</span></a>
+        <a href="#profile"><b>02</b><span>能力标准</span></a>
+        <a href="#literacy"><b>03</b><span>AI 基础课</span></a>
+        <a href="#preparation"><b>04</b><span>准备路线</span></a>
+        <a href="#answering"><b>05</b><span>回答方法</span></a>
+        <a href="#questions"><b>06</b><span>高频问答</span></a>
+        <a href="#interview-day"><b>07</b><span>面试当天</span></a>
+        <a href="#future"><b>08</b><span>未来趋势</span></a>
+        <a href="#sources"><b>09</b><span>招聘证据</span></a>
+      </nav>
+      <div class="side-tools">
+        <button class="tool-button" id="themeToggle" type="button" aria-label="切换明暗主题">主题</button>
+        <button class="tool-button" id="printButton" type="button" aria-label="打印或导出 PDF">打印</button>
+      </div>
+    </aside>
+
+    <main class="main" id="main">
+      <noscript><div class="noscript">筛选、随机抽题和学习进度需要启用 JavaScript；正文仍可直接阅读。</div></noscript>
+
+      <header class="hero">
+        <div class="hero-copy">
+          <div>
+            <p class="eyebrow">Professional Interview Fieldbook · 2026</p>
+            <h1><em>AI 销售</em>的<br>自我修养</h1>
+            <p class="hero-lede" data-pretext>面向中高级销售与销售管理者的行业通用教程：从零补齐 AI 商业化常识，把经验整理成证据，并在面试中讲清楚你如何发现价值、推进复杂交易和推动客户采用。</p>
+          </div>
+          <div class="hero-meta" aria-label="手册范围">
+            <span class="meta-chip">行业通用</span>
+            <span class="meta-chip">中高级销售</span>
+            <span class="meta-chip">销售管理者</span>
+            <span class="meta-chip">零基础可学</span>
+            <span class="meta-chip">面试题库</span>
+            <span class="meta-chip">清单进度仅存本机</span>
+          </div>
+        </div>
+        <div class="hero-panel" aria-label="本版学习结果">
+          <div class="hero-panel-label">学完要能交付的四件事</div>
+          <div class="hero-stat"><strong>一张岗位地图</strong><span>知道企业为什么招你、岗位如何创造收入</span></div>
+          <div class="hero-stat"><strong>一套 AI 语言</strong><span>能用业务语言解释模型、RAG、Agent 与评测</span></div>
+          <div class="hero-stat"><strong>六个事实案例</strong><span>每个案例都有角色、动作、数字和复盘</span></div>
+          <div class="hero-stat"><strong>一次可信面试</strong><span>不背标准答案，能围绕证据稳定展开</span></div>
+        </div>
+      </header>
+
+      <section class="section" id="definition" data-section="岗位重构">
+        <div class="section-head">
+          <div>
+            <span class="section-index">01 / ROLE DEFINITION</span>
+            <h2>先理解岗位<br>再准备面试</h2>
+          </div>
+          <p class="section-intro">AI 销售仍然是销售，但交易对象变了：客户购买的不只是软件功能，而是一套能够进入真实工作流、接受评测、被安全治理并持续产生结果的新能力。</p>
+        </div>
+
+        <div class="thesis">
+          <blockquote data-pretext contenteditable="true" spellcheck="false">AI 销售的专业性，不在于会背多少模型名词，而在于能否把模糊兴趣变成可衡量、可采购、可上线、可扩展的业务项目。</blockquote>
+          <span class="editable-label">可直接编辑为你的职业理解；内容只停留在当前页面</span>
+        </div>
+
+        <div class="shift-list" aria-label="AI 时代销售工作的四项变化">
+          <div class="shift-row">
+            <span class="shift-number">01</span>
+            <span class="shift-old">介绍功能和产品路线图</span>
+            <span class="shift-arrow">→</span>
+            <span class="shift-new">诊断流程、数据、风险和成功指标</span>
+          </div>
+          <div class="shift-row">
+            <span class="shift-number">02</span>
+            <span class="shift-old">把 POC 当作成交证明</span>
+            <span class="shift-arrow">→</span>
+            <span class="shift-new">从一开始设计生产上线、采用和扩展路径</span>
+          </div>
+          <div class="shift-row">
+            <span class="shift-number">03</span>
+            <span class="shift-old">只经营业务决策人</span>
+            <span class="shift-arrow">→</span>
+            <span class="shift-new">同时建立业务、技术、安全、采购和使用者共识</span>
+          </div>
+          <div class="shift-row">
+            <span class="shift-number">04</span>
+            <span class="shift-old">靠信息差和勤奋获得优势</span>
+            <span class="shift-arrow">→</span>
+            <span class="shift-new">用 AI 提高准备效率，把时间留给判断、信任与谈判</span>
+          </div>
+        </div>
+
+        <div class="principle-grid" aria-label="面试官常见的四个判断维度">
+          <article class="principle">
+            <b>判断一 · 能不能卖</b>
+            <h3>有复杂交易的基本功</h3>
+            <p>能开拓账户、做需求发现、建立多线程关系、管理销售阶段、谈商业条款，并用证据预测成交。</p>
+          </article>
+          <article class="principle">
+            <b>判断二 · 懂不懂 AI</b>
+            <h3>技术深度够用且可信</h3>
+            <p>不要求写模型，但要解释能力边界、数据路径、评测方法、安全风险以及从试点到生产的差距。</p>
+          </article>
+          <article class="principle">
+            <b>判断三 · 能不能落地</b>
+            <h3>不把签约当作终点</h3>
+            <p>能和方案、交付、客户成功共同定义上线条件、采用指标、治理机制和扩展路线。</p>
+          </article>
+          <article class="principle">
+            <b>判断四 · 学得够不够快</b>
+            <h3>能在高变化环境中工作</h3>
+            <p>会使用 AI 工具，有自己的学习方法，面对产品变化和信息不完整仍能形成可检验的判断。</p>
+          </article>
+        </div>
+
+        <div class="role-note">
+          <strong>面试准备原则：</strong>所有观点都要尽量落到“我做过什么、留下什么证据、结果是多少、如果重来会如何调整”。没有直接 AI 经验时，用可迁移的复杂销售经验加上近期完成的 AI 学习作品证明适配性。
+        </div>
+      </section>
+
+      <section class="section" id="profile" data-section="能力标准">
+        <div class="section-head">
+          <div>
+            <span class="section-index">02 / HIRING PROFILE</span>
+            <h2>两类岗位<br>能力标准</h2>
+          </div>
+          <p class="section-intro">这里不做打分。把每项标准当作课程目录：先理解企业为什么需要它，再准备一个能被追问的事实案例，并把薄弱项转成具体练习。</p>
+        </div>
+
+        <div class="tabs" role="tablist" aria-label="选择岗位能力标准">
+          <button class="tab-button" id="tabSenior" type="button" role="tab" aria-selected="true" aria-controls="profilePanel" data-role="senior">中高级销售</button>
+          <button class="tab-button" id="tabManager" type="button" role="tab" aria-selected="false" aria-controls="profilePanel" data-role="manager">销售管理者</button>
+        </div>
+
+        <div id="profilePanel" role="tabpanel" aria-live="polite">
+          <div class="profile-header">
+            <strong id="profileTitle">中高级销售：独立经营复杂 AI 机会</strong>
+            <p id="profileSummary"></p>
+          </div>
+          <div class="competency-list" id="competencyList"></div>
+        </div>
+      </section>
+
+      <section class="section" id="literacy" data-section="AI 基础课">
+        <div class="section-head">
+          <div>
+            <span class="section-index">03 / AI LITERACY</span>
+            <h2>零基础 AI<br>自学课程</h2>
+          </div>
+          <p class="section-intro">学习顺序遵循“先业务、后机制、再风险”。每个模块都给出要学什么、怎样练、最后拿出什么。目标不是成为工程师，而是能和客户及技术团队准确协作。</p>
+        </div>
+
+        <div class="syllabus-grid" id="syllabus"></div>
+
+        <div class="glossary-tools">
+          <input class="search-input" id="glossarySearch" type="search" placeholder="搜索 RAG、Agent、评测、Token、SLA 等术语…" aria-label="搜索 AI 销售术语">
+          <span class="count-label" id="glossaryCount"></span>
+        </div>
+        <div class="glossary" id="glossary" aria-live="polite"></div>
+
+        <div class="coach-note">
+          <strong>新手学习止损线：</strong>如果一个概念学了 40 分钟仍不能用三句话讲给非技术客户听，先停止继续深入。改为回答三个问题：它解决什么业务问题？失败会怎样？上线前要验证什么？
+        </div>
+      </section>
+
+      <section class="section" id="preparation" data-section="准备路线">
+        <div class="section-head">
+          <div>
+            <span class="section-index">04 / PREPARATION ROADMAP</span>
+            <h2>按剩余时间<br>逐步准备</h2>
+          </div>
+          <p class="section-intro">选择距离面试的时间，页面会给出对应学习路线。时间越短，越要优先岗位理解、案例证据和高频问题；时间充足时再补技术深度和作品。</p>
+        </div>
+
+        <div class="segmented" role="group" aria-label="选择准备周期">
+          <button class="segment-button" type="button" data-plan="3" aria-pressed="false">3 天急救</button>
+          <button class="segment-button" type="button" data-plan="7" aria-pressed="false">7 天冲刺</button>
+          <button class="segment-button" type="button" data-plan="14" aria-pressed="true">14 天标准</button>
+          <button class="segment-button" type="button" data-plan="30" aria-pressed="false">30 天补基础</button>
+        </div>
+
+        <div class="prep-layout">
+          <aside class="prep-sidebar">
+            <h3 id="planTitle">14 天标准路线</h3>
+            <p id="planDescription"></p>
+            <div class="plan-progress">
+              <strong id="planProgressText">完成 0 / 0</strong>
+              <div class="progress-track" aria-hidden="true"><span id="planProgressBar"></span></div>
+            </div>
+            <p class="prep-note">勾选只表示“做过并留下交付物”，不是能力评分。进度保存在当前浏览器。</p>
+            <button class="quiet-button" id="resetPlan" type="button">重置当前路线</button>
+          </aside>
+          <div class="roadmap" id="roadmap"></div>
+        </div>
+      </section>
+
+      <section class="section" id="answering" data-section="回答方法">
+        <div class="section-head">
+          <div>
+            <span class="section-index">05 / ANSWER SYSTEM</span>
+            <h2>把经验讲成<br>可信证据</h2>
+          </div>
+          <p class="section-intro">高级销售的答案不靠气势，而靠结构。先给结论，再交代背景和你的具体动作，用数字说明结果，最后说复盘。面试官越追问，证据越具体。</p>
+        </div>
+
+        <div class="framework-grid">
+          <article class="framework">
+            <span>行为与案例题 · H-C-A-M-L</span>
+            <h3>先结论，后事实</h3>
+            <ol>
+              <li><strong>Headline：</strong>一句话给出你的判断和结果。</li>
+              <li><strong>Context：</strong>客户、目标、约束和你承担的角色。</li>
+              <li><strong>Actions：</strong>你亲自做的三到四个关键动作。</li>
+              <li><strong>Metrics：</strong>金额、周期、使用、转化或风险变化。</li>
+              <li><strong>Learning：</strong>复盘，以及下一次会怎样做得更好。</li>
+            </ol>
+          </article>
+          <article class="framework">
+            <span>技术与方案题 · B-M-R-P</span>
+            <h3>从业务讲到风险</h3>
+            <ol>
+              <li><strong>Business：</strong>先说明它解决哪类业务任务。</li>
+              <li><strong>Mechanism：</strong>只讲够用的工作机制和数据路径。</li>
+              <li><strong>Risk：</strong>主动说质量、安全、成本和责任边界。</li>
+              <li><strong>Proof：</strong>给出评测、试点和生产采用的验证办法。</li>
+            </ol>
+          </article>
+        </div>
+
+        <div class="answer-template">
+          <header>
+            <div>
+              <span class="section-index">60-SECOND INTRODUCTION</span>
+              <h3>60 秒自我介绍草稿</h3>
+            </div>
+            <button class="quiet-button" id="copyIntro" type="button">复制骨架</button>
+          </header>
+          <p class="personal-draft" id="introDraft" data-pretext contenteditable="true" spellcheck="false">我有【年限】年的【行业／企业软件】销售经验，过去【时间段】主要负责【客户类型与区域】，典型交易规模为【金额与周期】。我最擅长的是【复杂账户经营／新市场开拓／价值销售】，例如我曾在【场景】中，通过【三个关键动作】，实现【可量化结果】。最近我系统学习了【LLM、RAG、Agent、评测等】，并完成【账户研究、演示、业务案例或自动化作品】。我希望加入贵公司，是因为【市场判断＋产品差异＋个人适配】，我能带来的第一项价值是【具体贡献】。</p>
+        </div>
+
+        <div class="story-bank" aria-label="面试前必须准备的六个案例">
+          <article class="story-card"><strong>01 最大复杂交易</strong><p>金额、周期、决策链、阻力、你亲自改变了什么、最终结果。</p></article>
+          <article class="story-card"><strong>02 从零开拓</strong><p>如何选择账户、形成假设、找到切入口并建立第一个有效关系。</p></article>
+          <article class="story-card"><strong>03 需求发现</strong><p>怎样从表面诉求追到流程、基线、损失、责任人和采购理由。</p></article>
+          <article class="story-card"><strong>04 逆转或推进停滞</strong><p>如何识别真实阻力、重新取得承诺，或及时退出伪机会。</p></article>
+          <article class="story-card"><strong>05 失败与复盘</strong><p>不甩锅，说明你忽略了什么、损失是什么、制度如何改变。</p></article>
+          <article class="story-card"><strong>06 采用与扩展</strong><p>签约后如何推动上线、真实使用、续约、增购或标杆复制。</p></article>
+        </div>
+
+        <div class="warning">
+          <strong>不要背示范答案：</strong>下面的回答用于展示结构与核心要点，场景和数字可以虚构。正式面试只能使用你能经得住追问的真实经历；没有经历时，明确说“我没有直接做过，但我的处理思路是……”。
+        </div>
+      </section>
+
+      <section class="section" id="questions" data-section="高频问答">
+        <div class="section-head">
+          <div>
+            <span class="section-index">06 / INTERVIEW QUESTIONS</span>
+            <h2>高频问题<br>与示范回答</h2>
+          </div>
+          <p class="section-intro">中高级销售题库覆盖岗位动机、复杂交易、AI 理解、价值工程、客户推进、预测和复盘。销售管理者另有加试题，用于准备二面或管理面。</p>
+        </div>
+
+        <div class="question-control-panel">
+          <div class="question-control-row" role="group" aria-label="选择题库">
+            <strong>岗位题库</strong>
+            <button class="filter-button track-filter" type="button" data-track="senior" aria-pressed="true">中高级销售</button>
+            <button class="filter-button track-filter" type="button" data-track="manager" aria-pressed="false">销售管理加试</button>
+          </div>
+          <div class="question-control-row" role="group" aria-label="筛选问题类别">
+            <strong>问题类别</strong>
+            <button class="filter-button category-filter" type="button" data-category="all" aria-pressed="true">全部</button>
+            <button class="filter-button category-filter" type="button" data-category="岗位动机" aria-pressed="false">岗位动机</button>
+            <button class="filter-button category-filter" type="button" data-category="销售实战" aria-pressed="false">销售实战</button>
+            <button class="filter-button category-filter" type="button" data-category="AI理解" aria-pressed="false">AI 理解</button>
+            <button class="filter-button category-filter" type="button" data-category="客户推进" aria-pressed="false">客户推进</button>
+            <button class="filter-button category-filter" type="button" data-category="复盘成长" aria-pressed="false">复盘成长</button>
+            <button class="filter-button category-filter" type="button" data-category="管理加试" aria-pressed="false">管理加试</button>
+          </div>
+          <div class="question-tools">
+            <input class="search-input" id="questionSearch" type="search" placeholder="搜索问题、判断点或答案关键词…" aria-label="搜索面试问题">
+            <span class="count-label" id="questionCount"></span>
+          </div>
+        </div>
+
+        <div class="question-list" id="questionList" aria-live="polite"></div>
+
+        <div class="mock-panel" aria-label="随机模拟面试">
+          <aside class="mock-aside">
+            <strong>随机抽题</strong>
+            <p>先用 90 秒口头回答，再查看判断点和示范答案。不要边看边答。</p>
+          </aside>
+          <div class="mock-content">
+            <span class="section-index" id="mockMeta">中高级销售 · 高频题</span>
+            <h3 id="mockQuestion">点击“下一题”开始模拟。</h3>
+            <div class="mock-actions">
+              <button class="primary-button" id="nextQuestion" type="button">下一题</button>
+              <button class="quiet-button" id="revealAnswer" type="button">查看提示</button>
+            </div>
+            <div class="mock-answer" id="mockAnswer" data-open="false"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="interview-day" data-section="面试当天">
+        <div class="section-head">
+          <div>
+            <span class="section-index">07 / INTERVIEW DAY</span>
+            <h2>把准备成果<br>带进现场</h2>
+          </div>
+          <p class="section-intro">面试当天的目标不是把所有内容说完，而是让对方快速确认三件事：你理解岗位、你有证据、你能在不确定中学习并推进结果。</p>
+        </div>
+
+        <div class="day-grid">
+          <article class="day-card">
+            <h3>提前 24 小时</h3>
+            <ul>
+              <li>重新阅读 JD，把每条要求对应到一个案例或学习作品。</li>
+              <li>确认公司产品、目标客户、典型用例、商业模式和两名主要竞争者。</li>
+              <li>准备六个案例的一页提纲，只写数字和关键词，不写逐字稿。</li>
+              <li>准备 60 秒介绍、最大交易、失败复盘和 30/60/90 天计划。</li>
+              <li>检查会议链接、时区、设备、网络、摄像头和安静环境。</li>
+            </ul>
+          </article>
+          <article class="day-card">
+            <h3>提前 30 分钟</h3>
+            <ul>
+              <li>关闭通知和无关窗口，把简历、JD、案例提纲放在同一屏。</li>
+              <li>用一句话复述：这个岗位为什么存在，录用后最先解决什么问题。</li>
+              <li>口头热身两题：自我介绍和一个复杂交易，不再临时补新内容。</li>
+              <li>准备纸笔记录追问、异议和下一轮需要补充的材料。</li>
+            </ul>
+          </article>
+          <article class="day-card">
+            <h3>回答过程中</h3>
+            <ul>
+              <li>先回答问题本身，再补背景；控制第一轮回答在 60—120 秒。</li>
+              <li>说清“我”的动作，不用“我们”掩盖自己的贡献。</li>
+              <li>数字不确定时给范围并说明口径，不编造精确值。</li>
+              <li>技术问题先讲业务用途，再讲机制、风险和验证。</li>
+              <li>听不懂问题时复述确认，不急于用术语填满沉默。</li>
+            </ul>
+          </article>
+          <article class="day-card">
+            <h3>结束后 24 小时</h3>
+            <ul>
+              <li>记录所有问题、自己的回答、卡顿点和对岗位的新理解。</li>
+              <li>发送简短跟进：感谢、重申匹配点、补充承诺过的材料。</li>
+              <li>若暴露知识缺口，制作一页补充说明，而不是长篇辩解。</li>
+              <li>更新问题库和案例库，为下一轮面试复用。</li>
+            </ul>
+          </article>
+        </div>
+
+        <div class="question-to-ask">
+          <h3>你可以反问面试官的十个问题</h3>
+          <ul>
+            <li>这个岗位在未来 12 个月最重要的三个结果是什么？</li>
+            <li>目前表现最好的销售，与普通销售的差异体现在哪里？</li>
+            <li>客户从第一次试用到生产部署，最常卡在哪一步？</li>
+            <li>销售、方案、部署和客户成功之间如何分工？</li>
+            <li>团队怎样定义合格机会，以及什么时候主动退出？</li>
+            <li>收入指标之外，是否关注采用、用量、续约或客户结果？</li>
+            <li>最常见的竞争替代是同类产品、客户自研，还是暂不行动？</li>
+            <li>新人前三个月可以使用哪些客户案例、工具和专家资源？</li>
+            <li>过去一年团队打法发生过什么变化？为什么？</li>
+            <li>根据今天的交流，您对我胜任这个岗位最大的疑问是什么？</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="section" id="future" data-section="未来趋势">
+        <div class="section-head">
+          <div>
+            <span class="section-index">08 / 2029—2031</span>
+            <h2>未来五年<br>面试会更难</h2>
+          </div>
+          <p class="section-intro">以下是基于当前招聘信号和 AI 商业模式做出的方向判断。它不是确定预测，但可以帮助你决定哪些能力值得长期积累。</p>
+        </div>
+
+        <div class="future-grid">
+          <article class="future-row">
+            <time>准入项</time>
+            <h3>AI 使用证据代替“熟悉 AI”</h3>
+            <p>候选人需要展示账户研究、客户简报、自动化流程、原型或评测样例，而不只是列出使用过哪些工具。</p>
+            <span class="confidence">高置信</span>
+          </article>
+          <article class="future-row">
+            <time>面试形式</time>
+            <h3>现场任务和案例演练增加</h3>
+            <p>企业会更常要求现场做账户判断、发现问题、构造商业案例或解释一段 AI 方案，以验证真实工作能力。</p>
+            <span class="confidence">高置信</span>
+          </article>
+          <article class="future-row">
+            <time>绩效边界</time>
+            <h3>签约、上线和采用逐步连成一体</h3>
+            <p>优秀销售不仅解释如何成交，还要说明如何让客户进入生产、形成使用行为并推动续约扩展。</p>
+            <span class="confidence">高置信</span>
+          </article>
+          <article class="future-row">
+            <time>组织形态</time>
+            <h3>销售与部署角色继续融合</h3>
+            <p>高价值项目需要销售、方案、行业专家、部署和成功团队共同经营，单纯移交式销售的价值下降。</p>
+            <span class="confidence">中高置信</span>
+          </article>
+          <article class="future-row">
+            <time>效率</time>
+            <h3>Agent 接管准备与记录工作</h3>
+            <p>研究、材料初稿、会议总结和 CRM 更新将高度自动化；面试更关注你如何判断、校验和负责任地使用结果。</p>
+            <span class="confidence">高置信</span>
+          </article>
+          <article class="future-row">
+            <time>稀缺性</time>
+            <h3>深业务理解与治理能力升值</h3>
+            <p>会讲模型的人增多，能进入客户真实流程、处理数据安全与组织变革、对结果负责的人仍然稀缺。</p>
+            <span class="confidence">中高置信</span>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="sources" data-section="招聘证据">
+        <div class="section-head">
+          <div>
+            <span class="section-index">09 / RECRUITING EVIDENCE</span>
+            <h2>从真实岗位<br>校准准备重点</h2>
+          </div>
+          <p class="section-intro">样本来自企业官方招聘网站，检索时间为北京时间 2026 年 7 月 27 日。岗位页面可能更新或下线，本页保留企业、能力信号和原始链接。</p>
+        </div>
+
+        <div class="source-note">
+          这些岗位不代表完整劳动力市场。共同信号是：复杂销售基本功仍是底座，AI 流利度、技术可信度、商业案例、生产部署、采用和持续用量正在进入同一套商业化能力标准。
+        </div>
+
+        <div class="sources">
+          <article class="source"><span class="source-code">S01</span><strong>OpenAI</strong><span>强调生产系统、持续采用和客户影响，而不是只看演示或活动量。</span><a href="https://jobs.ashbyhq.com/openai/01091aed-427d-4e10-8cdb-fb500cf55bb9" target="_blank" rel="noreferrer">官方岗位</a></article>
+          <article class="source"><span class="source-code">S02</span><strong>Anthropic</strong><span>要求行业观点、财务化商业案例、技术评测、变革管理及席位与用量经营。</span><a href="https://job-boards.greenhouse.io/anthropic/jobs/4493035008" target="_blank" rel="noreferrer">官方岗位</a></article>
+          <article class="source"><span class="source-code">S03</span><strong>Glean</strong><span>把 AI fluency 作为核心能力，直接考察候选人如何使用 AI 工具。</span><a href="https://job-boards.greenhouse.io/gleanwork/jobs/4661884005" target="_blank" rel="noreferrer">官方岗位</a></article>
+          <article class="source"><span class="source-code">S04</span><strong>Harvey</strong><span>让行业专家进入 GTM，参与 Agent、Playbook、Prompt 和质量评测设计。</span><a href="https://jobs.ashbyhq.com/harvey/e1cb1a82-0e40-4039-aa40-f31d3e5a5cf1" target="_blank" rel="noreferrer">官方岗位</a></article>
+          <article class="source"><span class="source-code">S05</span><strong>Scale AI</strong><span>同一角色覆盖捕获、方案、采购、部署、续约和扩展，并要求 Agentic AI 与 RAG 可信度。</span><a href="https://job-boards.greenhouse.io/scaleai/jobs/4709157005" target="_blank" rel="noreferrer">官方岗位</a></article>
+          <article class="source"><span class="source-code">S06</span><strong>Sierra</strong><span>负责 Agent 从试点进入生产对话，覆盖工具、评测、上线和持续迭代。</span><a href="https://jobs.ashbyhq.com/sierra/c25ca18c-dbe6-439d-9a40-ce23b40c323c" target="_blank" rel="noreferrer">官方岗位</a></article>
+          <article class="source"><span class="source-code">S07</span><strong>Databricks</strong><span>强调超越 POC、形成采用信号和量化结果，同时关注 AI 辅助编码与数据能力。</span><a href="https://databricks.com/company/careers/open-positions/job?gh_jid=8501390002" target="_blank" rel="noreferrer">官方岗位</a></article>
+          <article class="source"><span class="source-code">S08</span><strong>飞书</strong><span>企业 AI 转型顾问需要把 Agent 与 Workflow 从需求、POC 做到上线、采用、续费和复用。</span><a href="https://jobs.bytedance.com/experienced/position/7620324107573348661/detail" target="_blank" rel="noreferrer">官方岗位</a></article>
+          <article class="source"><span class="source-code">S09</span><strong>Microsoft</strong><span>在原有行业与伙伴销售上叠加技术基线、生产推进和用量指标。</span><a href="https://apply.careers.microsoft.com/careers/job/1970393556917724" target="_blank" rel="noreferrer">官方岗位</a></article>
+          <article class="source"><span class="source-code">S10</span><strong>腾讯云</strong><span>AI 渠道销售强调渠道孵化、首单、回款、打法复制、快速产品学习和认证。</span><a href="https://careers.tencent.com/jobdesc.html?postId=2074048051558920192" target="_blank" rel="noreferrer">官方岗位</a></article>
+          <article class="source"><span class="source-code">S11</span><strong>IBM</strong><span>传统科技企业更多沿用产品组合、行业需求创造和既有销售周期的 AI 转型路径。</span><a href="https://careers.ibm.com/en_US/careers/JobDetail?jobId=113778&amp;source=WEB_Search_NA" target="_blank" rel="noreferrer">官方岗位</a></article>
+        </div>
+      </section>
+
+      <footer class="footer">
+        <div><strong>AI 销售的自我修养 · 行业通用面试学习版</strong><br>版本 2.0 · 2026-07</div>
+        <div>学习清单进度只保存在本机浏览器。<br>页面支持直接打印或导出为 PDF。</div>
+        <div class="footer-links">
+          <a href="https://lake2ocean.top" rel="noreferrer noopener">返回江湖首页</a>
+          <a href="https://crm.lake2ocean.top" rel="noreferrer noopener">进入江湖 CRM</a>
+        </div>
+        <div class="footer-legal">
+          <span>© 2026 自在创造（北京）智慧科技有限公司</span>
+          <a href="https://beian.miit.gov.cn/" target="_blank" rel="noreferrer noopener">京ICP备2026046195号-2</a>
+        </div>
+        <button class="quiet-button" id="clearProgress" type="button">清除学习进度</button>
+      </footer>
+    </main>
+  </div>
+
+  <script>
+var x0=["BN","BN","BN","BN","BN","BN","BN","BN","BN","S","B","S","WS","B","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","B","B","B","S","WS","ON","ON","ET","ET","ET","ON","ON","ON","ON","ON","ON","CS","ON","CS","ON","EN","EN","EN","EN","EN","EN","EN","EN","EN","EN","ON","ON","ON","ON","ON","ON","ON","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","ON","ON","ON","ON","ON","ON","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","ON","ON","ON","ON","BN","BN","BN","BN","BN","BN","B","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","CS","ON","ET","ET","ET","ET","ON","ON","ON","ON","L","ON","ON","ON","ON","ON","ET","ET","EN","EN","ON","L","ON","ON","ON","EN","L","ON","ON","ON","ON","ON","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","ON","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","ON","L","L","L","L","L","L","L","L"],g0=["AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","CS","AL","ON","ON","NSM","NSM","NSM","NSM","NSM","NSM","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","AL","AL","AL","AL","AL","AL","AL","AN","AN","AN","AN","AN","AN","AN","AN","AN","AN","ET","AN","AN","AL","AL","AL","NSM","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","ON","NSM","NSM","NSM","NSM","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL"];function m0(O){if(O<=255)return x0[O];if(1424<=O&&O<=1524)return"R";if(1536<=O&&O<=1791)return g0[O&255];if(1792<=O&&O<=2220)return"AL";return"L"}function r0(O){let _=O.length;if(_===0)return null;let J=Array(_),Y=0;for(let V=0;V<_;V++){let $=m0(O.charCodeAt(V));if($==="R"||$==="AL"||$==="AN")Y++;J[V]=$}if(Y===0)return null;let X=_/Y<0.3?0:1,R=new Int8Array(_);for(let V=0;V<_;V++)R[V]=X;let Z=X&1?"R":"L",Q=Z,f=Q;for(let V=0;V<_;V++)if(J[V]==="NSM")J[V]=f;else f=J[V];f=Q;for(let V=0;V<_;V++){let $=J[V];if($==="EN")J[V]=f==="AL"?"AN":"EN";else if($==="R"||$==="L"||$==="AL")f=$}for(let V=0;V<_;V++)if(J[V]==="AL")J[V]="R";for(let V=1;V<_-1;V++){if(J[V]==="ES"&&J[V-1]==="EN"&&J[V+1]==="EN")J[V]="EN";if(J[V]==="CS"&&(J[V-1]==="EN"||J[V-1]==="AN")&&J[V+1]===J[V-1])J[V]=J[V-1]}for(let V=0;V<_;V++){if(J[V]!=="EN")continue;let $;for($=V-1;$>=0&&J[$]==="ET";$--)J[$]="EN";for($=V+1;$<_&&J[$]==="ET";$++)J[$]="EN"}for(let V=0;V<_;V++){let $=J[V];if($==="WS"||$==="ES"||$==="ET"||$==="CS")J[V]="ON"}f=Q;for(let V=0;V<_;V++){let $=J[V];if($==="EN")J[V]=f==="L"?"L":"EN";else if($==="R"||$==="L")f=$}for(let V=0;V<_;V++){if(J[V]!=="ON")continue;let $=V+1;while($<_&&J[$]==="ON")$++;let u=V>0?J[V-1]:Q,q=$<_?J[$]:Q,D=u!=="L"?"R":"L";if(D===(q!=="L"?"R":"L"))for(let K=V;K<$;K++)J[K]=D;V=$-1}for(let V=0;V<_;V++)if(J[V]==="ON")J[V]=Z;for(let V=0;V<_;V++){let $=J[V];if((R[V]&1)===0){if($==="R")R[V]++;else if($==="AN"||$==="EN")R[V]+=2}else if($==="L"||$==="AN"||$==="EN")R[V]++}return R}function u0(O,_){let J=r0(O);if(J===null)return null;let Y=new Int8Array(_.length);for(let X=0;X<_.length;X++)Y[X]=J[_[X]];return Y}var a0=/[ \t\n\r\f]+/g,s0=/[\t\n\r\f]| {2,}|^ | $/;function d0(O){let _=O??"normal";return _==="pre-wrap"?{mode:_,preserveOrdinarySpaces:!0,preserveHardBreaks:!0}:{mode:_,preserveOrdinarySpaces:!1,preserveHardBreaks:!1}}function i0(O){if(!s0.test(O))return O;let _=O.replace(a0," ");if(_.charCodeAt(0)===32)_=_.slice(1);if(_.length>0&&_.charCodeAt(_.length-1)===32)_=_.slice(0,-1);return _}function t0(O){if(!/[\r\f]/.test(O))return O.replace(/\r\n/g,`
+`);return O.replace(/\r\n/g,`
+`).replace(/[\r\f]/g,`
+`)}var d=null,V0;function n0(){if(d===null)d=new Intl.Segmenter(V0,{granularity:"word"});return d}function z0(){d=null}function j0(O){let _=O&&O.length>0?O:void 0;if(V0===_)return;V0=_,d=null}var e0=/\p{Script=Arabic}/u,O0=/\p{M}/u,b0=/\p{Nd}/u;function X0(O){return e0.test(O)}function p(O){for(let _ of O){let J=_.codePointAt(0);if(J>=19968&&J<=40959||J>=13312&&J<=19903||J>=131072&&J<=173791||J>=173824&&J<=177983||J>=177984&&J<=178207||J>=178208&&J<=183983||J>=183984&&J<=191471||J>=196608&&J<=201551||J>=63744&&J<=64255||J>=194560&&J<=195103||J>=12288&&J<=12351||J>=12352&&J<=12447||J>=12448&&J<=12543||J>=44032&&J<=55215||J>=65280&&J<=65519)return!0}return!1}var $0=new Set(["，","．","！","：","；","？","、","。","・","）","〕","〉","》","」","』","】","〗","〙","〛","ー","々","〻","ゝ","ゞ","ヽ","ヾ"]),i=new Set(['"',"(","[","{","“","‘","«","‹","（","〔","〈","《","「","『","【","〖","〘","〚"]),Q0=new Set(["'","’"]),r=new Set([".",",","!","?",":",";","،","؛","؟","।","॥","၊","။","၌","၍","၏",")","]","}","%",'"',"”","’","»","›","…"]),OO=new Set([":",".","،","؛"]),_O=new Set(["၏"]),JO=new Set(["”","’","»","›","」","』","】","》","〉","〕","）"]);function RO(O){if(q0(O))return!0;let _=!1;for(let J of O){if(r.has(J)){_=!0;continue}if(_&&O0.test(J))continue;return!1}return _}function VO(O){for(let _ of O)if(!$0.has(_)&&!r.has(_))return!1;return O.length>0}function XO(O){if(q0(O))return!0;for(let _ of O)if(!i.has(_)&&!Q0.has(_)&&!O0.test(_))return!1;return O.length>0}function q0(O){let _=!1;for(let J of O){if(J==="\\"||O0.test(J))continue;if(i.has(J)||r.has(J)||Q0.has(J)){_=!0;continue}return!1}return _}function YO(O){let _=Array.from(O),J=_.length;while(J>0){let Y=_[J-1];if(O0.test(Y)){J--;continue}if(i.has(Y)||Q0.has(Y)){J--;continue}break}if(J<=0||J===_.length)return null;return{head:_.slice(0,J).join(""),tail:_.slice(J).join("")}}function ZO(O,_){if(O.length===0)return!1;for(let J of O)if(J!==_)return!1;return!0}function $O(O){if(!X0(O)||O.length===0)return!1;return OO.has(O[O.length-1])}function QO(O){if(O.length===0)return!1;return _O.has(O[O.length-1])}function qO(O){if(O.length<2||O[0]!==" ")return null;let _=O.slice(1);if(/^\p{M}+$/u.test(_))return{space:" ",marks:_};return null}function D0(O){for(let _=O.length-1;_>=0;_--){let J=O[_];if(JO.has(J))return!0;if(!r.has(J))return!1}return!1}function DO(O,_){if(_.preserveOrdinarySpaces||_.preserveHardBreaks){if(O===" ")return"preserved-space";if(O==="\t")return"tab";if(_.preserveHardBreaks&&O===`
+`)return"hard-break"}if(O===" ")return"space";if(O===" "||O===" "||O==="⁠"||O==="\uFEFF")return"glue";if(O==="​")return"zero-width-break";if(O==="­")return"soft-hyphen";return"text"}function NO(O,_,J,Y){let X=[],R=null,Z="",Q=J,f=!1,V=0;for(let $ of O){let u=DO($,Y),q=u==="text"&&_;if(R!==null&&u===R&&q===f){Z+=$,V+=$.length;continue}if(R!==null)X.push({text:Z,isWordLike:f,kind:R,start:Q});R=u,Z=$,Q=J+V,f=q,V+=$.length}if(R!==null)X.push({text:Z,isWordLike:f,kind:R,start:Q});return X}function Y0(O){return O==="space"||O==="preserved-space"||O==="zero-width-break"||O==="hard-break"}var fO=/^[A-Za-z][A-Za-z0-9+.-]*:$/;function HO(O,_){let J=O.texts[_];if(J.startsWith("www."))return!0;return fO.test(J)&&_+1<O.len&&O.kinds[_+1]==="text"&&O.texts[_+1]==="//"}function UO(O){return O.includes("?")&&(O.includes("://")||O.startsWith("www."))}function MO(O){let _=O.texts.slice(),J=O.isWordLike.slice(),Y=O.kinds.slice(),X=O.starts.slice();for(let Z=0;Z<O.len;Z++){if(Y[Z]!=="text"||!HO(O,Z))continue;let Q=Z+1;while(Q<O.len&&!Y0(Y[Q])){_[Z]+=_[Q],J[Z]=!0;let f=_[Q].includes("?");if(Y[Q]="text",_[Q]="",Q++,f)break}}let R=0;for(let Z=0;Z<_.length;Z++){let Q=_[Z];if(Q.length===0)continue;if(R!==Z)_[R]=Q,J[R]=J[Z],Y[R]=Y[Z],X[R]=X[Z];R++}return _.length=R,J.length=R,Y.length=R,X.length=R,{len:R,texts:_,isWordLike:J,kinds:Y,starts:X}}function CO(O){let _=[],J=[],Y=[],X=[];for(let R=0;R<O.len;R++){let Z=O.texts[R];if(_.push(Z),J.push(O.isWordLike[R]),Y.push(O.kinds[R]),X.push(O.starts[R]),!UO(Z))continue;let Q=R+1;if(Q>=O.len||Y0(O.kinds[Q]))continue;let f="",V=O.starts[Q],$=Q;while($<O.len&&!Y0(O.kinds[$]))f+=O.texts[$],$++;if(f.length>0)_.push(f),J.push(!0),Y.push("text"),X.push(V),R=$-1}return{len:_.length,texts:_,isWordLike:J,kinds:Y,starts:X}}var FO=new Set([":","-","/","×",",",".","+","–","—"]),K0=/^[A-Za-z0-9_]+[,:;]*$/,vO=/[,:;]+$/;function E0(O){for(let _ of O)if(b0.test(_))return!0;return!1}function Z0(O){if(O.length===0)return!1;for(let _ of O){if(b0.test(_)||FO.has(_))continue;return!1}return!0}function uO(O){let _=[],J=[],Y=[],X=[];for(let R=0;R<O.len;R++){let Z=O.texts[R],Q=O.kinds[R];if(Q==="text"&&Z0(Z)&&E0(Z)){let f=Z,V=R+1;while(V<O.len&&O.kinds[V]==="text"&&Z0(O.texts[V]))f+=O.texts[V],V++;_.push(f),J.push(!0),Y.push("text"),X.push(O.starts[R]),R=V-1;continue}_.push(Z),J.push(O.isWordLike[R]),Y.push(Q),X.push(O.starts[R])}return{len:_.length,texts:_,isWordLike:J,kinds:Y,starts:X}}function KO(O){let _=[],J=[],Y=[],X=[];for(let R=0;R<O.len;R++){let Z=O.texts[R],Q=O.kinds[R],f=O.isWordLike[R];if(Q==="text"&&f&&K0.test(Z)){let V=Z,$=R+1;while(vO.test(V)&&$<O.len&&O.kinds[$]==="text"&&O.isWordLike[$]&&K0.test(O.texts[$]))V+=O.texts[$],$++;_.push(V),J.push(!0),Y.push("text"),X.push(O.starts[R]),R=$-1;continue}_.push(Z),J.push(f),Y.push(Q),X.push(O.starts[R])}return{len:_.length,texts:_,isWordLike:J,kinds:Y,starts:X}}function zO(O){let _=[],J=[],Y=[],X=[];for(let R=0;R<O.len;R++){let Z=O.texts[R];if(O.kinds[R]==="text"&&Z.includes("-")){let Q=Z.split("-"),f=Q.length>1;for(let V=0;V<Q.length;V++){let $=Q[V];if(!f)break;if($.length===0||!E0($)||!Z0($))f=!1}if(f){let V=0;for(let $=0;$<Q.length;$++){let u=Q[$],q=$<Q.length-1?`${u}-`:u;_.push(q),J.push(!0),Y.push("text"),X.push(O.starts[R]+V),V+=q.length}continue}}_.push(Z),J.push(O.isWordLike[R]),Y.push(O.kinds[R]),X.push(O.starts[R])}return{len:_.length,texts:_,isWordLike:J,kinds:Y,starts:X}}function jO(O){let _=[],J=[],Y=[],X=[],R=0;while(R<O.len){let Z=O.texts[R],Q=O.isWordLike[R],f=O.kinds[R],V=O.starts[R];if(f==="glue"){let $=Z,u=V;R++;while(R<O.len&&O.kinds[R]==="glue")$+=O.texts[R],R++;if(R<O.len&&O.kinds[R]==="text")Z=$+O.texts[R],Q=O.isWordLike[R],f="text",V=u,R++;else{_.push($),J.push(!1),Y.push("glue"),X.push(u);continue}}else R++;if(f==="text")while(R<O.len&&O.kinds[R]==="glue"){let $="";while(R<O.len&&O.kinds[R]==="glue")$+=O.texts[R],R++;if(R<O.len&&O.kinds[R]==="text"){Z+=$+O.texts[R],Q=Q||O.isWordLike[R],R++;continue}Z+=$}_.push(Z),J.push(Q),Y.push(f),X.push(V)}return{len:_.length,texts:_,isWordLike:J,kinds:Y,starts:X}}function bO(O){let _=O.texts.slice(),J=O.isWordLike.slice(),Y=O.kinds.slice(),X=O.starts.slice();for(let R=0;R<_.length-1;R++){if(Y[R]!=="text"||Y[R+1]!=="text")continue;if(!p(_[R])||!p(_[R+1]))continue;let Z=YO(_[R]);if(Z===null)continue;_[R]=Z.head,_[R+1]=Z.tail+_[R+1],X[R+1]=X[R]+Z.head.length}return{len:_.length,texts:_,isWordLike:J,kinds:Y,starts:X}}function EO(O,_,J){let Y=n0(),X=0,R=[],Z=[],Q=[],f=[];for(let q of Y.segment(O))for(let D of NO(q.segment,q.isWordLike??!1,q.index,J)){let b=D.kind==="text";if(_.carryCJKAfterClosingQuote&&b&&X>0&&Q[X-1]==="text"&&p(D.text)&&p(R[X-1])&&D0(R[X-1]))R[X-1]+=D.text,Z[X-1]=Z[X-1]||D.isWordLike;else if(b&&X>0&&Q[X-1]==="text"&&VO(D.text)&&p(R[X-1]))R[X-1]+=D.text,Z[X-1]=Z[X-1]||D.isWordLike;else if(b&&X>0&&Q[X-1]==="text"&&QO(R[X-1]))R[X-1]+=D.text,Z[X-1]=Z[X-1]||D.isWordLike;else if(b&&X>0&&Q[X-1]==="text"&&D.isWordLike&&X0(D.text)&&$O(R[X-1]))R[X-1]+=D.text,Z[X-1]=!0;else if(b&&!D.isWordLike&&X>0&&Q[X-1]==="text"&&D.text.length===1&&D.text!=="-"&&D.text!=="—"&&ZO(R[X-1],D.text))R[X-1]+=D.text;else if(b&&!D.isWordLike&&X>0&&Q[X-1]==="text"&&(RO(D.text)||D.text==="-"&&Z[X-1]))R[X-1]+=D.text;else R[X]=D.text,Z[X]=D.isWordLike,Q[X]=D.kind,f[X]=D.start,X++}for(let q=1;q<X;q++)if(Q[q]==="text"&&!Z[q]&&q0(R[q])&&Q[q-1]==="text")R[q-1]+=R[q],Z[q-1]=Z[q-1]||Z[q],R[q]="";for(let q=X-2;q>=0;q--)if(Q[q]==="text"&&!Z[q]&&XO(R[q])){let D=q+1;while(D<X&&R[D]==="")D++;if(D<X&&Q[D]==="text")R[D]=R[q]+R[D],f[D]=f[q],R[q]=""}let V=0;for(let q=0;q<X;q++){let D=R[q];if(D.length===0)continue;if(V!==q)R[V]=D,Z[V]=Z[q],Q[V]=Q[q],f[V]=f[q];V++}R.length=V,Z.length=V,Q.length=V,f.length=V;let $=jO({len:V,texts:R,isWordLike:Z,kinds:Q,starts:f}),u=bO(KO(zO(uO(CO(MO($))))));for(let q=0;q<u.len-1;q++){let D=qO(u.texts[q]);if(D===null)continue;if(u.kinds[q]!=="space"&&u.kinds[q]!=="preserved-space"||u.kinds[q+1]!=="text"||!X0(u.texts[q+1]))continue;u.texts[q]=D.space,u.isWordLike[q]=!1,u.kinds[q]=u.kinds[q]==="preserved-space"?"preserved-space":"space",u.texts[q+1]=D.marks+u.texts[q+1],u.starts[q+1]=u.starts[q]+D.space.length}return u}function GO(O,_){if(O.len===0)return[];if(!_.preserveHardBreaks)return[{startSegmentIndex:0,endSegmentIndex:O.len,consumedEndSegmentIndex:O.len}];let J=[],Y=0;for(let X=0;X<O.len;X++){if(O.kinds[X]!=="hard-break")continue;J.push({startSegmentIndex:Y,endSegmentIndex:X,consumedEndSegmentIndex:X+1}),Y=X+1}if(Y<O.len)J.push({startSegmentIndex:Y,endSegmentIndex:O.len,consumedEndSegmentIndex:O.len});return J}function N0(O,_,J="normal"){let Y=d0(J),X=Y.mode==="pre-wrap"?t0(O):i0(O);if(X.length===0)return{normalized:X,chunks:[],len:0,texts:[],isWordLike:[],kinds:[],starts:[]};let R=EO(X,_,Y);return{normalized:X,chunks:GO(R,Y),...R}}var a=null,f0=new Map,s=null,PO=/\p{Emoji_Presentation}/u,AO=/[\p{Emoji_Presentation}\p{Extended_Pictographic}\p{Regional_Indicator}\uFE0F\u20E3]/u,_0=null,H0=new Map;function U0(){if(a!==null)return a;if(typeof OffscreenCanvas<"u")return a=new OffscreenCanvas(1,1).getContext("2d"),a;if(typeof document<"u")return a=document.createElement("canvas").getContext("2d"),a;throw Error("Text measurement requires OffscreenCanvas or a DOM canvas context.")}function BO(O){let _=f0.get(O);if(!_)_=new Map,f0.set(O,_);return _}function x(O,_){let J=_.get(O);if(J===void 0)J={width:U0().measureText(O).width,containsCJK:p(O)},_.set(O,J);return J}function h(){if(s!==null)return s;if(typeof navigator>"u")return s={lineFitEpsilon:0.005,carryCJKAfterClosingQuote:!1,preferPrefixWidthsForBreakableRuns:!1,preferEarlySoftHyphenBreak:!1},s;let O=navigator.userAgent,J=navigator.vendor==="Apple Computer, Inc."&&O.includes("Safari/")&&!O.includes("Chrome/")&&!O.includes("Chromium/")&&!O.includes("CriOS/")&&!O.includes("FxiOS/")&&!O.includes("EdgiOS/"),Y=O.includes("Chrome/")||O.includes("Chromium/")||O.includes("CriOS/")||O.includes("Edg/");return s={lineFitEpsilon:J?0.015625:0.005,carryCJKAfterClosingQuote:Y,preferPrefixWidthsForBreakableRuns:J,preferEarlySoftHyphenBreak:J},s}function TO(O){let _=O.match(/(\d+(?:\.\d+)?)\s*px/);return _?parseFloat(_[1]):16}function M0(){if(_0===null)_0=new Intl.Segmenter(void 0,{granularity:"grapheme"});return _0}function wO(O){return PO.test(O)||O.includes("️")}function G0(O){return AO.test(O)}function yO(O,_){let J=H0.get(O);if(J!==void 0)return J;let Y=U0();Y.font=O;let X=Y.measureText("\uD83D\uDE00").width;if(J=0,X>_+0.5&&typeof document<"u"&&document.body!==null){let R=document.createElement("span");R.style.font=O,R.style.display="inline-block",R.style.visibility="hidden",R.style.position="absolute",R.textContent="\uD83D\uDE00",document.body.appendChild(R);let Z=R.getBoundingClientRect().width;if(document.body.removeChild(R),X-Z>0.5)J=X-Z}return H0.set(O,J),J}function LO(O){let _=0,J=M0();for(let Y of J.segment(O))if(wO(Y.segment))_++;return _}function WO(O,_){if(_.emojiCount===void 0)_.emojiCount=LO(O);return _.emojiCount}function g(O,_,J){if(J===0)return _.width;return _.width-WO(O,_)*J}function P0(O,_,J,Y){if(_.graphemeWidths!==void 0)return _.graphemeWidths;let X=[],R=M0();for(let Z of R.segment(O)){let Q=x(Z.segment,J);X.push(g(Z.segment,Q,Y))}return _.graphemeWidths=X.length>1?X:null,_.graphemeWidths}function A0(O,_,J,Y){if(_.graphemePrefixWidths!==void 0)return _.graphemePrefixWidths;let X=[],R=M0(),Z="";for(let Q of R.segment(O)){Z+=Q.segment;let f=x(Z,J);X.push(g(Z,f,Y))}return _.graphemePrefixWidths=X.length>1?X:null,_.graphemePrefixWidths}function B0(O,_){let J=U0();J.font=O;let Y=BO(O),X=TO(O),R=_?yO(O,X):0;return{cache:Y,fontSize:X,emojiCorrection:R}}function T0(){f0.clear(),H0.clear(),_0=null}function m(O){return O==="space"||O==="preserved-space"||O==="tab"||O==="zero-width-break"||O==="soft-hyphen"}function SO(O){return O==="space"}function w0(O,_){if(_<=0)return 0;let J=O%_;if(Math.abs(J)<=0.000001)return _;return _-J}function t(O,_,J,Y){if(!Y||_===null)return O[J];return _[J]-(J>0?_[J-1]:0)}function y0(O,_,J,Y,X,R){let Z=0,Q=_;while(Z<O.length){let f=R?_+O[Z]:Q+O[Z];if((Z+1<O.length?f+X:f)>J+Y)break;Q=f,Z++}return{fitCount:Z,fittedWidth:Q}}function L0(O,_){for(let J=0;J<O.chunks.length;J++){let Y=O.chunks[J];if(_<Y.consumedEndSegmentIndex)return J}return-1}function kO(O,_){let{segmentIndex:J,graphemeIndex:Y}=_;if(J>=O.widths.length)return null;if(Y>0)return _;let X=L0(O,J);if(X<0)return null;let R=O.chunks[X];if(R.startSegmentIndex===R.endSegmentIndex&&J===R.startSegmentIndex)return{segmentIndex:J,graphemeIndex:0};if(J<R.startSegmentIndex)J=R.startSegmentIndex;while(J<R.endSegmentIndex){let Z=O.kinds[J];if(Z!=="space"&&Z!=="zero-width-break"&&Z!=="soft-hyphen")return{segmentIndex:J,graphemeIndex:0};J++}if(R.consumedEndSegmentIndex>=O.widths.length)return null;return{segmentIndex:R.consumedEndSegmentIndex,graphemeIndex:0}}function W0(O,_){if(O.simpleLineWalkFastPath)return IO(O,_);return J0(O,_)}function IO(O,_){let{widths:J,kinds:Y,breakableWidths:X,breakablePrefixWidths:R}=O;if(J.length===0)return 0;let Z=h(),Q=Z.lineFitEpsilon,f=0,V=0,$=!1;function u(q){let D=J[q];if(D>_&&X[q]!==null){let b=X[q],K=R[q]??null;V=0;for(let j=0;j<b.length;j++){let B=t(b,K,j,Z.preferPrefixWidthsForBreakableRuns);if(V>0&&V+B>_+Q)f++,V=B;else{if(V===0)f++;V+=B}}}else V=D,f++;$=!0}for(let q=0;q<J.length;q++){let D=J[q],b=Y[q];if(!$){u(q);continue}let K=V+D;if(K>_+Q){if(SO(b))continue;V=0,$=!1,u(q);continue}V=K}if(!$)return f+1;return f}function cO(O,_,J){let{widths:Y,kinds:X,breakableWidths:R,breakablePrefixWidths:Z}=O;if(Y.length===0)return 0;let Q=h(),f=Q.lineFitEpsilon,V=0,$=0,u=!1,q=0,D=0,b=0,K=0,j=-1,B=0;function k(){j=-1,B=0}function y(H=b,z=K,W=$){V++,J?.({startSegmentIndex:q,startGraphemeIndex:D,endSegmentIndex:H,endGraphemeIndex:z,width:W}),$=0,u=!1,k()}function A(H,z){u=!0,q=H,D=0,b=H+1,K=0,$=z}function T(H,z,W){u=!0,q=H,D=z,b=H,K=z+1,$=W}function L(H,z){if(!u){A(H,z);return}$+=z,b=H+1,K=0}function C(H,z){if(!m(X[H]))return;j=H+1,B=$-z}function F(H){P(H,0)}function P(H,z){let W=R[H],c=Z[H]??null;for(let I=z;I<W.length;I++){let o=t(W,c,I,Q.preferPrefixWidthsForBreakableRuns);if(!u){T(H,I,o);continue}if($+o>_+f)y(),T(H,I,o);else $+=o,b=H,K=I+1}if(u&&b===H&&K===W.length)b=H+1,K=0}let E=0;while(E<Y.length){let H=Y[E],z=X[E];if(!u){if(H>_&&R[E]!==null)F(E);else A(E,H);C(E,H),E++;continue}if($+H>_+f){if(m(z)){L(E,H),y(E+1,0,$-H),E++;continue}if(j>=0){y(j,0,B);continue}if(H>_&&R[E]!==null){y(),F(E),E++;continue}y();continue}L(E,H),C(E,H),E++}if(u)y();return V}function J0(O,_,J){if(O.simpleLineWalkFastPath)return cO(O,_,J);let{widths:Y,lineEndFitAdvances:X,lineEndPaintAdvances:R,kinds:Z,breakableWidths:Q,breakablePrefixWidths:f,discretionaryHyphenWidth:V,tabStopAdvance:$,chunks:u}=O;if(Y.length===0||u.length===0)return 0;let q=h(),D=q.lineFitEpsilon,b=0,K=0,j=!1,B=0,k=0,y=0,A=0,T=-1,L=0,C=0,F=null;function P(){T=-1,L=0,C=0,F=null}function E(N=y,M=A,v=K){b++,J?.({startSegmentIndex:B,startGraphemeIndex:k,endSegmentIndex:N,endGraphemeIndex:M,width:v}),K=0,j=!1,P()}function H(N,M){j=!0,B=N,k=0,y=N+1,A=0,K=M}function z(N,M,v){j=!0,B=N,k=M,y=N,A=M+1,K=v}function W(N,M){if(!j){H(N,M);return}K+=M,y=N+1,A=0}function c(N,M){if(!m(Z[N]))return;let v=Z[N]==="tab"?0:X[N],w=Z[N]==="tab"?M:R[N];T=N+1,L=K-M+v,C=K-M+w,F=Z[N]}function I(N){o(N,0)}function o(N,M){let v=Q[N],w=f[N]??null;for(let G=M;G<v.length;G++){let l=t(v,w,G,q.preferPrefixWidthsForBreakableRuns);if(!j){z(N,G,l);continue}if(K+l>_+D)E(),z(N,G,l);else K+=l,y=N,A=G+1}if(j&&y===N&&A===v.length)y=N+1,A=0}function S(N){if(F!=="soft-hyphen")return!1;let M=Q[N];if(M===null)return!1;let v=q.preferPrefixWidthsForBreakableRuns?f[N]??M:M,w=v!==M,{fitCount:G,fittedWidth:l}=y0(v,K,_,D,V,w);if(G===0)return!1;if(K=l,y=N,A=G,P(),G===M.length)return y=N+1,A=0,!0;return E(N,G,l+V),o(N,G),!0}function U(N){b++,J?.({startSegmentIndex:N.startSegmentIndex,startGraphemeIndex:0,endSegmentIndex:N.consumedEndSegmentIndex,endGraphemeIndex:0,width:0}),P()}for(let N=0;N<u.length;N++){let M=u[N];if(M.startSegmentIndex===M.endSegmentIndex){U(M);continue}j=!1,K=0,B=M.startSegmentIndex,k=0,y=M.startSegmentIndex,A=0,P();let v=M.startSegmentIndex;while(v<M.endSegmentIndex){let w=Z[v],G=w==="tab"?w0(K,$):Y[v];if(w==="soft-hyphen"){if(j)y=v+1,A=0,T=v+1,L=K+V,C=K+V,F=w;v++;continue}if(!j){if(G>_&&Q[v]!==null)I(v);else H(v,G);c(v,G),v++;continue}if(K+G>_+D){let n=K+(w==="tab"?0:X[v]),e=K+(w==="tab"?G:R[v]);if(F==="soft-hyphen"&&q.preferEarlySoftHyphenBreak&&L<=_+D){E(T,0,C);continue}if(F==="soft-hyphen"&&S(v)){v++;continue}if(m(w)&&n<=_+D){W(v,G),E(v+1,0,e),v++;continue}if(T>=0&&L<=_+D){E(T,0,C);continue}if(G>_&&Q[v]!==null){E(),I(v),v++;continue}E();continue}W(v,G),c(v,G),v++}if(j){let w=T===M.consumedEndSegmentIndex?C:K;E(M.consumedEndSegmentIndex,0,w)}}return b}function S0(O,_,J){let Y=kO(O,_);if(Y===null)return null;if(O.simpleLineWalkFastPath)return oO(O,Y,J);let X=L0(O,Y.segmentIndex);if(X<0)return null;let R=O.chunks[X];if(R.startSegmentIndex===R.endSegmentIndex)return{startSegmentIndex:R.startSegmentIndex,startGraphemeIndex:0,endSegmentIndex:R.consumedEndSegmentIndex,endGraphemeIndex:0,width:0};let{widths:Z,lineEndFitAdvances:Q,lineEndPaintAdvances:f,kinds:V,breakableWidths:$,breakablePrefixWidths:u,discretionaryHyphenWidth:q,tabStopAdvance:D}=O,b=h(),K=b.lineFitEpsilon,j=0,B=!1,k=Y.segmentIndex,y=Y.graphemeIndex,A=k,T=y,L=-1,C=0,F=0,P=null;function E(){L=-1,C=0,F=0,P=null}function H(U=A,N=T,M=j){if(!B)return null;return{startSegmentIndex:k,startGraphemeIndex:y,endSegmentIndex:U,endGraphemeIndex:N,width:M}}function z(U,N){B=!0,A=U+1,T=0,j=N}function W(U,N,M){B=!0,A=U,T=N+1,j=M}function c(U,N){if(!B){z(U,N);return}j+=N,A=U+1,T=0}function I(U,N){if(!m(V[U]))return;let M=V[U]==="tab"?0:Q[U],v=V[U]==="tab"?N:f[U];L=U+1,C=j-N+M,F=j-N+v,P=V[U]}function o(U,N){let M=$[U],v=u[U]??null;for(let w=N;w<M.length;w++){let G=t(M,v,w,b.preferPrefixWidthsForBreakableRuns);if(!B){W(U,w,G);continue}if(j+G>J+K)return H();j+=G,A=U,T=w+1}if(B&&A===U&&T===M.length)A=U+1,T=0;return null}function S(U){if(P!=="soft-hyphen"||L<0)return null;let N=$[U]??null;if(N!==null){let M=b.preferPrefixWidthsForBreakableRuns?u[U]??N:N,v=M!==N,{fitCount:w,fittedWidth:G}=y0(M,j,J,K,q,v);if(w===N.length)return j=G,A=U+1,T=0,E(),null;if(w>0)return H(U,w,G+q)}if(C<=J+K)return H(L,0,F);return null}for(let U=Y.segmentIndex;U<R.endSegmentIndex;U++){let N=V[U],M=U===Y.segmentIndex?Y.graphemeIndex:0,v=N==="tab"?w0(j,D):Z[U];if(N==="soft-hyphen"&&M===0){if(B)A=U+1,T=0,L=U+1,C=j+q,F=j+q,P=N;continue}if(!B){if(M>0){let G=o(U,M);if(G!==null)return G}else if(v>J&&$[U]!==null){let G=o(U,0);if(G!==null)return G}else z(U,v);I(U,v);continue}if(j+v>J+K){let G=j+(N==="tab"?0:Q[U]),l=j+(N==="tab"?v:f[U]);if(P==="soft-hyphen"&&b.preferEarlySoftHyphenBreak&&C<=J+K)return H(L,0,F);let n=S(U);if(n!==null)return n;if(m(N)&&G<=J+K)return c(U,v),H(U+1,0,l);if(L>=0&&C<=J+K)return H(L,0,F);if(v>J&&$[U]!==null){let e=H();if(e!==null)return e;let v0=o(U,0);if(v0!==null)return v0}return H()}c(U,v),I(U,v)}if(L===R.consumedEndSegmentIndex&&T===0)return H(R.consumedEndSegmentIndex,0,F);return H(R.consumedEndSegmentIndex,0,j)}function oO(O,_,J){let{widths:Y,kinds:X,breakableWidths:R,breakablePrefixWidths:Z}=O,Q=h(),f=Q.lineFitEpsilon,V=0,$=!1,u=_.segmentIndex,q=_.graphemeIndex,D=u,b=q,K=-1,j=0;function B(C=D,F=b,P=V){if(!$)return null;return{startSegmentIndex:u,startGraphemeIndex:q,endSegmentIndex:C,endGraphemeIndex:F,width:P}}function k(C,F){$=!0,D=C+1,b=0,V=F}function y(C,F,P){$=!0,D=C,b=F+1,V=P}function A(C,F){if(!$){k(C,F);return}V+=F,D=C+1,b=0}function T(C,F){if(!m(X[C]))return;K=C+1,j=V-F}function L(C,F){let P=R[C],E=Z[C]??null;for(let H=F;H<P.length;H++){let z=t(P,E,H,Q.preferPrefixWidthsForBreakableRuns);if(!$){y(C,H,z);continue}if(V+z>J+f)return B();V+=z,D=C,b=H+1}if($&&D===C&&b===P.length)D=C+1,b=0;return null}for(let C=_.segmentIndex;C<Y.length;C++){let F=Y[C],P=X[C],E=C===_.segmentIndex?_.graphemeIndex:0;if(!$){if(E>0){let z=L(C,E);if(z!==null)return z}else if(F>J&&R[C]!==null){let z=L(C,0);if(z!==null)return z}else k(C,F);T(C,F);continue}if(V+F>J+f){if(m(P))return A(C,F),B(C+1,0,V-F);if(K>=0)return B(K,0,j);if(F>J&&R[C]!==null){let z=B();if(z!==null)return z;let W=L(C,0);if(W!==null)return W}return B()}A(C,F),T(C,F)}return B()}var R0=null,C0=new WeakMap;function I0(){if(R0===null)R0=new Intl.Segmenter(void 0,{granularity:"grapheme"});return R0}function lO(O){if(O)return{widths:[],lineEndFitAdvances:[],lineEndPaintAdvances:[],kinds:[],simpleLineWalkFastPath:!0,segLevels:null,breakableWidths:[],breakablePrefixWidths:[],discretionaryHyphenWidth:0,tabStopAdvance:0,chunks:[],segments:[]};return{widths:[],lineEndFitAdvances:[],lineEndPaintAdvances:[],kinds:[],simpleLineWalkFastPath:!0,segLevels:null,breakableWidths:[],breakablePrefixWidths:[],discretionaryHyphenWidth:0,tabStopAdvance:0,chunks:[]}}function c0(O,_,J){let Y=I0(),X=h(),{cache:R,emojiCorrection:Z}=B0(_,G0(O.normalized)),Q=g("-",x("-",R),Z),V=g(" ",x(" ",R),Z)*8;if(O.len===0)return lO(J);let $=[],u=[],q=[],D=[],b=O.chunks.length<=1,K=J?[]:null,j=[],B=[],k=J?[]:null,y=Array.from({length:O.len}),A=Array.from({length:O.len});function T(F,P,E,H,z,W,c,I){if(z!=="text"&&z!=="space"&&z!=="zero-width-break")b=!1;if($.push(P),u.push(E),q.push(H),D.push(z),K?.push(W),j.push(c),B.push(I),k!==null)k.push(F)}for(let F=0;F<O.len;F++){y[F]=$.length;let P=O.texts[F],E=O.isWordLike[F],H=O.kinds[F],z=O.starts[F];if(H==="soft-hyphen"){T(P,0,Q,Q,H,z,null,null),A[F]=$.length;continue}if(H==="hard-break"){T(P,0,0,0,H,z,null,null),A[F]=$.length;continue}if(H==="tab"){T(P,0,0,0,H,z,null,null),A[F]=$.length;continue}let W=x(P,R);if(H==="text"&&W.containsCJK){let S="",U=0;for(let N of Y.segment(P)){let M=N.segment;if(S.length===0){S=M,U=N.index;continue}if(i.has(S)||$0.has(M)||r.has(M)||X.carryCJKAfterClosingQuote&&p(M)&&D0(S)){S+=M;continue}let v=x(S,R),w=g(S,v,Z);T(S,w,w,w,"text",z+U,null,null),S=M,U=N.index}if(S.length>0){let N=x(S,R),M=g(S,N,Z);T(S,M,M,M,"text",z+U,null,null)}A[F]=$.length;continue}let c=g(P,W,Z),I=H==="space"||H==="preserved-space"||H==="zero-width-break"?0:c,o=H==="space"||H==="zero-width-break"?0:c;if(E&&P.length>1){let S=P0(P,W,R,Z),U=X.preferPrefixWidthsForBreakableRuns?A0(P,W,R,Z):null;T(P,c,I,o,H,z,S,U)}else T(P,c,I,o,H,z,null,null);A[F]=$.length}let L=hO(O.chunks,y,A),C=K===null?null:u0(O.normalized,K);if(k!==null)return{widths:$,lineEndFitAdvances:u,lineEndPaintAdvances:q,kinds:D,simpleLineWalkFastPath:b,segLevels:C,breakableWidths:j,breakablePrefixWidths:B,discretionaryHyphenWidth:Q,tabStopAdvance:V,chunks:L,segments:k};return{widths:$,lineEndFitAdvances:u,lineEndPaintAdvances:q,kinds:D,simpleLineWalkFastPath:b,segLevels:C,breakableWidths:j,breakablePrefixWidths:B,discretionaryHyphenWidth:Q,tabStopAdvance:V,chunks:L}}function hO(O,_,J){let Y=[];for(let X=0;X<O.length;X++){let R=O[X],Z=R.startSegmentIndex<_.length?_[R.startSegmentIndex]:J[J.length-1]??0,Q=R.endSegmentIndex<_.length?_[R.endSegmentIndex]:J[J.length-1]??0,f=R.consumedEndSegmentIndex<_.length?_[R.consumedEndSegmentIndex]:J[J.length-1]??0;Y.push({startSegmentIndex:Z,endSegmentIndex:Q,consumedEndSegmentIndex:f})}return Y}function o0(O,_,J,Y){let X=N0(O,h(),Y?.whiteSpace);return c0(X,_,J)}function V1(O,_,J){let Y=performance.now(),X=N0(O,h(),J?.whiteSpace),R=performance.now(),Z=c0(X,_,!1),Q=performance.now(),f=0;for(let V of Z.breakableWidths)if(V!==null)f++;return{analysisMs:R-Y,measureMs:Q-R,totalMs:Q-Y,analysisSegments:X.len,preparedSegments:Z.widths.length,breakableSegments:f}}function X1(O,_,J){return o0(O,_,!1,J)}function Y1(O,_,J){return o0(O,_,!0,J)}function F0(O){return O}function Z1(O,_,J){let Y=W0(F0(O),_);return{lineCount:Y,height:Y*J}}function k0(O,_,J){let Y=J.get(O);if(Y!==void 0)return Y;Y=[];let X=I0();for(let R of X.segment(_[O]))Y.push(R.segment);return J.set(O,Y),Y}function l0(O){let _=C0.get(O);if(_!==void 0)return _;return _=new Map,C0.set(O,_),_}function pO(O,_,J,Y){return Y>0&&O[Y-1]==="soft-hyphen"&&!(_===Y&&J>0)}function xO(O,_,J,Y,X,R,Z){let Q="",f=pO(_,Y,X,R);for(let V=Y;V<R;V++){if(_[V]==="soft-hyphen"||_[V]==="hard-break")continue;if(V===Y&&X>0)Q+=k0(V,O,J).slice(X).join("");else Q+=O[V]}if(Z>0){if(f)Q+="-";Q+=k0(R,O,J).slice(Y===R?X:0,Z).join("")}else if(f)Q+="-";return Q}function h0(O,_,J,Y,X,R,Z){return{text:xO(O.segments,O.kinds,_,Y,X,R,Z),width:J,start:{segmentIndex:Y,graphemeIndex:X},end:{segmentIndex:R,graphemeIndex:Z}}}function gO(O,_,J){return h0(O,_,J.width,J.startSegmentIndex,J.startGraphemeIndex,J.endSegmentIndex,J.endGraphemeIndex)}function p0(O){return{width:O.width,start:{segmentIndex:O.startSegmentIndex,graphemeIndex:O.startGraphemeIndex},end:{segmentIndex:O.endSegmentIndex,graphemeIndex:O.endGraphemeIndex}}}function mO(O,_,J){let Y=S0(O,_,J);if(Y===null)return null;return p0(Y)}function rO(O,_){return h0(O,l0(O),_.width,_.start.segmentIndex,_.start.graphemeIndex,_.end.segmentIndex,_.end.graphemeIndex)}function $1(O,_,J){if(O.widths.length===0)return 0;return J0(F0(O),_,(Y)=>{J(p0(Y))})}function Q1(O,_,J){let Y=mO(O,_,J);if(Y===null)return null;return rO(O,Y)}function q1(O,_,J){let Y=[];if(O.widths.length===0)return{lineCount:0,height:0,lines:Y};let X=l0(O),R=J0(F0(O),_,(Z)=>{Y.push(gO(O,X,Z))});return{lineCount:R,height:R*J,lines:Y}}function aO(){z0(),R0=null,C0=new WeakMap,T0()}function D1(O){j0(O),aO()}window.Pretext={walkLineRanges:$1,setLocale:D1,profilePrepare:V1,prepareWithSegments:Y1,prepare:X1,layoutWithLines:q1,layoutNextLine:Q1,layout:Z1,clearCache:aO};
+
+  </script>
+  <script>
+    (() => {
+      "use strict";
+
+      const STORAGE_KEY = "ai-sales-interview-fieldbook-v2";
+      const $ = (selector, scope = document) => scope.querySelector(selector);
+      const $$ = (selector, scope = document) => [...scope.querySelectorAll(selector)];
+
+      const state = {
+        role: "senior",
+        plan: "14",
+        done: {},
+        track: "senior",
+        category: "all",
+        questionSearch: "",
+        theme: "light",
+        mockId: null
+      };
+
+      const profiles = {
+        senior: {
+          title: "中高级销售：独立经营复杂 AI 机会",
+          summary: "能够从账户选择和需求发现开始，协调业务、技术、安全、采购与交付角色，把模糊的 AI 兴趣转化为有业务基线、有生产路径、有采用结果的可持续收入。",
+          competencies: [
+            {
+              name: "业务诊断与发现",
+              subtitle: "从“想用 AI”追到真实流程和经济影响",
+              standard: "能识别触发事件、当前流程、关键摩擦、成本或风险基线、责任人和成功指标；不会在发现阶段急于演示。",
+              evidence: "准备一个你通过追问改变客户问题定义的案例，并带上发现问题清单、流程图或商业假设。",
+              value: "过滤伪需求，提高方案命中率，并让后续 POC 有明确的验证目标。",
+              practice: "每周选择一个业务流程，写出十个发现问题，再用 AI 扮演客户进行十五分钟模拟访谈。"
+            },
+            {
+              name: "AI 技术流利度",
+              subtitle: "能讲清模型、RAG、Agent、评测和生产约束",
+              standard: "能用非技术语言解释核心概念，知道能力边界、数据路径、延迟与成本、幻觉、安全和人工审批等关键风险。",
+              evidence: "一张 AI 方案示意图；一次五分钟白板讲解；能回答“为什么不用通用聊天工具直接做”。",
+              value: "建立客户和内部技术团队的信任，减少过度承诺和无效试点。",
+              practice: "每学一个术语，都用“业务用途—机制—风险—验证”四句话重写，并录音回听。"
+            },
+            {
+              name: "账户策略与多线程经营",
+              subtitle: "同时经营业务、技术、安全、采购和使用者",
+              standard: "能建立账户假设、利益相关者地图、竞争态势和互惠行动计划；知道 Champion 与经济买家不能互相替代。",
+              evidence: "一个复杂账户的角色地图、关系强度、关键承诺、风险和下一步；说明你如何补齐单线程风险。",
+              value: "降低关键联系人离职或态度变化造成的失控，提高组织共识和成交确定性。",
+              practice: "复盘三笔机会，为每个角色写出其目标、顾虑、所需证据和你要获得的下一项承诺。"
+            },
+            {
+              name: "价值工程与商业案例",
+              subtitle: "把技术改善翻译成客户认可的经济结果",
+              standard: "能确认业务基线、改善假设、采用率、归因、总成本与风险情景，并让客户共同确认计算口径。",
+              evidence: "一个包含基线、公式、数据来源、保守情景和责任人的商业案例；不能只给供应商单方面 ROI。",
+              value: "形成采购理由、预算优先级和高层沟通语言，减少只看功能与价格的比较。",
+              practice: "用一个熟悉场景制作三版价值案例：假设版、试点版、生产版，并标注证据差异。"
+            },
+            {
+              name: "方案、POC 与生产推进",
+              subtitle: "试点开始前就设计上线条件",
+              standard: "能定义 POC 进入条件、数据范围、Ground Truth、评测指标、通过阈值、业务负责人和生产后续计划。",
+              evidence: "一份两页 POC 章程，以及从试点到生产所需的集成、安全、运维、培训和预算清单。",
+              value: "避免“演示很好但无法上线”，缩短成交到价值的时间。",
+              practice: "找一个公开 AI 用例，反向写出 POC 章程，并请技术同事挑出三个无法上线的风险。"
+            },
+            {
+              name: "治理与可信度",
+              subtitle: "主动处理安全、质量和责任边界",
+              standard: "能区分数据安全、权限、驻留、模型质量、错误处置和高风险动作审批；不把所有问题都回答成“模型会进步”。",
+              evidence: "安全问答清单、风险分级、人工介入点和失败处理流程；知道哪些问题必须交给专家。",
+              value: "让风险部门更早参与并形成可审查方案，减少后期阻断。",
+              practice: "模拟一次安全审查会，准备十个尖锐问题和“已知—未知—下一步验证”的回答。"
+            },
+            {
+              name: "商业谈判与成交纪律",
+              subtitle: "用交换而不是单向让步推进协议",
+              standard: "能管理范围、价格、付款、责任、数据、SLA 和成功条件；每次让步都换取期限、范围、案例或其他对等承诺。",
+              evidence: "一个谈判复盘：初始立场、双方利益、让步顺序、内部底线、最终交换和后续风险。",
+              value: "保护合同质量、回款和交付可行性，不用折扣掩盖价值不足。",
+              practice: "把常见五类异议写成“先诊断—再重构—给证据—提出交换”的话术并角色扮演。"
+            },
+            {
+              name: "采用、扩展与 AI 工作方式",
+              subtitle: "把签约变成真实使用和可复制增长",
+              standard: "能与客户成功和交付定义 30/60/90 天采用计划、健康指标、QBR 和扩展触发器；日常用 AI 提高研究与跟进效率。",
+              evidence: "一个从签约到上线、采用、续约或增购的案例；展示你如何使用 AI 且如何校验输出。",
+              value: "把一次性订单变成持续收入和客户证言，同时提高个人单位时间产出。",
+              practice: "为一笔已成交项目补写采用计划；建立一个可审查的 AI 账户研究与会后跟进流程。"
+            }
+          ]
+        },
+        manager: {
+          title: "销售管理者：设计并运行 AI GTM 系统",
+          summary: "不仅能带人拿单，还要选择市场、定义团队能力、建立资格审查和预测纪律，协调产品、市场、方案、部署与客户成功，让团队从获客到采用形成可复制闭环。",
+          competencies: [
+            {
+              name: "GTM 战略与市场选择",
+              subtitle: "明确先卖给谁、卖什么结果、为什么现在买",
+              standard: "能基于客户痛点、数据条件、交付成本、竞争和可复制性做细分市场取舍，并定义 ICP、优先用例和退出规则。",
+              evidence: "一份进入与不进入清单、资源配置逻辑、关键假设和季度验证指标。",
+              value: "避免团队在所有行业和所有用例上平均用力，提升单位资源产出。",
+              practice: "每季度重做一次细分市场复盘，要求销售用赢单、输单和采用数据反驳现有假设。"
+            },
+            {
+              name: "人才画像、招聘与教练",
+              subtitle: "把个人英雄能力变成团队标准",
+              standard: "能定义中高级销售的行为标准、面试评分证据、入职学习路径和持续教练机制，区分知识不足、技能不足与意愿问题。",
+              evidence: "岗位评分表、结构化面试题、30/60/90 天 onboarding 和一份真实教练记录。",
+              value: "提高招聘准确率、缩短爬坡周期，并减少管理依赖个人感觉。",
+              practice: "旁听销售电话，用事实反馈替代抽象评价；每月校准一次招聘与绩效标准。"
+            },
+            {
+              name: "销售流程与资格纪律",
+              subtitle: "用客户证据定义阶段，不用销售乐观定义阶段",
+              standard: "建立明确的阶段进入与退出条件，要求业务问题、决策标准、经济买家、Champion、竞争和互惠行动计划有可核验证据。",
+              evidence: "阶段定义、机会审查模板、退出案例和被团队实际使用的资格标准。",
+              value: "减少伪 Pipeline，提高资源配置和管理动作的质量。",
+              practice: "每周选择一笔乐观机会，只问客户证据；缺乏下一步承诺时降级或退出。"
+            },
+            {
+              name: "Pipeline 与预测经营",
+              subtitle: "把预测当成经营系统，不是周报数字",
+              standard: "能解释覆盖率、转化、销售周期、阶段停留、来源质量和 Commit 证据，区分风险、行动和管理判断。",
+              evidence: "一次预测偏差复盘；说明如何发现偏差、调整资源并改变后续机制。",
+              value: "提高收入可预见性，让招聘、交付和资源投入有依据。",
+              practice: "按机会证据、历史基准和风险情景做三层预测，不允许只报单一乐观数字。"
+            },
+            {
+              name: "跨职能 GTM 编队",
+              subtitle: "让产品、方案、部署和成功共同承担客户结果",
+              standard: "能定义各角色在发现、方案、评测、采购、上线和扩展阶段的责任、交接和升级机制。",
+              evidence: "一份 RACI、升级路径、联合账户计划和跨职能冲突处理案例。",
+              value: "减少内部摩擦和承诺失真，提高从成交到生产的速度。",
+              practice: "为标杆机会建立每周编队会，只讨论客户里程碑、风险责任人和需要的决策。"
+            },
+            {
+              name: "价值销售与可复制资产",
+              subtitle: "把最佳实践固化成团队可用的 Playbook",
+              standard: "能把高质量发现、价值模型、POC 章程、异议处理和案例证据固化为可训练资产，并持续根据数据更新。",
+              evidence: "一套被团队复用的资产，以及采用率、影响和迭代记录。",
+              value: "降低销售表现差异，让新人更快达到可独立作战状态。",
+              practice: "每个季度从赢单和输单各提取一项机制改进，停止堆积没人使用的文档。"
+            },
+            {
+              name: "产能、区域与激励设计",
+              subtitle: "让目标、资源与销售周期匹配",
+              standard: "能基于市场容量、销售周期、成熟机会、爬坡时间和交付能力设计区域、配额、人员与激励，不用统一数字掩盖差异。",
+              evidence: "一份容量模型、区域调整或激励优化案例，说明假设与结果。",
+              value: "提高覆盖质量和团队公平感，避免为短期签约牺牲长期采用。",
+              practice: "把签约、回款、上线、采用和扩展指标放在一起审视潜在行为副作用。"
+            },
+            {
+              name: "客户结果与经营复盘",
+              subtitle: "让收入增长建立在生产采用之上",
+              standard: "能跨销售、客户成功和部署看上线时间、采用、用量、留存、扩展和客户证言，并把结果反馈到市场选择与产品。",
+              evidence: "一次 QBR 机制、客户健康盘点或从失败部署反推销售流程变化的案例。",
+              value: "减少低质量收入，形成可持续续约、扩展和口碑增长。",
+              practice: "每月抽查签约后 90 天客户，追问承诺是否兑现、谁在使用、什么阻碍价值。"
+            }
+          ]
+        }
+      };
+
+      const syllabus = [
+        {
+          code: "M01",
+          title: "先画清 AI 商业化全景",
+          level: "建议 60 分钟",
+          learn: "认识模型层、数据层、应用层、工作流层与治理层；知道 AI 原生企业和 AI 转型企业的收入逻辑可能不同。",
+          explain: "能用一张图说明：客户问题怎样经过数据和模型变成应用输出，谁使用、谁付费、谁承担风险。",
+          practice: "选择目标公司的一个产品，画出“用户任务—输入数据—模型能力—输出—人工确认—业务指标”。",
+          proof: "一页产品与价值链地图；可以在五分钟内白板讲清。"
+        },
+        {
+          code: "M02",
+          title: "理解 LLM、Token 与推理",
+          level: "建议 90 分钟",
+          learn: "理解大语言模型按上下文生成结果；Token 影响成本和上下文；模型大小、延迟、准确率与价格之间存在取舍。",
+          explain: "能回答为什么同一个任务会选择不同模型，为什么回答不是数据库查询，以及为什么需要验证。",
+          practice: "用两个不同模型完成同一项销售研究，比较输入、输出、延迟、引用、错误和成本。",
+          proof: "一张对比表；写出三条模型选择原则。"
+        },
+        {
+          code: "M03",
+          title: "理解 RAG 与企业数据",
+          level: "建议 120 分钟",
+          learn: "理解检索增强生成如何从企业知识中找材料并放入上下文；掌握切分、Embedding、向量检索、权限与引用溯源的基本含义。",
+          explain: "能回答 RAG 为什么不等于训练模型、何时检索不到、错误权限会造成什么风险。",
+          practice: "准备五份公开文档，用任意知识库工具建立问答，设计十个问题并记录命中与失败。",
+          proof: "十题测试表，至少包含两个失败案例及改进方法。"
+        },
+        {
+          code: "M04",
+          title: "理解 Agent、工具与 MCP",
+          level: "建议 120 分钟",
+          learn: "理解 Agent 会规划步骤、调用工具并根据结果继续执行；Tool Use、Function Calling 和 MCP 解决模型怎样访问外部能力。",
+          explain: "能区分聊天回答与执行动作，说明哪些步骤自动化、哪些必须人工批准。",
+          practice: "设计一个“会前研究—生成问题—会后纪要—更新 CRM”的 Agent 流程，标记每个工具和审批点。",
+          proof: "一张工作流图、一份失败与回滚清单。"
+        },
+        {
+          code: "M05",
+          title: "理解 Evals、幻觉与护栏",
+          level: "建议 120 分钟",
+          learn: "理解评测集、Ground Truth、Grader、准确性、完整性、拒答、红队、Guardrails 和 Human-in-the-Loop。",
+          explain: "能回答“怎么证明它足够好”，并区分离线评测、试点评测和生产监控。",
+          practice: "为一个客服或文档问答场景设计二十道测试题，包含正确、模糊、越权和恶意输入。",
+          proof: "评测表、通过阈值、失败分类和上线后的监控指标。"
+        },
+        {
+          code: "M06",
+          title: "理解 API、集成与安全",
+          level: "建议 90 分钟",
+          learn: "理解 API、身份权限、数据驻留、日志、加密、SLA、延迟、可观测性和供应商责任边界。",
+          explain: "能说明从演示到生产还要经过哪些技术与治理工作，哪些问题必须交给方案或安全专家。",
+          practice: "模拟客户安全审查，准备数据是否用于训练、谁能访问、日志保存、故障处置等十五个问题。",
+          proof: "安全与生产就绪检查表，明确已知、未知和责任人。"
+        },
+        {
+          code: "M07",
+          title: "理解 AI 商业模式与单位经济",
+          level: "建议 90 分钟",
+          learn: "理解席位订阅、平台费、用量计费、项目服务与结果计费；知道推理成本、毛利、采用与扩展如何影响收入。",
+          explain: "能回答客户怎样付费、使用增长怎样影响成本、为什么低价 POC 不等于健康业务。",
+          practice: "为目标公司写出收入公式、成本驱动、续约条件和三个客户扩展触发器。",
+          proof: "一页商业模式卡和一版客户 TCO 问题清单。"
+        },
+        {
+          code: "M08",
+          title: "理解 AI GTM：从试点到生产",
+          level: "建议 120 分钟",
+          learn: "理解 ICP、用例优先级、发现、技术验证、商业案例、采购、上线、采用和扩展组成一条连续链路。",
+          explain: "能说明一个机会为什么值得做、怎样退出伪机会、POC 通过后还缺什么。",
+          practice: "选择一个公开客户案例，反推销售阶段、关键角色、验证证据、上线条件和扩展路径。",
+          proof: "一份完整机会地图和 30/60/90 天客户成功假设。"
+        }
+      ];
+
+      const glossary = [
+        ["Foundation Model / 基础模型", "在大规模数据上训练、可适配多种任务的通用模型。销售要关心适用任务、成本、延迟与风险。"],
+        ["LLM", "大语言模型。擅长理解和生成语言，但输出是概率生成，不天然等于经过验证的事实。"],
+        ["Token", "模型处理文本的计量单位，影响上下文容量、调用成本和响应时间。"],
+        ["Context Window", "一次请求中模型可以处理的上下文范围。更大不等于一定更准，还要看信息质量和组织方式。"],
+        ["Inference / 推理", "模型根据输入生成输出的运行过程。商业上要关注准确率、速度、稳定性与单次成本。"],
+        ["Multimodal / 多模态", "同时处理文字、图片、音频或视频等信息。适合文档、质检、客服和现场辅助等任务。"],
+        ["RAG", "先检索企业知识，再把相关内容放入模型上下文生成答案。重点是检索质量、权限与引用。"],
+        ["Embedding", "把内容表示成可比较的向量，用于语义检索、相似度匹配和聚类。"],
+        ["Vector Search", "根据语义相似度查找内容，不只依赖关键词。仍可能检索错或漏检。"],
+        ["Fine-tuning", "用特定数据继续训练模型，使行为更适合某类任务。它和 RAG 解决的问题不同。"],
+        ["Agent", "能够规划步骤、调用工具、观察结果并继续执行的 AI 系统。关键是权限、状态、失败和审批。"],
+        ["Tool Use", "模型调用搜索、数据库、CRM、邮件等外部工具的能力。执行动作比生成文字风险更高。"],
+        ["Function Calling", "模型按预定义结构选择和填写函数参数，让系统安全地调用能力。"],
+        ["MCP", "模型上下文协议，用统一方式连接 AI 应用与数据、工具或服务。销售要理解连接价值与权限边界。"],
+        ["Memory", "让 AI 系统在会话间保留有用信息的机制。必须考虑准确性、权限、过期与删除。"],
+        ["Evals", "用于系统评估 AI 输出质量的一组任务、数据、指标和流程，是从演示走向生产的关键。"],
+        ["Ground Truth", "用来判断输出是否正确的参考答案或人工标准。没有可靠标准，很难证明效果。"],
+        ["Grader", "给 AI 输出打分的规则、程序、模型或人工评审。要检查评分是否与业务目标一致。"],
+        ["Hallucination / 幻觉", "模型生成看似合理但不真实或无依据的内容。应通过检索、引用、评测、限制和人工复核降低风险。"],
+        ["Guardrails", "限制输入、输出和动作的规则或技术，用于内容安全、权限、格式和业务边界控制。"],
+        ["Human-in-the-Loop", "在关键判断或高风险动作中保留人的确认、复核或接管。"],
+        ["Observability / 可观测性", "记录输入、输出、调用、错误、延迟和成本，以发现问题并持续改进。"],
+        ["Latency / 延迟", "从请求到响应所需时间。实时场景和复杂推理对延迟容忍度不同。"],
+        ["SLA", "服务可用性、响应和恢复等承诺。要区分平台 SLA 与客户业务结果。"],
+        ["Data Residency", "数据在哪个地区存储和处理，常与监管、合同和客户安全政策有关。"],
+        ["Model Routing", "根据任务、质量、成本或风险选择不同模型，避免所有任务都使用最贵模型。"],
+        ["POC", "概念验证。应验证明确假设与指标，不应成为无期限的免费定制项目。"],
+        ["Production", "真实用户、真实数据和真实责任下持续运行的生产环境，要求集成、治理、运维和采用。"],
+        ["Adoption", "目标用户真正开始并持续使用产品的程度。部署完成不等于采用。"],
+        ["Consumption", "API、Token、任务或算力等实际使用量，常与用量收入和成本直接相关。"],
+        ["TCO", "总拥有成本，包括产品、算力、集成、运维、培训、治理和变革成本。"],
+        ["AI Fluency", "能在工作中正确使用、校验和改进 AI，而不只是了解概念或会写简单 Prompt。"]
+      ];
+
+      const plans = {
+        "3": {
+          title: "3 天急救路线",
+          description: "适合面试已经确定、基础较弱的情况。只保留岗位理解、四个核心 AI 概念、六个案例和高频问题。",
+          tasks: [
+            { id: "3-1", day: "第 1 天上午", time: "2 小时", title: "拆解 JD 与岗位结果", learn: "把 JD 每条要求分为销售基本功、AI 常识、客户落地和管理协作。", do: "建立两列表：岗位要求；你能提供的案例或待补证据。圈出前三项录用理由。", output: "一页岗位地图；一句话说明岗位为何存在。" },
+            { id: "3-2", day: "第 1 天下午", time: "3 小时", title: "掌握四个核心概念", learn: "LLM、RAG、Agent、Evals，以及每项的业务用途和风险。", do: "按“业务用途—机制—风险—验证”各写四句话，录一次五分钟讲解。", output: "一页 AI 概念图；五分钟录音。" },
+            { id: "3-3", day: "第 2 天上午", time: "3 小时", title: "整理六个事实案例", learn: "复杂交易、开拓、发现、停滞、失败、采用六类案例。", do: "每个案例只写客户背景、你的动作、数字结果和复盘；删掉不能经受追问的细节。", output: "六张案例卡；每张不超过一页。" },
+            { id: "3-4", day: "第 2 天下午", time: "2 小时", title: "研究公司与产品", learn: "目标客户、典型用例、商业模式、竞争替代和从试点到生产的路径。", do: "阅读官网、产品文档、客户案例与岗位页面，写出三条公司判断和两个疑问。", output: "一页公司简报；五个面试反问。" },
+            { id: "3-5", day: "第 3 天上午", time: "3 小时", title: "练习十二道高频题", learn: "自我介绍、为什么 AI、最大交易、发现、技术解释、POC、价值、异议、失败和 90 天计划。", do: "先口答再看示范；每题控制 90 秒，录音并删掉空话。", output: "十二题提纲；一版 60 秒介绍。" },
+            { id: "3-6", day: "第 3 天下午", time: "2 小时", title: "完成一次全真模拟", learn: "练习追问、停顿、澄清和反问，不再补充新知识。", do: "请同伴或 AI 连续问十五题；记录卡顿点，最后只改三处最影响可信度的问题。", output: "模拟记录；面试当天一页提示卡。" }
+          ]
+        },
+        "7": {
+          title: "7 天冲刺路线",
+          description: "适合已有销售经验但 AI 基础不完整的人。每天 2—3 小时，先补语言，再形成岗位证据。",
+          tasks: [
+            { id: "7-1", day: "第 1 天", time: "2 小时", title: "拆解岗位与公司", learn: "岗位目标、客户、产品、商业模式、销售周期与协作角色。", do: "把 JD 逐条映射到证据，阅读官网、文档和三个客户案例。", output: "岗位地图、公司简报、十个待验证问题。" },
+            { id: "7-2", day: "第 2 天", time: "3 小时", title: "学习 LLM 与 RAG", learn: "Token、上下文、推理、检索、权限和引用。", do: "比较两个模型；用公开文档建立小型知识库并做十题测试。", output: "模型对比表、RAG 测试表。" },
+            { id: "7-3", day: "第 3 天", time: "3 小时", title: "学习 Agent 与评测", learn: "工具调用、MCP、人工审批、Ground Truth、Grader 和 Guardrails。", do: "画一个销售 Agent 流程，并为它设计十个正常与异常测试。", output: "工作流图、评测清单、风险边界。" },
+            { id: "7-4", day: "第 4 天", time: "2.5 小时", title: "整理六个案例", learn: "用 H-C-A-M-L 结构把经验转成可追问证据。", do: "补齐金额、周期、角色、动作、结果和复盘；找同伴追问。", output: "六张案例卡和证据附件清单。" },
+            { id: "7-5", day: "第 5 天", time: "2.5 小时", title: "制作 AI 商业案例与 POC 章程", learn: "基线、采用、归因、TCO、进入条件、评测与生产路径。", do: "为目标公司的一个用例制作一页商业案例和两页 POC 计划。", output: "商业案例、POC 章程。" },
+            { id: "7-6", day: "第 6 天", time: "3 小时", title: "完成高频题书面提纲", learn: "覆盖题库中的岗位动机、销售实战、AI 理解、客户推进和复盘。", do: "每题写五个关键词，不写逐字稿；完成两轮 90 秒口答。", output: "题库提纲、60 秒介绍、30/60/90 天计划。" },
+            { id: "7-7", day: "第 7 天上午", time: "2 小时", title: "模拟面试与纠偏", learn: "训练追问、技术边界、数字口径和反问。", do: "完成一次 45 分钟模拟；标记事实不清、结构松散和术语堆砌。", output: "模拟复盘和三项修正。" },
+            { id: "7-8", day: "第 7 天下午", time: "1 小时", title: "整理面试包", learn: "把资料压缩成可现场调用的提示。", do: "检查设备、链接与时区；准备一页公司判断、一页案例索引和十个反问。", output: "最终面试包。" }
+          ]
+        },
+        "14": {
+          title: "14 天标准路线",
+          description: "推荐路线。每天 90—150 分钟，既补齐 AI 商业化基础，也能完成公司研究、案例库、作品和两轮模拟。",
+          tasks: [
+            { id: "14-1", day: "第 1 天", time: "90 分钟", title: "拆解 JD 与录用标准", learn: "识别销售基本功、AI 常识、客户落地、协作和管理要求。", do: "逐条标注“已有证据／需要改写／没有证据”，写出前三项岗位结果。", output: "岗位要求—证据矩阵。" },
+            { id: "14-2", day: "第 2 天", time: "120 分钟", title: "研究公司、产品与市场", learn: "目标客户、用例、收入模式、竞争替代和产品路线。", do: "阅读官网、文档、定价、案例和三名面试官公开背景。", output: "两页公司简报与三条独立判断。" },
+            { id: "14-3", day: "第 3 天", time: "120 分钟", title: "学习 LLM、Token 与推理", learn: "理解生成机制、上下文、延迟、成本和模型选择。", do: "用两个模型做同一项账户研究，记录质量、错误、速度和引用。", output: "模型对比实验。" },
+            { id: "14-4", day: "第 4 天", time: "120 分钟", title: "学习 RAG 与企业数据", learn: "理解检索、Embedding、权限、引用和失败原因。", do: "用公开资料搭建知识问答，完成十题测试并分析两个失败。", output: "RAG 测试表与改进说明。" },
+            { id: "14-5", day: "第 5 天", time: "120 分钟", title: "学习 Agent、工具与 MCP", learn: "理解规划、工具调用、状态、权限、人工审批和回滚。", do: "画出一条销售 Agent 工作流，逐步标出输入、工具、输出和风险。", output: "Agent 工作流图。" },
+            { id: "14-6", day: "第 6 天", time: "120 分钟", title: "学习评测、治理与安全", learn: "Ground Truth、Grader、幻觉、Guardrails、监控和数据责任。", do: "设计二十题评测集和十五题安全审查清单。", output: "评测计划与生产风险表。" },
+            { id: "14-7", day: "第 7 天", time: "90 分钟", title: "理解商业模式与单位经济", learn: "席位、用量、服务、结果计费，以及采用、推理成本和毛利。", do: "写出目标公司的收入公式、成本驱动和客户扩展触发器。", output: "一页商业模式卡。" },
+            { id: "14-8", day: "第 8 天", time: "150 分钟", title: "整理六个销售案例", learn: "用 H-C-A-M-L 形成结论、背景、动作、数字和复盘。", do: "补齐你的个人贡献；删除无法解释的数据；请同伴连续追问。", output: "六张事实案例卡。" },
+            { id: "14-9", day: "第 9 天", time: "120 分钟", title: "制作账户计划与发现问题", learn: "ICP、触发事件、工作流、利益相关者、竞争和下一步承诺。", do: "选择目标公司的一个理想客户，做账户研究并写十五个发现问题。", output: "账户简报、角色地图、发现清单。" },
+            { id: "14-10", day: "第 10 天", time: "120 分钟", title: "制作商业案例与 POC 章程", learn: "基线、改善、采用、归因、TCO、评测阈值和生产条件。", do: "用合理假设制作一页价值模型，再写两页 POC 章程并标注未知项。", output: "商业案例与 POC 章程。" },
+            { id: "14-11", day: "第 11 天", time: "120 分钟", title: "完成高频题第一轮", learn: "先写关键词，再口头回答，不背逐字稿。", do: "练习全部高频题；每题控制 90 秒，录音检查空话和术语堆砌。", output: "题库关键词提纲与第一轮录音。" },
+            { id: "14-12", day: "第 12 天", time: "90 分钟", title: "完成 60 秒介绍和 90 天计划", learn: "把经历、证据、AI 学习和岗位价值连成一条线。", do: "准备 30/60/90 天计划，分别覆盖学习、Pipeline、客户和内部协作。", output: "60 秒介绍与 90 天计划。" },
+            { id: "14-13", day: "第 13 天", time: "90 分钟", title: "完成第一次全真模拟", learn: "在追问下保持结构、事实和边界。", do: "请同伴进行 45 分钟模拟，要求打断、追问数字和挑战技术理解。", output: "模拟记录与前三项改进。" },
+            { id: "14-14", day: "第 14 天", time: "90 分钟", title: "第二次模拟与面试包定稿", learn: "只修正影响录用判断的问题，不再扩展知识范围。", do: "复练卡顿题；整理案例索引、公司判断、反问和设备清单。", output: "最终面试包与跟进邮件草稿。" }
+          ]
+        },
+        "30": {
+          title: "30 天补基础路线",
+          description: "适合缺乏 AI 与复杂企业销售体系训练的人。按四周完成基础课、作品、案例、题库和多轮模拟。",
+          tasks: [
+            { id: "30-1", day: "第 1—2 天", time: "每日 90 分钟", title: "建立岗位地图与学习目录", learn: "拆解 JD、两类能力标准和目标公司的 GTM 结构。", do: "完成要求—证据矩阵，并安排未来四周固定学习时段。", output: "岗位地图、个人学习日历。" },
+            { id: "30-2", day: "第 3—4 天", time: "每日 90 分钟", title: "补齐企业销售基本框架", learn: "ICP、发现、资格、Champion、经济买家、Mutual Action Plan 和预测证据。", do: "用过去三笔机会重画销售过程，找出阶段判断错误。", output: "三笔机会复盘。" },
+            { id: "30-3", day: "第 5—6 天", time: "每日 90 分钟", title: "学习 LLM 与模型选择", learn: "Token、上下文、推理、延迟、成本、多模态和模型路由。", do: "比较三个模型完成同一任务，记录质量、速度与错误。", output: "模型选择对比表。" },
+            { id: "30-4", day: "第 7—8 天", time: "每日 120 分钟", title: "学习 RAG 与数据基础", learn: "Embedding、检索、权限、引用、数据质量和失败模式。", do: "搭建公开文档知识库，完成二十题测试。", output: "RAG 小作品与测试报告。" },
+            { id: "30-5", day: "第 9—10 天", time: "每日 120 分钟", title: "学习 Agent 与工具调用", learn: "任务规划、Function Calling、MCP、状态、审批和回滚。", do: "设计并尽可能实现一个销售准备 Agent。", output: "工作流图或可运行原型。" },
+            { id: "30-6", day: "第 11—12 天", time: "每日 120 分钟", title: "学习评测与治理", learn: "Ground Truth、Grader、幻觉、红队、Guardrails 和监控。", do: "为你的 RAG 或 Agent 作品建立评测集和失败分类。", output: "评测报告与治理清单。" },
+            { id: "30-7", day: "第 13—14 天", time: "每日 90 分钟", title: "学习商业模式与价值工程", learn: "席位、用量、服务、结果计费；基线、采用、归因、TCO。", do: "拆解三家目标公司的商业模式，制作一个客户价值模型。", output: "商业模式对比与价值案例。" },
+            { id: "30-8", day: "第 15—16 天", time: "每日 120 分钟", title: "研究目标公司与竞争", learn: "产品定位、用例、客户、竞争替代和销售动作。", do: "读产品文档、客户案例和岗位，访谈一名从业者或用户。", output: "三页公司与竞争简报。" },
+            { id: "30-9", day: "第 17—18 天", time: "每日 120 分钟", title: "制作账户研究作品", learn: "触发事件、业务假设、角色地图、发现问题和下一步。", do: "为一个理想客户制作完整账户计划，并用 AI 辅助但逐项校验。", output: "账户计划与研究来源。" },
+            { id: "30-10", day: "第 19—20 天", time: "每日 120 分钟", title: "制作 POC 与生产计划", learn: "进入条件、数据、评测、责任、集成、安全、上线和采用。", do: "为一个用例写 POC 章程和 30/60/90 天采用计划。", output: "POC 章程与采用计划。" },
+            { id: "30-11", day: "第 21—22 天", time: "每日 120 分钟", title: "整理六个事实案例", learn: "H-C-A-M-L、个人贡献、数字口径和复盘。", do: "写完后让同伴追问，每个案例至少准备两层细节。", output: "六张案例卡和附件索引。" },
+            { id: "30-12", day: "第 23—24 天", time: "每日 90 分钟", title: "练习岗位动机与销售实战题", learn: "自我介绍、为什么 AI、最大交易、发现、账户和异议。", do: "完成书面关键词和第一轮录音，删掉通用表态。", output: "十一题提纲与录音。" },
+            { id: "30-13", day: "第 25—26 天", time: "每日 90 分钟", title: "练习 AI 与客户推进题", learn: "RAG、Agent、评测、安全、POC、价值、采用和预测。", do: "先用业务语言回答，再接受技术追问。", output: "十一题提纲与白板讲解。" },
+            { id: "30-14", day: "第 27 天", time: "120 分钟", title: "完成第一次模拟面试", learn: "观察结构、事实、语速、追问和边界。", do: "完成 60 分钟模拟，记录每个失分点的根因。", output: "模拟复盘与修正计划。" },
+            { id: "30-15", day: "第 28 天", time: "90 分钟", title: "准备 30/60/90 天入职计划", learn: "学习、内部关系、Pipeline、客户与第一项可见成果。", do: "根据目标公司阶段写计划，不承诺不现实的成交数字。", output: "一页入职计划。" },
+            { id: "30-16", day: "第 29 天", time: "90 分钟", title: "完成第二次模拟与压力追问", learn: "应对反对、失败、无直接经验和技术边界问题。", do: "要求模拟者打断、质疑数字并改变题目条件。", output: "第二次复盘与最终提纲。" },
+            { id: "30-17", day: "第 30 天", time: "60 分钟", title: "压缩成最终面试包", learn: "把大量学习成果变成现场可调用的少量材料。", do: "只保留岗位地图、六个案例索引、公司判断、90 天计划和反问。", output: "最终面试包与跟进邮件。" }
+          ]
+        }
+      };
+
+      const questions = [
+        {
+          id: "S01", track: "senior", category: "岗位动机", frequency: "高频",
+          question: "请用一分钟介绍你自己，并说明为什么适合这个 AI 销售岗位。",
+          intent: "判断你能否抓住重点，把经历、证据、AI 学习和岗位价值连成一条逻辑线。",
+          answer: "我有八年企业软件销售经验，最近四年负责华东大型客户，典型项目周期六到十二个月，单笔合同在一百五十万到五百万元之间。我的优势是复杂账户经营和价值销售。上一家公司中，我曾把一个只有部门试用意愿的机会，推进成跨三个事业部的三年合同：我重做了业务基线、补齐信息安全和采购角色，并与交付团队共同制定上线计划，最终首年合同三百二十万元，九个月内扩展到第二个事业部。过去三个月，我系统学习了 LLM、RAG、Agent 和 Evals，完成了一个公开资料知识库、二十题评测和一份 AI 客服商业案例。我申请这个岗位，是因为贵公司正在从单点试用走向企业级生产，我的复杂交易和跨职能推进经验可以直接用于缩短从兴趣到上线的周期。",
+          structure: "年限与客户范围 → 一项核心优势 → 一个带数字的代表案例 → 近期 AI 学习作品 → 对目标岗位的具体贡献。",
+          pitfalls: "从毕业经历开始讲；只列公司名称；反复说“学习能力强”却没有近期作品；超过两分钟仍未说明岗位匹配。"
+        },
+        {
+          id: "S02", track: "senior", category: "岗位动机", frequency: "高频",
+          question: "为什么现在转向 AI 销售？为什么选择我们公司？",
+          intent: "判断这是不是追热点，以及你是否真正研究过公司、客户和商业化阶段。",
+          answer: "我不是因为 AI 热度转行，而是看到企业软件购买逻辑正在变化。过去客户主要比较功能和实施能力，现在他们还要判断模型质量、数据安全、采用和持续成本，这让复杂销售的价值更高。选择贵公司有三个原因：第一，你们在客户服务 Agent 上已经有生产案例，而不只是通用 Copilot；第二，产品同时覆盖业务人员和技术团队，适合我擅长的多线程经营；第三，你们正在建立行业化销售打法，我过去把一个通用数据产品做成制造业细分方案的经历可以迁移。我也做了准备：基于公开资料，我整理了两个优先 ICP、一个 POC 章程和一份竞争替代分析，今天很希望验证其中的假设。",
+          structure: "市场判断 → 公司独特性 → 个人可迁移优势 → 已完成的准备 → 希望验证的假设。",
+          pitfalls: "只说市场大、技术先进、看好未来；把公司官网文案原样复述；没有说明为什么是你、为什么是现在。"
+        },
+        {
+          id: "S03", track: "senior", category: "岗位动机", frequency: "高频",
+          question: "你没有直接的 AI 销售经验，我们为什么要录用你？",
+          intent: "判断你能否诚实处理经验缺口，并用可迁移能力和学习证据降低录用风险。",
+          answer: "我没有完整负责过生成式 AI 产品收入，这一点我不会包装成有。但岗位最难的部分中，有三项我已经反复做过：第一，经营六到十二个月的复杂企业交易；第二，把技术能力翻译成业务基线和采购理由；第三，协调安全、法务、采购、交付和业务负责人共同推进。为了补上 AI 差距，我完成了三项可检查的作品：一个基于公开文档的 RAG 知识库及评测表、一份 Agent 工作流和风险边界、一个从 POC 到生产采用的商业案例。如果入职，我前三十天会跟随方案和部署团队完成产品与安全认证，同时以现有账户经营能力建立首批机会。我希望您按“是否能快速达到独立作战”来判断我，而不是只按过去的产品标签。",
+          structure: "承认边界 → 三项可迁移能力 → 三项学习证据 → 明确的补差计划 → 建议对方如何验证。",
+          pitfalls: "否认经验缺口；声称所有销售都一样；用证书代替作品；给出“我会努力学习”但没有时间表。"
+        },
+        {
+          id: "S04", track: "senior", category: "销售实战", frequency: "高频",
+          question: "讲一个你亲自推进过的最复杂交易。",
+          intent: "判断交易规模、复杂度、个人贡献、过程纪律和结果是否达到中高级销售水平。",
+          answer: "我负责过一家全国零售集团的数据平台项目，初始需求只是市场部门购买五十个分析席位。项目复杂在于十一名关键相关者、既有供应商阻力和严格的数据安全评审。我先把讨论从席位扩展到门店补货与促销决策流程，和业务负责人确认每月约六千小时的人工分析基线；随后建立业务、IT、安全、采购五条关系线，并与 Champion 制定双方行动计划。我邀请方案团队用客户真实数据做四周验证，成功标准不是演示效果，而是预测报告准备时间和业务采用。安全评审卡住时，我组织专题会拆分数据驻留、权限和日志问题，让每项风险都有责任人和截止日期。项目九个月签约，首年三百二十万元，六个月后扩展到第二事业部。复盘看，我前两个月过度依赖 Champion，之后才补齐经济买家，未来我会更早做权力与风险地图。",
+          structure: "一句话结果 → 客户与复杂度 → 你的关键动作 → 数字结果 → 一个诚实复盘。",
+          pitfalls: "只讲团队做了什么；没有客户角色和阻力；只有合同金额没有过程；把运气描述成方法。"
+        },
+        {
+          id: "S05", track: "senior", category: "销售实战", frequency: "常见",
+          question: "你如何制定一个目标大客户的账户计划？",
+          intent: "判断你是否会用事实与假设选择切入口，而不是拿到名单后群发联系。",
+          answer: "我把账户计划分成五层。第一层是外部触发，例如新任高管、成本压力、并购、产品发布或监管变化；第二层是业务流程假设，明确哪些岗位在什么任务上有可量化摩擦；第三层是技术与数据条件，判断能否接入、能否评测；第四层是利益相关者，包括业务负责人、经济买家、技术、安全、采购、使用者和潜在 Champion；第五层是行动与证据，每一步都要换来客户承诺。以一家物流企业为例，我不会先推“企业 AI 平台”，而会从公开财报中的客服成本增长和招聘量推导服务效率假设，准备三类发现问题，再通过合作伙伴找到运营负责人验证。验证成立后才投入方案资源。账户计划每两周更新，所有无法验证的内容都标为假设。",
+          structure: "触发事件 → 流程假设 → 数据条件 → 角色地图 → 互惠行动；区分事实和假设。",
+          pitfalls: "把公司简介当账户计划；只列联系人；没有优先用例和退出条件；大量使用未经验证的 AI 生成信息。"
+        },
+        {
+          id: "S06", track: "senior", category: "销售实战", frequency: "高频",
+          question: "你如何做高质量的需求发现？会问哪些问题？",
+          intent: "判断你能否从表面需求进入流程、基线、影响、决策和下一步承诺。",
+          answer: "我不会先问客户想要什么功能，而是沿工作流追问。第一组问触发：为什么现在讨论，什么变化让原方式不再可接受；第二组问现状：谁在什么时间做哪些步骤，输入和输出是什么；第三组问影响：时间、成本、收入、风险或客户体验的基线是多少；第四组问约束：数据在哪里，谁能访问，错误能否被发现，哪些动作必须人工确认；第五组问决策：谁拥有指标、谁批准预算、技术和安全标准是什么；最后确认下一步：如果我们验证某项指标，客户愿意投入什么资源并在何时做什么决定。一次客服项目中，这套问题让“做智能问答”被重新定义为“减少新人查找时间且保证合规引用”，POC 因此有了可测目标。",
+          structure: "触发 → 当前流程 → 业务影响 → 数据与风险 → 决策过程 → 双方下一步承诺。",
+          pitfalls: "问题像审讯；只问痛点不问基线；没有追到责任人和预算；发现结束后只留下“发方案”。"
+        },
+        {
+          id: "S07", track: "senior", category: "AI理解", frequency: "高频",
+          question: "你怎样判断一个需求是否适合用 AI，而不是普通自动化或规则系统？",
+          intent: "判断你是否有用例选择能力，能避免把所有问题都包装成 AI。",
+          answer: "我会看六个条件。第一，任务是否包含语言、图像、非结构化信息或需要在不完整信息中判断；第二，任务是否高频且当前成本或风险明显；第三，是否有足够的数据、示例或专家标准用于验证；第四，错误后果是否可控，能否设置人工复核；第五，AI 相比规则或传统软件是否带来明显增量；第六，是否有业务负责人愿意改变流程并承担采用。比如固定格式的发票字段校验，规则或 OCR 可能更简单；但处理多种合同、提取复杂条款并生成带引用摘要，AI 可能更合适。最终不是选最先进技术，而是选总成本和风险下最合理的方案。",
+          structure: "任务特征 → 频率与价值 → 数据与评测 → 错误风险 → 替代方案 → 业务 owner 与采用。",
+          pitfalls: "只要数据多就用 AI；认为生成式 AI 一定优于规则；忽略错误代价和流程改变。"
+        },
+        {
+          id: "S08", track: "senior", category: "AI理解", frequency: "高频",
+          question: "请用客户能听懂的方式解释 LLM、RAG 和 Agent 的区别。",
+          intent: "判断你能否准确简化技术概念，并主动说明边界。",
+          answer: "我会把三者放在一个工作场景里解释。LLM 像一个通用的语言与推理引擎，能理解指令和生成内容，但它不天然知道公司的最新资料。RAG 是给这个引擎临时提供经过检索的企业资料，让回答尽量基于可引用的内部来源；它的质量取决于文档、检索和权限。Agent 则是在模型之外增加目标、步骤和工具，让系统不仅回答，还能查询 CRM、创建工单或发送草稿。能力越往后，业务价值可能越高，执行风险也越大，所以要有评测、权限、日志和人工审批。客户真正要选的不是术语，而是任务需要回答、检索还是执行。",
+          structure: "一个场景内解释三者 → 各自解决的问题 → 质量依赖 → 风险随执行能力上升 → 回到任务选择。",
+          pitfalls: "用更多技术术语解释术语；把 RAG 说成训练模型；把 Agent 描述成完全自主且不会失败。"
+        },
+        {
+          id: "S09", track: "senior", category: "AI理解", frequency: "高频",
+          question: "客户担心幻觉、数据泄露和不可控，你会怎么回应？",
+          intent: "判断你能否承认风险、进行分层，并提出可验证的治理方案。",
+          answer: "我会先确认这不是一句“我们很安全”能够解决的问题，并把风险分三类。质量风险上，使用受控知识、引用来源、拒答规则和业务评测集，并对高风险输出保留人工复核；数据风险上，确认数据是否用于训练、传输与存储位置、身份权限、日志、加密和删除机制；执行风险上，限制 Agent 可调用的工具和参数，高风险动作需要审批，并保留回滚。然后根据业务后果分级：内部草稿可以容忍较低风险，付款、合规判断或对外承诺必须更严格。最后用客户数据和异常场景做评测，让安全、业务和技术共同确认上线阈值。若某项我不能确认，我会记录问题并由安全专家正式答复，而不是现场猜测。",
+          structure: "承认风险 → 质量／数据／执行三层 → 按业务后果分级 → 评测和审批 → 明确专家边界。",
+          pitfalls: "承诺零幻觉；把问题推给技术团队；只谈加密不谈权限和日志；没有验证计划。"
+        },
+        {
+          id: "S10", track: "senior", category: "客户推进", frequency: "高频",
+          question: "你会怎样设计一个高质量的 POC？",
+          intent: "判断你能否把 POC 变成决策工具，而不是免费演示或无期限定制。",
+          answer: "我会先确认 POC 是否真的必要。如果需要，会在开始前签署两页章程：第一，明确要验证的业务假设，例如客服总结时间下降百分之三十；第二，锁定数据范围、代表性和 Ground Truth；第三，定义质量、速度、成本和安全指标及通过阈值；第四，确认客户业务 owner、技术 owner 和我方责任；第五，约定周期、资源和每周评审；第六，把通过后的生产步骤、预算路径和决策日期写进去。曾有客户希望用所有历史数据做三个月“全面测试”，我把范围缩成五十个高价值场景、四周完成，并要求业务负责人每周评分。结果不仅更快得出结论，也暴露了权限继承问题，避免在合同后才发现。",
+          structure: "先判断是否需要 → 假设 → 数据 → 指标与阈值 → 责任与周期 → 生产与预算后续。",
+          pitfalls: "只写技术功能；没有客户投入和决策承诺；没有 Ground Truth；成功后仍不知道谁买单。"
+        },
+        {
+          id: "S11", track: "senior", category: "客户推进", frequency: "高频",
+          question: "如果 POC 成功但客户迟迟不上生产，你会怎么处理？",
+          intent: "判断你是否理解技术验证、采购理由、组织改变和生产就绪是四件不同的事。",
+          answer: "我会先重新诊断“成功”的定义。很多 POC 只证明模型能做，并没有证明业务愿意改变、系统能集成、风险能接受或预算已存在。我会召开从试点到生产的差距评审，分成五栏：业务 owner 与目标、生产数据和集成、安全与法务、运营与支持、采用与预算。一个文档助手 POC 达到九十二分准确率后停滞，我们发现真正阻力不是模型，而是没有人负责知识更新，信息安全也未确认权限继承。我协助客户指定知识 owner，把权限验证纳入上线门槛，并把首批用户缩成一个部门；同时让经济买家确认若六十天采用率达到百分之六十就扩展。项目六周后进入生产。若客户不愿为差距提供资源和决策，我会降级机会而不是继续免费投入。",
+          structure: "重定义成功 → 五类生产差距 → 具体修复动作 → 采用与扩展门槛 → 必要时降级退出。",
+          pitfalls: "继续增加功能；认为采购只是流程慢；无限延长免费试点；没有经济买家和业务 owner。"
+        },
+        {
+          id: "S12", track: "senior", category: "客户推进", frequency: "高频",
+          question: "你如何为 AI 项目建立商业案例和 ROI？",
+          intent: "判断你能否使用客户认可的基线、保守假设和总成本，而不是给出营销数字。",
+          answer: "我从客户现状而不是产品效果开始。假设一个团队每月处理一万二千个案例，平均每个需要八分钟人工整理。我们先和运营确认量、时间和人工成本，再假设 AI 能减少百分之三十处理时间、首年真实采用率百分之六十五，得到约三千七百小时的年度节省。然后扣除产品、集成、培训、运维和治理成本，并增加保守情景。除了效率，还记录错误率、响应时间和员工体验，但不把无法归因的好处强行货币化。POC 阶段用样本数据更新改善幅度，生产阶段用真实采用和业务结果更新。最重要的是让财务和业务 owner 共同确认公式、数据源和责任人，这样 ROI 才能成为采购与扩展依据。",
+          structure: "客户基线 → 改善假设 → 采用与归因 → TCO → 保守情景 → 客户共同确认并持续更新。",
+          pitfalls: "直接引用行业平均 ROI；忽略采用率和总成本；把所有潜在好处相加；数字没有客户 owner。"
+        },
+        {
+          id: "S13", track: "senior", category: "客户推进", frequency: "高频",
+          question: "你如何在复杂客户组织中建立多线程关系并找到真正的 Champion？",
+          intent: "判断你是否理解关系数量不等于关系质量，以及 Champion 需要能力和意愿。",
+          answer: "我会先按作用而不是职位画图：业务 owner 拥有问题，经济买家控制优先级和预算，技术与安全定义可行性，采购和法务控制交易流程，使用者决定采用。Champion 必须同时具备影响力、个人动机和推动内部行动的意愿，愿意分享组织信息、帮我们接触其他角色并在内部替方案辩护。一次项目中，最热情的创新经理并不控制流程，我没有把他误判为 Champion，而是请他协助我们与运营副总共同定义指标。运营副总主动提供基线、组织试点人员并安排财务评审，才成为真正 Champion。我会定期检查关系是否带来客户承诺；只有会议数量没有内部行动，仍然是单线程风险。",
+          structure: "角色地图 → Champion 三个条件 → 如何验证 → 一个识别或纠正案例 → 持续检查客户承诺。",
+          pitfalls: "把喜欢产品的人当 Champion；只找高职级；关系完全依赖销售个人；没有接触经济买家。"
+        },
+        {
+          id: "S14", track: "senior", category: "客户推进", frequency: "高频",
+          question: "一笔看起来很好的交易停滞了，你会怎么诊断和推进？",
+          intent: "判断你是否会用客户行为和证据重新资格审查，而不是靠催促和内部乐观。",
+          answer: "我先停止重复问“流程怎么样”，回到五项证据：业务问题是否仍有优先级，Champion 是否还在推动，经济买家是否认可采购理由，技术与安全是否有未解决风险，决策流程和日期是否真实。曾有一笔预测为 Commit 的项目连续三周没有客户行动，我发现原 Champion 调岗，新负责人把项目视为可选创新。我与业务团队重新确认基线，发现成本压力仍在，但原方案范围太大。我们把第一阶段缩成一个高价值流程，并要求新负责人、IT 和采购共同确认行动计划。客户愿意投入资源后，机会回到真实阶段；若他们不愿承诺会议、数据或日期，我会从预测中移出，保护团队资源。推进不是更多跟进，而是获得新的客户行动证据。",
+          structure: "停止催单 → 五项重新资格 → 缩小或重构 → 换取客户行动 → 必要时降级预测。",
+          pitfalls: "用折扣制造紧迫感；把沉默解释为采购流程；不敢降级 Commit；继续投入方案资源。"
+        },
+        {
+          id: "S15", track: "senior", category: "销售实战", frequency: "常见",
+          question: "竞争对手价格低百分之三十，客户要求你匹配，你会怎么处理？",
+          intent: "判断你能否保护价值、理解竞争差异，并进行有条件交换。",
+          answer: "我不会马上讨论折扣，先确认客户比较的是不是同一范围和结果。我会拆分产品能力、模型与用量成本、集成、治理、支持、上线时间和采用责任，找出价格差异背后的范围差异。若我们的优势确实能降低客户风险或更快实现价值，我会用商业案例和验证证据重构比较；若功能和结果接近，我会讨论范围、合同期限、预付、案例权利或分阶段部署等交换。例如客户要求降价百分之三十，我们最终通过缩小首年范围、签三年期并获得联合案例，把首年价格下调百分之十二，同时保留扩展单价。若价值不足以支持溢价，我会诚实调整，而不是用空泛“品质更好”坚持。",
+          structure: "确认可比范围 → TCO 与结果差异 → 证据重构 → 有条件交换 → 承认真实差距。",
+          pitfalls: "立刻匹配价格；贬低竞争对手；只讲品牌和功能；让步后没有换取任何承诺。"
+        },
+        {
+          id: "S16", track: "senior", category: "销售实战", frequency: "常见",
+          question: "讲一次重要谈判，你如何设定底线并交换条件？",
+          intent: "判断你是否有准备、顺序、内部协同和合同质量意识。",
+          answer: "一次三年订阅谈判中，客户同时要求降价、延长付款和增加定制。我在谈判前与财务、法务、交付分别确认价格、现金流、责任和资源底线，把条件分成可给、需交换和不可给三类。会上先确认客户真正优先的是首年预算，而不是总合同金额，于是我们设计分阶段席位增长，不直接降低长期单价。作为交换，客户接受三年期限、年度预付、标准实施范围和案例评审权。最终首年金额较原方案低百分之十，但合同总额和毛利达标，且没有留下无限定制义务。复盘中我发现法务介入仍偏晚，之后把责任与数据条款提前到商务方案阶段。",
+          structure: "谈判前底线 → 理解对方真实利益 → 条件组合 → 每次让步换回什么 → 结果和复盘。",
+          pitfalls: "只谈价格；没有内部授权；把对方立场当成真实利益；签约后把风险留给交付。"
+        },
+        {
+          id: "S17", track: "senior", category: "复盘成长", frequency: "高频",
+          question: "讲一笔你输掉的交易。你应负什么责任？",
+          intent: "判断自我觉察、诚实程度、学习机制和是否会把失败归因于客户或价格。",
+          answer: "我输过一家金融客户的知识平台项目，合同约四百万元。表面原因是竞争对手价格低，但我的主要责任有两点：第一，我把数字化负责人当作 Champion，却没有验证他能否接触经济买家；第二，我过早投入 POC，技术评分很高，但没有共同确认业务基线和采购理由。进入采购后，项目被当作可替代工具，价格自然成为主导。输单后，我和团队复盘了关系与资格证据，新增两项规则：没有经济买家认可的问题和明确 POC 后决策，不进入正式试点；每周预测必须区分联系人热情与组织承诺。之后两个季度，我们主动退出了三笔类似伪机会，并把方案资源集中到有业务 owner 的项目。失败的价值不在于讲得坦然，而在于机制真的改变。",
+          structure: "交易与损失 → 自己的两项责任 → 错误如何发生 → 机制改进 → 后续可见结果。",
+          pitfalls: "归因客户没预算、竞争对手太便宜；说“没有真正失败”；只讲感受，没有流程改变。"
+        },
+        {
+          id: "S18", track: "senior", category: "销售实战", frequency: "高频",
+          question: "你如何做销售预测？什么情况下会把机会放进 Commit？",
+          intent: "判断预测是否基于客户证据、历史基准和风险，而不是主观信心。",
+          answer: "我把预测分成客户证据、过程基准和风险情景三层。客户证据包括经济买家认可采购理由、明确决策标准、Champion 持续推动、技术与安全关键问题关闭、双方行动计划有日期和责任人，以及商业条款进入可控范围。过程基准看同类交易的阶段转化、剩余动作和历史周期。风险情景则问如果某个关键事件延期，季度内是否仍能完成。只有客户已完成关键行动、剩余步骤和时间真实可行，我才放进 Commit。一次机会虽然客户口头说本月签，但安全评审尚未排期，我把它留在 Best Case；最终确实延后。准确预测不是保守报数，而是让团队能据此配置资源并尽早采取动作。",
+          structure: "客户证据 → 历史基准 → 风险情景 → Commit 门槛 → 一个坚持纪律的例子。",
+          pitfalls: "按销售阶段自动 Commit；以客户口头承诺代替行动；为满足数字不降级；只给结果不讲风险。"
+        },
+        {
+          id: "S19", track: "senior", category: "客户推进", frequency: "常见",
+          question: "签约以后，你如何推动采用、续约和扩展？",
+          intent: "判断你是否承担收入质量和客户结果，而不是合同后立刻移交。",
+          answer: "我在签约前就和客户成功、交付及业务 owner 共同定义 30/60/90 天计划。三十天看技术接入、首批用户和培训；六十天看核心工作流中的使用频率、质量和障碍；九十天看业务指标、管理支持和扩展条件。我保留销售角色，不替代交付，但负责确保原采购理由没有丢失。一个分析平台项目签约后，登录率很高但关键报告使用低，我们访谈发现产品没有嵌入周会流程。通过重新设计模板和经理例会，八周内核心报告周使用率从百分之二十五升到百分之六十八。达到成功门槛后，业务负责人支持扩展到第二部门。续约与扩展不是临近合同到期才开始，而是从第一批可见结果开始。",
+          structure: "签约前成功计划 → 30/60/90 指标 → 销售的持续角色 → 采用障碍与动作 → 扩展触发。",
+          pitfalls: "只看登录人数；完全交给客户成功；没有业务指标；到续约前一个月才联系客户。"
+        },
+        {
+          id: "S20", track: "senior", category: "AI理解", frequency: "高频",
+          question: "你在自己的销售工作中怎样使用 AI？如何确保结果可靠？",
+          intent: "判断 AI fluency 是否体现在真实工作方式中，以及你是否有数据和质量意识。",
+          answer: "我把 AI 用在四类低风险、高重复任务：账户公开信息整理、会前问题初稿、会议纪要结构化和跟进材料草拟。以账户研究为例，我先限定公开来源和时间范围，让模型输出事实、来源与假设三栏，再逐条打开原始链接核验；涉及联系人、财务数字和竞争判断的内容必须人工确认。会后我让 AI 按客户目标、风险、承诺、责任人和日期整理，但最终由我对照录音或笔记修正，再更新 CRM。我不会把客户机密直接放入未经批准的公共工具，也不会让 AI 自动发送对外邮件。结果是每个账户准备时间从约九十分钟降到四十分钟，但质量标准没有降低。我把节省的时间用于更多客户访谈和内部协调。",
+          structure: "使用场景 → 一个具体流程 → 校验与数据边界 → 量化效率 → 时间重新投入到哪里。",
+          pitfalls: "只列工具名；声称完全自动化；忽略机密数据；没有说明如何核验错误。"
+        },
+        {
+          id: "S21", track: "senior", category: "岗位动机", frequency: "高频",
+          question: "如果录用，你的 30/60/90 天计划是什么？",
+          intent: "判断你能否平衡学习、内部协作、Pipeline 和客户结果，且承诺现实。",
+          answer: "前三十天我会完成产品、架构、安全和销售流程认证，跟听十次客户会议，访谈产品、方案、部署和客户成功负责人，并复盘十笔赢单与输单，最终产出 ICP、常见用例、竞争和资格标准地图。三十一到六十天，我会接管目标账户，完成二十份分层账户计划，启动首批发现会议，与方案团队共同形成两到三个合格机会，同时用周复盘校准话术和技术边界。六十一到九十天，我的目标是建立可审查的 Pipeline，其中至少一笔进入有客户承诺的技术或商业验证，并交付一项团队可复用资产，例如行业发现问题或 POC 章程。具体金额要根据区域、周期和现有 Pipeline 校准，我不会在不了解基线时承诺不现实的季度签约。",
+          structure: "30 天学习与关系 → 60 天账户与发现 → 90 天合格 Pipeline 和可见资产 → 对数字承诺的合理边界。",
+          pitfalls: "第一月就承诺大单；只有学习没有客户动作；只有活动量没有质量；计划与公司阶段无关。"
+        },
+        {
+          id: "S22", track: "senior", category: "复盘成长", frequency: "常见",
+          question: "你当前最需要提升的一项能力是什么？你正在怎么做？",
+          intent: "判断自我认知是否真实、是否影响岗位核心，以及你是否用具体行动改善。",
+          answer: "我需要提升的是与技术团队讨论 AI 评测和生产风险的深度。过去卖成熟 SaaS 时，产品边界较固定，我更擅长业务发现和商业推进；进入 AI 项目后，如果只依赖方案顾问，可能无法在早期识别错误的 POC 目标。为此我做了三件事：系统学习 RAG、Agent 和 Evals；用公开文档搭建知识库并设计二十道评测题；每周请一名工程师审查我的方案图和风险清单。目前我已经能独立完成第一轮技术发现，并知道哪些问题必须升级给专家。我的目标不是替代方案顾问，而是更早发现风险、减少内部返工。选择这项作为短板，是因为它真实影响 AI 销售质量，而且我已经有可检查的进步路径。",
+          structure: "真实且相关的短板 → 为什么重要 → 三个行动 → 当前进步 → 合理目标边界。",
+          pitfalls: "把优点包装成缺点；选择与岗位无关的弱点；只有计划没有行动；声称很快成为技术专家。"
+        },
+        {
+          id: "M01", track: "manager", category: "管理加试", frequency: "高频",
+          question: "如果让你从零建立 AI 销售团队，你会怎样选择市场并设计 GTM？",
+          intent: "判断战略取舍、验证节奏、资源意识和是否会把“所有企业”当目标客户。",
+          answer: "我会先用五项条件筛选细分市场：问题强度和预算、数据与流程条件、产品差异、交付成本、成功案例可复制性。前六十天不急于扩团队，而是和产品、方案及部署共同验证两到三个优先 ICP 和用例，明确谁不卖、什么条件退出。每个细分市场建立统一假设：触发事件、业务 owner、价值基线、技术门槛、销售周期和扩展路径。早期指标不只看签约，还看高质量发现、技术验证转生产、上线时间和采用。验证出可重复模式后，再设计区域、伙伴和招聘。例如客服 Agent 可能先选择有大量数字渠道、知识基础较好且业务 owner 清晰的企业，而不是所有客服中心。我的原则是先找到可重复问题，再扩大覆盖。",
+          structure: "筛选五项 → 小规模验证 → 明确 ICP 与退出 → 早期指标 → 证明可复制后扩张。",
+          pitfalls: "先按行业规模招人；同时进入太多市场；只用签约验证；忽略部署成本和产品成熟度。"
+        },
+        {
+          id: "M02", track: "manager", category: "管理加试", frequency: "高频",
+          question: "你会怎样招聘和识别优秀的 AI 销售？",
+          intent: "判断是否有结构化画像和证据标准，而不是按背景光环或个人感觉招聘。",
+          answer: "我会把标准分为四层：复杂销售基本功、AI 技术流利度、从 POC 到采用的客户经营、学习与使用 AI 的证据。面试采用结构化题目和统一评分：复杂交易要追问角色、动作、数字与失败；技术部分要求候选人用白板解释 RAG、Agent 和评测；案例部分给一个模糊客户需求，让他做发现和资格判断；最后查看近期 AI 作品，而不是只看证书。背景上我不会只招同类厂商人员，行业专家、云和数据平台销售都可能适合，但必须证明学习速度和跨职能协作。录用后用 30/60/90 天标准验证产品认证、客户会议、账户计划和首批合格机会。",
+          structure: "四层画像 → 结构化验证 → 现场案例 → 扩大人才来源但不降低证据 → 入职后验证。",
+          pitfalls: "只招竞品销售；过度看人脉；把会用 ChatGPT 当 AI fluency；面试官各自凭感觉。"
+        },
+        {
+          id: "M03", track: "manager", category: "管理加试", frequency: "高频",
+          question: "一名资深销售连续两个季度不达标，你会如何诊断和辅导？",
+          intent: "判断你能否区分市场、Pipeline、技能、执行和意愿问题，并做有期限的管理决定。",
+          answer: "我先用数据和现场观察区分根因，而不是直接要求增加活动量。看区域容量、有效账户覆盖、阶段转化、销售周期、机会质量和客户承诺；再旁听发现与推进会议，判断是账户选择、发现、资格、多线程、价值还是谈判问题。假设发现他会议很多但机会长期停在 POC，且没有经济买家和生产计划，我会把改进目标定义为：四周内对现有机会重新资格，退出伪机会；新 POC 必须有业务 owner、通过阈值和后续决策；每周做一次电话复盘。我提供示范、陪访和方案资源，同时明确六十天结果门槛。若技能和行为改善但市场假设错误，我调整区域；若有能力却不执行，则进入正式绩效管理。教练不是无限延长，而是让问题、支持、期限和后果都清楚。",
+          structure: "数据诊断 → 现场观察 → 明确技能或行为问题 → 有期限的行动与支持 → 根据证据做决定。",
+          pitfalls: "只看结果数字；要求多打电话；把资深等同于不可教练；没有时间边界和后果。"
+        },
+        {
+          id: "M04", track: "manager", category: "管理加试", frequency: "高频",
+          question: "你怎样建立可靠的 Pipeline 和预测机制？",
+          intent: "判断你是否把预测变成客户证据、管理动作和资源配置系统。",
+          answer: "我会先定义每个阶段的客户行为和退出条件，例如从发现进入验证，必须有业务问题、基线、owner、技术假设和客户资源承诺；从验证进入商业阶段，必须有通过结果、经济买家认可、生产差距和决策流程。周预测不逐笔听故事，而是审查新增、推进、停滞、降级和退出，并区分 Commit、Best Case 与 Pipeline 的证据。管理层同时看覆盖率、转化、阶段停留和来源质量，避免只盯季度末金额。预测偏差后做机制复盘：是阶段定义、销售判断、客户事件还是管理压力造成。我的目标不是让所有人报得保守，而是让数字能驱动方案资源、招聘和交付准备。",
+          structure: "阶段证据 → 周度审查 → 三层预测 → 漏斗指标 → 偏差复盘 → 资源决策。",
+          pitfalls: "用 CRM 阶段代替证据；季度末才清理；逼销售报 Commit；预测和资源配置脱节。"
+        },
+        {
+          id: "M05", track: "manager", category: "管理加试", frequency: "常见",
+          question: "销售、产品、方案和部署团队发生冲突时，你如何处理？",
+          intent: "判断你能否围绕客户结果澄清事实、责任和决策，而不是只维护销售团队。",
+          answer: "我先把冲突从“谁不配合”改写成客户里程碑和风险。例如销售承诺四周上线，部署认为至少十周，我会要求列出数据、集成、安全、资源和采用五类前提，区分事实、假设和缺失决策。然后确认谁对范围、技术可行性、商业承诺和交付时间负责，必要时由明确的决策人裁决。一次项目中，我们最终把上线分成低风险工作流和高风险集成两阶段，销售保住客户时间目标，部署避免不可控承诺，并把变更机制写入行动计划。事后我会修改流程，例如在报价前增加生产就绪评审。解决一次冲突不够，必须降低同类冲突复发。",
+          structure: "回到客户里程碑 → 拆事实与假设 → 明确责任和决策人 → 设计可执行方案 → 改变机制。",
+          pitfalls: "默认销售优先；把问题升级给老板后不复盘；只调解情绪；不修正承诺流程。"
+        },
+        {
+          id: "M06", track: "manager", category: "管理加试", frequency: "常见",
+          question: "你如何把一两个明星销售的打法复制到整个团队？",
+          intent: "判断你是否会提取可观察行为、资产和训练机制，而不是简单要求别人模仿。",
+          answer: "我不会复制明星的个人风格，而是提取可观察、可训练、与结果相关的行为。先比较三类样本：赢单、输单和高采用客户，找出稳定差异，例如是否更早接触经济买家、是否在 POC 前确认生产路径、是否用客户基线做商业案例。然后把行为固化成少量资产：发现问题、资格标准、角色地图、POC 章程和谈判交换清单；通过真实机会训练，而不是只开课堂。最后设采用指标，例如资产使用率、阶段转化和 POC 到生产比例，并允许团队根据客户反馈修改。若资产没人使用，我会先检查它是否增加负担或脱离现场，而不是责怪销售。复制的目标是缩小表现差异，同时保留个人优势。",
+          structure: "比较样本 → 提取行为 → 固化少量资产 → 真实机会训练 → 用结果和采用迭代。",
+          pitfalls: "录一场明星分享就结束；复制话术而非判断；资产越多越好；只统计培训参加人数。"
+        }
+      ];
+
+      function loadState() {
+        try {
+          const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+          Object.assign(state, saved);
+          if (!profiles[state.role]) state.role = "senior";
+          if (!plans[state.plan]) state.plan = "14";
+          if (!["senior", "manager"].includes(state.track)) state.track = "senior";
+          if (!state.done || typeof state.done !== "object") state.done = {};
+        } catch {
+          localStorage.removeItem(STORAGE_KEY);
+        }
+      }
+
+      function saveState() {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      }
+
+      function renderProfile() {
+        const profile = profiles[state.role];
+        $("#profileTitle").textContent = profile.title;
+        $("#profileSummary").textContent = profile.summary;
+        $$(".tab-button").forEach(button => {
+          const selected = button.dataset.role === state.role;
+          button.setAttribute("aria-selected", String(selected));
+          button.tabIndex = selected ? 0 : -1;
+        });
+        $("#competencyList").innerHTML = profile.competencies.map((item, index) => `
+          <details ${index === 0 ? "open" : ""}>
+            <summary>
+              <span class="summary-index">${String(index + 1).padStart(2, "0")}</span>
+              <span>${item.name}<span class="summary-sub">${item.subtitle}</span></span>
+            </summary>
+            <div class="details-body">
+              <div class="standard-grid">
+                <article class="standard-block"><strong class="block-label">达到什么标准</strong><p>${item.standard}</p></article>
+                <article class="standard-block"><strong class="block-label">面试准备什么证据</strong><p>${item.evidence}</p></article>
+                <article class="standard-block"><strong class="block-label">业务价值与训练方法</strong><p><strong>价值：</strong>${item.value}<br><strong>训练：</strong>${item.practice}</p></article>
+              </div>
+            </div>
+          </details>
+        `).join("");
+        saveState();
+      }
+
+      function renderSyllabus() {
+        $("#syllabus").innerHTML = syllabus.map((module, index) => `
+          <details class="module" ${index === 0 ? "open" : ""}>
+            <summary>
+              <span class="summary-index">${module.code}</span>
+              <span>${module.title}<span class="module-level">${module.level}</span></span>
+            </summary>
+            <div class="details-body">
+              <div class="lesson-path">
+                <div class="lesson-step"><strong>先学什么</strong><p>${module.learn}</p></div>
+                <div class="lesson-step"><strong>必须会讲</strong><p>${module.explain}</p></div>
+                <div class="lesson-step"><strong>照着练习</strong><p>${module.practice}</p></div>
+                <div class="lesson-step"><strong>完成标志</strong><p>${module.proof}</p></div>
+              </div>
+            </div>
+          </details>
+        `).join("");
+      }
+
+      function renderGlossary() {
+        const query = $("#glossarySearch").value.trim().toLowerCase();
+        const matches = glossary.filter(([term, description]) => `${term} ${description}`.toLowerCase().includes(query));
+        $("#glossaryCount").textContent = `${matches.length} / ${glossary.length}`;
+        $("#glossary").innerHTML = matches.length
+          ? matches.map(([term, description]) => `<article><h3>${term}</h3><p>${description}</p></article>`).join("")
+          : `<div class="empty-state">没有匹配术语，请换一个关键词。</div>`;
+      }
+
+      function renderPlan() {
+        const plan = plans[state.plan];
+        $("#planTitle").textContent = plan.title;
+        $("#planDescription").textContent = plan.description;
+        $$(".segment-button").forEach(button => {
+          button.setAttribute("aria-pressed", String(button.dataset.plan === state.plan));
+        });
+        $("#roadmap").innerHTML = plan.tasks.map(task => {
+          const done = Boolean(state.done[task.id]);
+          return `
+            <article class="task-card" data-done="${done}">
+              <div class="task-head">
+                <input type="checkbox" id="task-${task.id}" data-task="${task.id}" ${done ? "checked" : ""} aria-label="标记完成：${task.title}">
+                <label for="task-${task.id}">
+                  <h3>${task.title}</h3>
+                  <small>${task.day}</small>
+                </label>
+                <span class="task-time">${task.time}</span>
+              </div>
+              <div class="task-content">
+                <div><strong>学习重点</strong><p>${task.learn}</p></div>
+                <div><strong>具体动作</strong><p>${task.do}</p></div>
+                <div><strong>必须留下的交付物</strong><p>${task.output}</p></div>
+              </div>
+            </article>
+          `;
+        }).join("");
+        $$("[data-task]", $("#roadmap")).forEach(input => {
+          input.addEventListener("change", () => {
+            state.done[input.dataset.task] = input.checked;
+            saveState();
+            renderPlan();
+          });
+        });
+        const completed = plan.tasks.filter(task => state.done[task.id]).length;
+        const percent = plan.tasks.length ? (completed / plan.tasks.length) * 100 : 0;
+        $("#planProgressText").textContent = `完成 ${completed} / ${plan.tasks.length}`;
+        $("#planProgressBar").style.width = `${percent}%`;
+        saveState();
+      }
+
+      function getFilteredQuestions() {
+        const query = state.questionSearch.trim().toLowerCase();
+        return questions.filter(item => {
+          const trackMatch = item.track === state.track;
+          const categoryMatch = state.category === "all" || item.category === state.category;
+          const searchMatch = !query || `${item.question} ${item.intent} ${item.answer} ${item.structure} ${item.pitfalls}`.toLowerCase().includes(query);
+          return trackMatch && categoryMatch && searchMatch;
+        });
+      }
+
+      function renderQuestions() {
+        $$(".track-filter").forEach(button => {
+          button.setAttribute("aria-pressed", String(button.dataset.track === state.track));
+        });
+        $$(".category-filter").forEach(button => {
+          button.setAttribute("aria-pressed", String(button.dataset.category === state.category));
+        });
+        $("#questionSearch").value = state.questionSearch;
+        const items = getFilteredQuestions();
+        $("#questionCount").textContent = `${items.length} 题`;
+        $("#questionList").innerHTML = items.length
+          ? items.map((item, index) => `
+              <details class="question-item">
+                <summary>
+                  <span class="question-code">${item.id}</span>
+                  <span class="question-title">${item.question}
+                    <span class="question-meta"><span>${item.frequency}</span><span>${item.category}</span></span>
+                  </span>
+                </summary>
+                <div class="question-body">
+                  <div class="interviewer-intent"><strong>面试官在判断：</strong>${item.intent}</div>
+                  <article class="sample-answer">
+                    <strong class="block-label">示范回答</strong>
+                    <p>${item.answer}</p>
+                  </article>
+                  <div class="answer-review">
+                    <div><strong>回答结构</strong><p>${item.structure}</p></div>
+                    <div><strong>低质量回答警示</strong><p>${item.pitfalls}</p></div>
+                  </div>
+                </div>
+              </details>
+            `).join("")
+          : `<div class="empty-state">当前筛选没有题目，请切换类别或清除搜索。</div>`;
+        if (!items.some(item => item.id === state.mockId)) {
+          state.mockId = items[0]?.id || null;
+          renderMock(false);
+        }
+        saveState();
+      }
+
+      function renderMock(openAnswer = false) {
+        const pool = getFilteredQuestions();
+        const item = pool.find(question => question.id === state.mockId) || pool[0];
+        if (!item) {
+          $("#mockMeta").textContent = "当前没有可抽取的问题";
+          $("#mockQuestion").textContent = "请调整题库筛选条件。";
+          $("#mockAnswer").innerHTML = "";
+          $("#mockAnswer").dataset.open = "false";
+          return;
+        }
+        state.mockId = item.id;
+        $("#mockMeta").textContent = `${item.track === "senior" ? "中高级销售" : "销售管理者"} · ${item.category} · ${item.frequency}`;
+        $("#mockQuestion").textContent = item.question;
+        $("#mockAnswer").innerHTML = `<p><strong>先检查是否覆盖：</strong>${item.structure}</p><p><strong>面试官在判断：</strong>${item.intent}</p>`;
+        $("#mockAnswer").dataset.open = String(openAnswer);
+        $("#revealAnswer").textContent = openAnswer ? "收起提示" : "查看提示";
+        saveState();
+      }
+
+      function pickNextQuestion() {
+        const pool = getFilteredQuestions();
+        if (!pool.length) return;
+        const currentIndex = pool.findIndex(item => item.id === state.mockId);
+        const offset = Math.max(1, Math.floor(Math.random() * pool.length));
+        const nextIndex = (currentIndex + offset) % pool.length;
+        state.mockId = pool[nextIndex].id;
+        renderMock(false);
+      }
+
+      function setupPretext() {
+        if (!window.Pretext) return;
+        const { prepare, layout, setLocale } = window.Pretext;
+        setLocale("zh-CN");
+        const prepared = new Map();
+        const elements = $$("[data-pretext]");
+
+        const prepareElement = element => {
+          const style = getComputedStyle(element);
+          prepared.set(element, prepare(element.textContent, style.font, { whiteSpace: style.whiteSpace }));
+        };
+
+        const relayout = () => {
+          for (const [element, handle] of prepared) {
+            const style = getComputedStyle(element);
+            const lineHeight = Number.parseFloat(style.lineHeight) || Number.parseFloat(style.fontSize) * 1.6;
+            const result = layout(handle, Math.max(1, element.clientWidth), lineHeight);
+            if (Number.isFinite(result.height) && result.height > 0) {
+              element.style.height = `${Math.ceil(result.height)}px`;
+            }
+          }
+        };
+
+        elements.forEach(element => {
+          prepareElement(element);
+          if (element.contentEditable === "true") {
+            new MutationObserver(() => {
+              prepareElement(element);
+              relayout();
+            }).observe(element, { childList: true, characterData: true, subtree: true });
+          }
+        });
+
+        const observer = new ResizeObserver(() => requestAnimationFrame(relayout));
+        observer.observe(document.body);
+        relayout();
+      }
+
+      function setupNavigation() {
+        const navLinks = $$(".chapter-nav a");
+        const sections = $$("main [data-section]");
+        const observer = new IntersectionObserver(entries => {
+          const visible = entries
+            .filter(entry => entry.isIntersecting)
+            .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+          if (!visible) return;
+          navLinks.forEach(link => {
+            link.setAttribute("aria-current", String(link.getAttribute("href") === `#${visible.target.id}`));
+          });
+        }, { rootMargin: "-20% 0px -65% 0px", threshold: [0.05, 0.2, 0.5] });
+        sections.forEach(section => observer.observe(section));
+      }
+
+      function updateReadingProgress() {
+        const total = document.documentElement.scrollHeight - window.innerHeight;
+        const progress = total > 0 ? (window.scrollY / total) * 100 : 0;
+        $("#readingProgress").style.width = `${Math.min(100, Math.max(0, progress))}%`;
+      }
+
+      function copyText(text, button) {
+        let finished = false;
+        const done = () => {
+          if (finished) return;
+          finished = true;
+          const original = button.textContent;
+          button.textContent = "已复制";
+          setTimeout(() => { button.textContent = original; }, 1300);
+        };
+        if (navigator.clipboard && window.isSecureContext) {
+          navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+          setTimeout(() => {
+            if (!finished) fallbackCopy(text, done);
+          }, 500);
+        } else {
+          fallbackCopy(text, done);
+        }
+      }
+
+      function fallbackCopy(text, done) {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        textarea.remove();
+        done();
+      }
+
+      function applyTheme() {
+        document.documentElement.dataset.theme = state.theme;
+        $("#themeToggle").textContent = state.theme === "dark" ? "浅色" : "深色";
+      }
+
+      function bindEvents() {
+        $$(".tab-button").forEach(button => {
+          button.addEventListener("click", () => {
+            state.role = button.dataset.role;
+            renderProfile();
+          });
+        });
+
+        $$(".segment-button").forEach(button => {
+          button.addEventListener("click", () => {
+            state.plan = button.dataset.plan;
+            renderPlan();
+          });
+        });
+
+        $("#glossarySearch").addEventListener("input", renderGlossary);
+
+        $$(".track-filter").forEach(button => {
+          button.addEventListener("click", () => {
+            state.track = button.dataset.track;
+            state.category = state.track === "manager" ? "管理加试" : "all";
+            state.mockId = null;
+            renderQuestions();
+            renderMock(false);
+          });
+        });
+
+        $$(".category-filter").forEach(button => {
+          button.addEventListener("click", () => {
+            state.category = button.dataset.category;
+            state.mockId = null;
+            renderQuestions();
+            renderMock(false);
+          });
+        });
+
+        $("#questionSearch").addEventListener("input", event => {
+          state.questionSearch = event.target.value;
+          state.mockId = null;
+          renderQuestions();
+          renderMock(false);
+        });
+
+        $("#nextQuestion").addEventListener("click", pickNextQuestion);
+        $("#revealAnswer").addEventListener("click", () => {
+          const open = $("#mockAnswer").dataset.open !== "true";
+          renderMock(open);
+        });
+
+        $("#copyIntro").addEventListener("click", event => {
+          copyText($("#introDraft").textContent.trim(), event.currentTarget);
+        });
+
+        $("#themeToggle").addEventListener("click", () => {
+          state.theme = state.theme === "dark" ? "light" : "dark";
+          applyTheme();
+          saveState();
+        });
+
+        $("#printButton").addEventListener("click", () => window.print());
+
+        $("#resetPlan").addEventListener("click", () => {
+          if (!window.confirm("重置当前准备路线的完成记录？")) return;
+          plans[state.plan].tasks.forEach(task => delete state.done[task.id]);
+          saveState();
+          renderPlan();
+        });
+
+        $("#clearProgress").addEventListener("click", () => {
+          if (!window.confirm("清除所有学习清单进度和页面偏好？")) return;
+          localStorage.removeItem(STORAGE_KEY);
+          window.location.reload();
+        });
+
+        window.addEventListener("scroll", updateReadingProgress, { passive: true });
+        window.addEventListener("resize", updateReadingProgress);
+      }
+
+      async function init() {
+        loadState();
+        applyTheme();
+        renderProfile();
+        renderSyllabus();
+        renderGlossary();
+        renderPlan();
+        renderQuestions();
+        renderMock(false);
+        bindEvents();
+        setupNavigation();
+        updateReadingProgress();
+        if (document.fonts?.ready) await document.fonts.ready;
+        setupPretext();
+      }
+
+      init();
+    })();
+  </script>
+</body>
+</html>
