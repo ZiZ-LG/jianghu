@@ -349,7 +349,7 @@ docs/content/
 
   首批公开集合必须至少包含 30 条内容、6 个交叉专题和 8 个可执行工具；三个领域各至少 10 条，至少 12 条内容同时命中两个领域，所有最新条目必须有发布时间和一手或多源证据。
 
-- [ ] **Step 2: Define the source registry**
+- [x] **Step 2: Define the source registry**
 
   每个信源记录 `id`、`name`、`homepage`、`kind`、`authority`、`language`、`cadence`、`redistributionPolicy`、`active`。第一批只启用官方产品/研究、招聘页、公开研究机构、可信商业媒体和明确署名的一线实践者。
 
@@ -357,17 +357,19 @@ docs/content/
 
   先完成首批 30 条候选及逐条核验材料，比例固定为：10 条 AI 技术解释/更新、8 条复杂销售方法、6 条 AI 岗位变化、6 条组织转型与采用；至少 12 条包含“下一步行动”和配套工具链接。30 条内容、6 个专题和 8 个工具必须有完整中文；英文正文可缺省并明确标记，不阻塞该任务。全部候选完成后集中生成一次“30 条内容终审包”交项目所有者批量审核；审核前保持 `candidate`，不得伪装成 `approved` 或进入生产公开集合。等待审核时继续执行所有不依赖终审的页面、工具、测试与文档。
 
-- [ ] **Step 4: Document publication rules**
+- [x] **Step 4: Document publication rules**
 
   编辑政策必须写明：事实与推断分离、一手优先、双源校验条件、摘要长度、链接失效处理、纠错删除流程、AI 生成标识、商业授权边界和每季度失效审查。
 
 - [ ] **Step 5: Test and commit**
 
-  Run: `cd app && npm test -- stephen/src/content/content.test.ts`
+  Run: `cd app && npx vitest run --root stephen src/content/content.test.ts`
 
   Expected: PASS with all coverage and provenance rules satisfied；候选集合与公开集合严格分离，未经项目所有者批准的种子内容不会进入公开集合。
 
   Commit: `content(stephen): seed three-domain knowledge collection`
+
+  Source-governance evidence（2026-08-23）：已通过项目规定的 `/browse` 实时打开并核验 10 个公开信源；登记文件、编辑与版权规则已建立；Stephen 独立测试必须使用 `npx vitest run --root stephen ...`，因为 CRM 主 Vitest 配置仅包含 `app/src/**/*.test.ts`。
 
 ### Task 4: SAAS-602 实现今日、雷达、专题、工具与详情页
 
