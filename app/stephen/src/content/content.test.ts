@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { approvedKnowledgeItems, seedCandidates } from './items';
+import { seedCandidates } from './items';
+import { approvedKnowledgeItems } from './publicItems';
 import { sourceRegistry, validateSourceRegistry } from './sources';
 import { knowledgeTools } from './tools';
 import { knowledgeTopics } from './topics';

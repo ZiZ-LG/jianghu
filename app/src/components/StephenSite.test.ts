@@ -7,6 +7,12 @@ const siteUrl = fieldbookUrl;
 const shellIndexUrl = new URL('../../stephen/index.html', import.meta.url);
 const shellAppUrl = new URL('../../stephen/src/App.tsx', import.meta.url);
 const shellStylesUrl = new URL('../../stephen/src/styles.css', import.meta.url);
+const shellNavigationUrl = new URL('../../stephen/src/navigation.ts', import.meta.url);
+const shellI18nUrl = new URL('../../stephen/src/i18n.ts', import.meta.url);
+const todayPageUrl = new URL('../../stephen/src/pages/TodayPage.tsx', import.meta.url);
+const learnPageUrl = new URL('../../stephen/src/pages/LearnPage.tsx', import.meta.url);
+const knowledgeCardUrl = new URL('../../stephen/src/components/KnowledgeCard.tsx', import.meta.url);
+const publicItemsUrl = new URL('../../stephen/src/content/publicItems.ts', import.meta.url);
 const stephenConfigUrl = new URL('../../vite.stephen.config.ts', import.meta.url);
 const packageUrl = new URL('../../package.json', import.meta.url);
 const nginxUrl = new URL('../../../deploy/stephen.nginx.conf', import.meta.url);
@@ -146,6 +152,15 @@ describe('Stephen self-cultivation site', () => {
     const index = readRequiredFile(shellIndexUrl);
     const app = readRequiredFile(shellAppUrl);
     const styles = readRequiredFile(shellStylesUrl);
+    const publicItems = readRequiredFile(publicItemsUrl);
+    const shell = [
+      app,
+      readRequiredFile(shellNavigationUrl),
+      readRequiredFile(shellI18nUrl),
+      readRequiredFile(todayPageUrl),
+      readRequiredFile(learnPageUrl),
+      readRequiredFile(knowledgeCardUrl),
+    ].join('\n');
 
     expect(packageJson.scripts.build).toBe('vite build');
     expect(packageJson.scripts['build:stephen']).toBe('vite build --config vite.stephen.config.ts');
@@ -171,15 +186,18 @@ describe('Stephen self-cultivation site', () => {
       '大客户销售', 'Enterprise Sales',
       '岗位与组织转型', 'Roles & Organization',
     ]) {
-      expect(app).toContain(label);
+      expect(shell).toContain(label);
     }
-    expect(app).toContain('href="/fieldbook/"');
-    expect(app).toContain('1 / 7 / 30 / 90');
+    expect(shell).toMatch(/href=['"]\/fieldbook\/['"]/);
+    expect(shell).toContain('1 / 7 / 30 / 90');
     expect(app).toContain('京ICP备2026046195号-2');
     expect(app).toContain('自在创造（北京）智慧科技有限公司');
-    expect(app).toContain('Chinese content');
+    expect(shell).toContain('Chinese content');
     expect(app).toContain("document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en'");
     expect(app).not.toContain('/api/');
+    expect(app).toContain("from './content/publicItems'");
+    expect(app).not.toContain('seedCandidates');
+    expect(publicItems).not.toContain("from './items'");
     expect(styles).not.toMatch(/body\s*\{[^}]*overflow\s*:\s*hidden/s);
   });
 

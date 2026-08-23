@@ -550,7 +550,3 @@ export const seedCandidates = [
     verificationNotes: '保留 LinkedIn 平台数据与预测属性，不把 70% 解释为每个岗位都必然相同。',
   }),
 ] as const satisfies readonly SeedCandidate[];
-
-// The owner review gate is intentional: seed candidates never enter the public
-// collection until the project owner records an explicit decision per item.
-export const approvedKnowledgeItems: readonly SeedCandidate[] = [];

@@ -55,17 +55,14 @@ AIHOT 值得借鉴的不是栏目名称，而是底层内容加工方式：
 
 ## 产品信息架构
 
-桌面端一级栏目：
+桌面端与移动端一级栏目均固定为四项：
 
 1. `今日必读`：每天展示 3–5 条经过审核、与目标用户高度相关的变化。
-2. `三域雷达`：AI 技术、大客户销售、岗位与组织三个视角及其交叉筛选。
-3. `交叉专题`：围绕一个持续问题聚合事件、解释、方法和工具，例如 AI POC 到规模化、AI 采购委员会、Agent 商业化、AI 岗位能力地图。
-4. `方法工具`：访谈提纲、客户研究、价值假设、业务案例、POC 设计、采用计划、面试与转岗工具。
-5. `岗位与组织`：AI 商业岗位、职责变化、能力证据、组织采用与变革方法。
-6. `学习路径`：新知识库提供 1/7/30/90 天路线；现有完整手册放在 `/fieldbook/`，内部 3/7/14/30 天任务原样保留。
-7. `我的收藏`：本机收藏、已读和学习进度。
+2. `雷达专题`：承载 AI 技术、大客户销售、岗位与组织三个视角、交叉筛选、6 个专题及岗位与组织入口。
+3. `方法工具`：承载 8 个行动工具、1/7/30/90 天学习路径和完整旧手册入口。
+4. `我的收藏`：承载本机收藏、已读、工具进度和已完成材料。
 
-移动端底部导航只保留 `今日｜专题｜工具｜我的`，分别对应桌面端的 `今日必读｜雷达专题｜方法工具｜我的收藏`，其余入口放入对应栏目。
+移动端使用短标签 `今日｜专题｜工具｜我的`。专题页、岗位与组织页、学习页、工具页和详情页保留独立固定链接，但不增加平级一级导航。
 
 ## 内容对象与展示契约
 
@@ -162,7 +159,8 @@ app/
       App.tsx
       domain.ts                        # 内容契约
       content/
-        items.ts                       # 已审核内容
+        items.ts                       # 终审候选；不进入生产应用依赖图
+        publicItems.ts                 # 生产公开集合；只接收项目所有者已批准内容
         topics.ts                      # 交叉专题
         tools.ts                       # 方法工具
         sources.ts                     # 信源与授权登记
@@ -384,38 +382,42 @@ docs/content/
 - Create: `app/stephen/src/pages/TopicPage.tsx`
 - Create: `app/stephen/src/pages/ToolsPage.tsx`
 - Create: `app/stephen/src/pages/RolesPage.tsx`
+- Create: `app/stephen/src/pages/LearnPage.tsx`
 - Create: `app/stephen/src/pages/LibraryPage.tsx`
 - Create: `app/stephen/src/pages/ItemPage.tsx`
+- Create: `app/stephen/src/content/publicItems.ts`
 - Create: `app/stephen/src/navigation.ts`
 - Create: `app/stephen/src/navigation.test.ts`
 
 **Interfaces:**
-- Consumes: Task 3 review candidates for non-production preview；正式公开构建只消费项目所有者批准后的 public collection
-- Produces: stable paths `/`、`/radar/`、`/topics/:slug/`、`/tools/`、`/roles/`、`/learn/`、`/items/:slug/`
+- Consumes: Task 3 contracts、topics、tools 与独立的 production public collection；终审候选不进入生产应用依赖图
+- Produces: stable paths `/`、`/radar/`、`/topics/`、`/topics/:slug/`、`/tools/`、`/roles/`、`/learn/`、`/library/`、`/items/:slug/`
 
-- [ ] **Step 1: Write navigation and selection tests**
+- [x] **Step 1: Write navigation and selection tests**
 
   测试今日页显示 3–5 条、按编辑优先级与时间排序；不足 3 条高价值内容时允许少发而不是凑数；领域筛选采用 AND/OR 显式模式；不存在的 slug 返回站内 404；所有卡片都有 `whyItMatters`、`nextAction` 和证据入口。
 
-- [ ] **Step 2: Implement stable client-side routing without a new router dependency**
+- [x] **Step 2: Implement stable client-side routing without a new router dependency**
 
   复用轻量路径解析，支持浏览器前进/后退和可分享 URL；Nginx 继续用 `try_files ... /index.html` 回退。
 
-- [ ] **Step 3: Implement the content pages**
+- [x] **Step 3: Implement the content pages**
 
   首页先显示“今日 3–5 条”，再显示三域交叉专题和工具入口；详情页固定区分事实摘要、销售含义、岗位/组织含义、下一步行动和证据。
 
-- [ ] **Step 4: Add responsive navigation**
+- [x] **Step 4: Add responsive navigation**
 
-  桌面显示完整七栏目；375 px 宽度显示四项底部导航，内容不横向溢出，正文保持可滚动。
+  桌面显示四个一级入口；专题、岗位与组织、学习和详情通过所属栏目进入并保留固定链接。375 px 宽度显示四项底部导航，内容不横向溢出，正文保持可滚动。
 
-- [ ] **Step 5: Test, build and commit**
+- [x] **Step 5: Test, build and commit**
 
-  Run: `cd app && npm run typecheck && npm test -- stephen/src/navigation.test.ts && npm run build:stephen`
+  Run: `cd app && npm run typecheck && npx vitest run --root stephen src/navigation.test.ts && npm run build:stephen`
 
   Expected: PASS and all stable paths render from the production build.
 
-  Commit: `feat(stephen): ship three-domain knowledge experience`
+  Commit: `feat(SAAS-602): ship three-domain knowledge experience`
+
+  Page evidence（2026-08-23）：路由与选择测试先因缺少 `navigation.ts` 得到预期 RED，随后 6/6 通过；内容测试 5/5、Stephen TypeScript、主站 Stephen 保护测试和生产构建均通过。桌面一级导航严格保持四项，专题、岗位、学习和详情使用独立固定链接。浏览器实测 1280×720 与 375×812 无横向溢出，移动端四项导航、页面滚动、AND/OR 筛选、专题四段框架、详情证据、8 个工具和中英文外壳可用，控制台 0 错误；生产预览直接打开专题与工具固定链接返回 200。另在浏览器验证中发现“页面不显示候选但候选正文仍被打包”的隐性泄漏，随后以第二轮 RED → GREEN 增加 `publicItems.ts` 物理隔离：App 只静态导入生产公开集合，候选文件不在生产依赖图，构建产物不得含未终审正文。
 
 ### Task 5: SAAS-603 增加搜索、收藏、已读与学习状态
 
