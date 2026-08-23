@@ -2,15 +2,15 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
-> **Plan status:** `SYNCHRONIZED / SAAS-601_COMPLETE_AWAITING_OWNER_REVIEW`
+> **Plan status:** `SYNCHRONIZED / SAAS-601_COMPLETE / SAAS-602_IN_PROGRESS`
 >
-> **Current authorization:** `SAAS-601` 已完成并停止在产品所有者预览审核门。`SAAS-602`～`SAAS-604`、生产部署、流量切换、自动发布启用、`main` 合并和 CRM 变更均未授权。
+> **Current authorization:** `SAAS-601` 已完成。项目所有者已授权按 `SAAS-602 → SAAS-603 → SAAS-604` 持续形成发布候选；生产部署、流量切换、自动发布启用、`main` 合并和 CRM 变更仍未授权。
 >
 > **Execution isolation:** branch `codex/stephen-knowledge-hub`; worktree `/Volumes/PowerData/江湖APP/.worktrees/stephen-knowledge-hub`; base `e20e6f76407389aefbac35ca184efbb5c2f83852`.
 
 **Goal:** 将 `stephen.lake2ocean.top` 从单篇“AI 销售面试手册”升级为面向传统 To B 销售个人的“AI 技术 × 大客户销售 × AI 岗位与组织转型”行动型知识库，同时完整保留现有手册。
 
-**Architecture:** 第一版采用独立的 React/Vite 静态内容应用，不接入 CRM 后端、租户数据库或用户身份系统。首发 30 条结构化内容全部人工终审后随构建发布；现有单文件手册迁移到 `/fieldbook/` 作为常青内容。后续只有来自 6–10 个白名单公开信源、通过确定性校验的低风险事实更新，才可在停止开关、审计、回退和独立发布批准齐备后自动发布；中高风险、来源冲突、评论性或证据不足内容始终进入人工审核。本轮 `SAAS-601` 只建立契约与独立构建外壳，不实现或启用自动发布。
+**Architecture:** 第一版采用独立的 React/Vite 静态内容应用，不接入 CRM 后端、租户数据库或用户身份系统。首发 30 条结构化内容先保持候选状态，集中完成人工终审后才进入公开集合并随构建发布；现有单文件手册迁移到 `/fieldbook/` 作为常青内容。后续只有来自 6–10 个白名单公开信源、通过确定性校验的低风险事实更新，才可在停止开关、审计、回退和独立发布批准齐备后自动发布；中高风险、来源冲突、评论性或证据不足内容始终进入人工审核。自动发布默认关闭，本轮只形成发布候选，不启用生产发布。
 
 **Tech Stack:** React 18、TypeScript、Vite、Vitest、静态 JSON/TypeScript 内容、localStorage、Nginx、Docker、Let's Encrypt。
 
@@ -318,7 +318,7 @@ docs/content/
 
   Commit: `feat(stephen): add standalone knowledge hub shell`
 
-> **STOP GATE:** 完成上述两项并提交 `SAAS-601` 证据后必须停止。以下 `SAAS-602`～`SAAS-604` 仅保留为后续顺序计划，当前不得创建其内容、页面、状态、流水线、发布候选或生产部署。
+> **SAAS-601 GATE RECORD:** 上述两项已完成并留下验证证据。项目所有者随后授权继续执行 `SAAS-602`～`SAAS-604` 发布候选；生产部署、流量切换、自动发布启用、`main` 合并和 CRM 变更仍禁止。
 
 `SAAS-601` 完成证据（2026-08-23）：
 
@@ -353,9 +353,9 @@ docs/content/
 
   每个信源记录 `id`、`name`、`homepage`、`kind`、`authority`、`language`、`cadence`、`redistributionPolicy`、`active`。第一批只启用官方产品/研究、招聘页、公开研究机构、可信商业媒体和明确署名的一线实践者。
 
-- [ ] **Step 3: Author the first approved collection**
+- [ ] **Step 3: Author the first review collection**
 
-  首批 30 条内容全部经过人工终审，比例固定为：10 条 AI 技术解释/更新、8 条复杂销售方法、6 条 AI 岗位变化、6 条组织转型与采用；至少 12 条包含“下一步行动”和配套工具链接。30 条内容、6 个专题和 8 个工具必须有完整中文；英文正文可缺省并明确标记，不阻塞该任务。
+  先完成首批 30 条候选及逐条核验材料，比例固定为：10 条 AI 技术解释/更新、8 条复杂销售方法、6 条 AI 岗位变化、6 条组织转型与采用；至少 12 条包含“下一步行动”和配套工具链接。30 条内容、6 个专题和 8 个工具必须有完整中文；英文正文可缺省并明确标记，不阻塞该任务。全部候选完成后集中生成一次“30 条内容终审包”交项目所有者批量审核；审核前保持 `candidate`，不得伪装成 `approved` 或进入生产公开集合。等待审核时继续执行所有不依赖终审的页面、工具、测试与文档。
 
 - [ ] **Step 4: Document publication rules**
 
@@ -365,7 +365,7 @@ docs/content/
 
   Run: `cd app && npm test -- stephen/src/content/content.test.ts`
 
-  Expected: PASS with all coverage and provenance rules satisfied.
+  Expected: PASS with all coverage and provenance rules satisfied；候选集合与公开集合严格分离，未经项目所有者批准的种子内容不会进入公开集合。
 
   Commit: `content(stephen): seed three-domain knowledge collection`
 
