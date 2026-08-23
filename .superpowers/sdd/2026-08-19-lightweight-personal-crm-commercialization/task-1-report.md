@@ -274,3 +274,99 @@ git diff --check
 - compound direct executor 在 clone/plan 更新前先拒绝，测试同时断言数据库零写入。
 - standalone G64111/PDE 只提供本任务允许的 shell surface 与现有事项摘要，没有实现公式、读模型、表单或后续任务业务。
 - 唯一待复验项是修复后 Server full suite；生命周期继续保持 `IN_PROGRESS`。
+
+---
+
+## Fix Round 2/5 — permitted MCP policy 透传与真实 internal render smoke
+
+### 状态与提交
+
+- Round 2 修复完成；`SAAS-101` 继续保持 `IN_PROGRESS`。
+- 修复提交：`2a81cb7b4874cf92c5aa1e57ff5fe6e17718d227`（`fix(SAAS-101): restore permitted MCP writes`）。
+- 未 push、未 merge；无 schema、migration、部署、定价或后续任务改动。
+
+### 修复内容
+
+1. MCP 新增并实际使用共享 `executeMcpTool(ctx, name, args, policy)` 边界：
+   - capability 与 access-token scope 都在 dispatch 前检查；缺失、畸形或 Free policy 统一在任何查询／写入前拒绝；
+   - `upsert_account`、`upsert_opportunity`、`append_visit_note` 把同一服务端 policy 显式传到 `syncLegacyAccount / syncLegacyOpportunity / syncLegacyVisit`；三条路径自身再次 fail closed；
+   - permitted internal 与 commercial `sales.workspace` policy 正常执行 Account → Opportunity → Visit 连续写入；
+   - 旧的无调用 `upsertAccount / upsertOpportunity / appendVisitNote` 重复实现也改为必传 policy，所有 `applyMcpAction` 调用的 policy 参数从 optional 改为 required，防止未来恢复旧路径时再次漏门禁。
+2. App 新增薄层 `InternalRootAdapter` 并由 `App.tsx` 的真实 internal root 分支使用：
+   - adapter 只包裹现有 `CustomerHub / SyncStatus / GlobalDialogs / Footer`，没有复制或重写 legacy shell；
+   - `display: contents` 避免新包装层改变既有布局；
+   - smoke 使用 `renderToStaticMarkup` 真正渲染 `InternalRootAdapter + CustomerHub`，断言 internal 标记、Hub DOM 与旧标题可见，commercial policy 不挂载 internal adapter。
+
+### RED 证据
+
+```text
+cd server && DATABASE_URL=file:./test.db npx vitest run tests/mcp-capability-policy.test.ts
+```
+
+- exit 1；1 file / 5 tests failed，均为 `TypeError: executeMcpTool is not a function`。
+- RED 同时定义 internal 与 commercial sales-enabled 的三工具正向契约，以及 commercial Free、missing、malformed policy 对三工具的零写入契约。
+
+```text
+cd app && npm test -- --run src/components/InternalRootAdapter.test.tsx
+cd app && npm test -- --run src/components/InternalRootAdapter.test.ts
+```
+
+- 第一条 exit 1，确认仓库 Vitest 只包含 `src/**/*.test.ts`；保持测试内容不变改用 `.test.ts`。
+- 第二条 exit 1；suite 因 `Cannot find module './InternalRootAdapter'` 失败，建立真实 internal adapter render RED。
+
+### GREEN 与受影响验证
+
+```text
+cd app && npm test -- --run src/components/InternalRootAdapter.test.ts
+cd server && DATABASE_URL=file:./test.db npx vitest run tests/mcp-capability-policy.test.ts
+```
+
+- App：exit 0；1 file / 2 tests passed。
+- Server MCP policy：exit 0；1 file / 5 tests passed。
+
+```text
+cd app && npm run typecheck
+cd server && npm run typecheck
+```
+
+- 两项均 exit 0。
+
+```text
+cd app && npm test && npm run build
+```
+
+- exit 0；33 files / 250 tests passed；Vite production build 通过。
+- 仅有既有 Node `localStorage` experimental warning 与 Vite `>500 kB` chunk warning。
+
+```text
+cd server && DATABASE_URL=file:./test.db npx vitest run tests/mcp-capability-policy.test.ts tests/mcpBoundary.test.ts tests/mcp-sync-idempotency.test.ts tests/access-token-scope.test.ts tests/product-capabilities.test.ts
+```
+
+- exit 0；5 files / 61 tests passed。
+- 在把 `applyMcpAction` policy 改为 required 后又执行 `npm run typecheck` 与同一 5 files / 61 tests，仍全部 exit 0。
+
+```text
+rg -n "handleMcpBody\\(" server/src server/tests
+rg -n "executeMcpTool\\(|syncLegacy(Account|Opportunity|Visit)\\(|upsertAccount\\(|upsertOpportunity\\(|appendVisitNote\\(" server/src server/tests
+git diff --check
+```
+
+- 调用审计确认：生产 `handleMcpBody` 仅由 `server/src/app.ts` 调用并传 `product.policy`；测试调用显式传 internal/Free policy 或经 typed helper 传递。
+- `executeMcpTool` 仅由 MCP message handler 与新 focused test 调用；三条 active `syncLegacy*` 仅由该边界调用并接收 policy；三条旧 `upsert*` 定义当前无调用但其 nested Action 已全部要求 policy。
+- `git diff --check` exit 0。
+
+### Fix Round 2 文件
+
+- `server/src/mcpServer.ts`
+- `server/tests/mcp-capability-policy.test.ts`
+- `app/src/App.tsx`
+- `app/src/components/InternalRootAdapter.tsx`
+- `app/src/components/InternalRootAdapter.test.ts`
+- `app/src/styles.css`
+
+### 自审与关注
+
+- capability policy 仍只来自服务端 `buildApp` 装配，不读取 MCP 参数或客户端状态；access scope 与 capability 是交集关系。
+- Free／缺失／畸形 policy 的三工具负例逐个执行并断言 Account、Opportunity、Visit 均为 0；正例逐个断言三表各 1。
+- mounted smoke 渲染真实 `CustomerHub`，不是 selector-only；internal 旧标题、DOM 与 commercial 排除均有断言。
+- 控制器已在 Round 1 后以宿主权限独立验证 Server 57/57 files、436/436 tests；Round 2 后完整 Server suite 尚待控制器重跑，本报告不宣告 final full green。
