@@ -169,6 +169,7 @@ export interface ToolMaterial {
 }
 
 export interface LocalLibraryState {
+  readonly version: 1;
   readonly bookmarkedIds: readonly string[];
   readonly readIds: readonly string[];
   readonly toolMaterials: readonly ToolMaterial[];

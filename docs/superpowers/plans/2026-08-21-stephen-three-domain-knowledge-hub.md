@@ -425,32 +425,40 @@ docs/content/
 - Create: `app/stephen/src/components/SearchBox.tsx`
 - Create: `app/stephen/src/state/localLibrary.ts`
 - Create: `app/stephen/src/state/localLibrary.test.ts`
+- Create: `app/stephen/src/state/search.ts`
+- Create: `app/stephen/src/state/LibraryContext.tsx`
 - Modify: `app/stephen/src/App.tsx`
+- Modify: `app/stephen/src/components/KnowledgeCard.tsx`
+- Modify: `app/stephen/src/pages/RadarPage.tsx`
+- Modify: `app/stephen/src/pages/ToolsPage.tsx`
+- Modify: `app/stephen/src/pages/ItemPage.tsx`
 - Modify: `app/stephen/src/pages/LibraryPage.tsx`
 
 **Interfaces:**
 - Consumes: `KnowledgeItem[]`
 - Produces: `searchKnowledge(query, filters)`、`getLibraryState()`、`toggleBookmark(id)`、`markRead(id)`、`setToolProgress(id, state)`
 
-- [ ] **Step 1: Write failing state and search tests**
+- [x] **Step 1: Write failing state and search tests**
 
   测试中英文大小写无关搜索、标题/摘要/标签/行动命中、非法 localStorage 自动回退、删除不存在 ID 幂等，以及换版本后保留仍存在的收藏。
 
-- [ ] **Step 2: Implement versioned local state**
+- [x] **Step 2: Implement versioned local state**
 
-  使用 key `stephen-knowledge-library-v1`，保存 `bookmarkedIds`、`readIds`、`toolProgress` 和 `updatedAt`；页面明确提示本机数据不会跨设备同步。
+  使用 key `stephen-knowledge-library-v1`，保存 `bookmarkedIds`、`readIds`、带状态的 `toolMaterials` 和 `updatedAt`；页面明确提示本机数据不会跨设备同步。
 
-- [ ] **Step 3: Implement global search and personal library**
+- [x] **Step 3: Implement global search and personal library**
 
   搜索结果默认按相关性再按时间排序；“我的收藏”分为未读、已读、工具进行中、已完成材料和完整手册进度入口。工具材料必须能继续编辑、复制为纯文本并下载为 Markdown，只保存在本机；不提供作品集打包、公开主页、云端分享或 CRM 写入。
 
-- [ ] **Step 4: Test and commit**
+- [x] **Step 4: Test and commit**
 
-  Run: `cd app && npm test -- stephen/src/state/localLibrary.test.ts && npm run build:stephen`
+  Run: `cd app && npx vitest run --root stephen src/state/localLibrary.test.ts && npm run build:stephen`
 
   Expected: PASS.
 
-  Commit: `feat(stephen): add local search and learning library`
+  Commit: `feat(SAAS-603): add local search and learning library`
+
+  Local-library evidence（2026-08-23）：状态与搜索测试先因缺少 `localLibrary.ts` 得到预期 RED，随后 7/7 通过；覆盖中文字段、英文原文标题、AND/OR、损坏 JSON 恢复、跨版本有效 ID 保留、幂等收藏/已读、单工具材料更新、清除和安全 Markdown 文件名。生产浏览器实测搜索跳转与查询回显、本机逐字自动保存、进度改为完成、刷新后材料仍在、我的收藏归档、复制 API 被拒时的 legacy fallback、Markdown 下载触发、损坏存储恢复为空状态；375×812 输入区无横向溢出且控制台 0 错误。所有内容与工具状态仅写当前浏览器 `localStorage`，不访问 CRM、账号或运行时后端。
 
 ### Task 6: SAAS-603 建立每日编辑候选流程与摘要机制
 

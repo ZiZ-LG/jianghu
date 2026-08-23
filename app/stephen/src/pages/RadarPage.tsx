@@ -8,6 +8,7 @@ import {
 } from '../domain';
 import { domainLabels, localize, type Language } from '../i18n';
 import { filterKnowledgeItems } from '../navigation';
+import { searchKnowledge } from '../state/search';
 import Filters from '../components/Filters';
 import InternalLink from '../components/InternalLink';
 import KnowledgeCard from '../components/KnowledgeCard';
@@ -17,16 +18,22 @@ export default function RadarPage({
   items,
   topics,
   language,
+  query,
 }: {
   readonly items: readonly SeedCandidate[];
   readonly topics: readonly KnowledgeTopic[];
   readonly language: Language;
+  readonly query: string;
 }) {
   const [selectedDomains, setSelectedDomains] = useState<KnowledgeDomain[]>([]);
   const [mode, setMode] = useState<'and' | 'or'>('and');
+  const searchedItems = useMemo(
+    () => searchKnowledge(items, query),
+    [items, query],
+  );
   const filteredItems = useMemo(
-    () => filterKnowledgeItems(items, { domains: selectedDomains, mode }),
-    [items, mode, selectedDomains],
+    () => filterKnowledgeItems(searchedItems, { domains: selectedDomains, mode }),
+    [mode, searchedItems, selectedDomains],
   );
 
   const toggleDomain = (domain: KnowledgeDomain) => {
@@ -70,6 +77,13 @@ export default function RadarPage({
         onClear={() => setSelectedDomains([])}
       />
 
+      {query && (
+        <p className='active-query' role='status'>
+          {language === 'zh' ? '当前搜索：' : 'Current search: '}
+          <strong>{query}</strong>
+        </p>
+      )}
+
       <section className='section-block' aria-labelledby='radar-result-title'>
         <div className='section-heading section-heading-row'>
           <div>
@@ -90,7 +104,9 @@ export default function RadarPage({
           <div className='empty-state'>
             <strong>{language === 'zh' ? '当前没有可公开内容' : 'No public item matches yet'}</strong>
             <p>
-              {selectedDomains.length > 0
+              {query
+                ? (language === 'zh' ? '尝试更短的关键词、原文岗位标题，或清除搜索。' : 'Try a shorter keyword, an original job title, or clear search.')
+                : selectedDomains.length > 0
                 ? (language === 'zh' ? '尝试清除筛选或切换 AND / OR。' : 'Clear filters or switch AND / OR.')
                 : (language === 'zh' ? '首批 30 条仍在项目所有者终审。' : 'The first 30 items remain under owner review.')}
             </p>

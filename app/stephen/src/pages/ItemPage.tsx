@@ -1,5 +1,8 @@
+import { useEffect } from 'react';
+
 import type { KnowledgeTool, KnowledgeTopic, SeedCandidate } from '../domain';
 import { domainLabels, isChineseFallback, localize, type Language } from '../i18n';
+import { useLibrary } from '../state/LibraryContext';
 import EvidenceBadge from '../components/EvidenceBadge';
 import InternalLink from '../components/InternalLink';
 
@@ -21,11 +24,15 @@ export default function ItemPage({
   readonly tools: readonly KnowledgeTool[];
   readonly language: Language;
 }) {
+  const { state, markRead, toggleBookmark } = useLibrary();
+  const bookmarked = state.bookmarkedIds.includes(item.id);
   const relatedTopics = topics.filter((topic) => item.topicSlugs.includes(topic.slug));
   const relatedTools = tools.filter((tool) => item.toolIds.includes(tool.id));
   const date = new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', {
     dateStyle: 'long',
   }).format(new Date(item.publishedAt));
+
+  useEffect(() => markRead(item.id), [item.id, markRead]);
 
   return (
     <article className='item-detail'>
@@ -54,6 +61,16 @@ export default function ItemPage({
       {isChineseFallback(item.title, language) && <span className='language-fallback'>Chinese content</span>}
       {item.originalTitle && <p className='original-title'>{item.originalTitle}</p>}
       <p className='lead'>{localize(item.summary, language)}</p>
+      <button
+        className='bookmark-detail'
+        type='button'
+        aria-pressed={bookmarked}
+        onClick={() => toggleBookmark(item.id)}
+      >
+        {bookmarked
+          ? (language === 'zh' ? '★ 已收藏' : '★ Bookmarked')
+          : (language === 'zh' ? '☆ 收藏这条内容' : '☆ Bookmark this item')}
+      </button>
 
       <div className='item-interpretation'>
         <section>

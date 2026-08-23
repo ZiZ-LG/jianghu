@@ -4,6 +4,7 @@ import { approvedKnowledgeItems } from './content/publicItems';
 import { knowledgeTools } from './content/tools';
 import { knowledgeTopics } from './content/topics';
 import InternalLink from './components/InternalLink';
+import SearchBox from './components/SearchBox';
 import type { Language } from './i18n';
 import {
   desktopNavigation,
@@ -22,15 +23,19 @@ import TodayPage from './pages/TodayPage';
 import ToolsPage from './pages/ToolsPage';
 import TopicPage from './pages/TopicPage';
 import TopicsPage from './pages/TopicsPage';
+import { LibraryProvider } from './state/LibraryContext';
 
 const productScope = {
   zh: 'AI 技术 × 大客户销售 × 岗位与组织转型',
   en: 'AI Technology × Enterprise Sales × Roles & Organization',
 } as const;
+const approvedItemIds = approvedKnowledgeItems.map((item) => item.id);
+const knowledgeToolIds = knowledgeTools.map((tool) => tool.id);
 
 function useBrowserLocation() {
   const readLocation = () => ({
     pathname: window.location.pathname,
+    search: window.location.search,
     hash: window.location.hash,
   });
   const [location, setLocation] = useState(readLocation);
@@ -80,6 +85,7 @@ export default function App() {
   const [language, setLanguage] = useState<Language>('zh');
   const location = useBrowserLocation();
   const route = useMemo(() => parseRoute(location.pathname), [location.pathname]);
+  const searchQuery = new URLSearchParams(location.search).get('q')?.trim() ?? '';
 
   useLayoutEffect(() => {
     const root = document.documentElement;
@@ -96,7 +102,7 @@ export default function App() {
       root.style.scrollBehavior = previousBehavior;
     });
     return () => window.cancelAnimationFrame(restoreFrame);
-  }, [location.hash, location.pathname]);
+  }, [location.hash, location.pathname, location.search]);
 
   useEffect(() => {
     document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en';
@@ -117,7 +123,14 @@ export default function App() {
           />
         );
       case 'radar':
-        return <RadarPage items={approvedKnowledgeItems} topics={knowledgeTopics} language={language} />;
+        return (
+          <RadarPage
+            items={approvedKnowledgeItems}
+            topics={knowledgeTopics}
+            language={language}
+            query={searchQuery}
+          />
+        );
       case 'topics':
         return <TopicsPage topics={knowledgeTopics} language={language} />;
       case 'topic': {
@@ -133,7 +146,13 @@ export default function App() {
       case 'learn':
         return <LearnPage language={language} />;
       case 'library':
-        return <LibraryPage language={language} />;
+        return (
+          <LibraryPage
+            items={approvedKnowledgeItems}
+            tools={knowledgeTools}
+            language={language}
+          />
+        );
       case 'item': {
         const item = getKnowledgeItemBySlug(approvedKnowledgeItems, route.slug);
         return item
@@ -146,7 +165,8 @@ export default function App() {
   })();
 
   return (
-    <div className='site-shell'>
+    <LibraryProvider itemIds={approvedItemIds} toolIds={knowledgeToolIds}>
+      <div className='site-shell'>
       <a className='skip-link' href='#main'>
         {language === 'zh' ? '跳到正文' : 'Skip to content'}
       </a>
@@ -169,6 +189,7 @@ export default function App() {
             </InternalLink>
           ))}
         </nav>
+        <SearchBox language={language} query={searchQuery} />
         <button
           className='language-toggle'
           type='button'
@@ -205,6 +226,7 @@ export default function App() {
           </InternalLink>
         ))}
       </nav>
-    </div>
+      </div>
+    </LibraryProvider>
   );
 }

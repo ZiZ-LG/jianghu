@@ -1,5 +1,6 @@
 import type { KnowledgeItem, SeedReview } from '../domain';
 import { domainLabels, isChineseFallback, localize, type Language } from '../i18n';
+import { useLibrary } from '../state/LibraryContext';
 import EvidenceBadge from './EvidenceBadge';
 import InternalLink from './InternalLink';
 
@@ -12,6 +13,9 @@ export default function KnowledgeCard({
   readonly item: DisplayItem;
   readonly language: Language;
 }) {
+  const { state, toggleBookmark, markRead } = useLibrary();
+  const bookmarked = state.bookmarkedIds.includes(item.id);
+  const read = state.readIds.includes(item.id);
   const date = new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', {
     year: 'numeric',
     month: 'short',
@@ -35,7 +39,10 @@ export default function KnowledgeCard({
         </p>
       )}
       <h3>
-        <InternalLink href={`/items/${encodeURIComponent(item.slug)}/`}>
+        <InternalLink
+          href={`/items/${encodeURIComponent(item.slug)}/`}
+          onClick={() => markRead(item.id)}
+        >
           {localize(item.title, language)}
         </InternalLink>
       </h3>
@@ -62,6 +69,18 @@ export default function KnowledgeCard({
             {language === 'zh' ? '（在新窗口打开原文）' : ' (opens source in a new tab)'}
           </span>
         </a>
+      </div>
+      <div className='card-actions'>
+        <button
+          type='button'
+          aria-pressed={bookmarked}
+          onClick={() => toggleBookmark(item.id)}
+        >
+          {bookmarked
+            ? (language === 'zh' ? '已收藏' : 'Bookmarked')
+            : (language === 'zh' ? '收藏' : 'Bookmark')}
+        </button>
+        <span>{read ? (language === 'zh' ? '已读' : 'Read') : (language === 'zh' ? '未读' : 'Unread')}</span>
       </div>
     </article>
   );
