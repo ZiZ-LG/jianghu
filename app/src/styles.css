@@ -75,9 +75,39 @@ select { font-family: inherit; }
 button.commercial-shell-row { cursor: pointer; }
 button.commercial-shell-row:hover { background: var(--hover); }
 .commercial-shell-row span:last-child { color: var(--faint); font-size: 12px; }
+.quick-capture { display: grid; gap: 16px; }
+.quick-capture-editor { min-inline-size: 0; margin: 0; padding: 0; border: 0; display: grid; gap: 16px; }
+.quick-capture-natural, .quick-capture-form, .quick-capture-draft, .quick-capture-readonly { padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2); color: var(--ink-2); }
+.quick-capture-natural { display: grid; gap: 8px; }
+.quick-capture-natural > label, .quick-capture-field { display: grid; gap: 6px; font-size: 14px; font-weight: 700; color: var(--ink-2); }
+.quick-capture-natural small, .quick-capture-hint { color: var(--muted); font-size: 12px; }
+.quick-capture-inline { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; }
+.quick-capture-inline textarea, .quick-capture-field input, .quick-capture-field select { width: 100%; min-height: 44px; border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; color: var(--ink); background: var(--panel); font-family: inherit; font-size: 16px; line-height: 1.4; }
+.quick-capture-inline textarea { resize: vertical; min-height: 58px; }
+.quick-capture-inline textarea:focus, .quick-capture-field input:focus, .quick-capture-field select:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+.quick-capture-form { display: grid; gap: 14px; background: var(--panel); }
+.quick-capture-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.quick-capture-field span { color: var(--danger); }
+.quick-capture-details { border-top: 1px solid var(--line); padding-top: 12px; }
+.quick-capture-details summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; color: var(--ink-2); font-size: 14px; font-weight: 700; }
+.quick-capture-details[open] { display: grid; gap: 12px; }
+.quick-capture-details[open] summary { margin-bottom: 12px; }
+.quick-capture-check { min-height: 44px; display: flex; align-items: center; gap: 8px; color: var(--ink-2); font-size: 14px; }
+.quick-capture-check input { width: auto; }
+.quick-capture-draft { display: grid; gap: 10px; border-color: var(--accent); background: var(--accent-soft); }
+.quick-capture-draft > div:not(.commercial-shell-actions) { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 10px; }
+.quick-capture-draft strong { color: var(--accent-ink); }
+.quick-capture-draft p { color: var(--ink-2); font-size: 12px; }
+.quick-capture-message { padding: 10px 12px; border-radius: 8px; font-size: 13px; }
+.quick-capture-message.error { color: var(--danger); border: 1px solid var(--danger); background: var(--panel); }
+.quick-capture-message.success { color: var(--accent-ink); border: 1px solid var(--accent); background: var(--accent-soft); }
+.quick-capture .btn { min-height: 44px; }
 @media (max-width: 640px) {
   .commercial-shell-header, .commercial-shell-nav { padding-left: 14px; padding-right: 14px; }
   .commercial-shell-panel { margin-top: 14px; padding: 18px; }
+  .quick-capture-grid, .quick-capture-inline { grid-template-columns: 1fr; }
+  .quick-capture-inline .btn { justify-self: start; }
+  .quick-capture-draft > div:not(.commercial-shell-actions) { grid-template-columns: 1fr; gap: 3px; }
 }
 .app-upper { display: flex; flex: 1; min-height: 0; position: relative; } /* 上半区：侧栏 + 画布并排；坞提出后列①落在左栏正下方。relative=右栏面板(.drawer)的定位锚——面板底边天然止于坞顶（第9刀） */
 

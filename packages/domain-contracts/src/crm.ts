@@ -52,6 +52,8 @@ export const CustomerV2Schema = z.object({
 
 export type CustomerV2 = z.infer<typeof CustomerV2Schema>;
 
+export const CUSTOMER_NAME_MAX_LENGTH = 120;
+
 const matterObject = z.object({
   id,
   customerId: id,
@@ -221,6 +223,7 @@ export type CommitmentV2 = z.infer<typeof CommitmentV2Schema>;
 
 const customerCreate = CustomerV2Schema.omit({ archivedAt: true, version: true }).extend({
   id: OpaqueEntityIdSchema,
+  name: z.string().trim().min(1).max(CUSTOMER_NAME_MAX_LENGTH),
   categoryKey: openKey.nullable().default(null),
   primaryOwnerUserId: id.nullable().default(null),
 });
@@ -406,6 +409,78 @@ export const CustomerCreateCommandSchema = command({
 });
 export type CustomerCreateCommand = z.infer<typeof CustomerCreateCommandSchema>;
 
+export const CreateCommitmentCommandSchema = command({
+  type: z.literal('CREATE_COMMITMENT'),
+  commitment: commitmentCreate,
+});
+
+export const QUICK_CAPTURE_TITLE_MAX_LENGTH = 200;
+
+const quickCaptureCommitmentCreate = z.object({
+  ...commitmentCreateFields,
+  title: z.string().trim().min(1).max(QUICK_CAPTURE_TITLE_MAX_LENGTH),
+  kind: z.literal('follow_up'),
+  scheduledAtUtc: instant,
+  dueAtUtc: z.null(),
+  isAllDay: z.literal(false),
+  localDate: z.null(),
+  source: z.literal('manual_quick_capture'),
+  sourceRef: z.null(),
+}).strict().superRefine((value, ctx) => {
+  validateSchedule(value, ctx);
+  validateConfirmationDeadline(value, value.confirmationStatus === 'pending' ? 'required' : 'forbidden', ctx);
+});
+
+const quickCaptureCommitmentCommandSchema = command({
+  type: z.literal('CREATE_COMMITMENT'),
+  commitment: quickCaptureCommitmentCreate,
+});
+
+const quickCaptureCustomerSchema = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('existing'), customerId: id }).strict(),
+  z.object({ mode: z.literal('create'), command: CustomerCreateCommandSchema }).strict(),
+]);
+
+/**
+ * One user-confirmed application command. Inline Customer creation and the
+ * customer-level Commitment must execute in one transaction; this schema is
+ * deliberately not part of CrmCommandSchema because it only composes the two
+ * existing formal domain commands.
+ */
+export const QuickCaptureCommandSchema = z.object({
+  customer: quickCaptureCustomerSchema,
+  commitment: quickCaptureCommitmentCommandSchema,
+}).strict().superRefine((value, ctx) => {
+  const customerId = value.customer.mode === 'existing'
+    ? value.customer.customerId
+    : value.customer.command.customer.id;
+  if (value.commitment.commitment.customerId !== customerId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['commitment', 'commitment', 'customerId'],
+      message: 'Quick Capture Customer and Commitment must match',
+    });
+  }
+  if (value.customer.mode === 'create') {
+    if (value.commitment.commitment.matterId !== null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['commitment', 'commitment', 'matterId'],
+        message: 'an inline new Customer cannot already have a Matter',
+      });
+    }
+    if (value.commitment.commitment.personId !== null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['commitment', 'commitment', 'personId'],
+        message: 'an inline new Customer cannot already have a Person',
+      });
+    }
+  }
+});
+
+export type QuickCaptureCommand = z.infer<typeof QuickCaptureCommandSchema>;
+
 export const CRM_COMMAND_TYPES = [
   'CREATE_CUSTOMER', 'UPDATE_CUSTOMER', 'ARCHIVE_CUSTOMER', 'RESTORE_CUSTOMER',
   'CREATE_MATTER', 'UPDATE_MATTER', 'TRANSFER_MATTER_OWNER', 'TRANSITION_MATTER_LIFECYCLE', 'REOPEN_MATTER',
@@ -444,7 +519,7 @@ const crmCommandSchemas = [
   command({ type: z.literal('RESTORE_MATTER'), ...versionedEntityCommand, matterId: id }),
   AddMatterParticipantCommandSchema,
   RemoveMatterParticipantCommandSchema,
-  command({ type: z.literal('CREATE_COMMITMENT'), commitment: commitmentCreate }),
+  CreateCommitmentCommandSchema,
   command({
     type: z.literal('RESCHEDULE_COMMITMENT'),
     ...scheduledCommitmentCommand,
@@ -520,3 +595,11 @@ export const CommitmentCommandReceiptSchema = z.object({
 }).strict();
 
 export type CommitmentCommandReceipt = z.infer<typeof CommitmentCommandReceiptSchema>;
+
+/** Non-sensitive replay summary for the atomic Quick Capture application command. */
+export const QuickCaptureCommandReceiptSchema = z.object({
+  customer: CustomerCommandReceiptSchema.nullable(),
+  commitment: CommitmentCommandReceiptSchema,
+}).strict();
+
+export type QuickCaptureCommandReceipt = z.infer<typeof QuickCaptureCommandReceiptSchema>;

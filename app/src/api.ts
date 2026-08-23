@@ -2,7 +2,12 @@ import type { Action } from './store';
 import type { AccountState, CommitmentCommand, CommitmentCommandReceipt, PipelineStage } from './types';
 import type { AiContextOptions, ContextManifest } from './aiContext';
 import { toWireAction } from './wireAction';
-import type { ProductAccess } from '@jianghu/domain-contracts';
+import {
+  QuickCaptureCommandReceiptSchema,
+  type ProductAccess,
+  type QuickCaptureCommand,
+  type QuickCaptureCommandReceipt,
+} from '@jianghu/domain-contracts';
 
 // 生产构建把 VITE_API_URL 设为空串 "" → 走同源相对路径 /api（由 Nginx 反代到后端）。
 // 开发未设(undefined) → 回退本地后端。用 ?? 而非 ||，确保空串不被误回退。
@@ -124,6 +129,39 @@ const commandReq = async <T>(path: string, opts: RequestInit, requestOptions: { 
     return request<T>(path, frozenOptions, requestOptions); // 固定认证头与 Idempotency-Key，重试不得跨会话。
   }
 };
+
+const invalidQuickCaptureResponse = (cause?: unknown): ApiError => new ApiError({
+  code: 'invalid_response',
+  message: '服务返回的快速记录结果无效，请刷新后确认正式记录。',
+  retryable: false,
+  cause,
+});
+
+function parseQuickCaptureResponse(
+  raw: unknown,
+  command: QuickCaptureCommand,
+): QuickCaptureCommandReceipt & { replayed: boolean } {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw invalidQuickCaptureResponse();
+  const { replayed, ...receiptValue } = raw as Record<string, unknown>;
+  if (typeof replayed !== 'boolean') throw invalidQuickCaptureResponse();
+  const parsed = QuickCaptureCommandReceiptSchema.safeParse(receiptValue);
+  if (!parsed.success) throw invalidQuickCaptureResponse(parsed.error);
+
+  const expectedCustomerId = command.customer.mode === 'existing'
+    ? command.customer.customerId
+    : command.customer.command.customer.id;
+  const expectedMatterId = command.commitment.commitment.matterId;
+  const customerReceiptMatches = command.customer.mode === 'existing'
+    ? parsed.data.customer === null
+    : parsed.data.customer?.customerId === expectedCustomerId;
+  if (!customerReceiptMatches
+    || parsed.data.commitment.commitmentId !== command.commitment.commitment.id
+    || parsed.data.commitment.customerId !== expectedCustomerId
+    || parsed.data.commitment.matterId !== expectedMatterId) {
+    throw invalidQuickCaptureResponse();
+  }
+  return { ...parsed.data, replayed };
+}
 export const newIdempotencyKey = (): string => crypto.randomUUID();
 
 export interface AuthResult {
@@ -256,6 +294,12 @@ export const api = {
     commandReq('/api/commands/commitment', {
       method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(command),
     }),
+  quickCapture: async (command: QuickCaptureCommand, idempotencyKey: string): Promise<QuickCaptureCommandReceipt & { replayed: boolean }> => {
+    const raw = await commandReq<unknown>('/api/commands/quick-capture', {
+      method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(command),
+    });
+    return parseQuickCaptureResponse(raw, command);
+  },
   demo: (): Promise<{ ok: true }> => req('/api/demo', { method: 'POST' }),
   archive: (target: 'account' | 'opportunity', id: string, reason: string): Promise<{ ok: true }> =>
     req('/api/archive', { method: 'POST', body: JSON.stringify({ target, id, reason }) }),

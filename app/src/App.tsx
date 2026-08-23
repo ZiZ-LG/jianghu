@@ -829,10 +829,15 @@ export default function App() {
           access={auth.product}
           pathname={commercialPath}
           accounts={state.accounts}
+          actorUserId={auth.user.id}
           readonly={readonly}
           onNavigate={navigateCommercial}
           onOpenLegacy={salesWorkspaceEnabled ? openAccount : () => setSyncErr('当前版本未启用复杂销售工作台')}
           onOpenTeam={() => setGlobalDialogOpen('team', true)}
+          onQuickCaptureSaved={async () => {
+            await refreshRenderedState();
+            if (sessionLease.isCurrent()) setSyncErr('');
+          }}
           onLogout={logout}
         />
         {syncErr && <div className="sync-toast">{syncErr}</div>}

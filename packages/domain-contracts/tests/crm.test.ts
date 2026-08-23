@@ -12,6 +12,8 @@ import {
   CustomerV2Schema,
   MatterOwnerAssignmentReportSchema,
   MatterV2Schema,
+  QuickCaptureCommandReceiptSchema,
+  QuickCaptureCommandSchema,
 } from '../src/index.js';
 
 const NEW_CUSTOMER_ID = 'customer_00000000000000000000000000000001';
@@ -271,6 +273,156 @@ describe('generic CRM commands', () => {
     };
     expect(CommitmentCommandReceiptSchema.safeParse(receipt).success).toBe(true);
     expect(CommitmentCommandReceiptSchema.safeParse({ ...receipt, title: '不得进入幂等摘要' }).success).toBe(false);
+  });
+
+  it('composes inline Customer and Commitment creation without permitting partial or cross-customer payloads', () => {
+    const commitment = {
+      type: 'CREATE_COMMITMENT' as const,
+      commitment: {
+        ...COMMITMENT_CREATE_INPUT,
+        customerId: NEW_CUSTOMER_ID,
+        matterId: null,
+        personId: null,
+        kind: 'follow_up',
+        source: 'manual_quick_capture',
+        sourceRef: null,
+      },
+    };
+    const createInline = {
+      customer: {
+        mode: 'create' as const,
+        command: {
+          type: 'CREATE_CUSTOMER' as const,
+          customer: {
+            id: NEW_CUSTOMER_ID,
+            name: '远山制造',
+            categoryKey: null,
+            primaryOwnerUserId: 'user-cao',
+          },
+        },
+      },
+      commitment,
+    };
+    expect(QuickCaptureCommandSchema.parse(createInline)).toEqual(createInline);
+    expect(QuickCaptureCommandSchema.safeParse({
+      ...createInline,
+      commitment: {
+        ...commitment,
+        commitment: { ...commitment.commitment, customerId: 'legacy-account-1' },
+      },
+    }).success).toBe(false);
+    expect(QuickCaptureCommandSchema.safeParse({
+      ...createInline,
+      commitment: {
+        ...commitment,
+        commitment: { ...commitment.commitment, matterId: 'legacy-opportunity-1' },
+      },
+    }).success).toBe(false);
+    expect(QuickCaptureCommandSchema.safeParse({
+      ...createInline,
+      commitment: {
+        ...commitment,
+        commitment: { ...commitment.commitment, title: '下'.repeat(201) },
+      },
+    }).success).toBe(false);
+    expect(QuickCaptureCommandSchema.safeParse({
+      ...createInline,
+      commitment: {
+        ...commitment,
+        commitment: { ...commitment.commitment, title: '下'.repeat(200) },
+      },
+    }).success).toBe(true);
+
+    const existing = {
+      customer: { mode: 'existing' as const, customerId: 'legacy-account-1' },
+      commitment: {
+        ...commitment,
+        commitment: { ...commitment.commitment, customerId: 'legacy-account-1' },
+      },
+    };
+    expect(QuickCaptureCommandSchema.safeParse(existing).success).toBe(true);
+    expect(QuickCaptureCommandSchema.safeParse({
+      ...existing,
+      commitment: { type: 'COMPLETE_COMMITMENT', customerId: 'legacy-account-1' },
+    }).success).toBe(false);
+
+    const receipt = {
+      customer: {
+        customerId: NEW_CUSTOMER_ID,
+        categoryKey: null,
+        primaryOwnerUserId: 'user-cao',
+        version: 0,
+        undoable: false,
+      },
+      commitment: {
+        commitmentId: NEW_COMMITMENT_ID,
+        customerId: NEW_CUSTOMER_ID,
+        matterId: null,
+        executionStatus: 'planned',
+        confirmationStatus: 'not_required',
+        version: 0,
+        scheduleVersion: 0,
+        nextCommitmentId: null,
+        linkedFromCommitmentId: null,
+        undoable: false,
+        repairCommands: ['RESCHEDULE_COMMITMENT', 'CANCEL_COMMITMENT'],
+      },
+    };
+    expect(QuickCaptureCommandReceiptSchema.safeParse(receipt).success).toBe(true);
+    expect(QuickCaptureCommandReceiptSchema.safeParse({ ...receipt, title: '不得进入幂等摘要' }).success).toBe(false);
+  });
+
+  it('keeps Quick Capture provenance and schedule fields authoritative', () => {
+    const valid = {
+      customer: { mode: 'existing' as const, customerId: 'legacy-account-1' },
+      commitment: {
+        type: 'CREATE_COMMITMENT' as const,
+        commitment: {
+          ...COMMITMENT_CREATE_INPUT,
+          customerId: 'legacy-account-1',
+          matterId: null,
+          personId: null,
+          kind: 'follow_up',
+          scheduledAtUtc: '2026-08-25T02:00:00Z',
+          dueAtUtc: null,
+          isAllDay: false,
+          localDate: null,
+          source: 'manual_quick_capture',
+          sourceRef: null,
+        },
+      },
+    };
+    expect(QuickCaptureCommandSchema.safeParse(valid).success).toBe(true);
+    for (const patch of [
+      { kind: 'meeting' },
+      { source: 'imported' },
+      { sourceRef: 'forged-source' },
+      { scheduledAtUtc: null },
+      { dueAtUtc: '2026-08-25T03:00:00Z' },
+      { isAllDay: true, localDate: '2026-08-25', scheduledAtUtc: null },
+    ]) {
+      expect(QuickCaptureCommandSchema.safeParse({
+        ...valid,
+        commitment: {
+          ...valid.commitment,
+          commitment: { ...valid.commitment.commitment, ...patch },
+        },
+      }).success).toBe(false);
+    }
+  });
+
+  it('bounds new Customer names at the shared command boundary', () => {
+    const customer = {
+      id: NEW_CUSTOMER_ID,
+      name: '客'.repeat(120),
+      categoryKey: null,
+      primaryOwnerUserId: 'user-cao',
+    };
+    expect(CustomerCreateCommandSchema.safeParse({ type: 'CREATE_CUSTOMER', customer }).success).toBe(true);
+    expect(CustomerCreateCommandSchema.safeParse({
+      type: 'CREATE_CUSTOMER',
+      customer: { ...customer, name: '客'.repeat(121) },
+    }).success).toBe(false);
   });
 
   it('lives beside, rather than widening, the 51-command legacy Action contract', () => {

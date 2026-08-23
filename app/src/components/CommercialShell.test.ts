@@ -8,10 +8,12 @@ const renderShell = (pathname: string, enabledEntitlements?: string[]) => render
   access: assembleProductAccess({ edition: 'commercial', ...(enabledEntitlements ? { enabledEntitlements } : {}) }),
   pathname,
   accounts: [],
+  actorUserId: 'user-cao',
   readonly: false,
   onNavigate: () => undefined,
   onOpenLegacy: () => undefined,
   onOpenTeam: () => undefined,
+  onQuickCaptureSaved: async () => undefined,
   onLogout: () => undefined,
 }));
 
@@ -24,12 +26,16 @@ describe('CommercialShell', () => {
     expect(html).not.toContain('G64111');
     expect(html).not.toContain('PDE');
 
-    for (const path of ['/today', '/customers', '/matters', '/quick-capture']) {
+    for (const path of ['/today', '/customers', '/matters']) {
       const routeHtml = renderShell(path);
       expect(routeHtml).toContain('data-product-panel');
       expect(routeHtml).toMatch(/<h1>[^<]+<\/h1>/);
       expect(routeHtml).toContain('commercial-shell-empty');
     }
+    const quickCaptureHtml = renderShell('/quick-capture');
+    expect(quickCaptureHtml).toContain('data-product-panel="quick-capture"');
+    expect(quickCaptureHtml).toContain('data-quick-capture-form="true"');
+    expect(quickCaptureHtml).not.toContain('前往客户');
   });
 
   it('renders every gated entry and its non-empty surface only when enabled', () => {

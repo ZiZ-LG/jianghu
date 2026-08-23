@@ -105,6 +105,7 @@ const serviceCapabilityRules: ReadonlyArray<{
       || pathname.startsWith('/api/archive/')
       || pathname === '/api/commands/customer'
       || pathname === '/api/commands/commitment'
+      || pathname === '/api/commands/quick-capture'
       || pathname === '/api/commands/matter-participant'
       || pathname.startsWith('/api/repair/account/'),
   },

@@ -1,6 +1,7 @@
 import type { ProductAccess, ProductEntryId } from '@jianghu/domain-contracts';
 import type { Account } from '../types';
 import { resolveProductRoute } from '../lib/productRoutes';
+import { QuickCapture } from './QuickCapture';
 
 function EmptyState({ children }: { children: string }) {
   return <div className="commercial-shell-empty">{children}</div>;
@@ -20,14 +21,16 @@ function LegacyAccountList({ accounts, onOpenLegacy }: { accounts: Account[]; on
 }
 
 function ProductPanel({
-  id, accounts, readonly, onNavigate, onOpenLegacy, onOpenTeam,
+  id, accounts, actorUserId, readonly, onNavigate, onOpenLegacy, onOpenTeam, onQuickCaptureSaved,
 }: {
   id: ProductEntryId;
   accounts: Account[];
+  actorUserId: string;
   readonly: boolean;
   onNavigate: (path: string) => void;
   onOpenLegacy: (accountId: string) => void;
   onOpenTeam: () => void;
+  onQuickCaptureSaved: () => Promise<unknown>;
 }) {
   const matters = accounts.flatMap((account) => account.opportunities.map((matter) => ({ account, matter })));
   if (id === 'today') {
@@ -58,16 +61,12 @@ function ProductPanel({
     );
   }
   if (id === 'quick-capture') {
-    return (
-      <div className="commercial-shell-empty">
-        <p>选择一个已有客户或事项，继续留下下一步。</p>
-        <div className="commercial-shell-actions">
-          <button className="btn primary" onClick={() => onNavigate('/customers')}>前往客户</button>
-          <button className="btn ghost" onClick={() => onNavigate('/matters')}>查看事项</button>
-        </div>
-        {readonly && <small>当前为只读视图。</small>}
-      </div>
-    );
+    return <QuickCapture
+      accounts={accounts}
+      actorUserId={actorUserId}
+      readonly={readonly}
+      onSaved={onQuickCaptureSaved}
+    />;
   }
   if (id === 'team') {
     return (
@@ -103,15 +102,17 @@ function ProductPanel({
 }
 
 export function CommercialShell({
-  access, pathname, accounts, readonly, onNavigate, onOpenLegacy, onOpenTeam, onLogout,
+  access, pathname, accounts, actorUserId, readonly, onNavigate, onOpenLegacy, onOpenTeam, onQuickCaptureSaved, onLogout,
 }: {
   access: ProductAccess;
   pathname: string;
   accounts: Account[];
+  actorUserId: string;
   readonly: boolean;
   onNavigate: (path: string) => void;
   onOpenLegacy: (accountId: string) => void;
   onOpenTeam: () => void;
+  onQuickCaptureSaved: () => Promise<unknown>;
   onLogout: () => void;
 }) {
   const route = resolveProductRoute(pathname, access);
@@ -139,10 +140,12 @@ export function CommercialShell({
         <ProductPanel
           id={route.entry.id}
           accounts={accounts}
+          actorUserId={actorUserId}
           readonly={readonly}
           onNavigate={onNavigate}
           onOpenLegacy={onOpenLegacy}
           onOpenTeam={onOpenTeam}
+          onQuickCaptureSaved={onQuickCaptureSaved}
         />
       </main>
     </div>

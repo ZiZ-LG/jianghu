@@ -301,6 +301,88 @@ describe('typed API failures', () => {
     }
   });
 
+  it('sends the atomic Quick Capture command with one frozen key across network retry', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError('network lost'))
+      .mockResolvedValueOnce(response(200, {
+        customer: null,
+        commitment: {
+          commitmentId: 'commitment_00000000000000000000000000000001',
+          customerId: 'customer-1', matterId: null, executionStatus: 'planned',
+          confirmationStatus: 'not_required', version: 0, scheduleVersion: 0,
+          nextCommitmentId: null, linkedFromCommitmentId: null, undoable: false,
+          repairCommands: ['RESCHEDULE_COMMITMENT', 'CANCEL_COMMITMENT'],
+        },
+        replayed: true,
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+    const payload = {
+      customer: { mode: 'existing' as const, customerId: 'customer-1' },
+      commitment: {
+        type: 'CREATE_COMMITMENT' as const,
+        commitment: {
+          id: 'commitment_00000000000000000000000000000001',
+          customerId: 'customer-1', matterId: null, personId: null,
+          title: '下一步', kind: 'follow_up' as const, ownerUserId: 'user-1',
+          confirmationStatus: 'not_required' as const,
+          scheduledAtUtc: '2026-08-27T07:00:00.000Z', dueAtUtc: null,
+          timeZone: 'Asia/Shanghai', isAllDay: false as const, localDate: null,
+          confirmationDueAtUtc: null, source: 'manual_quick_capture' as const, sourceRef: null,
+        },
+      },
+    };
+
+    await api.quickCapture(payload, 'stable-quick-capture-key');
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const [url, init] of fetchMock.mock.calls) {
+      expect(url).toBe('http://localhost:3001/api/commands/quick-capture');
+      expect(((init as RequestInit).headers as Headers).get('Idempotency-Key')).toBe('stable-quick-capture-key');
+      expect(JSON.parse(String((init as RequestInit).body))).toEqual(payload);
+    }
+  });
+
+  it('rejects malformed or mismatched Quick Capture success receipts', async () => {
+    const payload = {
+      customer: { mode: 'existing' as const, customerId: 'customer-1' },
+      commitment: {
+        type: 'CREATE_COMMITMENT' as const,
+        commitment: {
+          id: 'commitment_00000000000000000000000000000001',
+          customerId: 'customer-1', matterId: null, personId: null,
+          title: '下一步', kind: 'follow_up' as const, ownerUserId: 'user-1',
+          confirmationStatus: 'not_required' as const,
+          scheduledAtUtc: '2026-08-27T07:00:00.000Z', dueAtUtc: null,
+          timeZone: 'Asia/Shanghai', isAllDay: false as const, localDate: null,
+          confirmationDueAtUtc: null, source: 'manual_quick_capture' as const, sourceRef: null,
+        },
+      },
+    };
+    const validReceipt = {
+      customer: null,
+      commitment: {
+        commitmentId: payload.commitment.commitment.id,
+        customerId: payload.customer.customerId,
+        matterId: null,
+        executionStatus: 'planned', confirmationStatus: 'not_required',
+        version: 0, scheduleVersion: 0, nextCommitmentId: null,
+        linkedFromCommitmentId: null, undoable: false,
+        repairCommands: ['RESCHEDULE_COMMITMENT', 'CANCEL_COMMITMENT'],
+      },
+      replayed: false,
+    };
+
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(response(200, {}))
+      .mockResolvedValueOnce(response(200, {
+        ...validReceipt,
+        commitment: { ...validReceipt.commitment, commitmentId: 'commitment_00000000000000000000000000009999' },
+      })));
+
+    await expect(api.quickCapture(payload, 'malformed-quick-capture-key')).rejects.toMatchObject({ code: 'invalid_response' });
+    await expect(api.quickCapture(payload, 'mismatched-quick-capture-key')).rejects.toMatchObject({ code: 'invalid_response' });
+  });
+
   it('sends minimum repair commands to the dedicated audited endpoints', async () => {
     const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => response(200, {
       source: 'workbuddy', sourceRef: 'acc-ref', syncedAt: null, syncRuns: [], auditEvents: [],
