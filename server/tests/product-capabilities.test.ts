@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
+import { assembleProductAccess, type CommandContext } from '@jianghu/domain-contracts';
+import { handleMcpBody } from '../src/mcpServer.js';
+import { executeOpportunitySkeleton } from '../src/mutation/compoundCommands.js';
 import { createTestContext, type TestContext } from './helpers/testApp.js';
 
 const contexts: TestContext[] = [];
@@ -48,8 +51,63 @@ describe('server product capability enforcement', () => {
     } });
     await expectDenied(context.app, context.token, 'GET', '/api/members');
     await expectDenied(context.app, context.token, 'POST', '/api/opportunity/clone', {});
+    await expectDenied(context.app, context.token, 'GET', '/api/suggest');
+    await expectDenied(context.app, context.token, 'POST', '/api/suggest/missing/accept', {});
+    await expectDenied(context.app, context.token, 'POST', '/api/commands/action-feedback', {});
+    await expectDenied(context.app, context.token, 'POST', '/api/mcp', {
+      jsonrpc: '2.0', id: 1, method: 'tools/list',
+    });
     await expectDenied(context.app, context.token, 'POST', '/api/commands/methodology', {});
     await expectDenied(context.app, context.token, 'GET', '/api/pde/missing/ev');
+  });
+
+  it('denies a commercial Free MCP compound write before shared action or direct bundle mutation', async () => {
+    const context = await contextFor({ edition: 'commercial' });
+    const commandContext: CommandContext = {
+      tenantId: context.tenant.id,
+      actorId: context.owner.id,
+      actorRole: 'owner',
+      channel: 'mcp',
+      requestId: 'free-mcp-bypass',
+      assertionMode: 'machine_proposed',
+      scopes: ['read', 'sync_business'],
+    };
+    const response = await handleMcpBody(commandContext, {
+      jsonrpc: '2.0', id: 2, method: 'tools/call', params: {
+        name: 'sync_intel_bundle',
+        arguments: {
+          idempotencyKey: 'free-mcp-bypass-key',
+          bundle: {
+            account: { externalRef: 'free-mcp-account', name: 'Free bypass', customerType: 1 },
+            opportunity: { externalRef: 'free-mcp-opportunity', name: 'Forbidden opportunity' },
+          },
+        },
+      },
+    }, assembleProductAccess({ edition: 'commercial' }).policy);
+
+    expect(JSON.stringify(response)).toContain('能力未启用');
+    expect(await context.prisma.account.count({ where: { tenantId: context.tenant.id } })).toBe(0);
+    expect(await context.prisma.opportunity.count({ where: { tenantId: context.tenant.id } })).toBe(0);
+  });
+
+  it('denies a direct compound-command entry before its nested shared actions', async () => {
+    const context = await contextFor({ edition: 'commercial' });
+    const freePolicy = assembleProductAccess({ edition: 'commercial' }).policy;
+    await expect(executeOpportunitySkeleton({
+      tenantId: context.tenant.id,
+      actorId: context.owner.id,
+      actorRole: 'owner',
+      channel: 'web',
+      requestId: 'free-compound-bypass',
+      assertionMode: 'user_asserted',
+    }, {
+      accountId: 'missing-account',
+      name: 'Forbidden opportunity',
+      personIds: [],
+      withEdges: false,
+      skeleton: [],
+    }, context.prisma, freePolicy)).rejects.toMatchObject({ code: 'capability_denied' });
+    expect(await context.prisma.opportunity.count({ where: { tenantId: context.tenant.id } })).toBe(0);
   });
 
   it('lets enabled capabilities reach their existing handlers without changing Free defaults', async () => {

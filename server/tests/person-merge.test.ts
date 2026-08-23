@@ -7,6 +7,7 @@ import type { CommandContext } from '@jianghu/domain-contracts';
 import { assembleDeal } from '../src/pde/assemble.js';
 import { createPdeDecisionContext } from '../src/pde/context.js';
 import { handleMcpBody } from '../src/mcpServer.js';
+import { internalProductPolicy } from './helpers/productPolicy.js';
 import { resolveScopedRelSuggestions } from '../src/suggestionScope.js';
 
 const auth = (token: string, key = 'person-merge-key-0001') => ({
@@ -379,7 +380,7 @@ describe('INT-302 safe duplicate Person merge', () => {
       const mcp = await handleMcpBody({
         tenantId: context.tenant.id, actorId: context.owner.id, actorRole: 'owner', channel: 'mcp',
         requestId: 'merge-mcp-read', assertionMode: 'machine_proposed',
-      }, { jsonrpc: '2.0', id: 302, method: 'tools/call', params: { name: 'get_account_detail', arguments: { accountId: tree.accountId } } });
+      }, { jsonrpc: '2.0', id: 302, method: 'tools/call', params: { name: 'get_account_detail', arguments: { accountId: tree.accountId } } }, internalProductPolicy);
       expect(JSON.stringify(mcp)).not.toContain(tree.sourcePersonId);
 
       const archivedCandidate = await context.prisma.relSuggestion.create({ data: {

@@ -71,13 +71,35 @@ function ProductPanel({
   }
   if (id === 'team') {
     return (
-      <div className="commercial-shell-empty">
+      <div className="commercial-shell-empty" data-capability-surface="team">
         <p>团队能力已启用。</p>
         <button className="btn primary" onClick={onOpenTeam}>打开团队管理</button>
       </div>
     );
   }
-  return <LegacyAccountList accounts={accounts} onOpenLegacy={onOpenLegacy} />;
+  if (id === 'sales-workspace') {
+    return <div data-capability-surface="sales-workspace"><LegacyAccountList accounts={accounts} onOpenLegacy={onOpenLegacy} /></div>;
+  }
+  if (id === 'g64111') {
+    return (
+      <div className="commercial-shell-empty" data-capability-surface="g64111">
+        <p>G64111 趋赢力方法论已就绪，可从现有事项开始检查关键角色与信息缺口。</p>
+        <strong>{matters.length} 个事项可纳入方法论分析</strong>
+        <div className="commercial-shell-actions">
+          <button className="btn primary" onClick={() => onNavigate('/matters')}>查看事项</button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="commercial-shell-empty" data-capability-surface="pde">
+      <p>PDE 决策能力已就绪，可基于现有事项准备评估与行动排序。</p>
+      <strong>{matters.length} 个事项可进入决策准备</strong>
+      <div className="commercial-shell-actions">
+        <button className="btn primary" onClick={() => onNavigate('/matters')}>查看事项</button>
+      </div>
+    </div>
+  );
 }
 
 export function CommercialShell({

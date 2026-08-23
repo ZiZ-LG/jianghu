@@ -99,6 +99,7 @@ const serviceCapabilityRules: ReadonlyArray<{
     matches: (pathname) => pathname === '/api/state'
       || pathname === '/api/mutate'
       || pathname === '/api/demo'
+      || pathname === '/api/donate'
       || pathname === '/api/archive'
       || pathname.startsWith('/api/archive/')
       || pathname === '/api/commands/commitment'
@@ -128,8 +129,17 @@ const serviceCapabilityRules: ReadonlyArray<{
 
 function registerCapabilityEnforcement(app: FastifyInstance, product: ProductAccess): void {
   app.addHook('onRoute', (routeOptions) => {
+    const preHandlers = routeOptions.preHandler
+      ? (Array.isArray(routeOptions.preHandler) ? routeOptions.preHandler : [routeOptions.preHandler])
+      : [];
+    const protectedRoute = preHandlers.includes(app.authenticate) || preHandlers.includes(mcpAuthenticate);
+    if (!protectedRoute || routeOptions.url === '/api/me') return;
     const rule = serviceCapabilityRules.find((candidate) => candidate.matches(routeOptions.url));
-    if (!rule || capabilityPolicyAllows(product.policy, rule.requirement)) return;
+    // Any authenticated legacy service not explicitly classified above belongs to the
+    // complex-sales adapter. This makes newly registered protected routes fail closed
+    // for commercial Free while the internal adapter (all entitlements) stays intact.
+    const requirement = rule?.requirement ?? { entitlement: 'sales.workspace' as const };
+    if (capabilityPolicyAllows(product.policy, requirement)) return;
     const deny = async (_req: unknown, reply: { code: (status: number) => { send: (body: unknown) => unknown } }) => (
       reply.code(403).send({ error: '能力未启用', code: 'capability_denied' })
     );
@@ -169,7 +179,7 @@ function registerRoutes(app: FastifyInstance, readinessProbe: ReadinessProbe, pr
   accessTokenRoutes(app);
   wecomRoutes(app); // 企微日历：配置/绑定（江湖→企微同步在 mutate 落库后触发）
   pdeRoutes(app); // PDE 决策引擎（M3 评估主链）：ev / intel-priorities / action-ranking / snapshot
-  compoundCommandRoutes(app);
+  compoundCommandRoutes(app, product);
   matterOwnershipRoutes(app);
   matterParticipantRoutes(app);
   commitmentRoutes(app);
@@ -320,7 +330,7 @@ function registerRoutes(app: FastifyInstance, readinessProbe: ReadinessProbe, pr
       requestId: req.id,
       assertionMode: 'machine_proposed',
       scopes: req.user.scopes,
-    }, req.body);
+    }, req.body, product.policy);
     if (out === null) return reply.code(204).send(); // 纯通知，无响应体
     return out;
   });

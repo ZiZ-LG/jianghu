@@ -1,7 +1,13 @@
 import type { FastifyInstance } from 'fastify';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { ActorRoleSchema, type CommandContext } from '@jianghu/domain-contracts';
+import {
+  ActorRoleSchema,
+  capabilityPolicyAllows,
+  capabilityRequirementForActionType,
+  type CommandContext,
+  type ProductAccess,
+} from '@jianghu/domain-contracts';
 import { denyViewer } from '../scope.js';
 import { applyAction, type DbClient } from '../mutate.js';
 import { CloneOpportunitySchema, cloneOpportunityInTransaction } from '../opp.js';
@@ -30,6 +36,17 @@ class ActionFeedbackPermissionError extends Error {
   readonly code = 'commitment_write_forbidden';
   constructor() { super('无权回填跟进承诺'); }
 }
+
+class CapabilityDeniedError extends Error {
+  readonly statusCode = 403;
+  readonly code = 'capability_denied';
+  constructor() { super('能力未启用'); }
+}
+
+const requireActionCapability = (policyInput: unknown, actionType: unknown): void => {
+  const requirement = capabilityRequirementForActionType(actionType);
+  if (!requirement || !capabilityPolicyAllows(policyInput, requirement)) throw new CapabilityDeniedError();
+};
 
 const SkeletonRoleSchema = z.object({
   title: z.string().min(1).max(80),
@@ -75,12 +92,15 @@ export async function executeOpportunitySkeleton(
   ctx: CommandContext,
   input: z.infer<typeof OpportunitySkeletonCommandSchema>,
   db: DbClient,
+  policyInput: unknown,
   options?: FaultOptions,
 ): Promise<{ opportunityId: string; memberCount: number; skeletonPersonIds: string[] }> {
+  requireActionCapability(policyInput, 'ADD_OPP');
   const cloned = await cloneOpportunityInTransaction(ctx, input, db);
   fault(options, 1);
   const skeletonPersonIds: string[] = [];
   for (const role of input.skeleton) {
+    requireActionCapability(policyInput, 'ADD_PERSON');
     const personId = 'p_' + randomUUID().replaceAll('-', '');
     await applyAction(ctx, {
       type: 'ADD_PERSON', accId: input.accountId,
@@ -88,7 +108,9 @@ export async function executeOpportunitySkeleton(
     }, db);
     skeletonPersonIds.push(personId);
     fault(options, 2);
+    requireActionCapability(policyInput, 'ADD_OPP_MEMBER');
     await applyAction(ctx, { type: 'ADD_OPP_MEMBER', accId: input.accountId, oppId: cloned.opportunityId, personId }, db);
+    requireActionCapability(policyInput, 'SET_ROLE');
     await applyAction(ctx, {
       type: 'SET_ROLE', accId: input.accountId, oppId: cloned.opportunityId, personId,
       patch: { role: role.role, sentiment: 'unknown', confidence: '不清' },
@@ -102,8 +124,10 @@ export async function executeActionFeedback(
   ctx: CommandContext,
   rawInput: ActionFeedbackInput,
   db: DbClient,
+  policyInput: unknown,
   options?: FaultOptions,
 ): Promise<{ evidenceId?: string }> {
+  requireActionCapability(policyInput, 'ADD_EVIDENCE');
   const input = ActionFeedbackCommandSchema.parse(rawInput);
   const actor = await db.user.findFirst({
     where: { id: ctx.actorId, tenantId: ctx.tenantId },
@@ -297,7 +321,7 @@ const commandFailure = (reply: any, error: any, message: string) => {
   return reply.code(500).send({ error: message });
 };
 
-export function compoundCommandRoutes(app: FastifyInstance): void {
+export function compoundCommandRoutes(app: FastifyInstance, product: ProductAccess): void {
   app.post('/api/commands/opportunity-skeleton', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (denyViewer(req, reply)) return;
     const key = idempotencyKey(req, reply); if (!key) return;
@@ -305,7 +329,7 @@ export function compoundCommandRoutes(app: FastifyInstance): void {
     if (!body.success) return reply.code(400).send({ error: '商机骨架参数无效' });
     try {
       const result = await runCommand(commandContext(req), { kind: 'opportunity-skeleton', idempotencyKey: key, payload: body.data },
-        (tx) => executeOpportunitySkeleton(commandContext(req), body.data, tx));
+        (tx) => executeOpportunitySkeleton(commandContext(req), body.data, tx, product.policy));
       return { ...result.result, replayed: result.replayed };
     } catch (error) { return commandFailure(reply, error, '商机创建失败'); }
   });
@@ -317,7 +341,7 @@ export function compoundCommandRoutes(app: FastifyInstance): void {
     if (!body.success) return reply.code(400).send({ error: '行动回填参数无效' });
     try {
       const result = await runCommand(commandContext(req), { kind: 'action-feedback', idempotencyKey: key, payload: body.data },
-        (tx) => executeActionFeedback(commandContext(req), body.data, tx));
+        (tx) => executeActionFeedback(commandContext(req), body.data, tx, product.policy));
       if (!result.replayed) {
         void syncCommitmentToWeCom(req.user.tenantId, body.data.actionId).catch(() => {});
       }

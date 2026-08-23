@@ -40,6 +40,7 @@ import { capabilityPolicyAllows, type ProductAccess } from '@jianghu/domain-cont
 import { GlobalDialogs, type GlobalInboxProps } from './components/GlobalDialogs';
 import { CommercialShell } from './components/CommercialShell';
 import { resolveProductRoute } from './lib/productRoutes';
+import { selectAppRootSurface } from './lib/appProductShell';
 import {
   appShellUiReducer,
   createInitialAppShellUiState,
@@ -819,7 +820,8 @@ export default function App() {
     </div>}
   </>;
 
-  if (!account && auth.product.shell === 'commercial') {
+  const rootSurface = selectAppRootSurface(auth.product, Boolean(account));
+  if (!account && rootSurface === 'commercial_shell') {
     return (
       <>
         <CommercialShell

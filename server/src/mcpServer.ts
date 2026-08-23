@@ -12,7 +12,13 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { ACCOUNT_PROFILE_FIELDS, ActionSchema, type CommandContext } from '@jianghu/domain-contracts';
+import {
+  ACCOUNT_PROFILE_FIELDS,
+  ActionSchema,
+  capabilityPolicyAllows,
+  capabilityRequirementForActionType,
+  type CommandContext,
+} from '@jianghu/domain-contracts';
 import { prisma } from './prisma.js';
 import { applyAction } from './mutate.js';
 import { C5_ITEMS, scoreFromState, ITEM_LABEL, ITEM_MAX, type ItemKey } from './g64111.js';
@@ -28,8 +34,11 @@ import { resolveEffectiveResourceScope } from './resourceScope.js';
 const MAX_PENDING_PERSON_SUGG = 200;
 const MAX_PENDING_REL_SUGG = 200;
 
-const applyMcpAction = async (ctx: CommandContext, input: unknown): Promise<void> => {
-  await applyAction(ctx, ActionSchema.parse(input));
+const applyMcpAction = async (ctx: CommandContext, input: unknown, policyInput?: unknown): Promise<void> => {
+  const action = ActionSchema.parse(input);
+  const requirement = capabilityRequirementForActionType(action.type);
+  if (!requirement || !capabilityPolicyAllows(policyInput, requirement)) throw new Error('能力未启用');
+  await applyAction(ctx, action);
 };
 
 const PROTOCOL_VERSION = '2024-11-05';
@@ -1332,7 +1341,7 @@ const VALID_SENT = ['star', 'plus', 'neutral', 'unknown', 'minus', 'x'];
 const VALID_CONF = ['共识', '明确', '推理', '不清'];
 
 /** set_opportunity_roles：批量设 ADURC 角色（只对正式 Person，候选跳过并回报）。 */
-async function setOpportunityRoles(ctx: CommandContext, args: Record<string, unknown>) {
+async function setOpportunityRoles(ctx: CommandContext, args: Record<string, unknown>, policyInput: unknown) {
   const { tenantId } = ctx;
   const opp = await resolveOppFromArgs(tenantId, args);
   const rolesIn = Array.isArray(args.roles) ? (args.roles as any[]) : [];
@@ -1385,7 +1394,7 @@ async function setOpportunityRoles(ctx: CommandContext, args: Record<string, unk
       }
       continue;
     }
-    await applyMcpAction(ctx, { type: 'SET_ROLE', accId: opp.accountId, oppId: opp.id, personId: person.id, patch });
+    await applyMcpAction(ctx, { type: 'SET_ROLE', accId: opp.accountId, oppId: opp.id, personId: person.id, patch }, policyInput);
     applied.push({ personId: person.id, name: person.name, role, sentiment: (patch.sentiment as string) ?? 'unknown' });
   }
   const parts = [`已设 ${applied.length} 个角色`];
@@ -1395,7 +1404,7 @@ async function setOpportunityRoles(ctx: CommandContext, args: Record<string, unk
 }
 
 /** set_burning_issue：记某干系人的 BI（按 商机+人+category 幂等）。 */
-async function setBurningIssue(ctx: CommandContext, args: Record<string, unknown>) {
+async function setBurningIssue(ctx: CommandContext, args: Record<string, unknown>, policyInput: unknown) {
   const { tenantId } = ctx;
   const opp = await resolveOppFromArgs(tenantId, args);
   const person = await findPersonInAccount(tenantId, opp.accountId, str(args.personId, 40).trim(), str(args.personName, 40).trim());
@@ -1415,12 +1424,12 @@ async function setBurningIssue(ctx: CommandContext, args: Record<string, unknown
     return { id: existing.id, opportunityId: opp.id, personId: person.id, proposed, origin: 'workbuddy', note: `${proposed} 个 BI 字段变更转入收件箱待人审。` };
   }
   const id = 'bi_' + randomUUID().replaceAll('-', '');
-  await applyMcpAction(ctx, { type: 'ADD_BI', accId: opp.accountId, oppId: opp.id, bi: { id, personId: person.id, description, category, isPrivate, confidence } });
+  await applyMcpAction(ctx, { type: 'ADD_BI', accId: opp.accountId, oppId: opp.id, bi: { id, personId: person.id, description, category, isPrivate, confidence } }, policyInput);
   return { id, opportunityId: opp.id, personId: person.id, created: true, origin: 'workbuddy', note: `已记「${person.name}」的 BI（${category}）。` };
 }
 
 /** set_ucv：记针对某 BI 的 UCV（按 商机+targetBi 幂等）。 */
-async function setUcv(ctx: CommandContext, args: Record<string, unknown>) {
+async function setUcv(ctx: CommandContext, args: Record<string, unknown>, policyInput: unknown) {
   const { tenantId } = ctx;
   const opp = await resolveOppFromArgs(tenantId, args);
   let targetBiId = str(args.targetBiId, 40).trim();
@@ -1449,13 +1458,13 @@ async function setUcv(ctx: CommandContext, args: Record<string, unknown>) {
     return { id: existing.id, opportunityId: opp.id, targetBiId, proposed, origin: 'workbuddy', note: `${proposed} 个 UCV 字段变更转入收件箱待人审。` };
   }
   const id = 'ucv_' + randomUUID().replaceAll('-', '');
-  await applyMcpAction(ctx, { type: 'ADD_UCV', accId: opp.accountId, oppId: opp.id, ucv: { id, targetBiId, description, competitorCannot, status } });
+  await applyMcpAction(ctx, { type: 'ADD_UCV', accId: opp.accountId, oppId: opp.id, ucv: { id, targetBiId, description, competitorCannot, status } }, policyInput);
   return { id, opportunityId: opp.id, targetBiId, created: true, origin: 'workbuddy', note: '已记 UCV。' };
 }
 
 // ───────────────────────── 工具分发 ─────────────────────────
 
-async function callTool(ctx: CommandContext, name: string, args: Record<string, unknown>) {
+async function callTool(ctx: CommandContext, name: string, args: Record<string, unknown>, policyInput: unknown) {
   const { tenantId, actorId: userId } = ctx;
   switch (name) {
     case 'sync_intel_bundle':
@@ -1485,11 +1494,11 @@ async function callTool(ctx: CommandContext, name: string, args: Record<string, 
     case 'append_visit_note':
       return syncLegacyVisit(ctx, args);
     case 'set_opportunity_roles':
-      return setOpportunityRoles(ctx, args);
+      return setOpportunityRoles(ctx, args, policyInput);
     case 'set_burning_issue':
-      return setBurningIssue(ctx, args);
+      return setBurningIssue(ctx, args, policyInput);
     case 'set_ucv':
-      return setUcv(ctx, args);
+      return setUcv(ctx, args, policyInput);
     default:
       throw new Error(`未知工具：${name}`);
   }
@@ -1503,7 +1512,7 @@ async function callTool(ctx: CommandContext, name: string, args: Record<string, 
  * - 其余返回 JsonRpcResponse。
  * 所有数据读写通过 tenantId 隔离（铁律）；写工具用 userId 记 proposedBy。
  */
-export async function handleMcpMessage(ctx: CommandContext, msg: JsonRpcRequest): Promise<JsonRpcResponse | null> {
+export async function handleMcpMessage(ctx: CommandContext, msg: JsonRpcRequest, policyInput: unknown): Promise<JsonRpcResponse | null> {
   const id = msg.id ?? null;
   const method = msg.method;
 
@@ -1535,10 +1544,13 @@ export async function handleMcpMessage(ctx: CommandContext, msg: JsonRpcRequest)
         if (!params.success) return err(id, -32602, '无效的 tool params');
         const { name, arguments: args = {} } = params.data;
         try {
+          if (!capabilityPolicyAllows(policyInput, { entitlement: 'sales.workspace' })) {
+            return ok(id, toolError('能力未启用'));
+          }
           if (canCallTool(ctx, name, args) === false) {
             return ok(id, toolError('权限不足：该令牌无权调用此工具'));
           }
-          const result = await callTool(ctx, name, args);
+          const result = await callTool(ctx, name, args, policyInput);
           return ok(id, toolText(result));
         } catch (e: unknown) {
           // 工具级错误用 isError content 返回（MCP 约定：工具失败不是协议错误）
@@ -1561,25 +1573,25 @@ function requestIdOf(input: unknown): string | number | null {
   return parsed.success ? parsed.data : null;
 }
 
-async function handleUnknownMcpMessage(ctx: CommandContext, input: unknown): Promise<JsonRpcResponse | null> {
+async function handleUnknownMcpMessage(ctx: CommandContext, input: unknown, policyInput: unknown): Promise<JsonRpcResponse | null> {
   const parsed = JsonRpcRequestSchema.safeParse(input);
   if (!parsed.success) return err(requestIdOf(input), -32600, '无效的 JSON-RPC 请求');
-  return handleMcpMessage(ctx, parsed.data);
+  return handleMcpMessage(ctx, parsed.data, policyInput);
 }
 
 /**
  * 处理一个请求体（可能是单条消息，也可能是 JSON-RPC 批量数组）。
  * 返回值：要发回客户端的 JSON（单对象 / 数组 / null）。null 表示纯通知、无响应体（HTTP 204）。
  */
-export async function handleMcpBody(ctx: CommandContext, body: unknown): Promise<JsonRpcResponse | JsonRpcResponse[] | null> {
+export async function handleMcpBody(ctx: CommandContext, body: unknown, policyInput: unknown): Promise<JsonRpcResponse | JsonRpcResponse[] | null> {
   if (Array.isArray(body)) {
     if (body.length === 0) return err(null, -32600, '无效的 JSON-RPC 请求');
     const responses: JsonRpcResponse[] = [];
     for (const m of body) {
-      const r = await handleUnknownMcpMessage(ctx, m);
+      const r = await handleUnknownMcpMessage(ctx, m, policyInput);
       if (r) responses.push(r);
     }
     return responses.length ? responses : null;
   }
-  return handleUnknownMcpMessage(ctx, body);
+  return handleUnknownMcpMessage(ctx, body, policyInput);
 }

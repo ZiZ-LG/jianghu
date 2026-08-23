@@ -40,4 +40,15 @@ describe('CommercialShell', () => {
     expect(html).toContain('打开 PDE 决策评估与行动排序。');
     expect(html).toContain('commercial-shell-empty');
   });
+
+  it.each([
+    ['sales.workspace', '/sales', 'sales-workspace'],
+    ['team.operations', '/team', 'team'],
+    ['methodology.g64111', '/g64111', 'g64111'],
+    ['decision.pde', '/pde', 'pde'],
+  ])('renders standalone %s as an independently usable capability surface', (entitlement, path, surface) => {
+    const html = renderShell(path, [entitlement]);
+    expect(html).toContain(`data-capability-surface="${surface}"`);
+    expect(html).not.toContain('当前版本未启用复杂销售工作台');
+  });
 });

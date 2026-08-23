@@ -3,10 +3,13 @@ import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
 import type { CommandContext } from '@jianghu/domain-contracts';
-import { handleMcpBody } from '../src/mcpServer.js';
+import { handleMcpBody as handleMcpBodyWithPolicy } from '../src/mcpServer.js';
 import { syncIntelBundle } from '../src/mcp/syncBundle.js';
 import { findSyncAnchorConflicts } from '../src/mcp/syncAnchorConflicts.js';
 import { createTestContext, type TestContext } from './helpers/testApp.js';
+import { internalProductPolicy } from './helpers/productPolicy.js';
+
+const handleMcpBody = (ctx: CommandContext, body: unknown) => handleMcpBodyWithPolicy(ctx, body, internalProductPolicy);
 
 describe('WorkBuddy atomic sync bundle', () => {
   let test: TestContext;

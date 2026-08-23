@@ -10,12 +10,27 @@ import {
   runCommand,
 } from '../src/mutation/commandRunner.js';
 import {
-  executeActionFeedback,
+  executeActionFeedback as executeActionFeedbackWithPolicy,
   executeInboxBatch,
-  executeOpportunitySkeleton,
+  executeOpportunitySkeleton as executeOpportunitySkeletonWithPolicy,
 } from '../src/mutation/compoundCommands.js';
 import { IngestCommandError, ingestVoiceText } from '../src/voice.js';
 import { hashIdempotencyKey } from '../src/idempotency.js';
+import { internalProductPolicy } from './helpers/productPolicy.js';
+
+const executeActionFeedback = (
+  ctx: Parameters<typeof executeActionFeedbackWithPolicy>[0],
+  input: Parameters<typeof executeActionFeedbackWithPolicy>[1],
+  db: Parameters<typeof executeActionFeedbackWithPolicy>[2],
+  options?: Parameters<typeof executeActionFeedbackWithPolicy>[4],
+) => executeActionFeedbackWithPolicy(ctx, input, db, internalProductPolicy, options);
+
+const executeOpportunitySkeleton = (
+  ctx: Parameters<typeof executeOpportunitySkeletonWithPolicy>[0],
+  input: Parameters<typeof executeOpportunitySkeletonWithPolicy>[1],
+  db: Parameters<typeof executeOpportunitySkeletonWithPolicy>[2],
+  options?: Parameters<typeof executeOpportunitySkeletonWithPolicy>[4],
+) => executeOpportunitySkeletonWithPolicy(ctx, input, db, internalProductPolicy, options);
 
 describe('atomic idempotent compound commands', () => {
   let test: TestContext;
