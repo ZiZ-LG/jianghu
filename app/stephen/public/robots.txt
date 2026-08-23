@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+Disallow: /library/
+
+Sitemap: https://stephen.lake2ocean.top/sitemap.xml

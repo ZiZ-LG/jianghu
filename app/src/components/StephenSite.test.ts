@@ -6,6 +6,8 @@ const fieldbookUrl = new URL('../../stephen/public/fieldbook/index.html', import
 const siteUrl = fieldbookUrl;
 const shellIndexUrl = new URL('../../stephen/index.html', import.meta.url);
 const shellAppUrl = new URL('../../stephen/src/App.tsx', import.meta.url);
+const robotsUrl = new URL('../../stephen/public/robots.txt', import.meta.url);
+const sitemapUrl = new URL('../../stephen/public/sitemap.xml', import.meta.url);
 const shellStylesUrl = new URL('../../stephen/src/styles.css', import.meta.url);
 const shellNavigationUrl = new URL('../../stephen/src/navigation.ts', import.meta.url);
 const shellI18nUrl = new URL('../../stephen/src/i18n.ts', import.meta.url);
@@ -266,6 +268,19 @@ describe('Stephen self-cultivation site', () => {
     expect(nginx).toMatch(/location \/\s*\{\s*try_files \$uri \$uri\/ \/index\.html;/);
     expect(nginx).toContain('add_header Strict-Transport-Security');
     expect(nginx).toContain('add_header X-Content-Type-Options "nosniff" always;');
+  });
+
+  it('publishes crawl controls for the approved static route surface', () => {
+    const robots = readRequiredFile(robotsUrl);
+    const sitemap = readRequiredFile(sitemapUrl);
+
+    expect(robots).toContain('User-agent: *');
+    expect(robots).toContain('Allow: /');
+    expect(robots).toContain('Sitemap: https://stephen.lake2ocean.top/sitemap.xml');
+    expect(sitemap).toContain('<loc>https://stephen.lake2ocean.top/</loc>');
+    expect(sitemap).toContain('<loc>https://stephen.lake2ocean.top/fieldbook/</loc>');
+    expect(sitemap).toContain('<loc>https://stephen.lake2ocean.top/policy/</loc>');
+    expect(sitemap).not.toContain('/items/');
   });
 
   it('publishes privacy, copyright and correction entry points without adding a forum', () => {
