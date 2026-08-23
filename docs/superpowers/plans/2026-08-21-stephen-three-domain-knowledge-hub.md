@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
-> **Plan status:** `SYNCHRONIZED / SAAS-601_COMPLETE / SAAS-602_IMPLEMENTED_OWNER_REVIEW_PENDING / SAAS-603_COMPLETE / SAAS-604_IN_PROGRESS`
+> **Plan status:** `SYNCHRONIZED / SAAS-601_COMPLETE / SAAS-602_IMPLEMENTED_OWNER_REVIEW_PENDING / SAAS-603_COMPLETE / SAAS-604_LOCAL_RC_COMPLETE / PRODUCTION_NOT_AUTHORIZED`
 >
 > **Current authorization:** `SAAS-601` 已完成。项目所有者已授权按 `SAAS-602 → SAAS-603 → SAAS-604` 持续形成发布候选；生产部署、流量切换、自动发布启用、`main` 合并和 CRM 变更仍未授权。
 >
@@ -154,6 +154,8 @@ app/
   stephen/
     index.html                         # 独立知识库入口
     public/fieldbook/index.html        # 现有完整手册
+    public/robots.txt                  # 抓取边界；本机收藏不参与索引
+    public/sitemap.xml                 # 仅列出已批准公开固定路由
     src/
       main.tsx
       App.tsx
@@ -516,7 +518,10 @@ docs/content/
 - Modify: `app/stephen/src/navigation.ts`
 - Modify: `app/stephen/src/pages/ItemPage.tsx`
 - Modify: `app/stephen/src/styles.css`
+- Modify: `app/stephen/public/fieldbook/index.html`
 - Create: `app/stephen/src/pages/PolicyPage.tsx`
+- Create: `app/stephen/public/robots.txt`
+- Create: `app/stephen/public/sitemap.xml`
 - Create: `docs/content/stephen-release-checklist.md`
 
 **Interfaces:**
@@ -529,22 +534,30 @@ docs/content/
 
   Deployment-contract evidence（2026-08-23）：新断言先因缺少 assets/HTML 缓存 location 和 `PolicyPage.tsx` 得到 2 个预期 RED，随后 Stephen 保护测试 8/8、路由测试 6/6、TypeScript 和 Stephen 构建通过。新增 `/policy/` 及隐私/版权/纠错深链，复用已实时核验的主站 `#wuhu` 与 `cs@zizai.tech`，不新建论坛或后端表单。Nginx 新 location 重复保留安全头，避免 `add_header` 局部配置导致父级安全头不继承。
 
-- [ ] **Step 2: Run all repository gates**
+- [x] **Step 2: Run all repository gates**
 
-  Run（未来 `SAAS-604` 获单独授权后）：
+  Run（已执行）：
 
   ```bash
   cd app && npm run typecheck && npm test && npm run build && npm run build:stephen
   cd ../packages/g64111 && npm run typecheck && npm test
-  cd ../../server && npx tsc --noEmit
+  cd ../../server && npm run typecheck
   git diff --check
   ```
 
   Expected: every command exits 0.
 
-- [ ] **Step 3: Browser-test desktop and mobile**
+  Gate evidence（2026-08-23，代码提交 `6c8f273`）：App TypeScript、30 files / 247 tests、CRM build；Stephen 5 files / 31 tests 与独立 build；G64111 TypeScript 与 2 files / 32 tests；Server TypeScript；`git diff --check` 全部退出 0。CRM 与 Stephen 产物串行构建后并存。候选文件中的 65 个标题/来源标题字面量在生产包中命中 0，无密钥、数据库或 `.env`；业务源码无 API 调用。`app/vite.config.ts`、lockfile、`server/**`、`packages/**`、CRM Action/DTO/Store 均无本分支差异。
+
+- [x] **Step 3a: Browser-test the approved empty-collection baseline on desktop and mobile**
 
   在 1280×720 和 375×812 验证：滚动、搜索、筛选、返回位置、详情证据、收藏、完整手册、深浅色、中文长标题、无横向溢出、无控制台错误。
+
+  Browser evidence（2026-08-23）：根页、雷达、六个专题、岗位、工具、学习、收藏、摘要、说明、旧手册及未批准详情 404 状态均可直接访问；移动端全部页面滚动到底，页脚不被固定导航遮挡；搜索、AND/OR、历史前进后退、工具保存/刷新/复制/下载/重置、工具进行中/完成/清除、损坏本机状态恢复、策略深链、旧手册术语/任务/题库/主题/打印均通过，控制台 0 错误。修复跳过链接焦点、旧手册 Google Fonts 外部请求和 375px 章节导航后复验通过。最终 Lighthouse mobile 为 Performance 100、Accessibility 100、Best Practices 100、SEO 100。
+
+- [ ] **Step 3b: Re-test approved public-content journeys after owner review**
+
+  30 条内容获逐条批准并进入 `publicItems.ts` 后，重跑公开卡片、真实详情证据与原文、收藏/已读及非空日报/周报；在此之前不得为测试而把候选注入生产集合。
 
 - [ ] **Step 4: Run a versioned candidate deployment**
 
@@ -554,7 +567,15 @@ docs/content/
 
   验证 HTTPS、证书 SAN、主要路径、静态缓存、安全头、备案链接和 `/api/` 隔离；保存旧镜像、回滚命令、状态码和截图。
 
-  Commit: `chore(stephen): complete knowledge hub release gates`
+  Final evidence commit: `docs(SAAS-604): record Stephen local release candidate`
+
+  Local candidate evidence（2026-08-23）：已生成未上传生产的 `/private/tmp/stephen-knowledge-hub-6c8f273.tar.gz`，SHA-256 为 `37562b57cf5d6898617146aa277e2a8f7a01d00d4b5e8e492e9c1b62f8dce386`。本机没有 Nginx，因此没有把字符串契约冒充真实 `nginx -t`；Step 4/5 仍受生产授权、证书和共享 Host 回归门约束。
+
+  SAAS-604 commits：
+
+  - `77728c6 chore(SAAS-604): harden Stephen release contracts`
+  - `64bec16 fix(SAAS-604): close Stephen browser QA gaps`
+  - `6c8f273 feat(SAAS-604): publish Stephen crawl controls`
 
 ---
 
