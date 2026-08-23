@@ -165,3 +165,112 @@ git diff --check
 - 运行时快速切回：`PRODUCT_EDITION=internal`，重启服务后使用旧 internal shell。
 - 代码回滚：revert 本 SAAS-101 独立提交。
 - 不回滚、不删除、不重写任何业务数据。
+
+---
+
+## Fix Round 1/5 — capability fail-closed 与 standalone surface
+
+### 状态与提交
+
+- 针对独立评审的 1 项 CRITICAL、2 项 IMPORTANT 完成修复；`SAAS-101` 仍保持 `IN_PROGRESS`。
+- 修复提交：`b5736c7157f5421d11013ca0c912a7165c56a186`（`fix(SAAS-101): close capability bypasses`）。
+- 未 push、未 merge；未扩展 SAAS-102+、G4、schema、deployment 或 pricing。
+
+### 修复内容
+
+1. `server/src/app.ts` 的 route 装配不再对未匹配的认证路由直接放行：
+   - 只检查带 `app.authenticate` 或 `mcpAuthenticate` 的受保护服务；健康检查、注册、登录不进入 capability hook；
+   - `/api/me` 是显式 session/bootstrap 例外，畸形 policy 仍可返回零授权结果供客户端安全退出；
+   - core、team、G64111、PDE 使用既有显式规则；其余认证 legacy 服务统一归 `sales.workspace`，所以商业 Free 默认拒绝；
+   - internal adapter 持有全部 entitlement，旧服务继续可达；拒绝 handler 仍追加在认证之后，未认证仍 401。
+2. MCP 与 compound command 不只依赖 HTTP 隐藏／路由：
+   - `handleMcpBody` 必须接收服务端 policy，`tools/call` 在 dispatch 前检查 `sales.workspace`；
+   - MCP 内所有正式 Action 写入再次按 `capabilityRequirementForActionType` 校验，`SET_ROLE / ADD_BI / ADD_UCV` 不能绕过方法论 entitlement；
+   - opportunity skeleton 与 action feedback 的共享 executor 在任何 DB 写入前检查自身及嵌套 Action ownership；直接调用 executor 也 fail closed；
+   - internal MCP／compound tests 显式传入 internal policy，没有测试态隐式放行。
+3. standalone capability 不再落到依赖复杂销售按钮的通用 legacy 列表：
+   - `sales.workspace`、`team.operations`、`methodology.g64111`、`decision.pde` 各有独立 surface marker 与非空内容；
+   - G64111/PDE standalone 提供自己的事项准备摘要和可用的“查看事项”动作，不要求 `sales.workspace`；
+   - `selectAppRootSurface` 成为 App edition adapter 边界，新增 internal → existing CustomerHub / legacy workspace smoke。
+
+### RED 证据
+
+```text
+cd app && npm test -- --run src/components/CommercialShell.test.ts src/lib/appProductShell.test.ts
+```
+
+- exit 1；`appProductShell` 模块不存在；4 个 standalone capability case 均缺少独立 surface，2 files failed。
+
+```text
+cd server && DATABASE_URL=file:./test.db npx vitest run tests/product-capabilities.test.ts
+```
+
+- exit 1；1 file 中 2/5 tests failed。
+- Free `/api/suggest` 进入 handler 并返回 400 而不是 capability 403。
+- Free policy 直接调用 MCP `sync_intel_bundle` 实际创建了 Account 与 Opportunity，断言“能力未启用／零写入”失败。
+- 同一 RED 切片还覆盖未匹配的 `/api/suggest/:id/accept`、`/api/commands/action-feedback` 与 `/api/mcp` HTTP 入口。
+
+### GREEN 与受影响回归
+
+```text
+cd app && npm test -- --run src/components/CommercialShell.test.ts src/lib/appProductShell.test.ts
+cd server && DATABASE_URL=file:./test.db npx vitest run tests/product-capabilities.test.ts
+```
+
+- App：exit 0；2 files / 8 tests passed。
+- Server capability：exit 0；1 file / 6 tests passed；包含 Free candidate/MCP/compound HTTP 负例、MCP 零写入和 direct compound executor 零写入。
+
+```text
+cd app && npm run typecheck
+cd server && npm run typecheck
+```
+
+- 两项均 exit 0。
+
+```text
+cd app && npm test && npm run build
+```
+
+- exit 0；32 files / 248 tests passed；Vite production build 通过。
+- 仅保留既有 Node `localStorage` experimental warning 与 Vite `>500 kB` chunk warning。
+
+```text
+cd server && DATABASE_URL=file:./test.db npx vitest run tests/product-capabilities.test.ts tests/compound-commands.test.ts tests/mcpBoundary.test.ts tests/mcp-sync-idempotency.test.ts tests/ingest-trust.test.ts tests/effective-scope-routes.test.ts tests/person-merge.test.ts
+```
+
+- exit 0；7 files / 89 tests passed。
+- 覆盖文件：`product-capabilities.test.ts`、`compound-commands.test.ts`、`mcpBoundary.test.ts`、`mcp-sync-idempotency.test.ts`、`ingest-trust.test.ts`、`effective-scope-routes.test.ts`、`person-merge.test.ts`。
+
+```text
+git diff --check
+```
+
+- exit 0。
+- 控制器已在本轮修复前以宿主权限独立验证 Server 57/57 files、434/434 tests；修复后的完整 Server suite 尚待控制器重跑，本报告不宣告 final full green。
+
+### Fix Round 文件
+
+- `app/src/App.tsx`
+- `app/src/components/CommercialShell.tsx`
+- `app/src/components/CommercialShell.test.ts`
+- `app/src/lib/appProductShell.ts`
+- `app/src/lib/appProductShell.test.ts`
+- `server/src/app.ts`
+- `server/src/mcpServer.ts`
+- `server/src/mutation/compoundCommands.ts`
+- `server/tests/product-capabilities.test.ts`
+- `server/tests/compound-commands.test.ts`
+- `server/tests/mcpBoundary.test.ts`
+- `server/tests/mcp-sync-idempotency.test.ts`
+- `server/tests/ingest-trust.test.ts`
+- `server/tests/effective-scope-routes.test.ts`
+- `server/tests/person-merge.test.ts`
+- `server/tests/helpers/productPolicy.ts`
+
+### 自审与关注
+
+- 默认拒绝 hook 只基于服务端 route preHandler，不信任请求参数、前端路径或 localStorage；认证、RBAC、tenantId、viewer/effective scope 顺序未改变。
+- MCP policy 由 `buildApp` 装配并显式传入，缺失／畸形 policy 在 `tools/call` 和 Action ownership 两层都拒绝。
+- compound direct executor 在 clone/plan 更新前先拒绝，测试同时断言数据库零写入。
+- standalone G64111/PDE 只提供本任务允许的 shell surface 与现有事项摘要，没有实现公式、读模型、表单或后续任务业务。
+- 唯一待复验项是修复后 Server full suite；生命周期继续保持 `IN_PROGRESS`。
