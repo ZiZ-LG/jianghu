@@ -6,8 +6,15 @@ type ColumnRow = {
   isNullable: 'YES' | 'NO';
   columnDefault: string | null;
 };
+type TableRow = { tableCount: number | bigint | string };
 
 try {
+  const tableRows = await prisma.$queryRawUnsafe<TableRow[]>(`
+    SELECT COUNT(*) AS "tableCount"
+      FROM information_schema.tables
+     WHERE table_schema = 'public'
+       AND table_name = 'Account'
+  `);
   const rows = await prisma.$queryRawUnsafe<ColumnRow[]>(`
     SELECT
       column_name AS "columnName",
@@ -24,7 +31,10 @@ try {
   const sales = columns.get('customerType');
   const version = columns.get('version');
   const validSalesType = sales?.dataType === 'integer';
-  if (rows.length === 1 && validSalesType && sales?.isNullable === 'NO') {
+  const tableCount = Number(tableRows[0]?.tableCount ?? 0);
+  if (tableCount === 0 && rows.length === 0) {
+    process.stdout.write('legacy');
+  } else if (tableCount === 1 && rows.length === 1 && validSalesType && sales?.isNullable === 'NO') {
     process.stdout.write('legacy');
   } else if (
     rows.length === 3
