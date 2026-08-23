@@ -281,7 +281,7 @@ docs/content/
 
 - [ ] **Step 2: Configure an isolated Stephen build**
 
-  `vite.stephen.config.ts` 使用独立 `root`、相对资源 `base`、独立 `outDir` 和 `emptyOutDir: true`；不读取或改写 `app/vite.config.ts`，不改变 CRM 主应用入口。
+  `vite.stephen.config.ts` 使用独立 `root`、与独立二级域名根路径一致的 `base: '/'`、独立 `outDir` 和 `emptyOutDir: true`；这样 `/fieldbook/` 及后续固定链接都从 Stephen Host 根目录解析资源。配置不读取或改写 `app/vite.config.ts`，不改变 CRM 主应用入口。
 
 - [ ] **Step 3: Preserve the legacy artifact**
 
