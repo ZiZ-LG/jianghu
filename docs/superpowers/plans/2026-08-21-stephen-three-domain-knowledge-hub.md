@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
-> **Plan status:** `SYNCHRONIZED / SAAS-601_COMPLETE / SAAS-602_IMPLEMENTED_OWNER_REVIEW_PENDING / SAAS-603_COMPLETE / SAAS-604_PENDING`
+> **Plan status:** `SYNCHRONIZED / SAAS-601_COMPLETE / SAAS-602_IMPLEMENTED_OWNER_REVIEW_PENDING / SAAS-603_COMPLETE / SAAS-604_IN_PROGRESS`
 >
 > **Current authorization:** `SAAS-601` 已完成。项目所有者已授权按 `SAAS-602 → SAAS-603 → SAAS-604` 持续形成发布候选；生产部署、流量切换、自动发布启用、`main` 合并和 CRM 变更仍未授权。
 >
@@ -512,15 +512,22 @@ docs/content/
 **Files:**
 - Modify: `deploy/stephen.nginx.conf`
 - Modify: `app/src/components/StephenSite.test.ts`
+- Modify: `app/stephen/src/App.tsx`
+- Modify: `app/stephen/src/navigation.ts`
+- Modify: `app/stephen/src/pages/ItemPage.tsx`
+- Modify: `app/stephen/src/styles.css`
+- Create: `app/stephen/src/pages/PolicyPage.tsx`
 - Create: `docs/content/stephen-release-checklist.md`
 
 **Interfaces:**
 - Consumes: complete production build
 - Produces: deployable `dist/stephen` and rollback evidence
 
-- [ ] **Step 1: Extend the deployment contract tests**
+- [x] **Step 1: Extend the deployment contract tests**
 
   断言 hashed assets 长缓存、HTML 不缓存、`/api/` 404、SPA 路由回退、备案与隐私/版权/纠错入口存在。
+
+  Deployment-contract evidence（2026-08-23）：新断言先因缺少 assets/HTML 缓存 location 和 `PolicyPage.tsx` 得到 2 个预期 RED，随后 Stephen 保护测试 8/8、路由测试 6/6、TypeScript 和 Stephen 构建通过。新增 `/policy/` 及隐私/版权/纠错深链，复用已实时核验的主站 `#wuhu` 与 `cs@zizai.tech`，不新建论坛或后端表单。Nginx 新 location 重复保留安全头，避免 `add_header` 局部配置导致父级安全头不继承。
 
 - [ ] **Step 2: Run all repository gates**
 

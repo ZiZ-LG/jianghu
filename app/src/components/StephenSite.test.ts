@@ -11,6 +11,8 @@ const shellNavigationUrl = new URL('../../stephen/src/navigation.ts', import.met
 const shellI18nUrl = new URL('../../stephen/src/i18n.ts', import.meta.url);
 const todayPageUrl = new URL('../../stephen/src/pages/TodayPage.tsx', import.meta.url);
 const learnPageUrl = new URL('../../stephen/src/pages/LearnPage.tsx', import.meta.url);
+const itemPageUrl = new URL('../../stephen/src/pages/ItemPage.tsx', import.meta.url);
+const policyPageUrl = new URL('../../stephen/src/pages/PolicyPage.tsx', import.meta.url);
 const knowledgeCardUrl = new URL('../../stephen/src/components/KnowledgeCard.tsx', import.meta.url);
 const publicItemsUrl = new URL('../../stephen/src/content/publicItems.ts', import.meta.url);
 const stephenConfigUrl = new URL('../../vite.stephen.config.ts', import.meta.url);
@@ -254,5 +256,31 @@ describe('Stephen self-cultivation site', () => {
     expect(nginx).toContain('/etc/letsencrypt/live/stephen.lake2ocean.top/fullchain.pem');
     expect(nginx).toContain('root /usr/share/nginx/jianghu/stephen;');
     expect(nginx).toMatch(/location \^~ \/api\/\s*\{\s*return 404;/);
+    expect(nginx).toMatch(/location \^~ \/assets\/\s*\{[^}]*max-age=31536000, immutable/s);
+    expect(nginx).toMatch(/location = \/index\.html\s*\{[^}]*no-store, no-cache, must-revalidate/s);
+    expect(nginx).toMatch(/location = \/fieldbook\/index\.html\s*\{[^}]*no-store, no-cache, must-revalidate/s);
+    expect(nginx).toMatch(/location \/\s*\{\s*try_files \$uri \$uri\/ \/index\.html;/);
+    expect(nginx).toContain('add_header Strict-Transport-Security');
+    expect(nginx).toContain('add_header X-Content-Type-Options "nosniff" always;');
+  });
+
+  it('publishes privacy, copyright and correction entry points without adding a forum', () => {
+    const app = readRequiredFile(shellAppUrl);
+    const navigation = readRequiredFile(shellNavigationUrl);
+    const itemPage = readRequiredFile(itemPageUrl);
+    const policyPage = readRequiredFile(policyPageUrl);
+
+    expect(navigation).toContain("if (path === '/policy/') return { name: 'policy' }");
+    expect(app).toContain("href='/policy/#privacy'");
+    expect(app).toContain("href='/policy/#copyright'");
+    expect(app).toContain("href='/policy/#correction'");
+    expect(itemPage).toContain("href='/policy/#correction'");
+    expect(policyPage).toContain("id='privacy'");
+    expect(policyPage).toContain("id='copyright'");
+    expect(policyPage).toContain("id='correction'");
+    expect(policyPage).toContain('stephen-knowledge-library-v1');
+    expect(policyPage).toContain('https://lake2ocean.top/#wuhu');
+    expect(policyPage).toContain('mailto:cs@zizai.tech');
+    expect(policyPage).toContain('不提供公开评论');
   });
 });

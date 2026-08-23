@@ -18,6 +18,7 @@ import ItemPage from './pages/ItemPage';
 import DigestPage from './pages/DigestPage';
 import LearnPage from './pages/LearnPage';
 import LibraryPage from './pages/LibraryPage';
+import PolicyPage from './pages/PolicyPage';
 import RadarPage from './pages/RadarPage';
 import RolesPage from './pages/RolesPage';
 import TodayPage from './pages/TodayPage';
@@ -162,6 +163,8 @@ export default function App() {
             language={language}
           />
         );
+      case 'policy':
+        return <PolicyPage language={language} />;
       case 'item': {
         const item = getKnowledgeItemBySlug(approvedKnowledgeItems, route.slug);
         return item
@@ -218,6 +221,9 @@ export default function App() {
           <p>© 2026 AI Sales Fieldcraft</p>
         </div>
         <div className='footer-links'>
+          <InternalLink href='/policy/#privacy'>{language === 'zh' ? '隐私' : 'Privacy'}</InternalLink>
+          <InternalLink href='/policy/#copyright'>{language === 'zh' ? '版权' : 'Copyright'}</InternalLink>
+          <InternalLink href='/policy/#correction'>{language === 'zh' ? '纠错与建议' : 'Corrections'}</InternalLink>
           <a href='https://lake2ocean.top' rel='noreferrer'>{language === 'zh' ? '返回江湖首页' : 'Back to Jianghu'}</a>
           <a href='https://crm.lake2ocean.top' rel='noreferrer'>{language === 'zh' ? '进入江湖 CRM' : 'Open Jianghu CRM'}</a>
           <a href='https://beian.miit.gov.cn/' target='_blank' rel='noreferrer'>京ICP备2026046195号-2</a>

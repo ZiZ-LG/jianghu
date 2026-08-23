@@ -664,6 +664,79 @@ h2 {
   line-height: 1.75;
 }
 
+.policy-updated {
+  margin-top: 18px;
+  color: var(--muted);
+  font-size: 13px !important;
+}
+
+.policy-toc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel);
+}
+
+.policy-toc a {
+  padding: 9px 13px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.policy-toc a:hover {
+  border-color: var(--accent);
+}
+
+.policy-section {
+  padding: clamp(26px, 5vw, 54px);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  scroll-margin-top: 94px;
+}
+
+.policy-section h2 {
+  max-width: 850px;
+  margin: 10px 0 20px;
+}
+
+.policy-section > p:not(.section-index) {
+  max-width: 900px;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.8;
+}
+
+.policy-section code {
+  padding: 2px 5px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--page);
+  color: var(--ink);
+  font-size: 0.9em;
+}
+
+.policy-correction {
+  border-color: var(--accent);
+}
+
+.policy-actions {
+  margin-top: 22px;
+}
+
+.correction-guide {
+  margin-top: 20px;
+  font-size: 14px !important;
+}
+
 .knowledge-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1119,6 +1192,33 @@ h2 {
   margin-top: 38px;
 }
 
+.feedback-callout {
+  display: flex;
+  gap: 24px;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 38px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--page);
+}
+
+.feedback-callout p,
+.feedback-callout h2 {
+  margin: 0;
+}
+
+.feedback-callout h2 {
+  margin-top: 6px;
+  font-family: inherit;
+  font-size: 18px;
+}
+
+.feedback-callout > a {
+  flex: 0 0 auto;
+}
+
 .tool-list {
   display: grid;
   gap: 18px;
@@ -1522,6 +1622,11 @@ h2 {
   .tool-heading,
   .tool-editor-heading,
   .local-data-controls {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .feedback-callout {
     align-items: flex-start;
     flex-direction: column;
   }

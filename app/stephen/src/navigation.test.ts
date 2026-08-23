@@ -24,6 +24,7 @@ describe('SAAS-602 Stephen navigation and selection', () => {
     expect(parseRoute('/learn/')).toEqual({ name: 'learn' });
     expect(parseRoute('/library/')).toEqual({ name: 'library' });
     expect(parseRoute('/digest/')).toEqual({ name: 'digest' });
+    expect(parseRoute('/policy/')).toEqual({ name: 'policy' });
     expect(parseRoute('/items/frontier-model-price-performance/')).toEqual({
       name: 'item',
       slug: 'frontier-model-price-performance',

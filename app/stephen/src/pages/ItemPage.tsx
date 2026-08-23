@@ -142,6 +142,16 @@ export default function ItemPage({
           </div>
         </div>
       </section>
+
+      <section className='feedback-callout'>
+        <div>
+          <p className='section-index'>CORRECTION</p>
+          <h2>{language === 'zh' ? '发现事实错误、失效链接或版权问题？' : 'Found a factual error, broken link or rights issue?'}</h2>
+        </div>
+        <InternalLink className='secondary-action' href='/policy/#correction'>
+          {language === 'zh' ? '提交纠错' : 'Submit a correction'}
+        </InternalLink>
+      </section>
     </article>
   );
 }
