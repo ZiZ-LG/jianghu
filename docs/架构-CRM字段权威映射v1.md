@@ -1,6 +1,6 @@
 # CRM 字段权威映射 v1
 
-- **状态：** Active，受 ADR-002 与 `CORE-102` 约束
+- **状态：** Active，受 ADR-002、ADR-003 与 `CORE-102` 约束
 - **日期：** 2026-08-19
 - **适用范围：** Account → Customer、Opportunity → Matter、PlanAction → Commitment 的 Expand → Migrate → Contract 过渡
 - **机器权威：** `packages/domain-contracts/src/authority.ts` 的 `CRM_FIELD_AUTHORITY`
@@ -31,7 +31,7 @@
 
 | 逻辑字段 | 当前唯一权威 | 目标权威 | 主要消费者 | 影子比较与切换门 | 停止条件／移除阶段 | 禁止事项 |
 |---|---|---|---|---|---|---|
-| `customer.category` | `legacy_path: Account.customerType` | `core_path: Customer.categoryKey` | app store；server state/mutate/voice | 仅由销售 adapter 映射 1..4；通用消费者全部改读 V2 且 dry-run 经审核后切换 | 通用命令和页面不再读写 customerType；G7 在销售 adapter 消费者清零后收缩 | 通用命令要求 1..4；categoryKey 为空时 fallback |
+| `customer.category` | `core_path: Customer.categoryKey`（物理 `Account.categoryKey`） | 同当前权威 | 通用 `CREATE_CUSTOMER` 命令；state 通用 Customer 投影；显式销售 adapter | 无通用影子比较或 fallback；未分类 Customer 保留 `categoryKey=null`，旧 1..4 值原样保留但不推导通用分类 | 仅显式销售 adapter 可读写 `Account.customerType`；G7 在该 adapter 消费者清零后再评估收缩 | 通用命令要求／推断 1..4；`categoryKey` 为空时 fallback；回填或双写 `customerType` |
 | `matter.lifecycle` | `legacy_path: Opportunity.status` | `core_path: Matter.lifecycleStatus + Matter.outcomeKey` | app store；server state/mutate/jobs | active/paused/won/lost 逐行影子映射；生命周期、重新打开审计和跨库 parity 通过后切换 | 通用写入只写生命周期与结果；G7 收缩旧 status | 把 won/lost 作为通用状态；两源 fallback |
 | `matter.owner` | `core_path: Matter.primaryOwnerUserId` | `core_path: Matter.primaryOwnerUserId` | server state；owner dry-run；owner-transfer command；EffectiveResourceScope resolver | Account.primaryOwnerUserId 只生成管理员待确认建议；同租户稳定 User.id、CAS、审计与转交命令旧 owner 即时撤权测试通过；CORE-109 已把读取范围收敛到统一 resolver | 所有正式 owner 写只走转交命令；生产启用 scoped policy 仍需单独批准 | 自动复制 Account owner；按姓名／地区／OpportunityMember 推导 Matter owner；Matter owner 为空时 fallback |
 | `tenant.data_scope` | `core_path: Tenant.dataScopePolicy + EffectiveResourceScope` | 同当前权威 | resolver；state；MCP；AI/strategy；advisor；PDE；Inbox；curated；transcript/job；repair/person merge | legacy owner/admin/member 与 viewer parity、scoped Customer/Matter 集合、owner transfer、角色降级、未知 policy/actor 删除和跨入口 ID parity 全部通过；生产启用 scoped 仍须单独批准 | 所有在线读取先取唯一集合；机器消费者 `planned=[]`；未来 Team/Grant/正文 ACL 只与之取交集 | 未知值回退租户共享；按 JWT 旧角色／姓名／地区／OpportunityMember 授权；partial Customer 返回详情；scoped 租户回滚到旧代码 |
@@ -45,13 +45,13 @@
 | `matter.participants` | `core_path: MatterParticipant` | `core_path: MatterParticipant` | app store；server state/mutate/opp/suggest/personMerge | 已按 OppRole＋OpportunityMember 去重并校验 tenant／Matter／Person／Customer 父树；SQLite 备份恢复、PostgreSQL 原子 migration、legacy visibility 与开放 Relation.kind 回归通过 | 通用读写只用 MatterParticipant；OppRole 仅保留方法论角色、OpportunityMember 仅保留旧可见性；G7 再评估旧表收缩 | ADURC 兼任参与关系；OpportunityMember 兼任真相源；切换后 fallback 双读 |
 | `commitment.record` | `core_path: 同一 PlanAction 行的通用 Commitment 字段` | `core_path: 同一 PlanAction 行的通用 Commitment 字段` | 通用 command/state/Today/jobs/patrol/WeCom；旧 App/store/StrategyCard 为销售 Matter adapter | CORE-106 初始 parity、CORE-107 幂等命令与 CORE-108 消费者清单均通过；客户级行只进入 `commitments`，旧 Action/StrategyCard 失败关闭；改期/确认/反馈均使用 version＋scheduleVersion，巡检只写 Reminder | `opportunityId` 已放宽；客户级读写只用通用字段；旧 PlanAction 入口继续强制 Matter 且不能看见/修改客户级行；G7 再收缩旧命令，物理表名可保留 | 新建第二主表；长期双写或 fallback 双读；伪造 Matter；旧 adapter 绕过通用 version；用 createdBy、姓名或旧时段猜测负责人/精确时间 |
 
-### 3.1 CORE-114 消费者剩余项审计
+### 3.1 CORE-114 / CORE-115 消费者剩余项审计
 
-CORE-114 不执行新的权威切换，只把已经完成的 G2 任务从机器清单的 `planned` 中移除，并把仍需清零的 legacy 消费者归到后续唯一任务。每一行仍只有一个 `currentAuthority`；`targetAuthority` 不是运行时备用读取源。
+CORE-114 不执行新的权威切换，只把已经完成的 G2 任务从机器清单的 `planned` 中移除，并把当时仍需清零的 legacy 消费者归到后续唯一任务。CORE-115 后，`customer.category` 已提前完成必要子集切换；其他行仍保持 CORE-114 结论。每一行仍只有一个 `currentAuthority`；`targetAuthority` 不是运行时备用读取源。
 
 | 逻辑字段 | 当前唯一读取／写入源 | 仍存消费者 | 后续任务 |
 |---|---|---|---|
-| `customer.category` | `Account.customerType` | 已登记的 App／Server 读写、adapter 与 migration | `CORE-501 customerType consumer cutover` |
+| `customer.category` | `Customer.categoryKey`（物理 `Account.categoryKey`） | 通用读写已切换；`Account.customerType` 仅剩机器清单登记的显式销售 adapter／migration | G7 在销售 adapter 消费者清零后再评估收缩 |
 | `matter.lifecycle` | `Opportunity.status` | 已登记的状态、AI、PDE、repair 与 migration 消费者 | `CORE-501 Opportunity.status consumer cutover` |
 | `matter.current_stage` | `Opportunity.pipelineStage` | 已登记的组合页、AI、MCP、state、写入与 migration 消费者 | `CORE-501 pipelineStage consumer cutover` |
 | `g64111.engage_stage` | `Opportunity.engageStage` | 已登记的 G64111 页面、服务、adapter、写入与 migration 消费者；PDE 不在其中 | `CORE-501 engageStage consumer cutover` |
@@ -66,12 +66,15 @@ CORE-114 不执行新的权威切换，只把已经完成的 G2 任务从机器�
 | 日期 | 逻辑字段 | 旧权威 → 新权威 | 消费者清零证据 | parity／恢复证据 | 回滚点 |
 |---|---|---|---|---|---|
 | YYYY-MM-DD | `logical.field` | `legacy_path` → `core_path/methodology_value` | 文件、查询、命令清单 | 测试、dry-run、备份恢复 | commit / migration / backup |
+| 2026-08-23 | `customer.category` | `legacy_path: Account.customerType` → `core_path: Customer.categoryKey`（物理 `Account.categoryKey`） | 机器权威将通用 `reads/writes` 收口到 `categoryKey`，其余 `customerType` 消费者全部列为显式销售 adapter 或 migration；`planned=[]`；通用 `CREATE_CUSTOMER` 不读写 1..4 | Domain authority/customer 契约、App adapter、Server Customer 命令/状态、SQLite migration 10/10、PostgreSQL fresh/upgrade/中断/备份恢复、Server 455/455 和精确 SHA Actions 12/12 通过；未分类保留 null，无推断、回填、fallback 或双写 | 实现链 `37b99f9`→`ffde03e`→`fb4e5bc`；部署前可 revert，部署后关闭 `CUSTOMER_COMMANDS_ENABLED` 并前向修复；保留 expand 字段、审计与业务行，禁止恢复 fallback |
 | 2026-08-21 | `matter.participants` | `OppRole + OpportunityMember` → `MatterParticipant` | 通用读仅 `app/src/store.ts`、`server/src/state.ts`；所有在线写显式落 MatterParticipant；旧表消费者只保留方法论／可见性语义 | `matter-participant.test.ts`、`sqlite-matter-upgrade.test.ts`、`schema-render.test.ts`、`actions.test.ts`；PostgreSQL 单事务 migration，SQLite 写前备份与中断恢复 | `53e1331`；`20260821010000_expand_matter_participants_relations`；回滚不删除已生成的 MatterParticipant 数据 |
 | 2026-08-21 | `commitment.record` | `legacy_path: PlanAction` → `core_path: 同行 Commitment 字段` | 新通用写入 `server/src/mutation/commitments.ts` 与受检反馈事务；通用读为 state/Today/jobs/patrol/WeCom；旧 App/store/StrategyCard 仅保留 Matter-required adapter；机器 `planned` 消费者已清零 | CORE-106 初始 parity；CORE-107 命令/CAS/审计；CORE-108 客户级 state、旧路径失败关闭、提醒终止、无伪造 Evidence、企微客户上下文、SQLite 备份/中断恢复与 PostgreSQL 原子 nullable migration | `5edef534` 为通用切换前点；CORE-108 分消费者提交 `c0a5653`、`622c31f`、nullable cutover `ca53efc`。若已有空 Matter 行，回滚仅关闭入口并保留 nullable 数据，禁止强制 `SET NOT NULL` 或删除业务行 |
 | 2026-08-21 | `tenant.data_scope` | ad-hoc tenant-wide/viewer 分支 → `Tenant.dataScopePolicy + EffectiveResourceScope` | [CORE-109 effective-scope 消费者清单](CORE-109-effective-scope消费者清单.md) 覆盖 resolver、legacy adapter、state、MCP、AI/strategy、advisor、PDE、Inbox、curated、transcript/job、repair/person merge；机器 `planned=[]`；专用 export/search 明确 absent | policy contract/migration、resolver matrix、partial Customer state 与跨入口 parity；owner transfer/角色降级不换 JWT 即时收权；SQLite/PostgreSQL 与全量 server 回归 | `050f439` 为 CORE-109 前点。仅当 scoped 租户为零才可回退应用；一旦启用 scoped 必须停止入口并前向修复，保留列与 migration，禁止改回 legacy 扩权 |
 | 2026-08-21 | `pde.decision_stage` | `Opportunity.engageStage` → `PdeDecisionContext.stageKey` | server assembler 已无 `engageStage`/`STAGE_MAP`；app PDE adapter 不属于服务端决策阶段消费者；新建、克隆、MCP 同步与 demo 入口均显式创建 context；机器 `planned=[]` | `pde-decision-context.test.ts` 覆盖缺失失败关闭、阶段独立、CAS/幂等、即时角色降级、租户包隔离、快照精确重放与 migration marker；SQLite 中断恢复、PostgreSQL 原子迁移、PDE kernel golden/property、G64111 parity 与全量 server 回归 | `66d55d4` 为运行时切换前点；保留 `20260821070000_add_pde_decision_context` 和已生成 context。回滚只能关闭 PDE 入口并前向修复，禁止恢复到 legacy fallback 或删除 context/快照 |
 
 `CORE-102` 仅建立映射，没有发生权威切换。
+
+`CORE-115` 完成 `customer.category` 的通用权威切换。逻辑 Customer 继续复用物理 `Account` 行，因此契约和机器权威写作 `Customer.categoryKey`，物理列是 `Account.categoryKey`。`Account.customerType` 仅供显式销售 adapter 保留 1..4 语义；不得用它填补、推断或双写通用分类。
 
 `CORE-106` 完成 Expand + 初始 Migrate，`CORE-107` 把新通用读写切到同一行的 Commitment 字段，`CORE-108` 清零受影响消费者并完成 Contract：物理 `opportunityId` 允许为空。客户级 Commitment 不进入 legacy `planActions`，旧 PlanAction 与 StrategyCard 路径必须失败关闭；旧字段只作为销售 Matter 兼容投影继续存在，不能成为通用命令或 migration 校验的 fallback。任何回滚都不得虚构 Matter、删除客户级业务行或在存在空值时恢复非空约束。
 

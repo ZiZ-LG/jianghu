@@ -7,6 +7,7 @@
 - **关联决策：** `docs/ADR-002-商业版单一演进与通用CRM能力分层.md`
 - **关联任务：** `CORE-115`、`SAAS-102`
 - **执行分支：** `codex/g3-lightweight-personal-crm`
+- **实施状态：** `CORE-115` 已完成；最终实现 `fb4e5bc495a605580e59dd795de1df73401891b1` 精确 SHA 远端 CI 12/12 全绿
 
 ## 1. 背景
 
@@ -70,3 +71,23 @@ Customer，设置 `CUSTOMER_COMMANDS_ENABLED=0` 关闭新入口并前向修复�
 - **原始决定：** “批准按最小方案修复并重跑”
 - **解释口径：** 批准新增并执行 `CORE-115`，完成后恢复 `SAAS-102`；不授权部署、
   合并 `main`、提前实施 G4 或扩大到完整 `CORE-501`。
+
+## 7. 实施与验收记录
+
+- **实现链：** `37b99f962a13a11e9466bfc72f3beae7721e224c` →
+  `ffde03e61eeadc400ad3fe47ab2c72e117952858` →
+  `fb4e5bc495a605580e59dd795de1df73401891b1`。
+- **权威结果：** 通用 Customer 分类只读写 `Customer.categoryKey`（物理
+  `Account.categoryKey`）；`Account.customerType` 仅供显式销售 adapter 使用。旧 1–4
+  原值保留，无自动回填、推断、fallback 或双写。
+- **命令结果：** `CREATE_CUSTOMER` 是唯一已开放通用 Customer 写入；带 tenant
+  scope、当前数据库角色重验、viewer 拒绝、稳定 owner 校验、幂等/并发、同事务
+  AuditEvent 与非敏感 receipt；角色降为 viewer 后不能借完成态重放绕过授权。
+- **迁移结果：** SQLite 写前备份／恢复／重跑／部分态检测与 PostgreSQL
+  fresh install／升级／中断重跑／加密备份恢复全绿；真正空的 PostgreSQL schema
+  可安全安装，存在 Account 但目标列不完整时仍失败关闭。
+- **验收证据：** Domain 69/69、G64111 32/32、PDE 25/25、App 252/252＋类型＋生产构建、
+  SQLite migration 10/10、Server 455/455＋类型、PostgreSQL 运维演练全绿；独立终审
+  0 Critical / 0 Important。[GitHub Actions 32655255508](https://github.com/ZiZ-LG/jianghu/actions/runs/32655255508)
+  对应精确 SHA `fb4e5bc495a605580e59dd795de1df73401891b1`，12/12 jobs 全绿。
+- **边界：** 未部署、未合并 `main`、未实施 `SAAS-102` 或其他 `CORE-501` 内容。
