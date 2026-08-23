@@ -146,6 +146,10 @@ describe('Stephen self-cultivation site', () => {
     expect(html).toContain('<link rel="icon" href="/favicon.svg"');
     expect(html).toContain('京ICP备2026046195号-2');
     expect(html).toContain('自在创造（北京）智慧科技有限公司');
+    expect(html).not.toContain('fonts.googleapis.com');
+    expect(html).not.toContain('fonts.gstatic.com');
+    expect(html).toMatch(/@media \(max-width: 480px\)[\s\S]*?\.brand\s*\{\s*display:\s*none;/);
+    expect(html).toMatch(/@media \(max-width: 480px\)[\s\S]*?\.sidebar\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto;/);
   });
 
   it('defines an isolated bilingual Stephen shell without changing the CRM build entry', () => {
@@ -274,6 +278,7 @@ describe('Stephen self-cultivation site', () => {
     expect(app).toContain("href='/policy/#privacy'");
     expect(app).toContain("href='/policy/#copyright'");
     expect(app).toContain("href='/policy/#correction'");
+    expect(app).toContain("<main id='main' tabIndex={-1}>");
     expect(itemPage).toContain("href='/policy/#correction'");
     expect(policyPage).toContain("id='privacy'");
     expect(policyPage).toContain("id='copyright'");

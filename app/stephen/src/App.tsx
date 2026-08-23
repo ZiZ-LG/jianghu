@@ -212,7 +212,7 @@ export default function App() {
         </button>
       </header>
 
-      <main id='main'>{page}</main>
+      <main id='main' tabIndex={-1}>{page}</main>
 
       <footer className='site-footer'>
         <div>

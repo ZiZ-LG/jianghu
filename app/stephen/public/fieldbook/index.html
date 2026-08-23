@@ -8,9 +8,6 @@
   <title>AI 销售的自我修养｜行业通用面试学习版</title>
   <link rel="canonical" href="https://stephen.lake2ocean.top/fieldbook/">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700;800;900&family=Noto+Serif+SC:wght@600;700;900&display=swap" rel="stylesheet">
   <style>
     :root {
       --paper: #f5f1e8;
@@ -1588,10 +1585,11 @@
       }
 
       .sidebar {
-        grid-template-columns: auto 1fr auto;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
       }
 
-      .brand strong {
+      .brand {
         display: none;
       }
 
