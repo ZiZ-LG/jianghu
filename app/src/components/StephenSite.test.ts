@@ -209,6 +209,22 @@ describe('Stephen self-cultivation site', () => {
     expect(styles).not.toMatch(/body\s*\{[^}]*overflow\s*:\s*hidden/s);
   });
 
+  it('switches to the compact navigation before tablet-width labels wrap', () => {
+    const styles = readRequiredFile(shellStylesUrl);
+    const tabletBreakpointStart = styles.indexOf('@media (max-width: 920px)');
+    expect(tabletBreakpointStart).toBeGreaterThanOrEqual(0);
+
+    const nextBreakpoint = styles.indexOf('@media', tabletBreakpointStart + 1);
+    const tabletStyles = styles.slice(
+      tabletBreakpointStart,
+      nextBreakpoint === -1 ? styles.length : nextBreakpoint,
+    );
+
+    expect(tabletStyles).toMatch(/\.desktop-nav\s*\{\s*display:\s*none;/);
+    expect(tabletStyles).toMatch(/\.global-search\s*\{[^}]*grid-row:\s*2;/s);
+    expect(tabletStyles).toMatch(/\.mobile-nav\s*\{[^}]*display:\s*grid;/s);
+  });
+
   it('preserves the complete migrated curriculum and interactive fieldbook', () => {
     const html = readRequiredFile(siteUrl);
     const syllabus = extract(html, /const syllabus = \[(.*?)\n\s*\];\n\n\s*const glossary/s, 'syllabus');

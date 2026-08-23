@@ -564,9 +564,9 @@ docs/content/
 
 - [x] **Step 3a: Browser-test the approved empty-collection baseline on desktop and mobile**
 
-  在 1280×720 和 375×812 验证：滚动、搜索、筛选、返回位置、详情证据、收藏、完整手册、深浅色、中文长标题、无横向溢出、无控制台错误。
+  在 1280×720、768×1024 和 375×812 验证：滚动、搜索、筛选、返回位置、详情证据、收藏、完整手册、深浅色、中文长标题、无横向溢出、无控制台错误。
 
-  Browser evidence（2026-08-23）：根页、雷达、六个专题、岗位、工具、学习、收藏、摘要、说明、旧手册及未批准详情 404 状态均可直接访问；移动端全部页面滚动到底，页脚不被固定导航遮挡；搜索、AND/OR、历史前进后退、工具保存/刷新/复制/下载/重置、工具进行中/完成/清除、损坏本机状态恢复、策略深链、旧手册术语/任务/题库/主题/打印均通过，控制台 0 错误。修复跳过链接焦点、旧手册 Google Fonts 外部请求和 375px 章节导航后复验通过。最终 Lighthouse mobile 为 Performance 100、Accessibility 100、Best Practices 100、SEO 100。
+  Browser evidence（2026-08-23）：根页、雷达、六个专题、岗位、工具、学习、收藏、摘要、说明、旧手册及未批准详情 404 状态均可直接访问；移动端全部页面滚动到底，页脚不被固定导航遮挡；搜索、AND/OR、历史前进后退、工具保存/刷新/复制/下载/重置、工具进行中/完成/清除、损坏本机状态恢复、策略深链、旧手册术语/任务/题库/主题/打印均通过，控制台 0 错误。修复跳过链接焦点、旧手册 Google Fonts 外部请求和 375px 章节导航后复验通过。完成度审计又补测 768×1024，发现 760px 断点使平板头部四项中文导航逐字换行；新增失败回归测试后，将紧凑头部和底部导航断点独立提前至 920px，保留平板正文双栏。随后 375×812、768×1024、1280×720 响应式截图及平板主要路由、滚动、控制台复验通过。最终 Lighthouse mobile 为 Performance 100、Accessibility 100、Best Practices 100、SEO 100。
 
 - [ ] **Step 3b: Re-test approved public-content journeys after owner review**
 
@@ -584,7 +584,7 @@ docs/content/
 
   Local candidate evidence（2026-08-23）：已生成未上传生产的 `/private/tmp/stephen-knowledge-hub-6c8f273.tar.gz`，SHA-256 为 `37562b57cf5d6898617146aa277e2a8f7a01d00d4b5e8e492e9c1b62f8dce386`。本机没有 Nginx，因此没有把字符串契约冒充真实 `nginx -t`；Step 4/5 仍受生产授权、证书和共享 Host 回归门约束。
 
-  Completion audit evidence（2026-08-23）：按目标原文重新执行 App `typecheck`、247 项全量测试、31 项 Stephen 独立测试、`build`、`build:stephen` 与 `build:all`，并执行 G64111 类型检查/32 项测试、Server `npx tsc --noEmit`、`git diff --check` 和允许范围差异检查，全部通过。最终 Stephen 静态包同时包含根页、旧手册、爬虫控制和哈希资源；对 69 个候选中文标题、英文原题、证据标题及原文 URL 的精确扫描命中 0。提交 `ef3171e` 对应 GitHub Actions 运行 `32660677560` 的 12 个作业全部成功。除项目所有者内容终审及其后的公开内容旅程复测外，没有发现其他未完成的本地发布候选要求。
+  Completion audit evidence（2026-08-23）：按目标原文重新执行 App `typecheck`、248 项全量测试、31 项 Stephen 独立测试、`build`、`build:stephen` 与 `build:all`，并执行 G64111 类型检查/32 项测试、Server `npx tsc --noEmit`、`git diff --check` 和允许范围差异检查，全部通过。最终 Stephen 静态包同时包含根页、旧手册、爬虫控制和哈希资源；对 69 个候选中文标题、英文原题、证据标题及原文 URL 的精确扫描命中 0。提交 `ef3171e` 对应 GitHub Actions 运行 `32660677560` 的 12 个作业全部成功；后续平板断点修复由新的分支 CI 继续验证。除项目所有者内容终审及其后的公开内容旅程复测外，没有发现其他未完成的本地发布候选要求。
 
   SAAS-604 commits：
 

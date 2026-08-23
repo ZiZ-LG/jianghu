@@ -1525,31 +1525,7 @@ h2 {
   }
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    color-scheme: dark;
-    --page: #121714;
-    --panel: #19211d;
-    --ink: #eef4ef;
-    --muted: #aab5ad;
-    --line: #36443c;
-    --accent: #72bd95;
-    --accent-strong: #245c43;
-    --accent-soft: #243b31;
-    --focus: #e39a68;
-    --shadow: 0 18px 54px rgb(0 0 0 / 25%);
-  }
-}
-
-@media (max-width: 760px) {
-  html {
-    scroll-padding-top: 74px;
-  }
-
-  .site-shell {
-    width: min(100% - 24px, 680px);
-  }
-
+@media (max-width: 920px) {
   .site-header {
     grid-template-columns: auto 1fr auto;
     min-height: 66px;
@@ -1573,6 +1549,55 @@ h2 {
   .global-search {
     grid-row: 2;
     grid-column: 1 / -1;
+  }
+
+  .mobile-nav {
+    position: fixed;
+    z-index: 12;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    padding: 10px max(10px, env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+    border-top: 1px solid var(--line);
+    background: color-mix(in srgb, var(--panel) 94%, transparent);
+    backdrop-filter: blur(16px);
+  }
+
+  .mobile-nav a {
+    min-width: 0;
+    padding: 8px 2px;
+    color: var(--muted);
+    font-size: 11px;
+    text-align: center;
+    text-decoration: none;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --page: #121714;
+    --panel: #19211d;
+    --ink: #eef4ef;
+    --muted: #aab5ad;
+    --line: #36443c;
+    --accent: #72bd95;
+    --accent-strong: #245c43;
+    --accent-soft: #243b31;
+    --focus: #e39a68;
+    --shadow: 0 18px 54px rgb(0 0 0 / 25%);
+  }
+}
+
+@media (max-width: 760px) {
+  html {
+    scroll-padding-top: 74px;
+  }
+
+  .site-shell {
+    width: min(100% - 24px, 680px);
   }
 
   main {
@@ -1664,28 +1689,6 @@ h2 {
     justify-content: start;
   }
 
-  .mobile-nav {
-    position: fixed;
-    z-index: 12;
-    right: 0;
-    bottom: 0;
-    left: 0;
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    padding: 10px max(10px, env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
-    border-top: 1px solid var(--line);
-    background: color-mix(in srgb, var(--panel) 94%, transparent);
-    backdrop-filter: blur(16px);
-  }
-
-  .mobile-nav a {
-    min-width: 0;
-    padding: 8px 2px;
-    color: var(--muted);
-    font-size: 11px;
-    text-align: center;
-    text-decoration: none;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -97,7 +97,7 @@ git status --short
 
 2026-08-23 最终本地门禁证据：
 
-- App TypeScript 通过；App `30 files / 247 tests` 通过；
+- App TypeScript 通过；App `30 files / 248 tests` 通过；
 - Stephen `5 files / 31 tests` 通过；
 - G64111 TypeScript 与 `2 files / 32 tests` 通过；
 - Server TypeScript 在本地生成 Prisma Client 后通过，未连接或修改数据库；
@@ -122,7 +122,7 @@ git status --short
 
 ## 7. 浏览器验收矩阵
 
-桌面 1280×720 与移动 375×812 均检查：
+桌面 1280×720、平板 768×1024 与移动 375×812 均检查：
 
 - [x] 首页滚动、3–5 条代码上限和无内容时的诚实空状态；
 - [x] `/radar/` 中英文搜索词、AND/OR 筛选、清除和前进/后退；
@@ -134,7 +134,8 @@ git status --short
 - [x] `/fieldbook/` 旧手册、术语搜索、任务、题库随机抽题/提示、主题切换和打印入口；
 - [x] 浏览器前进/后退、滚动到底、固定移动导航和页脚；
 - [x] 中文长标题、英文外壳、`html.lang`、跳过链接焦点进入 `<main>` 和 reduced-motion CSS；
-- [x] 1280×720 与 375×812 全路由无横向溢出、控制台 0 错误；旧手册不再请求 Google Fonts；
+- [x] 1280×720、768×1024 与 375×812 主要路由无横向溢出、控制台 0 错误；旧手册不再请求 Google Fonts；
+- [x] 768×1024 头部在中文四项导航开始换行前切换为紧凑搜索头部和四项底部导航，正文保留平板双栏并可滚动到页脚；
 - [x] Lighthouse 移动端最终评分：Performance 100、Accessibility 100、Best Practices 100、SEO 100；
 - [ ] 项目所有者批准内容后，重跑公开卡片、真实详情证据/原文、收藏/已读和非空日报/周报旅程。
 
@@ -191,8 +192,8 @@ rollback_verified_at=
 | 角色 | 结论 | 姓名 | 时间 | 证据 |
 |---|---|---|---|---|
 | 内容终审 | PENDING |  |  | 30 条终审包 |
-| 工程门禁 | PASS | Codex | 2026-08-23 | App 247、Stephen 31、G64111 32、三端类型、双构建与扫描通过 |
-| 浏览器验收 | BASELINE PASS / CONTENT RETEST PENDING | Codex | 2026-08-23 | 桌面/移动矩阵、交互、网络、控制台与 Lighthouse 100/100/100/100 |
+| 工程门禁 | PASS | Codex | 2026-08-23 | App 248、Stephen 31、G64111 32、三端类型、双构建与扫描通过 |
+| 浏览器验收 | BASELINE PASS / CONTENT RETEST PENDING | Codex | 2026-08-23 | 桌面/平板/移动矩阵、交互、网络、控制台与 Lighthouse 100/100/100/100 |
 | Nginx/镜像 | LOCAL BUNDLE PASS / PROD PENDING | Codex | 2026-08-23 | 本机静态包 digest 已记录；真实 `nginx -t`、证书和共享 Host 回归待授权 |
 | 项目所有者生产授权 | **NOT GRANTED** |  |  | 另行明确授权 |
 
