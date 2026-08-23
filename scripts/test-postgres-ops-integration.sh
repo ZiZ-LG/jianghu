@@ -711,6 +711,8 @@ git clone -q "file://$ROOT_DIR" "$fresh_root/repo"
 # Give the deployment fixture its own tracked branch and isolated origin so
 # deploy-company-update.sh exercises the production pull gate deterministically.
 git init --bare -q "$fresh_origin"
+# The CI workspace is shallow; allow only this disposable fixture origin to accept it.
+deployment_git_in_dir "$fresh_origin" config receive.shallowUpdate true
 deployment_git_in_dir "$fresh_root/repo" switch -q -C "$fresh_branch"
 deployment_git_in_dir "$fresh_root/repo" remote set-url origin "file://$fresh_origin"
 deployment_git_in_dir "$fresh_root/repo" push -qu -u origin "$fresh_branch"
