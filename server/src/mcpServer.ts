@@ -29,6 +29,7 @@ import { resolveScopedRelSuggestions } from './suggestionScope.js';
 import { syncIntelBundle } from './mcp/syncBundle.js';
 import { ALL_ACCESS_SCOPES, scopesForCurrentRole, type AccessScope } from './accessToken.js';
 import { resolveEffectiveResourceScope } from './resourceScope.js';
+import { requireSalesCustomerType } from './salesClassification.js';
 
 // 每租户 pending 候选容量上限（防外部 agent 刷爆）
 const MAX_PENDING_PERSON_SUGG = 200;
@@ -494,6 +495,8 @@ const CUSTOMER_TYPE_LABEL: Record<number, string> = {
   3: '分布式头部民企',
   4: 'EPC总承包商',
 };
+const customerTypeLabel = (customerType: number | null): string =>
+  customerType === null ? '未设置销售分类' : CUSTOMER_TYPE_LABEL[customerType] ?? `类型${customerType}`;
 const LAYER_LABEL: Record<string, string> = {
   L1: 'L1 组织架构', L2: 'L2 决策权力', L3: 'L3 情感阵营', L4: 'L4 战略本质',
 };
@@ -543,7 +546,7 @@ async function listAccounts(ctx: CommandContext) {
         id: account.id,
         name: account.name,
         customerType: account.customerType,
-        customerTypeLabel: CUSTOMER_TYPE_LABEL[account.customerType] ?? `类型${account.customerType}`,
+        customerTypeLabel: customerTypeLabel(account.customerType),
         ...(full ? {
           externalRef: full.externalRef ?? undefined, // 为空 = 江湖原生建、WorkBuddy 尚未加工（认领判据）
           unifiedCreditCode: full.unifiedCreditCode ?? undefined,
@@ -595,7 +598,7 @@ async function getAccountDetail(ctx: CommandContext, accountId: string) {
   }
 
   return {
-    account: { id: account.id, name: account.name, externalRef: account.externalRef ?? undefined, customerType: account.customerType, customerTypeLabel: CUSTOMER_TYPE_LABEL[account.customerType] ?? `类型${account.customerType}` },
+    account: { id: account.id, name: account.name, externalRef: account.externalRef ?? undefined, customerType: account.customerType, customerTypeLabel: customerTypeLabel(account.customerType) },
     persons: account.persons.map((p) => ({
       id: p.id,
       name: p.name,
@@ -938,7 +941,7 @@ async function upsertAccount(ctx: CommandContext, args: Record<string, unknown>,
 
   const name = str(args.name, 100).trim();
   const ct = num(args.customerType);
-  const customerType = ct && [1, 2, 3].includes(ct) ? ct : undefined;
+  const customerType = ct && [1, 2, 3, 4].includes(ct) ? ct : undefined;
   const profile = args.profile != null && typeof args.profile === 'object' ? projectAccountProfile(args.profile) : undefined;
 
   // 幂等查找（全程 where { tenantId }）：先主锚 externalRef，再副锚 unifiedCreditCode
@@ -968,12 +971,13 @@ async function upsertAccount(ctx: CommandContext, args: Record<string, unknown>,
 
   // 未命中 → CREATE（新建必须有 name）
   if (!name) throw new Error('未命中现有客户，新建需提供 name');
+  if (customerType === undefined) throw new Error('新建销售客户需明确 customerType（1–4）');
   const id = 'acc_' + randomUUID().replaceAll('-', '');
   await applyMcpAction(ctx, {
     type: 'ADD_ACCOUNT',
     account: {
       id, name,
-      customerType: customerType ?? 1,
+      customerType: requireSalesCustomerType(customerType),
       unifiedCreditCode: unifiedCreditCode ?? undefined,
       externalRef: externalRef ?? undefined,
       region: str(args.region, 40),
@@ -1015,13 +1019,15 @@ async function syncLegacyAccount(ctx: CommandContext, args: Record<string, unkno
   const name = str(args.name, 100).trim() || existing?.name;
   if (!name) throw new Error('未命中现有客户，新建需提供 name');
   const rawType = num(args.customerType);
-  const customerType = rawType && [1, 2, 3, 4].includes(rawType) ? rawType : existing?.customerType ?? 1;
+  if (rawType !== undefined && ![1, 2, 3, 4].includes(rawType)) throw new Error('customerType 必须是 1–4');
+  const customerType = rawType && [1, 2, 3, 4].includes(rawType) ? rawType : existing?.customerType;
   const syncReceipt = await syncIntelBundle(ctx, {
     idempotencyKey: legacySyncKey('upsert_account', args),
     bundle: { account: {
       ...(externalRef ? { externalRef } : {}),
       ...(unifiedCreditCode ? { unifiedCreditCode } : {}),
-      name, customerType,
+      name,
+      ...(customerType === null || customerType === undefined ? {} : { customerType }),
       ...(args.region !== undefined ? { region: str(args.region, 40) } : {}),
       ...(args.group !== undefined ? { group: str(args.group, 100) } : {}),
       ...(args.primaryOwner !== undefined ? { primaryOwner: str(args.primaryOwner, 40) } : {}),
@@ -1071,6 +1077,7 @@ async function syncLegacyOpportunity(ctx: CommandContext, args: Record<string, u
   const existing = await prisma.opportunity.findFirst({ where: { tenantId: ctx.tenantId, accountId: account.id, externalRef } });
   const name = str(args.name, 100).trim() || existing?.name;
   if (!name) throw new Error('未命中现有商机，新建需提供 name');
+  const customerType = existing ? undefined : requireSalesCustomerType(account.customerType);
   const pipelineInput = str(args.pipelineStage, 40) === '合同签约' ? '合同双签' : str(args.pipelineStage, 40);
   const pipelineStage = ['线索', '需求引导', '方案认可', '客户立项', '招投标', '合同谈判', '合同双签'].includes(pipelineInput)
     ? pipelineInput : existing?.pipelineStage;
@@ -1087,7 +1094,11 @@ async function syncLegacyOpportunity(ctx: CommandContext, args: Record<string, u
   const syncReceipt = await syncIntelBundle(ctx, {
     idempotencyKey: legacySyncKey('upsert_opportunity', args),
     bundle: {
-      account: { id: account.id, name: account.name, customerType: account.customerType },
+      account: {
+        id: account.id,
+        name: account.name,
+        ...(customerType === undefined ? {} : { customerType }),
+      },
       opportunity: {
         externalRef, name,
         ...(pipelineStage ? { pipelineStage } : {}),
@@ -1146,7 +1157,11 @@ async function syncLegacyVisit(ctx: CommandContext, args: Record<string, unknown
   const syncReceipt = await syncIntelBundle(ctx, {
     idempotencyKey: legacySyncKey('append_visit_note', args),
     bundle: {
-      account: { id: account.id, name: account.name, customerType: account.customerType },
+      account: {
+        id: account.id,
+        name: account.name,
+        ...(account.customerType === null ? {} : { customerType: requireSalesCustomerType(account.customerType) }),
+      },
       ...(opportunity?.externalRef ? { opportunity: {
         externalRef: opportunity.externalRef, name: opportunity.name,
         pipelineStage: opportunity.pipelineStage, engageStage: opportunity.engageStage,
@@ -1234,12 +1249,13 @@ async function upsertOpportunity(ctx: CommandContext, args: Record<string, unkno
   }
 
   if (!name) throw new Error('未命中现有商机，新建需提供 name');
+  const customerType = requireSalesCustomerType(account.customerType);
   const id = 'opp_' + randomUUID().replaceAll('-', '');
   await applyMcpAction(ctx, {
     type: 'ADD_OPP', accId: account.id,
     opp: {
       id, name, externalRef: externalRef ?? undefined,
-      customerType: account.customerType,
+      customerType,
       pipelineStage: pipelineStage ?? '线索',
       engageStage: engageStage ?? '需求调研立项',
       status: status ?? 'active',

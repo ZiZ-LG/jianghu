@@ -11,6 +11,7 @@ import { replayReceipt, type StoredSyncReceipt, type SyncReceipt } from './syncR
 import { activePersonWhere } from '../activePerson.js';
 import { mapLegacyOpportunityStatus } from '../matter/lifecycle.js';
 import { createPdeDecisionContext } from '../pde/context.js';
+import { requireSalesCustomerType } from '../salesClassification.js';
 
 const OPAQUE_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:#/-]*$/;
 const OpaqueRefSchema = z.string().trim().min(1).max(80).regex(OPAQUE_REF_PATTERN, 'ref must be an opaque identifier without names or free text');
@@ -254,7 +255,7 @@ async function executeBundle(
     account = await db.account.create({ data: {
       id: 'acc_' + randomUUID().replaceAll('-', ''), tenantId: ctx.tenantId,
       externalRef: accountFact.externalRef ?? null, unifiedCreditCode: accountFact.unifiedCreditCode ?? null,
-      name: accountFact.name, customerType: accountFact.customerType ?? 1,
+      name: accountFact.name, customerType: accountFact.customerType ?? null,
       region: accountFact.region ?? '', group: accountFact.group ?? '',
       primaryOwner: accountFact.primaryOwner ?? '', primaryOwnerUserId: accountFact.primaryOwnerUserId ?? null,
       profile: JSON.stringify(profile),
@@ -295,10 +296,11 @@ async function executeBundle(
       tenantId: ctx.tenantId, accountId: account.id, externalRef: fact.externalRef,
     } } });
     if (!opportunity) {
+      const customerType = requireSalesCustomerType(account.customerType);
       const status = fact.status ?? 'active';
       opportunity = await db.opportunity.create({ data: {
         id: 'opp_' + randomUUID().replaceAll('-', ''), tenantId: ctx.tenantId, accountId: account.id,
-        externalRef: fact.externalRef, name: fact.name, customerType: account.customerType,
+        externalRef: fact.externalRef, name: fact.name, customerType,
         pipelineStage: fact.pipelineStage ?? '线索', engageStage: fact.engageStage ?? '需求调研立项',
         status, ...mapLegacyOpportunityStatus(status), changeMode: fact.changeMode ?? null,
         productSolution: fact.productSolution ?? '', competitor: fact.competitor ?? '',

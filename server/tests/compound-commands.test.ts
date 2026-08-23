@@ -222,6 +222,37 @@ describe('atomic idempotent compound commands', () => {
     expect(await test.prisma.visitNote.count({ where: { tenantId: test.tenant.id } })).toBe(0);
   });
 
+  it('asks for a sales classification instead of defaulting voice-created accounts or opportunities', async () => {
+    const unclassifiedAccount = await test.prisma.account.create({ data: {
+      id: 'acc-voice-unclassified', tenantId: test.tenant.id, name: 'Unclassified voice account', customerType: null,
+    } });
+    const opportunityResult = await ingestVoiceText(ctx, {
+      text: '明确新建商机', accountId: unclassifiedAccount.id,
+    }, test.prisma, { extracted: {
+      account: null,
+      opportunity: { name: 'Voice Opp', kind: 'explicit', confidence: 1, evidence: '明确新建商机' },
+      persons: [], relationships: [], burningIssues: [], ucvs: [], evidences: [], rawNote: '明确新建商机',
+    } });
+    expect(opportunityResult).toEqual({
+      ok: false,
+      status: 409,
+      body: { error: '请先为客户设置销售分类，再创建商机', code: 'sales_customer_type_required' },
+    });
+    await expect(test.prisma.opportunity.count({ where: { accountId: unclassifiedAccount.id } })).resolves.toBe(0);
+
+    const accountResult = await ingestVoiceText(ctx, { text: '明确新建客户' }, test.prisma, { extracted: {
+      account: { name: 'Voice account without type', kind: 'explicit', confidence: 1, evidence: '明确新建客户' },
+      opportunity: null,
+      persons: [], relationships: [], burningIssues: [], ucvs: [], evidences: [], rawNote: '明确新建客户',
+    } });
+    expect(accountResult).toEqual({
+      ok: false,
+      status: 400,
+      body: { error: '请明确客户的销售分类（1–4）后再用口述创建客户', code: 'sales_customer_type_required' },
+    });
+    await expect(test.prisma.account.count({ where: { name: 'Voice account without type' } })).resolves.toBe(0);
+  });
+
   it('rolls back an inbox batch when a later item fails', async () => {
     for (const id of ['cp-one', 'cp-two']) await test.prisma.changeProposal.create({ data: {
       id, tenantId: test.tenant.id, accountId: 'acc-command', entityKind: 'person', entityId: 'missing',

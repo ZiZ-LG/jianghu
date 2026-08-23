@@ -89,7 +89,9 @@ model Account {
   tenantId           String
   tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name               String
-  customerType       Int
+  categoryKey        String?
+  customerType       Int?
+  version            Int                 @default(0)
   unifiedCreditCode  String?
   externalRef        String? // 销售包 customer_id，跨系统幂等主锚（WorkBuddy 集成）
   region             String              @default("") // 大区

@@ -18,7 +18,7 @@ import { resolveEffectiveResourceScope } from './resourceScope.js';
 const accountPatchSchema = z.object({
   base: z.object({
     name: z.string().max(200),
-    customerType: z.number().int().min(1).max(4),
+    customerType: z.number().int().min(1).max(4).nullable(),
     primaryOwner: z.string().max(100),
     primaryOwnerUserId: z.string().max(100).nullable(),
   }).strict(),

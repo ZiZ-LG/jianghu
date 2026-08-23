@@ -1,7 +1,7 @@
 // 作战档案面板（路 A · 字段内联编辑）：左侧导航选文档，右侧 MdDocView 文档视图（点字段原地改、失焦写回系统）。
 // 导出/复制用 mdProfile 渲染的 .md 文本（实时反映系统数据）；版本日志走 localStorage（决策 b）。
 import { useEffect, useMemo, useState } from 'react';
-import type { Account } from '../types';
+import { customerTypeLabel, type Account } from '../types';
 import { renderCustomerMd, renderOpportunityMd, renderVisitMd, type VersionLogEntry, type PdeBrief } from '../lib/mdProfile';
 import type { Action } from '../store';
 import { usePersistentState } from '../ui';
@@ -123,5 +123,5 @@ export function MdDocPanel({ account, dispatch, onClose, readonly = false }: { a
 
 function CUSTOMER_TYPE_LABEL_short(account: Account): string {
   const map: Record<number, string> = { 1: '央企发电', 2: '地方国企', 3: '分布式民企', 4: 'EPC总包' };
-  return map[account.customerType] ?? `类型${account.customerType}`;
+  return account.customerType === null ? customerTypeLabel(null) : map[account.customerType];
 }

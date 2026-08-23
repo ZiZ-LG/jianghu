@@ -400,6 +400,12 @@ export const MatterParticipantCommandSchema = z.union([
 ]);
 export type MatterParticipantCommand = z.infer<typeof MatterParticipantCommandSchema>;
 
+export const CustomerCreateCommandSchema = command({
+  type: z.literal('CREATE_CUSTOMER'),
+  customer: customerCreate,
+});
+export type CustomerCreateCommand = z.infer<typeof CustomerCreateCommandSchema>;
+
 export const CRM_COMMAND_TYPES = [
   'CREATE_CUSTOMER', 'UPDATE_CUSTOMER', 'ARCHIVE_CUSTOMER', 'RESTORE_CUSTOMER',
   'CREATE_MATTER', 'UPDATE_MATTER', 'TRANSFER_MATTER_OWNER', 'TRANSITION_MATTER_LIFECYCLE', 'REOPEN_MATTER',
@@ -413,7 +419,7 @@ export const CRM_COMMAND_TYPES = [
 export type CrmCommandType = (typeof CRM_COMMAND_TYPES)[number];
 
 const crmCommandSchemas = [
-  command({ type: z.literal('CREATE_CUSTOMER'), customer: customerCreate }),
+  CustomerCreateCommandSchema,
   command({ type: z.literal('UPDATE_CUSTOMER'), ...versionedEntityCommand, patch: customerPatch }),
   command({ type: z.literal('ARCHIVE_CUSTOMER'), ...versionedEntityCommand, reason: z.string().trim().min(1).optional() }),
   command({ type: z.literal('RESTORE_CUSTOMER'), ...versionedEntityCommand }),
@@ -464,6 +470,17 @@ const crmCommandSchemas = [
 export const CrmCommandSchema = z.union(crmCommandSchemas);
 export type CrmCommandInput = z.input<typeof CrmCommandSchema>;
 export type CrmCommand = z.infer<typeof CrmCommandSchema>;
+
+/** Non-sensitive replay summary for the create-only Customer command. */
+export const CustomerCommandReceiptSchema = z.object({
+  customerId: id,
+  categoryKey: openKey.nullable(),
+  primaryOwnerUserId: id.nullable(),
+  version,
+  undoable: z.literal(false),
+}).strict();
+
+export type CustomerCommandReceipt = z.infer<typeof CustomerCommandReceiptSchema>;
 
 export const COMMITMENT_COMMAND_TYPES = [
   'CREATE_COMMITMENT', 'RESCHEDULE_COMMITMENT', 'CONFIRM_COMMITMENT',

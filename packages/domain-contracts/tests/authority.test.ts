@@ -34,9 +34,7 @@ describe('CRM field authority map', () => {
     const planned = CRM_FIELD_AUTHORITY.flatMap((entry) => entry.consumers.planned);
     expect(planned.join('\n')).not.toMatch(/\bCORE-(?:109|111|112|113)\b/);
     expect(getCrmFieldAuthority('matter.owner')?.consumers.planned).toEqual([]);
-    expect(getCrmFieldAuthority('customer.category')?.consumers.planned).toEqual([
-      'CORE-501 customerType consumer cutover',
-    ]);
+    expect(getCrmFieldAuthority('customer.category')?.consumers.planned).toEqual([]);
     expect(getCrmFieldAuthority('matter.lifecycle')?.consumers.planned).toEqual([
       'CORE-501 Opportunity.status consumer cutover',
     ]);
@@ -73,7 +71,7 @@ describe('CRM field authority map', () => {
 
   it('routes the critical legacy fields to their approved distinct targets', () => {
     expect(getCrmFieldAuthority('customer.category')).toMatchObject({
-      currentAuthority: { kind: 'legacy_path', path: 'Account.customerType' },
+      currentAuthority: { kind: 'core_path', path: 'Customer.categoryKey' },
       targetAuthority: { kind: 'core_path', path: 'Customer.categoryKey' },
     });
     expect(getCrmFieldAuthority('matter.current_stage')).toMatchObject({
@@ -120,15 +118,19 @@ describe('CRM field authority map', () => {
       'app/src/wireAction.ts',
       'packages/domain-contracts/src/actions.ts',
       'server/scripts/migrate-adurc-v1.1.ts',
+      'server/scripts/postgres-customer-schema-state.ts',
+      'server/scripts/render-pre-customer-schema.ts',
       'server/src/ai.ts',
       'server/src/mcp/syncBundle.ts',
       'server/src/mcpServer.ts',
       'server/src/mutate.ts',
       'server/src/opp.ts',
       'server/src/repair.ts',
+      'server/src/salesClassification.ts',
       'server/src/seed-demo.ts',
       'server/src/state.ts',
       'server/src/voice.ts',
+      'server/scripts/upgrade-sqlite-schema.ts',
     ].sort());
   });
 

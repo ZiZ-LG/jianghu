@@ -44,7 +44,7 @@ describe('INT-301 RepairPanel', () => {
 
     expect(toAccountRepairPatch(legacyAccount, {
       name: '修正后的客户名',
-      customerType: legacyAccount.customerType,
+      customerType: legacyAccount.customerType === null ? '' : legacyAccount.customerType,
       primaryOwnerUserId: '',
       ownerChanged: false,
     })).toEqual({
@@ -56,6 +56,36 @@ describe('INT-301 RepairPanel', () => {
       },
       name: '修正后的客户名',
     });
+  });
+
+  it('preserves a missing sales classification instead of defaulting repair to type 2', () => {
+    const unclassifiedAccount: Account = {
+      ...seedAccount,
+      id: 'account-unclassified',
+      customerType: null,
+    };
+
+    expect(toAccountRepairPatch(unclassifiedAccount, {
+      name: unclassifiedAccount.name,
+      customerType: '',
+      primaryOwnerUserId: '',
+      ownerChanged: false,
+    })).toEqual({
+      base: {
+        name: unclassifiedAccount.name,
+        customerType: null,
+        primaryOwner: unclassifiedAccount.primaryOwner ?? '',
+        primaryOwnerUserId: unclassifiedAccount.primaryOwnerUserId ?? null,
+      },
+    });
+
+    const html = renderToStaticMarkup(createElement(RepairPanel, {
+      target: { kind: 'account', account: unclassifiedAccount },
+      accounts: [unclassifiedAccount],
+      onClose: vi.fn(),
+      onChanged: vi.fn(),
+    }));
+    expect(html).toContain('<option value="" selected="">未设置销售分类</option>');
   });
 
   it('closes a committed repair before refresh and surfaces refresh failure outside the closed panel', async () => {

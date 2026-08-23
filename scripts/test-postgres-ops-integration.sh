@@ -125,6 +125,16 @@ legacy_bridge_ready=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql 
 legacy_owner_id=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
   "SELECT \"primaryOwnerUserId\" FROM \"Account\" WHERE id = 'legacy-owner-account'" | tr -d '[:space:]')
 [[ "$legacy_owner_id" == legacy-owner-user ]]
+legacy_customer_expansion=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+  "SELECT ((SELECT count(*) FROM \"Account\"
+              WHERE id = 'legacy-owner-account'
+                AND \"customerType\" = 1
+                AND \"categoryKey\" IS NULL
+                AND version = 0) = 1
+       AND (SELECT is_nullable FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'Account'
+                AND column_name = 'customerType') = 'YES')::int" | tr -d '[:space:]')
+[[ "$legacy_customer_expansion" == 1 ]]
 legacy_matter_total=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
   "SELECT count(*) FROM \"Opportunity\" WHERE \"tenantId\" = 'legacy-owner-tenant'" | tr -d '[:space:]')
 legacy_matter_mapping_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
@@ -507,6 +517,56 @@ pde_context_incomplete_after_adoption=$(docker compose -p "$COMPOSE_PROJECT_NAME
 [[ "$pde_context_applied_after_adoption" == 1 ]]
 [[ "$pde_context_incomplete_after_adoption" == 0 ]]
 echo "INTERRUPTED_PDE_CONTEXT_AFTER_COMMIT_ADOPTION_OK=1"
+
+# CORE-115 must safely distinguish PostgreSQL rollback-before-commit from an
+# already committed expansion whose migration journal write was interrupted.
+customer_migration_db=jianghu_customer_migration
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$customer_migration_db"
+POSTGRES_DB="$customer_migration_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npx tsx scripts/render-pre-customer-schema.ts prisma/postgres/schema.prisma /tmp/pre-customer.prisma
+   npx prisma db push --schema /tmp/pre-customer.prisma --skip-generate >/dev/null
+   for path in prisma/postgres/migrations/20*; do
+     [ -d "$path" ] || continue
+     migration=$(basename "$path")
+     [ "$migration" = 20260823000000_expand_customer_fields ] && continue
+     npx prisma migrate resolve --applied "$migration" --schema prisma/postgres/schema.prisma >/dev/null
+   done' >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$customer_migration_db" -c \
+  "INSERT INTO \"Tenant\" (id,name) VALUES ('customer-migration-tenant','Customer Migration Tenant');
+   INSERT INTO \"Account\" (id,\"tenantId\",name,\"customerType\")
+     VALUES ('customer-migration-account','customer-migration-tenant','Legacy Customer',4);
+   INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+   VALUES ('int-customer-before-commit', repeat('0', 64),
+     '20260823000000_expand_customer_fields', CURRENT_TIMESTAMP, 0);" >/dev/null
+POSTGRES_DB="$customer_migration_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+customer_before_commit_parity=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$customer_migration_db" -tAc \
+  "SELECT ((SELECT count(*) FROM \"Account\"
+              WHERE id = 'customer-migration-account' AND \"customerType\" = 4
+                AND \"categoryKey\" IS NULL AND version = 0) = 1
+       AND (SELECT count(*) FROM \"_prisma_migrations\"
+              WHERE migration_name = '20260823000000_expand_customer_fields'
+                AND rolled_back_at IS NOT NULL) = 1)::int" | tr -d '[:space:]')
+[[ "$customer_before_commit_parity" == 1 ]]
+echo "INTERRUPTED_CUSTOMER_BEFORE_COMMIT_RETRY_OK=1"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$customer_migration_db" -c \
+  "DELETE FROM \"_prisma_migrations\"
+    WHERE migration_name = '20260823000000_expand_customer_fields' AND finished_at IS NOT NULL;
+   INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+   VALUES ('int-customer-after-commit', repeat('0', 64),
+     '20260823000000_expand_customer_fields', CURRENT_TIMESTAMP, 0);" >/dev/null
+POSTGRES_DB="$customer_migration_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+customer_after_commit_adoption=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$customer_migration_db" -tAc \
+  "SELECT ((SELECT count(*) FROM \"_prisma_migrations\"
+              WHERE migration_name = '20260823000000_expand_customer_fields'
+                AND finished_at IS NOT NULL AND rolled_back_at IS NULL) = 1
+       AND (SELECT count(*) FROM \"_prisma_migrations\"
+              WHERE migration_name = '20260823000000_expand_customer_fields'
+                AND finished_at IS NULL AND rolled_back_at IS NULL) = 0)::int" | tr -d '[:space:]')
+[[ "$customer_after_commit_adoption" == 1 ]]
+echo "INTERRUPTED_CUSTOMER_AFTER_COMMIT_ADOPTION_OK=1"
 
 # A duplicate tenant-local owner name must roll the bridge transaction back.
 # After data repair, the same database must resume and complete safely.

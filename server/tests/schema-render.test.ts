@@ -489,4 +489,46 @@ describe('PostgreSQL schema delivery', () => {
     expect(packageJson.scripts?.['migrate:pde-context-apply']).toBeTruthy();
     expect(packageJson.scripts?.['migrate:pde-context-verify']).toBeTruthy();
   });
+
+  it('delivers CORE-115 Customer fields as an atomic nullable expansion with recovery gates', async () => {
+    const migration = await read('prisma/postgres/migrations/20260823000000_expand_customer_fields/migration.sql').catch(() => '');
+    const schema = await read('prisma/postgres/schema.prisma');
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const schemaState = await read('scripts/postgres-customer-schema-state.ts').catch(() => '');
+    const sqliteUpgrade = await read('scripts/upgrade-sqlite-schema.ts');
+    const integrationDrill = await read('../scripts/test-postgres-ops-integration.sh');
+
+    expect(migration.trimStart().startsWith('BEGIN;')).toBe(true);
+    expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(migration).toContain("SET LOCAL lock_timeout = '30s'");
+    expect(migration).toContain("SET LOCAL statement_timeout = '15min'");
+    expect(migration).toContain('LOCK TABLE "Account" IN SHARE ROW EXCLUSIVE MODE');
+    expect(migration).toContain('ADD COLUMN "categoryKey" TEXT');
+    expect(migration).toContain('ADD COLUMN "version" INTEGER NOT NULL DEFAULT 0');
+    expect(migration).toContain('ALTER COLUMN "customerType" DROP NOT NULL');
+    expect(migration).not.toMatch(/UPDATE\s+"Account"[\s\S]*"categoryKey"/i);
+    expect(migration).toContain('Customer expansion parity failed');
+    expect(migration.indexOf('CREATE TEMP TABLE "_core115_account_legacy"'))
+      .toBeLessThan(migration.indexOf('ADD COLUMN "categoryKey"'));
+
+    expect(schema).toMatch(/model Account \{[^}]*categoryKey\s+String\?/);
+    expect(schema).toMatch(/model Account \{[^}]*customerType\s+Int\?/);
+    expect(schema).toMatch(/model Account \{[^}]*version\s+Int\s+@default\(0\)/);
+    expect(deployScript).toContain('CUSTOMER_MIGRATION=20260823000000_expand_customer_fields');
+    expect(deployScript).toContain('PRE_CUSTOMER_SCHEMA=$(mktemp /tmp/jianghu-pre-core115.prisma.XXXXXX)');
+    expect(deployScript).toContain('trap cleanup_pre_customer_schema EXIT');
+    expect(deployScript).not.toContain('PRE_CUSTOMER_SCHEMA=/tmp/jianghu-pre-core115.prisma');
+    expect(deployScript).toContain('recover_incomplete_customer_migration');
+    expect(deployScript).toContain('adopt_existing_customer_schema_if_safe');
+    expect(deployScript).toContain('postgres-customer-schema-state.ts');
+    expect(schemaState).toContain("process.stdout.write('legacy')");
+    expect(schemaState).toContain("process.stdout.write('expanded')");
+    expect(schemaState).toContain("process.stdout.write('partial')");
+    expect(sqliteUpgrade).toContain('inspectCustomerSchemaState');
+    expect(sqliteUpgrade).toContain('customerStateBefore');
+    expect(sqliteUpgrade).toContain('partial Customer category expansion detected');
+    expect(integrationDrill).toContain('for path in prisma/postgres/migrations/20*; do');
+    expect(integrationDrill).toContain('[ -d "$path" ] || continue');
+    expect(integrationDrill).not.toContain('for path in prisma/postgres/migrations/*; do');
+  });
 });

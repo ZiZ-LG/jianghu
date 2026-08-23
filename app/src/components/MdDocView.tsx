@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { c5WriteItems, type Account, type Opportunity, type VisitNote, type AccountProfile, type Note } from '../types';
 import {
-  CUSTOMER_TYPE_LABEL, ROLE_LABEL, SENTIMENT_CHAR, FAMILY_7Q, C3_ITEMS, C5_ITEMS,
+  customerTypeLabel, ROLE_LABEL, SENTIMENT_CHAR, FAMILY_7Q, C3_ITEMS, C5_ITEMS,
 } from '../types';
 import { scoreFromDomain, BAND_LABEL, ITEM_MAX, type ItemKey } from '../lib/g64111';
 import { uid, type Action } from '../store';
@@ -72,7 +72,7 @@ function CustomerDoc({ account, dispatch, readonly = false }: { account: Account
     if (readonly) return;
     void api.members().then((r) => setMembers(r.members)).catch(() => setMembers([]));
   }, [readonly]);
-  const set = (patch: Partial<Account>) => dispatch({ type: 'UPDATE_ACCOUNT', accId: account.id, patch });
+  const set = (patch: Omit<Partial<Account>, 'customerType'>) => dispatch({ type: 'UPDATE_ACCOUNT', accId: account.id, patch });
   const pf = account.profile ?? {};
   const setPf = (k: keyof AccountProfile, v: string) => set({ profile: { ...pf, [k]: v } });
   const scored = account.opportunities.map((o) => ({ o, b: scoreFromDomain(account, o) }));
@@ -83,7 +83,7 @@ function CustomerDoc({ account, dispatch, readonly = false }: { account: Account
       <h1>{account.name} · 客户档案</h1>
       <CuratedSummary entityKind="account" entityId={account.id} readonly={readonly} />
       <blockquote>
-        <div><b>客户类型</b>：{CUSTOMER_TYPE_LABEL[account.customerType]} <span className="mdv-ro">只读</span></div>
+        <div><b>客户类型</b>：{customerTypeLabel(account.customerType)} <span className="mdv-ro">只读</span></div>
         <div><b>大区</b>：<Field ro={readonly} value={account.region ?? ''} ph="如 华北" onSave={(v) => set({ region: v })} /></div>
         <div><b>集团 / 母公司</b>：<Field ro={readonly} value={account.group ?? ''} onSave={(v) => set({ group: v })} /></div>
         <div><b>主负责人</b>：{readonly

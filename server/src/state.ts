@@ -190,7 +190,7 @@ export async function assembleState(
     prisma.account.findMany({
       where: { tenantId, archivedAt: null, id: { in: visibleAccountIds } },
       orderBy: { createdAt: 'asc' },
-      select: { id: true, name: true, customerType: true, createdAt: true },
+      select: { id: true, name: true, categoryKey: true, customerType: true, version: true, createdAt: true },
     }),
     prisma.account.findMany({
       where: { tenantId, archivedAt: null, id: { in: fullAccountIds } },
@@ -267,7 +267,9 @@ export async function assembleState(
       id: header.id,
       tenantId,
       name: header.name,
+      categoryKey: header.categoryKey,
       customerType: header.customerType,
+      version: header.version,
       unifiedCreditCode: null,
       externalRef: null,
       region: '',
@@ -588,7 +590,9 @@ export async function assembleState(
     accounts: accounts.map((a) => ({
       id: a.id,
       name: a.name,
+      categoryKey: a.categoryKey,
       customerType: a.customerType,
+      version: a.version,
       unifiedCreditCode: a.unifiedCreditCode ?? undefined,
       externalRef: a.externalRef ?? undefined,
       region: a.region,

@@ -159,7 +159,7 @@ export interface ArchivedEntity {
 export interface AccountRepairPatch {
   base: {
     name: string;
-    customerType: 1 | 2 | 3 | 4;
+    customerType: 1 | 2 | 3 | 4 | null;
     primaryOwner: string;
     primaryOwnerUserId: string | null;
   };

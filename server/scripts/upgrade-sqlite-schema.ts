@@ -8,6 +8,7 @@ type CommitmentSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial'
 type MethodologySchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
 type MethodologyDataSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
 type PdeDecisionContextSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
+type CustomerSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
 
 const MATTER_COLUMNS = [
   'kind',
@@ -206,6 +207,35 @@ async function inspectPdeDecisionContextSchemaState(prisma: {
     : 'partial';
 }
 
+async function inspectCustomerSchemaState(prisma: {
+  $queryRawUnsafe<T>(query: string): Promise<T>;
+}): Promise<CustomerSchemaState> {
+  const tables = await prisma.$queryRawUnsafe<Array<{ name: string }>>(
+    `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'Account'`,
+  );
+  if (tables.length === 0) return 'uninitialized';
+  const columns = await prisma.$queryRawUnsafe<Array<{
+    name: string; type: string; notnull: number; dflt_value: string | null;
+  }>>('PRAGMA table_info("Account")');
+  const byName = new Map(columns.map((column) => [column.name, column]));
+  const category = byName.get('categoryKey');
+  const sales = byName.get('customerType');
+  const version = byName.get('version');
+  if (!category && !version && sales?.type.toUpperCase() === 'INTEGER' && Number(sales.notnull) === 1) {
+    return 'legacy';
+  }
+  if (
+    category?.type.toUpperCase() === 'TEXT'
+    && Number(category.notnull) === 0
+    && sales?.type.toUpperCase() === 'INTEGER'
+    && Number(sales.notnull) === 0
+    && version?.type.toUpperCase() === 'INTEGER'
+    && Number(version.notnull) === 1
+    && String(version.dflt_value) === '0'
+  ) return 'expanded';
+  return 'partial';
+}
+
 async function createConsistentBackup(
   prisma: { $executeRawUnsafe(query: string): Promise<number> },
   databasePath: string,
@@ -231,6 +261,7 @@ let commitmentState: CommitmentSchemaState;
 let methodologyState: MethodologySchemaState;
 let methodologyDataState: MethodologyDataSchemaState;
 let pdeDecisionContextState: PdeDecisionContextSchemaState;
+let customerState: CustomerSchemaState;
 let backupPath: string | null = null;
 let schemaChanges = false;
 let matterBackfillRequired = false;
@@ -240,6 +271,7 @@ let methodologyExpansionRequired = false;
 let methodologyDataExpansionRequired = false;
 let pdeDecisionContextExpansionRequired = false;
 let pdeDecisionContextBackfillRequired = false;
+let customerExpansionRequired = false;
 
 try {
   state = await inspectSchemaState(prisma);
@@ -248,6 +280,7 @@ try {
   methodologyState = await inspectMethodologySchemaState(prisma);
   methodologyDataState = await inspectMethodologyDataSchemaState(prisma);
   pdeDecisionContextState = await inspectPdeDecisionContextSchemaState(prisma);
+  customerState = await inspectCustomerSchemaState(prisma);
   if (state === 'partial') {
     throw new Error('partial Matter column expansion detected; restore the latest backup before retrying');
   }
@@ -266,6 +299,10 @@ try {
   if (pdeDecisionContextState === 'partial') {
     throw new Error('partial PDE decision context detected; restore the latest backup before retrying');
   }
+  if (customerState === 'partial') {
+    throw new Error('partial Customer category expansion detected; restore the latest backup before retrying');
+  }
+  customerExpansionRequired = customerState === 'uninitialized' || customerState === 'legacy';
   if (state === 'legacy') {
     run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-matter-fields.ts', '--dry-run'], url);
     matterBackfillRequired = true;
@@ -356,7 +393,7 @@ try {
     }
   }
   schemaChanges = state === 'uninitialized' ? true : schemaHasChanges(url);
-  if (state !== 'uninitialized' && (schemaChanges || matterBackfillRequired || participantBackfillRequired || commitmentBackfillRequired || methodologyExpansionRequired || methodologyDataExpansionRequired || pdeDecisionContextExpansionRequired || pdeDecisionContextBackfillRequired)) {
+  if (state !== 'uninitialized' && (schemaChanges || matterBackfillRequired || participantBackfillRequired || commitmentBackfillRequired || methodologyExpansionRequired || methodologyDataExpansionRequired || pdeDecisionContextExpansionRequired || pdeDecisionContextBackfillRequired || customerExpansionRequired)) {
     backupPath = await createConsistentBackup(prisma, databasePath);
   }
 } finally {
@@ -366,6 +403,15 @@ try {
 const dbPushArgs = ['prisma', 'db', 'push', '--schema', 'prisma/schema.prisma'];
 if (process.env.JIANGHU_SKIP_PRISMA_GENERATE === '1') dbPushArgs.push('--skip-generate');
 run(process.platform === 'win32' ? 'npx.cmd' : 'npx', dbPushArgs, url);
+
+const postPushPrisma = new PrismaClient();
+try {
+  if (await inspectCustomerSchemaState(postPushPrisma) !== 'expanded') {
+    throw new Error('Customer category expansion verification failed');
+  }
+} finally {
+  await postPushPrisma.$disconnect();
+}
 
 if (matterBackfillRequired) {
   run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-matter-fields.ts', '--apply'], url);
@@ -398,6 +444,7 @@ console.log(JSON.stringify({
   methodologyStateBefore: methodologyState,
   methodologyDataStateBefore: methodologyDataState,
   pdeDecisionContextStateBefore: pdeDecisionContextState,
+  customerStateBefore: customerState,
   schemaChanges,
   matterBackfillRequired,
   participantBackfillRequired,
@@ -406,5 +453,6 @@ console.log(JSON.stringify({
   methodologyDataExpansionRequired,
   pdeDecisionContextExpansionRequired,
   pdeDecisionContextBackfillRequired,
+  customerExpansionRequired,
   backupPath,
 }, null, 2));

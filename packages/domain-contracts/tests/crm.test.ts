@@ -7,6 +7,8 @@ import {
   CommitmentCommandSchema,
   CommitmentV2Schema,
   CrmCommandSchema,
+  CustomerCommandReceiptSchema,
+  CustomerCreateCommandSchema,
   CustomerV2Schema,
   MatterOwnerAssignmentReportSchema,
   MatterV2Schema,
@@ -214,6 +216,39 @@ describe('neutral CRM V2 contracts', () => {
 });
 
 describe('generic CRM commands', () => {
+  it('publishes a create-only Customer command surface and a non-sensitive receipt', () => {
+    const command = {
+      type: 'CREATE_CUSTOMER',
+      customer: {
+        id: NEW_CUSTOMER_ID,
+        name: '远山制造',
+        categoryKey: 'strategic_partner',
+        primaryOwnerUserId: 'user-cao',
+      },
+    } as const;
+    expect(CustomerCreateCommandSchema.parse(command)).toEqual(command);
+    expect(CustomerCreateCommandSchema.safeParse({
+      type: 'UPDATE_CUSTOMER',
+      customerId: NEW_CUSTOMER_ID,
+      baseVersion: 0,
+      patch: { name: '不得从创建入口更新' },
+    }).success).toBe(false);
+    expect(CustomerCreateCommandSchema.safeParse({
+      ...command,
+      customer: { ...command.customer, customerType: 1 },
+    }).success).toBe(false);
+
+    const receipt = {
+      customerId: NEW_CUSTOMER_ID,
+      categoryKey: 'strategic_partner',
+      primaryOwnerUserId: 'user-cao',
+      version: 0,
+      undoable: false,
+    } as const;
+    expect(CustomerCommandReceiptSchema.safeParse(receipt).success).toBe(true);
+    expect(CustomerCommandReceiptSchema.safeParse({ ...receipt, name: '不得进入幂等摘要' }).success).toBe(false);
+  });
+
   it('routes only Commitment commands and keeps replay receipts free of business text', () => {
     expect(CommitmentCommandSchema.safeParse({
       type: 'CREATE_COMMITMENT', commitment: COMMITMENT_CREATE_INPUT,

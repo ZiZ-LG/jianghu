@@ -43,6 +43,7 @@ import { compoundCommandRoutes } from './mutation/compoundCommands.js';
 import { matterOwnershipRoutes } from './mutation/matterOwnership.js';
 import { matterParticipantRoutes } from './mutation/matterParticipants.js';
 import { commitmentRoutes } from './mutation/commitments.js';
+import { customerRoutes } from './mutation/customers.js';
 import { methodologyCommandRoutes } from './methodology/commands.js';
 import { repairRoutes } from './repair.js';
 import { personMergeRoutes } from './personMerge.js';
@@ -102,6 +103,7 @@ const serviceCapabilityRules: ReadonlyArray<{
       || pathname === '/api/donate'
       || pathname === '/api/archive'
       || pathname.startsWith('/api/archive/')
+      || pathname === '/api/commands/customer'
       || pathname === '/api/commands/commitment'
       || pathname === '/api/commands/matter-participant'
       || pathname.startsWith('/api/repair/account/'),
@@ -182,6 +184,7 @@ function registerRoutes(app: FastifyInstance, readinessProbe: ReadinessProbe, pr
   compoundCommandRoutes(app, product);
   matterOwnershipRoutes(app);
   matterParticipantRoutes(app);
+  customerRoutes(app, product.policy);
   commitmentRoutes(app);
   methodologyCommandRoutes(app);
   repairRoutes(app);
