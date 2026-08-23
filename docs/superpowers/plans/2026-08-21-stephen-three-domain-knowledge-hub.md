@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
-> **Plan status:** `SYNCHRONIZED / SAAS-601_IN_PROGRESS`
+> **Plan status:** `SYNCHRONIZED / SAAS-601_COMPLETE_AWAITING_OWNER_REVIEW`
 >
-> **Current authorization:** 仅执行 `SAAS-601`。`SAAS-602`～`SAAS-604`、生产部署、流量切换、自动发布启用、`main` 合并和 CRM 变更均未授权。
+> **Current authorization:** `SAAS-601` 已完成并停止在产品所有者预览审核门。`SAAS-602`～`SAAS-604`、生产部署、流量切换、自动发布启用、`main` 合并和 CRM 变更均未授权。
 >
 > **Execution isolation:** branch `codex/stephen-knowledge-hub`; worktree `/Volumes/PowerData/江湖APP/.worktrees/stephen-knowledge-hub`; base `e20e6f76407389aefbac35ca184efbb5c2f83852`.
 
@@ -215,11 +215,11 @@ docs/content/
 - Consumes: 从 `f4ef4a9` 选择性迁移的 `app/public/stephen/index.html`、`app/src/components/StephenSite.test.ts` 与 `deploy/stephen.nginx.conf`
 - Produces: `KnowledgeItem`、`EvidenceRef`、风险/发布/审计类型、两套学习路径常量、`validateKnowledgeItems(items)` 与旧手册保护性契约
 
-- [ ] **Step 1: Write the failing legacy preservation test**
+- [x] **Step 1: Write the failing legacy preservation test**
 
   先用现有 `app/public/stephen/index.html` 锁定旧手册源：必须保留 8 个模块、32 个术语、45 项任务、22 道销售题、6 道管理题及备案/生态入口。内容契约同时锁定新路径 `1/7/30/90` 与旧手册路径 `3/7/14/30`，不得互相改写；目标 `/fieldbook/` 路径的失败测试和迁移留在 Task 2，保证两个任务都能独立 RED → GREEN。
 
-- [ ] **Step 2: Write the failing content validation tests**
+- [x] **Step 2: Write the failing content validation tests**
 
   ```ts
   expect(() => validateKnowledgeItems([validItem])).not.toThrow();
@@ -241,17 +241,17 @@ docs/content/
     .toThrow('automatic publication requires low risk');
   ```
 
-- [ ] **Step 3: Run the tests and verify RED**
+- [x] **Step 3: Run the tests and verify RED**
 
   Run: `cd app && npm test -- src/components/StephenSite.test.ts`
 
   Expected: FAIL because the typed contract and validator do not exist;既有旧手册源完整性断言继续 PASS。
 
-- [ ] **Step 4: Implement the minimal domain contract and validator**
+- [x] **Step 4: Implement the minimal domain contract and validator**
 
   实现本计划“内容对象与展示契约”的联合类型；校验唯一 ID/slug、ISO 时间、至少一个领域、至少一个证据、合法 HTTP(S) 原文、完整中文字段、只允许 `approved` 进入公开集合、种子内容必须人工批准，以及自动发布只允许低风险并具有完整审计信息。英文正文可选，不得成为校验失败原因。
 
-- [ ] **Step 5: Run the targeted tests and commit**
+- [x] **Step 5: Run the targeted tests and commit**
 
   Run: `cd app && npm test -- src/components/StephenSite.test.ts`
 
@@ -275,19 +275,19 @@ docs/content/
 - Consumes: Task 1 domain contract、现有完整手册
 - Produces: `app/dist/stephen/index.html`、`app/dist/stephen/fieldbook/index.html`
 
-- [ ] **Step 1: Add failing shell and build-contract assertions**
+- [x] **Step 1: Add failing shell and build-contract assertions**
 
   先断言独立配置、双语外壳、四个一级入口、`/fieldbook/` 入口和目标旧手册必须存在，并在目标文件上重复 8/32/45/22/6 与备案/生态入口完整性断言；断言既有 `build` 精确保持 `vite build`，没有 `build:main`，lockfile 与 `app/vite.config.ts` 不得改变。运行测试并观察因这些新文件/脚本尚不存在而 RED。
 
-- [ ] **Step 2: Configure an isolated Stephen build**
+- [x] **Step 2: Configure an isolated Stephen build**
 
   `vite.stephen.config.ts` 使用独立 `root`、与独立二级域名根路径一致的 `base: '/'`、独立 `outDir` 和 `emptyOutDir: true`；这样 `/fieldbook/` 及后续固定链接都从 Stephen Host 根目录解析资源。配置不读取或改写 `app/vite.config.ts`，不改变 CRM 主应用入口。
 
-- [ ] **Step 3: Preserve the legacy artifact**
+- [x] **Step 3: Preserve the legacy artifact**
 
   将选择性恢复的 `app/public/stephen/index.html` 迁移到 `app/stephen/public/fieldbook/index.html`。允许的唯一内容改动是把站内返回链接更新到新知识库首页；迁移前后 8/32/45/22/6、备案和生态入口测试必须相同。
 
-- [ ] **Step 4: Add explicit build scripts**
+- [x] **Step 4: Add explicit build scripts**
 
   ```json
   {
@@ -299,11 +299,11 @@ docs/content/
 
   不增加依赖，不修改 lockfile。
 
-- [ ] **Step 5: Implement the minimal bilingual shell**
+- [x] **Step 5: Implement the minimal bilingual shell**
 
   根页只实现 `SAAS-601` 外壳：中英文品牌/导航/状态/法律信息、`今日必读｜雷达专题｜方法工具｜我的收藏` 四个一级入口、三个知识域说明、1/7/30/90 天新路径入口和 `/fieldbook/` 完整旧手册入口。内容、专题、8 个工具、收藏状态和流水线属于后续任务，只显示诚实的未上线状态，不放入伪造数据。
 
-- [ ] **Step 6: Build, verify and commit**
+- [x] **Step 6: Build, verify and commit**
 
   Run:
 
@@ -319,6 +319,16 @@ docs/content/
   Commit: `feat(stephen): add standalone knowledge hub shell`
 
 > **STOP GATE:** 完成上述两项并提交 `SAAS-601` 证据后必须停止。以下 `SAAS-602`～`SAAS-604` 仅保留为后续顺序计划，当前不得创建其内容、页面、状态、流水线、发布候选或生产部署。
+
+`SAAS-601` 完成证据（2026-08-23）：
+
+- 基线：`e20e6f76407389aefbac35ca184efbb5c2f83852`；
+- 方案同步：`335e713`；线上旧站选择性迁移：`007defd`；内容契约：`bc20e68`；独立外壳：`6b6aa01`；
+- TDD：内容契约先出现 2 个预期失败，外壳先出现 2 个预期失败；修复 favicon 与文档语言属性时各追加一次 RED → GREEN；
+- 前端：30 个测试文件、245 项测试通过；CRM 与 Stephen TypeScript 检查通过；
+- 构建：`npm run build` 保持 CRM-only，`build:stephen` 与 `build:all` 产物完整；
+- 浏览器：1280×720 与 375×812 通过；移动端 `scrollWidth=375`、`scrollY=900`、`scrollHeight=2874`；中英文切换后文档 `lang=en`；根页与 `/fieldbook/` 控制台 0 错误；
+- 明确未做：30 条内容、6 个专题、8 个工具、收藏状态、内容流水线、自动发布、生产部署、流量切换、CRM 变更和 `main` 合并。
 
 ### Task 3: SAAS-602 建立首批可信内容与信源治理
 
