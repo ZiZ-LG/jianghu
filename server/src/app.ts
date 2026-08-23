@@ -7,7 +7,16 @@ import rateLimit from '@fastify/rate-limit';
 import multipart from '@fastify/multipart';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
-import { ActionSchema, ActorRoleSchema, type CommandContext } from '@jianghu/domain-contracts';
+import {
+  ActionSchema,
+  ActorRoleSchema,
+  assembleProductAccess,
+  capabilityRequirementForActionType,
+  capabilityPolicyAllows,
+  type CapabilityRequirement,
+  type CommandContext,
+  type ProductAccess,
+} from '@jianghu/domain-contracts';
 import { prisma } from './prisma.js';
 import { authRoutes } from './auth.js';
 import { assembleState, type StateSecurityWarning } from './state.js';
@@ -81,7 +90,57 @@ const requireRole = (req: any, reply: any, roles: string[]): boolean => {
 
 type ReadinessProbe = () => Promise<void>;
 
-function registerRoutes(app: FastifyInstance, readinessProbe: ReadinessProbe): void {
+const serviceCapabilityRules: ReadonlyArray<{
+  requirement: CapabilityRequirement;
+  matches: (pathname: string) => boolean;
+}> = [
+  {
+    requirement: { entitlement: 'crm.core' },
+    matches: (pathname) => pathname === '/api/state'
+      || pathname === '/api/mutate'
+      || pathname === '/api/demo'
+      || pathname === '/api/archive'
+      || pathname.startsWith('/api/archive/')
+      || pathname === '/api/commands/commitment'
+      || pathname === '/api/commands/matter-participant'
+      || pathname.startsWith('/api/repair/account/'),
+  },
+  {
+    requirement: { entitlement: 'team.operations' },
+    matches: (pathname) => pathname === '/api/members' || pathname.startsWith('/api/members/') || pathname === '/api/billing',
+  },
+  {
+    requirement: { entitlement: 'sales.workspace' },
+    matches: (pathname) => pathname.startsWith('/api/opportunity/')
+      || pathname === '/api/commands/opportunity-skeleton'
+      || pathname.startsWith('/api/strategy/')
+      || pathname.startsWith('/api/advisor/'),
+  },
+  {
+    requirement: { entitlement: 'methodology.g64111' },
+    matches: (pathname) => pathname === '/api/commands/methodology',
+  },
+  {
+    requirement: { entitlement: 'decision.pde' },
+    matches: (pathname) => pathname.startsWith('/api/pde/'),
+  },
+];
+
+function registerCapabilityEnforcement(app: FastifyInstance, product: ProductAccess): void {
+  app.addHook('onRoute', (routeOptions) => {
+    const rule = serviceCapabilityRules.find((candidate) => candidate.matches(routeOptions.url));
+    if (!rule || capabilityPolicyAllows(product.policy, rule.requirement)) return;
+    const deny = async (_req: unknown, reply: { code: (status: number) => { send: (body: unknown) => unknown } }) => (
+      reply.code(403).send({ error: '能力未启用', code: 'capability_denied' })
+    );
+    const existing = routeOptions.preHandler;
+    routeOptions.preHandler = existing
+      ? [...(Array.isArray(existing) ? existing : [existing]), deny]
+      : [deny];
+  });
+}
+
+function registerRoutes(app: FastifyInstance, readinessProbe: ReadinessProbe, product: ProductAccess): void {
   app.get('/api/health/live', async () => ({ ok: true }));
   const readinessHandler = async (_req: unknown, reply: { code: (status: number) => { send: (body: { ok: boolean }) => unknown } }) => {
     try {
@@ -95,7 +154,7 @@ function registerRoutes(app: FastifyInstance, readinessProbe: ReadinessProbe): v
   // Backward-compatible endpoint used by existing deploy callers; semantically readiness.
   app.get('/api/health', readinessHandler);
 
-  authRoutes(app);
+  authRoutes(app, product);
   aiRoutes(app);
   suggestRoutes(app);
   proposalRoutes(app);
@@ -140,6 +199,10 @@ function registerRoutes(app: FastifyInstance, readinessProbe: ReadinessProbe): v
     if (!envelope.success) return reply.code(400).send({ error: '无效的 action' });
     const parsed = ActionSchema.safeParse(envelope.data.action);
     if (!parsed.success) return reply.code(400).send({ error: '无效的 action' });
+    const actionRequirement = capabilityRequirementForActionType(parsed.data.type);
+    if (!actionRequirement || !capabilityPolicyAllows(product.policy, actionRequirement)) {
+      return reply.code(403).send({ error: '能力未启用', code: 'capability_denied' });
+    }
     const ctx: CommandContext = {
       tenantId: req.user.tenantId,
       actorId: req.user.userId,
@@ -352,15 +415,30 @@ function registerRoutes(app: FastifyInstance, readinessProbe: ReadinessProbe): v
 export interface BuildAppOptions {
   logger?: boolean;
   readinessProbe?: ReadinessProbe;
+  productAccess?: unknown;
+}
+
+function productAccessFrom(options: BuildAppOptions): ProductAccess {
+  if (options.productAccess !== undefined) return assembleProductAccess(options.productAccess);
+  const enabledEntitlements = process.env.PRODUCT_ENTITLEMENTS
+    ?.split(',')
+    .map((key) => key.trim())
+    .filter(Boolean);
+  return assembleProductAccess({
+    edition: process.env.PRODUCT_EDITION ?? 'commercial',
+    ...(enabledEntitlements && enabledEntitlements.length > 0 ? { enabledEntitlements } : {}),
+  });
 }
 
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
   // trustProxy：部署在 Nginx 反代之后，据此识别真实客户端 IP（限流/日志才准确）
   const logger = options.logger === true ? { level: 'warn' } : false;
   const app = Fastify({ logger, trustProxy: true });
+  const product = productAccessFrom(options);
   await registerSecurityPlugins(app);
+  registerCapabilityEnforcement(app, product);
   registerRoutes(app, options.readinessProbe ?? (async () => {
     await prisma.$queryRaw`SELECT 1`;
-  }));
+  }), product);
   return app;
 }

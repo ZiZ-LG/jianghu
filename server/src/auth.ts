@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
+import type { ProductAccess } from '@jianghu/domain-contracts';
 import { prisma } from './prisma.js';
 
 const phone = z.string().regex(/^1[3-9]\d{9}$/, '请输入有效的中国大陆手机号');
@@ -30,7 +31,7 @@ function userView(u: { id: string; phone: string | null; email: string | null; n
   return { id: u.id, phone: u.phone, email: u.email, name: u.name, role: u.role };
 }
 
-export function authRoutes(app: FastifyInstance) {
+export function authRoutes(app: FastifyInstance, product: ProductAccess) {
   app.post('/api/auth/register', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
     const p = registerSchema.safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: p.error.issues[0]?.message || '参数无效' });
@@ -43,7 +44,7 @@ export function authRoutes(app: FastifyInstance) {
       data: { tenantId: tenant.id, phone: ph ?? null, email: em ?? null, name, role: 'owner', passwordHash: await bcrypt.hash(password, 10) },
     });
     const token = app.jwt.sign({ userId: user.id, tenantId: tenant.id, role: user.role });
-    return { token, user: userView(user), tenant: tenantView(tenant) };
+    return { token, user: userView(user), tenant: tenantView(tenant), product };
   });
 
   app.post('/api/auth/login', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
@@ -66,13 +67,13 @@ export function authRoutes(app: FastifyInstance) {
     const tenant = await prisma.tenant.findUnique({ where: { id: user.tenantId } });
     if (!tenant) return reply.code(401).send({ error: '工作区不存在' });
     const token = app.jwt.sign({ userId: user.id, tenantId: tenant.id, role: user.role });
-    return { token, user: userView(user), tenant: tenantView(tenant) };
+    return { token, user: userView(user), tenant: tenantView(tenant), product };
   });
 
   app.get('/api/me', { preHandler: [app.authenticate] }, async (req, reply) => {
     const user = await prisma.user.findUnique({ where: { id: req.user.userId } });
     const tenant = await prisma.tenant.findUnique({ where: { id: req.user.tenantId } });
     if (!user || !tenant) return reply.code(401).send({ error: 'unauthorized' });
-    return { user: userView(user), tenant: tenantView(tenant) };
+    return { user: userView(user), tenant: tenantView(tenant), product };
   });
 }

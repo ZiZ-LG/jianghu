@@ -36,7 +36,10 @@ import { createCommitScheduler } from './lib/sync/commitScheduler';
 import { createMutationCoordinator, createMutationExecutionGate, entityKeyForAction } from './lib/sync/mutationCoordinator';
 import { localYmd } from './lib/dateYmd';
 import { clearStableBatchItemKey, runBatchWithProgress, stableBatchItemKey, type StableBatchKeyCache } from './lib/reviewBatch';
+import { capabilityPolicyAllows, type ProductAccess } from '@jianghu/domain-contracts';
 import { GlobalDialogs, type GlobalInboxProps } from './components/GlobalDialogs';
+import { CommercialShell } from './components/CommercialShell';
+import { resolveProductRoute } from './lib/productRoutes';
 import {
   appShellUiReducer,
   createInitialAppShellUiState,
@@ -57,6 +60,7 @@ import {
 export default function App() {
   const [state, dispatch] = useReducer(reducer, { accounts: [] });
   const [auth, setAuth] = useState<AuthResult | null>(null);
+  const [commercialPath, setCommercialPath] = useState(window.location.pathname);
   const [booting, setBooting] = useState(true);
   const [syncErr, setSyncErr] = useState('');
   const [undoHint, setUndoHint] = useState('');
@@ -83,6 +87,9 @@ export default function App() {
   stateRef.current = state;
   // viewer 角色 = 只读投影（契约 v1.0 §二-1）：编辑/录入控件一律不渲染（非置灰）；视图交互全保留
   const readonly = auth?.user.role === 'viewer';
+  const salesWorkspaceEnabled = capabilityPolicyAllows(auth?.product.policy, { entitlement: 'sales.workspace' });
+  const g64111Enabled = capabilityPolicyAllows(auth?.product.policy, { entitlement: 'methodology.g64111' });
+  const pdeEnabled = capabilityPolicyAllows(auth?.product.policy, { entitlement: 'decision.pde' });
 
   const [accId, setAccId] = useState<string | null>(null);
   const [oppId, setOppId] = useState<string | null>(null);
@@ -103,7 +110,10 @@ export default function App() {
   const [gapsOpen, setGapsOpen] = useState(false); // M3 缺口刷卡补分（enrichOpen 随重构删 EnrichPanel 移除）
   // P5 Hub 今日一屏：三源聚合「今日三件事」+ 客户卡「需要你」角标（纯前端零 schema）
   const hubTodayYmd = localYmd(new Date());
-  const hubToday = useMemo(() => computeG64111Today(state.accounts, inbox.reminders, hubTodayYmd), [state.accounts, inbox.reminders, hubTodayYmd]);
+  const hubToday = useMemo(
+    () => g64111Enabled ? computeG64111Today(state.accounts, inbox.reminders, hubTodayYmd) : [],
+    [g64111Enabled, state.accounts, inbox.reminders, hubTodayYmd],
+  );
   const hubNeedsYou = useMemo(() => needsYouByAccount(state.accounts, inbox, hubTodayYmd), [state.accounts, inbox, hubTodayYmd]);
   const [selfComputeBusy, setSelfComputeBusy] = useState(false); // 江湖自算·补全干系人 进行中
   const [addIntelOpen, setAddIntelOpen] = useState(false); // 🎧 接入录音（P3 文本入口收敛：口述/对话归坞尾「和地图对话」，AddIntel 容器退役）
@@ -156,6 +166,28 @@ export default function App() {
     }
   }, []);
 
+  const applyAuthenticatedRoute = useCallback((product: ProductAccess, accounts: { id: string; externalRef?: string; opportunities: { id: string; externalRef?: string }[] }[]) => {
+    if (product.shell === 'internal_legacy') {
+      applyRoute(accounts);
+      return;
+    }
+
+    if (pendingRoute.current) {
+      if (capabilityPolicyAllows(product.policy, { entitlement: 'sales.workspace' })) {
+        applyRoute(accounts);
+        return;
+      }
+      pendingRoute.current = null;
+      setSyncErr('当前版本未启用复杂销售工作台');
+    }
+
+    const route = resolveProductRoute(window.location.pathname, product);
+    if (route.denied) setSyncErr('当前版本未启用该能力');
+    setCommercialPath(route.canonicalPath);
+    if (window.location.pathname !== route.canonicalPath) window.history.replaceState(null, '', route.canonicalPath);
+    setAccId(null); setOppId(null); setSelectedId(null);
+  }, [applyRoute]);
+
   const refreshState = useCallback(async (ticket: SessionTicket = sessionGuard.current.capture()) => {
     const result = await runSessionRequest(sessionGuard.current, ticket, api.getState, api.getToken);
     if (!result.current) return null;
@@ -191,9 +223,9 @@ export default function App() {
       const st = await refreshState(sessionTicket);
       if (!st) return;
       const me = meResult.value;
-      setAuth({ token, user: me.user, tenant: me.tenant });
-      applyRoute(st.accounts);
-      if (me.user.role !== 'viewer') void loadInbox(sessionTicket);
+      setAuth({ token, user: me.user, tenant: me.tenant, product: me.product });
+      applyAuthenticatedRoute(me.product, st.accounts);
+      if (me.user.role !== 'viewer' && capabilityPolicyAllows(me.product.policy, { entitlement: 'sales.workspace' })) void loadInbox(sessionTicket);
     } catch (error) {
       if (!sessionGuard.current.isCurrent(sessionTicket, api.getToken())) return;
       if (isConfirmedAuthFailure(error)) {
@@ -210,7 +242,7 @@ export default function App() {
     } finally {
       if (sessionGuard.current.isCurrent(sessionTicket, api.getToken())) setBooting(false);
     }
-  }, [applyRoute, loadInbox, refreshState]);
+  }, [applyAuthenticatedRoute, loadInbox, refreshState]);
   // 启动：有 token 则恢复会话 + 拉取云端数据
   useEffect(() => { void restoreSession(); }, [restoreSession]);
 
@@ -220,8 +252,8 @@ export default function App() {
     const st = await refreshState(sessionTicket);
     if (!st) return;
     setAuth(res);
-    applyRoute(st.accounts);
-    if (res.user.role !== 'viewer') void loadInbox(sessionTicket);
+    applyAuthenticatedRoute(res.product, st.accounts);
+    if (res.user.role !== 'viewer' && capabilityPolicyAllows(res.product.policy, { entitlement: 'sales.workspace' })) void loadInbox(sessionTicket);
   };
   const logout = useCallback(() => {
     coordinatorResetRef.current();
@@ -246,6 +278,7 @@ export default function App() {
     setCloudDiscardRevisions({});
     setBooting(false);
     pendingRoute.current = null;
+    setCommercialPath('/today');
     window.history.replaceState(null, '', '/'); // 登出清 URL，避免登录页残留目标路径造成误解（重新登录会重新解析）
   }, []);
   useEffect(() => api.onUnauthorized(() => logout()), [logout]);
@@ -253,13 +286,30 @@ export default function App() {
   // 选中客户/商机 ↔ URL 双向同步：导航 pushState 入历史；popstate（前进/后退）解析回状态并规范化 URL
   useEffect(() => {
     if (!auth || pendingRoute.current) return; // 未登录不动 URL（保住 deep link 目标）；待解析目标不被覆盖
+    if (auth.product.shell === 'commercial' && !accId) return;
     const path = buildPath(accId, oppId);
     if (window.location.pathname !== path) window.history.pushState(null, '', path);
   }, [accId, oppId, auth]);
   useEffect(() => {
     const onPop = () => {
       const t = parsePath(window.location.pathname);
+      if (auth?.product.shell === 'commercial' && !t) {
+        const route = resolveProductRoute(window.location.pathname, auth.product);
+        if (route.denied) setSyncErr('当前版本未启用该能力');
+        if (window.location.pathname !== route.canonicalPath) window.history.replaceState(null, '', route.canonicalPath);
+        setCommercialPath(route.canonicalPath);
+        setAccId(null); setOppId(null); setSelectedId(null);
+        return;
+      }
       if (!t) { setAccId(null); setOppId(null); setSelectedId(null); return; }
+      if (auth?.product.shell === 'commercial' && !capabilityPolicyAllows(auth.product.policy, { entitlement: 'sales.workspace' })) {
+        const route = resolveProductRoute('/today', auth.product);
+        window.history.replaceState(null, '', route.canonicalPath);
+        setCommercialPath(route.canonicalPath);
+        setSyncErr('当前版本未启用复杂销售工作台');
+        setAccId(null); setOppId(null); setSelectedId(null);
+        return;
+      }
       const r = resolveRoute(stateRef.current.accounts, t);
       if (r) {
         window.history.replaceState(null, '', buildPath(r.accId, r.oppId)); // 先规范化，同步 effect 将 no-op
@@ -271,7 +321,7 @@ export default function App() {
     };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
-  }, []);
+  }, [auth]);
   const discardToCloudState = useCallback(async (entityKey?: string) => {
     if (!sessionLease.isCurrent()) return;
     const refreshed = await refreshState(renderedSessionTicket);
@@ -425,13 +475,13 @@ export default function App() {
 
   const account = state.accounts.find((a) => a.id === accId) ?? null;
   const opp = account?.opportunities.find((o) => o.id === oppId) ?? null;
-  const breakdown = useMemo(() => (account && opp ? scoreFromDomain(account, opp) : null), [account, opp]);
+  const breakdown = useMemo(() => (g64111Enabled && account && opp ? scoreFromDomain(account, opp) : null), [account, g64111Enabled, opp]);
 
   // PDE 完整评估（App 层一次 fetch 喂两处：左栏加权分小字+徽章 + 坞引擎详解抽屉）。引擎不可用静默 null 不阻塞。
   const [pdeFull, setPdeFull] = useState<any>(null);
   const [engineSignal, setEngineSignal] = useState(0); // 第8刀：左栏徽章 → 坞开「引擎详解」抽屉的跨组件信号（照 openActionId 模式）
   useEffect(() => {
-    if (!opp) { setPdeFull(null); return; }
+    if (!pdeEnabled || !opp) { setPdeFull(null); return; }
     let alive = true;
     const ticket = sessionGuard.current.capture();
     void runSessionRequest(sessionGuard.current, ticket, () => api.pdeEv(opp.id), api.getToken)
@@ -440,8 +490,8 @@ export default function App() {
         if (alive && sessionGuard.current.isCurrent(ticket, api.getToken())) setPdeFull(null);
       });
     return () => { alive = false; };
-  }, [opp?.id, breakdown]);
-  const gaps = useMemo(() => (account && opp ? computeGaps(account, opp) : []), [account, opp]);
+  }, [pdeEnabled, opp?.id, breakdown]);
+  const gaps = useMemo(() => (g64111Enabled && account && opp ? computeGaps(account, opp) : []), [account, g64111Enabled, opp]);
   const roleByPerson = useMemo(() => {
     const m = new Map<string, Role>();
     if (opp) for (const r of opp.roles) m.set(r.personId, r.role);
@@ -464,6 +514,24 @@ export default function App() {
   const openAccount = (id: string) => {
     const a = state.accounts.find((x) => x.id === id);
     setAccId(id); setOppId(a?.opportunities[0]?.id ?? null); setSelectedId(null); setVisibleLayers(new Set(['L1']));
+  };
+  const navigateCommercial = (path: string) => {
+    if (!auth || auth.product.shell !== 'commercial') return;
+    const route = resolveProductRoute(path, auth.product);
+    if (route.denied) {
+      setSyncErr('当前版本未启用该能力');
+      return;
+    }
+    setSyncErr('');
+    setCommercialPath(route.canonicalPath);
+    setAccId(null); setOppId(null); setSelectedId(null);
+    if (window.location.pathname !== route.canonicalPath) window.history.pushState(null, '', route.canonicalPath);
+  };
+  const leaveLegacyWorkspace = () => {
+    setAccId(null); setOppId(null); selectPerson(null);
+    if (auth?.product.shell === 'commercial') {
+      if (window.location.pathname !== commercialPath) window.history.pushState(null, '', commercialPath);
+    }
   };
   const createAccount = (name: string, ctype: CustomerType) => {
     const a = newAccount(name, ctype);
@@ -751,6 +819,40 @@ export default function App() {
     </div>}
   </>;
 
+  if (!account && auth.product.shell === 'commercial') {
+    return (
+      <>
+        <CommercialShell
+          access={auth.product}
+          pathname={commercialPath}
+          accounts={state.accounts}
+          readonly={readonly}
+          onNavigate={navigateCommercial}
+          onOpenLegacy={salesWorkspaceEnabled ? openAccount : () => setSyncErr('当前版本未启用复杂销售工作台')}
+          onOpenTeam={() => setGlobalDialogOpen('team', true)}
+          onLogout={logout}
+        />
+        {syncErr && <div className="sync-toast">{syncErr}</div>}
+        <GlobalDialogs
+          surface="hub"
+          state={appShellUi}
+          dispatch={appShellUiDispatch}
+          sessionLease={sessionLease}
+          readonly={readonly}
+          role={auth.user.role}
+          accounts={state.accounts}
+          inbox={inboxDialogProps}
+          repair={{
+            onChanged: async () => { await refreshRenderedState(); },
+            onRefreshError: (message) => { if (sessionLease.isCurrent()) setSyncErr(message); },
+            onRepairRecord: openRepairRecord,
+          }}
+        />
+        <Footer />
+      </>
+    );
+  }
+
   // ── Hub（手机竖屏时刻流已退役 2026-07-21：竖屏直接进 Hub，横屏提示只在进作战室后）──
   if (!account) {
     const intelContext = appShellUi.intelContext;
@@ -833,7 +935,7 @@ export default function App() {
       onOpenEngine={readonly ? undefined : () => setEngineSignal((n) => n + 1)}
       onSelectOpp={(id) => { setOppId(id); selectPerson(null); setMobileNavOpen(false); }}
       onAddOpp={addOpp}
-      onBack={() => { setAccId(null); selectPerson(null); }}
+      onBack={leaveLegacyWorkspace}
       onCollapse={() => (isMobile ? setMobileNavOpen(false) : setSidebarCollapsed(true))}
       gapCount={gaps.length} onOpenGaps={readonly ? undefined : () => setGapsOpen(true)}
     />

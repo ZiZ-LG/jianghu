@@ -2,6 +2,7 @@ import type { Action } from './store';
 import type { AccountState, CommitmentCommand, CommitmentCommandReceipt, PipelineStage } from './types';
 import type { AiContextOptions, ContextManifest } from './aiContext';
 import { toWireAction } from './wireAction';
+import type { ProductAccess } from '@jianghu/domain-contracts';
 
 // 生产构建把 VITE_API_URL 设为空串 "" → 走同源相对路径 /api（由 Nginx 反代到后端）。
 // 开发未设(undefined) → 回退本地后端。用 ?? 而非 ||，确保空串不被误回退。
@@ -129,6 +130,7 @@ export interface AuthResult {
   token: string;
   user: { id: string; phone: string | null; email: string | null; name: string; role: string };
   tenant: { id: string; name: string; plan: string; subscriptionStatus: string; seatLimit: number };
+  product: ProductAccess;
 }
 export interface Credentials { phone?: string; email?: string; password: string }
 // 登录命中「同一手机号/邮箱在多个工作区都有账号」时，后端返回候选工作区让用户选（而非直接发 token）
@@ -227,7 +229,7 @@ export const api = {
     req('/api/auth/register', { method: 'POST', body: JSON.stringify(b) }),
   login: (b: Credentials & { tenantId?: string }): Promise<AuthResult | WorkspaceChoice> =>
     req('/api/auth/login', { method: 'POST', body: JSON.stringify(b) }),
-  me: (): Promise<{ user: AuthResult['user']; tenant: AuthResult['tenant'] }> => req('/api/me'),
+  me: (): Promise<{ user: AuthResult['user']; tenant: AuthResult['tenant']; product: ProductAccess }> => req('/api/me'),
   getState: (): Promise<{ accounts: AccountState[] }> => req('/api/state'),
   mutate: (action: Action): Promise<{ ok: true }> => req('/api/mutate', { method: 'POST', body: JSON.stringify({ action: toWireAction(action) }) }),
   // 录入情报：口述文字 → 后端 LLM 抽取 + 双轨落库 → 回执

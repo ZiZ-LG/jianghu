@@ -1,0 +1,43 @@
+import { describe, expect, it } from 'vitest';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { createElement } from 'react';
+import { assembleProductAccess } from '@jianghu/domain-contracts';
+import { CommercialShell } from './CommercialShell';
+
+const renderShell = (pathname: string, enabledEntitlements?: string[]) => renderToStaticMarkup(createElement(CommercialShell, {
+  access: assembleProductAccess({ edition: 'commercial', ...(enabledEntitlements ? { enabledEntitlements } : {}) }),
+  pathname,
+  accounts: [],
+  readonly: false,
+  onNavigate: () => undefined,
+  onOpenLegacy: () => undefined,
+  onOpenTeam: () => undefined,
+  onLogout: () => undefined,
+}));
+
+describe('CommercialShell', () => {
+  it('renders exactly the four Free navigation entries and a real panel for each route', () => {
+    const html = renderShell('/today');
+    const navLabels = [...html.matchAll(/data-product-entry="[^"]+"[^>]*>([^<]+)<\/button>/g)].map((match) => match[1]);
+    expect(navLabels).toEqual(['今日', '客户', '事项', '快速记录']);
+    expect(html).not.toContain('复杂销售');
+    expect(html).not.toContain('G64111');
+    expect(html).not.toContain('PDE');
+
+    for (const path of ['/today', '/customers', '/matters', '/quick-capture']) {
+      const routeHtml = renderShell(path);
+      expect(routeHtml).toContain('data-product-panel');
+      expect(routeHtml).toMatch(/<h1>[^<]+<\/h1>/);
+      expect(routeHtml).toContain('commercial-shell-empty');
+    }
+  });
+
+  it('renders every gated entry and its non-empty surface only when enabled', () => {
+    const enabled = ['sales.workspace', 'team.operations', 'methodology.g64111', 'decision.pde'];
+    const html = renderShell('/pde', enabled);
+    for (const label of ['复杂销售', '团队', 'G64111', 'PDE']) expect(html).toContain(`>${label}</button>`);
+    expect(html).toContain('<h1>PDE</h1>');
+    expect(html).toContain('打开 PDE 决策评估与行动排序。');
+    expect(html).toContain('commercial-shell-empty');
+  });
+});
