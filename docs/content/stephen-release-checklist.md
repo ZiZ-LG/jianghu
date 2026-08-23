@@ -103,7 +103,7 @@ git status --short
 - Server TypeScript 在本地生成 Prisma Client 后通过，未连接或修改数据库；
 - `npm run build`、`npm run build:stephen` 和显式 `npm run build:all` 均退出码为 0；`build:all` 最终同时保留 CRM `dist/index.html`，并生成 Stephen 根页、哈希 JS/CSS、`fieldbook/index.html`、`robots.txt` 与 `sitemap.xml`；
 - `git diff --check` 通过；`app/vite.config.ts`、lockfile、`server/**`、`packages/**`、CRM Action/DTO/Store 无本分支差异；
-- GitHub origin 已持续推送至 `codex/stephen-knowledge-hub`；提交 `ef3171ec3ccb81d7d6f3e8ae5831e602565d91dd` 对应的 GitHub Actions 运行 `32660677560` 共 12 个作业全部成功，本地与远端 HEAD 随后再次核对一致。
+- GitHub origin 已持续推送至 `codex/stephen-knowledge-hub`；最新代码提交 `d0c622f199e0501c90776cbfabee1e5196fae29b` 对应的 GitHub Actions 运行 `32661961062` 共 12 个作业全部成功，本地与远端 HEAD 随后再次核对一致。
 
 ## 6. Nginx 与候选镜像门禁
 
@@ -117,8 +117,8 @@ git status --short
 - [x] 根 HTML 与旧手册 HTML 使用 `no-store, no-cache, must-revalidate`。
 - [x] HSTS、nosniff、DENY frame、referrer 与 permissions 安全头在新增 location 中保留。
 - [ ] 在与生产相同 Nginx 版本上运行 `nginx -t`；本地字符串测试不能替代真实语法检查。
-- [x] 已构建本机版本化静态候选包，不覆盖或上传当前生产目录：`/private/tmp/stephen-knowledge-hub-6c8f273.tar.gz`（132K）。
-- [x] 候选代码 Git SHA：`6c8f2738ec0d4463d1b1c1b387c018fd4ebdddd2`；静态包 SHA-256：`37562b57cf5d6898617146aa277e2a8f7a01d00d4b5e8e492e9c1b62f8dce386`；构建日期：2026-08-23。
+- [x] 已基于最新代码构建本机版本化静态候选包，不覆盖或上传当前生产目录：`/private/tmp/stephen-knowledge-hub-d0c622f.tar.gz`（132K）。
+- [x] 候选代码 Git SHA：`d0c622f199e0501c90776cbfabee1e5196fae29b`；静态包 SHA-256：`488a3d2bb00736e32173e46461701d2173c7550c25e55659e981b409cdc9e758`；构建日期：2026-08-23。
 
 ## 7. 浏览器验收矩阵
 
