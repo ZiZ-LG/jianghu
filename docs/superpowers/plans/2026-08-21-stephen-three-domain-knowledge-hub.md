@@ -539,15 +539,28 @@ docs/content/
   Run（已执行）：
 
   ```bash
-  cd app && npm run typecheck && npm test && npm run build && npm run build:stephen
-  cd ../packages/g64111 && npm run typecheck && npm test
-  cd ../../server && npm run typecheck
+  cd app
+  npm run typecheck
+  npm test
+  npx vitest run --root stephen
+  npm run build
+  npm run build:stephen
+  npm run build:all
+
+  cd ../packages/g64111
+  npm run typecheck
+  npm test
+
+  cd ../../server
+  npx tsc --noEmit
+
+  cd ..
   git diff --check
   ```
 
   Expected: every command exits 0.
 
-  Gate evidence（2026-08-23，代码提交 `6c8f273`）：App TypeScript、30 files / 247 tests、CRM build；Stephen 5 files / 31 tests 与独立 build；G64111 TypeScript 与 2 files / 32 tests；Server TypeScript；`git diff --check` 全部退出 0。CRM 与 Stephen 产物串行构建后并存。候选文件中的 65 个标题/来源标题字面量在生产包中命中 0，无密钥、数据库或 `.env`；业务源码无 API 调用。`app/vite.config.ts`、lockfile、`server/**`、`packages/**`、CRM Action/DTO/Store 均无本分支差异。
+  Gate evidence（2026-08-23，代码提交 `6c8f273`）：App TypeScript、30 files / 247 tests、CRM build；Stephen 5 files / 31 tests 与独立 build；G64111 TypeScript 与 2 files / 32 tests；Server TypeScript；`git diff --check` 全部退出 0。CRM 与 Stephen 产物串行构建后并存。后续 completion audit 又显式运行 `build:all`，并把泄漏扫描扩大到 69 个中文标题、英文原题、证据标题和原文 URL，生产包命中 0；无密钥、数据库或 `.env`，业务源码无 API 调用。`app/vite.config.ts`、lockfile、`server/**`、`packages/**`、CRM Action/DTO/Store 均无本分支差异。
 
 - [x] **Step 3a: Browser-test the approved empty-collection baseline on desktop and mobile**
 
@@ -570,6 +583,8 @@ docs/content/
   Final evidence commit: `docs(SAAS-604): record Stephen local release candidate`
 
   Local candidate evidence（2026-08-23）：已生成未上传生产的 `/private/tmp/stephen-knowledge-hub-6c8f273.tar.gz`，SHA-256 为 `37562b57cf5d6898617146aa277e2a8f7a01d00d4b5e8e492e9c1b62f8dce386`。本机没有 Nginx，因此没有把字符串契约冒充真实 `nginx -t`；Step 4/5 仍受生产授权、证书和共享 Host 回归门约束。
+
+  Completion audit evidence（2026-08-23）：按目标原文重新执行 App `typecheck`、247 项全量测试、31 项 Stephen 独立测试、`build`、`build:stephen` 与 `build:all`，并执行 G64111 类型检查/32 项测试、Server `npx tsc --noEmit`、`git diff --check` 和允许范围差异检查，全部通过。最终 Stephen 静态包同时包含根页、旧手册、爬虫控制和哈希资源；对 69 个候选中文标题、英文原题、证据标题及原文 URL 的精确扫描命中 0。提交 `ef3171e` 对应 GitHub Actions 运行 `32660677560` 的 12 个作业全部成功。除项目所有者内容终审及其后的公开内容旅程复测外，没有发现其他未完成的本地发布候选要求。
 
   SAAS-604 commits：
 

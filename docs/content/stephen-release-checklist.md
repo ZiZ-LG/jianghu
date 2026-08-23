@@ -60,7 +60,7 @@
 - [x] 工具材料可编辑、复制、下载和清除；服务端不能恢复。
 - [x] 自动发布默认关闭，停止开关默认合上。
 - [x] 中高风险、种子、评论性、来源冲突、证据不足内容不具备自动资格。
-- [x] 已再次运行密钥、候选泄漏、CRM/API 路径和非授权文件差异扫描；候选文件中的 65 个标题/来源标题字面量在生产包中命中 0，业务源码无 API 调用，Vite 产物中的 `fetch` 仅为 modulepreload 兼容代码。
+- [x] 已再次运行密钥、候选泄漏、CRM/API 路径和非授权文件差异扫描；候选文件中的 69 个中文标题、英文原题、证据标题和原文 URL 字面量在生产包中命中 0，业务源码无 API 调用，Vite 产物中的 `fetch` 仅为 modulepreload 兼容代码。
 
 ## 5. 构建与测试门禁
 
@@ -73,6 +73,7 @@ npm test
 npx vitest run --root stephen
 npm run build
 npm run build:stephen
+npm run build:all
 
 cd ../packages/g64111
 npm run typecheck
@@ -100,9 +101,9 @@ git status --short
 - Stephen `5 files / 31 tests` 通过；
 - G64111 TypeScript 与 `2 files / 32 tests` 通过；
 - Server TypeScript 在本地生成 Prisma Client 后通过，未连接或修改数据库；
-- `npm run build` 生成 CRM `dist/index.html`，随后 `npm run build:stephen` 仍保留 CRM 产物并生成 Stephen 根页、哈希 JS/CSS、`fieldbook/index.html`、`robots.txt` 与 `sitemap.xml`；
+- `npm run build`、`npm run build:stephen` 和显式 `npm run build:all` 均退出码为 0；`build:all` 最终同时保留 CRM `dist/index.html`，并生成 Stephen 根页、哈希 JS/CSS、`fieldbook/index.html`、`robots.txt` 与 `sitemap.xml`；
 - `git diff --check` 通过；`app/vite.config.ts`、lockfile、`server/**`、`packages/**`、CRM Action/DTO/Store 无本分支差异；
-- GitHub origin 已持续推送至 `codex/stephen-knowledge-hub`，最终证据提交推送后再次核对远端 HEAD。
+- GitHub origin 已持续推送至 `codex/stephen-knowledge-hub`；提交 `ef3171ec3ccb81d7d6f3e8ae5831e602565d91dd` 对应的 GitHub Actions 运行 `32660677560` 共 12 个作业全部成功，本地与远端 HEAD 随后再次核对一致。
 
 ## 6. Nginx 与候选镜像门禁
 
