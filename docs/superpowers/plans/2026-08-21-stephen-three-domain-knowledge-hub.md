@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
-> **Plan status:** `SYNCHRONIZED / SAAS-601_COMPLETE / SAAS-602_IMPLEMENTED_OWNER_REVIEW_PENDING / SAAS-603_IN_PROGRESS`
+> **Plan status:** `SYNCHRONIZED / SAAS-601_COMPLETE / SAAS-602_IMPLEMENTED_OWNER_REVIEW_PENDING / SAAS-603_COMPLETE / SAAS-604_PENDING`
 >
 > **Current authorization:** `SAAS-601` 已完成。项目所有者已授权按 `SAAS-602 → SAAS-603 → SAAS-604` 持续形成发布候选；生产部署、流量切换、自动发布启用、`main` 合并和 CRM 变更仍未授权。
 >
@@ -484,17 +484,17 @@ docs/content/
 
   每日流程固定为：检查 6–10 个白名单公开信源 → 生成候选 → 去重/事件归组 → 核对一手证据 → 补充用户含义和行动 → 确定性风险分级 → 运行内容测试 → 构建预览 → 经批准发布。首批 30 条全部人工批准；之后只有低风险、白名单、无冲突、字段与审计完整的事实更新可在独立批准启用后自动公开。中高风险、第三方评论、来源冲突或证据不足内容必须人工审核。AI 不能自行降级风险或绕过批准状态。
 
-- [ ] **Step 3: Define the deterministic digest contract**
+- [x] **Step 3: Define the deterministic digest contract**
 
   日报展示 3–5 条内容、三域覆盖、预计阅读时长、来源数量和“今天该做什么”；每周新增或实质更新 3–5 条，周报包含本周主线、持续事件、岗位变化与推荐工具。
 
-- [ ] **Step 4: Write failing digest tests**
+- [x] **Step 4: Write failing digest tests**
 
   测试日报不得包含候选/归档项，不得重复同一事件，不得只有单一领域；没有足够高价值内容时允许少发而不是凑数。
 
-- [ ] **Step 5: Implement digest projections and commit**
+- [x] **Step 5: Implement digest projections and commit**
 
-  Run: `cd app && npm test -- stephen/src/content/digests.test.ts && npm run build:stephen`
+  Run: `cd app && npx vitest run --root stephen src/content/digests.test.ts src/navigation.test.ts && npm run build:stephen`
 
   Expected: PASS.
 
@@ -504,6 +504,8 @@ docs/content/
   - `feat(SAAS-603): add reviewed daily and weekly digests`
 
   Pipeline evidence（2026-08-23）：测试先因缺少 `pipeline.ts` 得到预期 RED，安全证据 URL 断言也先得到预期 RED，随后 7/7 通过；覆盖默认双重关闭、低风险资格与实际发布分离、中高风险人工队列、种子/冲突/评论边界、缺失字段与非 HTTPS 证据拒绝、三层去重、确定性抽样和不丢历史的撤回/回滚审计。`npm run typecheck` 通过；当前 `autoPublishingEnabled=false` 且 `stopSwitchEngaged=true`，无 crawler、公网写入端点或生产发布动作。
+
+  Digest evidence（2026-08-23）：测试先因缺少 `digests.ts` 得到预期 RED，`/digest/` 也先得到路由 RED，随后摘要 6/6、路由 6/6 通过；覆盖只读 `approved`、事件与规范 URL 去重、最多 5 条、三域优先覆盖、不凑数、阅读时长/信源/行动字段、周内新增或实质更新、本周主线/持续事件/岗位变化/推荐工具和非法日期拒绝。公开集合仍为空，新页诚实显示无简报，不依赖 `items.ts` 候选集合。
 
 ### Task 7: SAAS-604 完成合规、可访问性与生产验收
 

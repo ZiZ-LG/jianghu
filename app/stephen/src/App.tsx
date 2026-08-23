@@ -15,6 +15,7 @@ import {
   type AppRoute,
 } from './navigation';
 import ItemPage from './pages/ItemPage';
+import DigestPage from './pages/DigestPage';
 import LearnPage from './pages/LearnPage';
 import LibraryPage from './pages/LibraryPage';
 import RadarPage from './pages/RadarPage';
@@ -50,7 +51,7 @@ function useBrowserLocation() {
 }
 
 function routeBelongsToPrimary(route: AppRoute, href: string) {
-  if (href === '/') return route.name === 'today';
+  if (href === '/') return route.name === 'today' || route.name === 'digest';
   if (href === '/radar/') {
     return ['radar', 'topics', 'topic', 'roles', 'item'].includes(route.name);
   }
@@ -148,6 +149,14 @@ export default function App() {
       case 'library':
         return (
           <LibraryPage
+            items={approvedKnowledgeItems}
+            tools={knowledgeTools}
+            language={language}
+          />
+        );
+      case 'digest':
+        return (
+          <DigestPage
             items={approvedKnowledgeItems}
             tools={knowledgeTools}
             language={language}

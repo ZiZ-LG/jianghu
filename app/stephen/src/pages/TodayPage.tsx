@@ -52,9 +52,14 @@ export default function TodayPage({
             <p className='section-index'>TODAY</p>
             <h2 id='today-title'>{language === 'zh' ? '今日必读' : 'Today'}</h2>
           </div>
-          <span className='result-count'>
-            {language === 'zh' ? `${todayItems.length} 条精选` : `${todayItems.length} selected`}
-          </span>
+          <div className='heading-actions'>
+            <span className='result-count'>
+              {language === 'zh' ? `${todayItems.length} 条精选` : `${todayItems.length} selected`}
+            </span>
+            <InternalLink href='/digest/'>
+              {language === 'zh' ? '日报与周报' : 'Daily & weekly digests'}
+            </InternalLink>
+          </div>
         </div>
         {todayItems.length > 0 ? (
           <div className='knowledge-grid'>
@@ -91,8 +96,8 @@ export default function TodayPage({
           <h2 id='action-title'>{language === 'zh' ? '读完就做一件事' : 'Turn reading into one action'}</h2>
           <p>
             {language === 'zh'
-              ? '每个工具都会生成一份只保存在本机的 Markdown 材料。编辑、复制和下载将在 SAAS-603 接通。'
-              : 'Each tool produces local-only Markdown. Editing, copy and download arrive in SAAS-603.'}
+              ? '每个工具都会生成一份只保存在当前浏览器的 Markdown 材料，可继续编辑、复制和下载。'
+              : 'Each tool creates a browser-local Markdown artifact you can keep editing, copy or download.'}
           </p>
         </div>
         <div className='link-stack'>

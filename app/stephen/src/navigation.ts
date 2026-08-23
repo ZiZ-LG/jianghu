@@ -14,6 +14,7 @@ export type AppRoute =
   | { readonly name: 'roles' }
   | { readonly name: 'learn' }
   | { readonly name: 'library' }
+  | { readonly name: 'digest' }
   | { readonly name: 'item'; readonly slug: string }
   | { readonly name: 'not_found' };
 
@@ -56,6 +57,7 @@ export function parseRoute(pathname: string): AppRoute {
   if (path === '/roles/') return { name: 'roles' };
   if (path === '/learn/') return { name: 'learn' };
   if (path === '/library/') return { name: 'library' };
+  if (path === '/digest/') return { name: 'digest' };
 
   const topic = path.match(/^\/topics\/([^/]+)\/$/);
   if (topic) return { name: 'topic', slug: decodeSlug(topic[1]) };
