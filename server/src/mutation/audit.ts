@@ -8,6 +8,8 @@ export type ArchiveTarget = 'account' | 'opportunity';
 
 const ARCHIVE_FIELDS = JSON.stringify(['archivedAt', 'archivedBy', 'archiveReason']);
 const RESTORE_FIELDS = JSON.stringify(['archivedAt', 'archivedBy', 'archiveReason']);
+const MATTER_ARCHIVE_FIELDS = JSON.stringify(['archivedAt', 'archivedBy', 'archiveReason', 'version']);
+const MATTER_RESTORE_FIELDS = JSON.stringify(['archivedAt', 'archivedBy', 'archiveReason', 'version']);
 
 function assertWriter(ctx: CommandContext): void {
   CommandContextSchema.parse(ctx);
@@ -37,7 +39,9 @@ async function writeAudit(
       entityId: id,
       requestId: ctx.requestId ?? null,
       sourceRef: null,
-      changedFields: action === 'archive' ? ARCHIVE_FIELDS : RESTORE_FIELDS,
+      changedFields: target === 'opportunity'
+        ? action === 'archive' ? MATTER_ARCHIVE_FIELDS : MATTER_RESTORE_FIELDS
+        : action === 'archive' ? ARCHIVE_FIELDS : RESTORE_FIELDS,
     },
   });
 }
@@ -58,7 +62,7 @@ export async function archiveEntity(
       })
       : await tx.opportunity.updateMany({
         where: { id, tenantId: ctx.tenantId, archivedAt: null, account: { archivedAt: null } },
-        data: { archivedAt: now, archivedBy: ctx.actorId, archiveReason: reason },
+        data: { archivedAt: now, archivedBy: ctx.actorId, archiveReason: reason, version: { increment: 1 } },
       });
     if (result.count !== 1) throw new ScopedNotFoundError();
     await writeAudit(tx, ctx, 'archive', target, id);
@@ -84,7 +88,7 @@ export async function restoreEntity(
           archivedAt: { not: null },
           account: { archivedAt: null },
         },
-        data: { archivedAt: null, archivedBy: null, archiveReason: '' },
+        data: { archivedAt: null, archivedBy: null, archiveReason: '', version: { increment: 1 } },
       });
     if (result.count !== 1) throw new ScopedNotFoundError();
     await writeAudit(tx, ctx, 'restore', target, id);

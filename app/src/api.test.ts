@@ -383,6 +383,67 @@ describe('typed API failures', () => {
     await expect(api.quickCapture(payload, 'mismatched-quick-capture-key')).rejects.toMatchObject({ code: 'invalid_response' });
   });
 
+  it('reads and runtime-validates the fixed Today intervention contract', async () => {
+    const validToday = {
+      generatedAtUtc: '2026-08-23T19:00:00.000Z',
+      sections: [
+        { key: 'pending_confirmation', label: '待确认', items: [] },
+        { key: 'follow_up', label: '待跟进', items: [] },
+        { key: 'completed', label: '已完成', items: [] },
+      ],
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(200, validToday))
+      .mockResolvedValueOnce(response(200, {
+        ...validToday,
+        sections: [{ key: 'follow_up', label: '待跟进', items: [] }],
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.today()).resolves.toEqual(validToday);
+    await expect(api.today()).rejects.toMatchObject({ code: 'invalid_response', retryable: false });
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'http://localhost:3001/api/today',
+      'http://localhost:3001/api/today',
+    ]);
+  });
+
+  it('revalidates an exact Today source revision before drill-down', async () => {
+    const sourceRef = {
+      entityKind: 'commitment', entityId: 'commitment/1', version: 2, scheduleVersion: 3,
+    };
+    const validSource = {
+      sourceRef,
+      customerId: 'customer-1',
+      matterId: 'matter-1',
+      label: '确认周一会议',
+      detail: '计划中 · 待确认',
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(200, validSource))
+      .mockResolvedValueOnce(response(200, {
+        ...validSource,
+        sourceRef: { ...sourceRef, entityId: 'different-commitment' },
+      }))
+      .mockResolvedValueOnce(response(200, {
+        ...validSource,
+        sourceRef: { ...sourceRef, entityId: 'x'.repeat(20_000) },
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.todaySource(sourceRef)).resolves.toEqual(validSource);
+    await expect(api.todaySource(sourceRef)).rejects.toMatchObject({ code: 'invalid_response', retryable: false });
+    const longSourceRef = { ...sourceRef, entityId: 'x'.repeat(20_000) };
+    await expect(api.todaySource(longSourceRef)).resolves.toMatchObject({ sourceRef: longSourceRef });
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'http://localhost:3001/api/today/source',
+      'http://localhost:3001/api/today/source',
+      'http://localhost:3001/api/today/source',
+    ]);
+    expect(fetchMock.mock.calls.map(([, init]) => init?.method)).toEqual(['POST', 'POST', 'POST']);
+    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual(longSourceRef);
+  });
+
   it('sends minimum repair commands to the dedicated audited endpoints', async () => {
     const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => response(200, {
       source: 'workbuddy', sourceRef: 'acc-ref', syncedAt: null, syncRuns: [], auditEvents: [],

@@ -4,9 +4,14 @@ import type { AiContextOptions, ContextManifest } from './aiContext';
 import { toWireAction } from './wireAction';
 import {
   QuickCaptureCommandReceiptSchema,
+  TodayReadModelSchema,
+  TodaySourceViewSchema,
+  type InterventionSourceRef,
   type ProductAccess,
   type QuickCaptureCommand,
   type QuickCaptureCommandReceipt,
+  type TodayReadModel,
+  type TodaySourceView,
 } from '@jianghu/domain-contracts';
 
 // 生产构建把 VITE_API_URL 设为空串 "" → 走同源相对路径 /api（由 Nginx 反代到后端）。
@@ -136,6 +141,32 @@ const invalidQuickCaptureResponse = (cause?: unknown): ApiError => new ApiError(
   retryable: false,
   cause,
 });
+
+const invalidTodayResponse = (cause?: unknown): ApiError => new ApiError({
+  code: 'invalid_response',
+  message: '服务返回的今日干预数据无效，请刷新后重试。',
+  retryable: false,
+  cause,
+});
+
+function parseTodayResponse(raw: unknown): TodayReadModel {
+  const parsed = TodayReadModelSchema.safeParse(raw);
+  if (!parsed.success) throw invalidTodayResponse(parsed.error);
+  return parsed.data;
+}
+
+function parseTodaySourceResponse(raw: unknown, expected: InterventionSourceRef): TodaySourceView {
+  const parsed = TodaySourceViewSchema.safeParse(raw);
+  if (!parsed.success) throw invalidTodayResponse(parsed.error);
+  const actual = parsed.data.sourceRef;
+  if (actual.entityKind !== expected.entityKind
+    || actual.entityId !== expected.entityId
+    || actual.version !== expected.version
+    || actual.scheduleVersion !== expected.scheduleVersion) {
+    throw invalidTodayResponse(new Error('Today source revision mismatch'));
+  }
+  return parsed.data;
+}
 
 function parseQuickCaptureResponse(
   raw: unknown,
@@ -269,6 +300,11 @@ export const api = {
     req('/api/auth/login', { method: 'POST', body: JSON.stringify(b) }),
   me: (): Promise<{ user: AuthResult['user']; tenant: AuthResult['tenant']; product: ProductAccess }> => req('/api/me'),
   getState: (): Promise<{ accounts: AccountState[] }> => req('/api/state'),
+  today: async (): Promise<TodayReadModel> => parseTodayResponse(await req<unknown>('/api/today')),
+  todaySource: async (source: InterventionSourceRef): Promise<TodaySourceView> => parseTodaySourceResponse(
+    await req<unknown>('/api/today/source', { method: 'POST', body: JSON.stringify(source) }),
+    source,
+  ),
   mutate: (action: Action): Promise<{ ok: true }> => req('/api/mutate', { method: 'POST', body: JSON.stringify({ action: toWireAction(action) }) }),
   // 录入情报：口述文字 → 后端 LLM 抽取 + 双轨落库 → 回执
   voiceExtract: (b: { text: string; accountId?: string; opportunityId?: string; personId?: string; priorText?: string; sourceVisitId?: string }, idempotencyKey: string): Promise<any> =>

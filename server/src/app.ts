@@ -47,6 +47,7 @@ import { customerRoutes } from './mutation/customers.js';
 import { methodologyCommandRoutes } from './methodology/commands.js';
 import { repairRoutes } from './repair.js';
 import { personMergeRoutes } from './personMerge.js';
+import { todayRoutes } from './today.js';
 
 async function registerSecurityPlugins(app: FastifyInstance): Promise<void> {
   const isProd = process.env.NODE_ENV === 'production';
@@ -98,6 +99,8 @@ const serviceCapabilityRules: ReadonlyArray<{
   {
     requirement: { entitlement: 'crm.core' },
     matches: (pathname) => pathname === '/api/state'
+      || pathname === '/api/today'
+      || pathname === '/api/today/source'
       || pathname === '/api/mutate'
       || pathname === '/api/demo'
       || pathname === '/api/donate'
@@ -190,6 +193,7 @@ function registerRoutes(app: FastifyInstance, readinessProbe: ReadinessProbe, pr
   methodologyCommandRoutes(app);
   repairRoutes(app);
   personMergeRoutes(app);
+  todayRoutes(app);
 
   // ── 数据：拉取整树 / 应用变更 ──
   // 服务端组装时传入当前身份，统一执行归属与敏感字段 ACL。

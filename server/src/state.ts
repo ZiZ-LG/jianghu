@@ -1,8 +1,8 @@
 import type { Prisma } from '@prisma/client';
-import { CommitmentV2Schema } from '@jianghu/domain-contracts';
 import { prisma } from './prisma.js';
 import { canReadPrivateBusinessData, visiblePersonLogs, type ReadPrincipal } from './visibility.js';
 import { activePersonWhere } from './activePerson.js';
+import { commitmentFromPlanAction } from './commitment/view.js';
 import { resolveEffectiveResourceScope } from './resourceScope.js';
 
 const J = (s: string | null | undefined, d: unknown) => { try { return s ? JSON.parse(s) : d; } catch { return d; } };
@@ -107,34 +107,6 @@ function planActionView(a: any) {
     source: a.source, sourceRef: a.sourceRef, archivedAt: a.archivedAt?.toISOString() ?? null,
     version: a.version,
   };
-}
-function commitmentView(a: any) {
-  const parsed = CommitmentV2Schema.safeParse({
-    id: a.id,
-    customerId: a.accountId,
-    matterId: a.opportunityId,
-    personId: a.personId,
-    title: a.title,
-    kind: a.kind,
-    ownerUserId: a.ownerUserId,
-    executionStatus: a.executionStatus,
-    confirmationStatus: a.confirmationStatus,
-    scheduledAtUtc: a.scheduledAtUtc?.toISOString() ?? null,
-    dueAtUtc: a.dueAtUtc?.toISOString() ?? null,
-    timeZone: a.timeZone,
-    isAllDay: a.isAllDay,
-    localDate: a.localDate,
-    confirmationDueAtUtc: a.confirmationDueAtUtc?.toISOString() ?? null,
-    confirmedAtUtc: a.confirmedAtUtc?.toISOString() ?? null,
-    confirmedByUserId: a.confirmedByUserId,
-    scheduleVersion: a.scheduleVersion,
-    nextCommitmentId: a.nextCommitmentId,
-    source: a.source,
-    sourceRef: a.sourceRef,
-    archivedAt: a.archivedAt?.toISOString() ?? null,
-    version: a.version,
-  });
-  return parsed.success ? parsed.data : null;
 }
 function milestoneView(m: any) {
   return { id: m.id, accountId: m.accountId, opportunityId: m.opportunityId, title: m.title, startDate: m.startDate, endDate: m.endDate, half: m.half, createdAt: m.createdAt.toISOString() };
@@ -463,7 +435,7 @@ export async function assembleState(
   // PlanAction / OppMilestone 同 VisitNote：无 Account relation，单独查后按 accountId 挂载
   const plans = await prisma.planAction.findMany({ where: { tenantId, ...visibleParentWhere } });
   const plansByAccount = new Map<string, ReturnType<typeof planActionView>[]>();
-  const commitmentsByAccount = new Map<string, NonNullable<ReturnType<typeof commitmentView>>[]>();
+  const commitmentsByAccount = new Map<string, NonNullable<ReturnType<typeof commitmentFromPlanAction>>[]>();
   const planActionLocation = new Map<string, { accountId: string; opportunityId: string }>();
   for (const p of plans) {
     if (inArchivedBranch(p.accountId, p.opportunityId)) continue;
@@ -479,7 +451,7 @@ export async function assembleState(
       arr.push(planActionView(p));
       plansByAccount.set(p.accountId, arr);
     }
-    const commitment = commitmentView(p);
+    const commitment = commitmentFromPlanAction(p);
     if (commitment) {
       const commitments = commitmentsByAccount.get(p.accountId) ?? [];
       commitments.push(commitment);

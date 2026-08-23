@@ -26,7 +26,11 @@ describe('CommercialShell', () => {
     expect(html).not.toContain('G64111');
     expect(html).not.toContain('PDE');
 
-    for (const path of ['/today', '/customers', '/matters']) {
+    const todayHtml = renderShell('/today');
+    expect(todayHtml).toContain('data-today-state="loading"');
+    expect(todayHtml).not.toContain('commercial-shell-summary');
+
+    for (const path of ['/customers', '/matters']) {
       const routeHtml = renderShell(path);
       expect(routeHtml).toContain('data-product-panel');
       expect(routeHtml).toMatch(/<h1>[^<]+<\/h1>/);

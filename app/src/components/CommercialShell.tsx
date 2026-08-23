@@ -2,6 +2,7 @@ import type { ProductAccess, ProductEntryId } from '@jianghu/domain-contracts';
 import type { Account } from '../types';
 import { resolveProductRoute } from '../lib/productRoutes';
 import { QuickCapture } from './QuickCapture';
+import { TodayPanel } from './TodayPanel';
 
 function EmptyState({ children }: { children: string }) {
   return <div className="commercial-shell-empty">{children}</div>;
@@ -32,12 +33,10 @@ function ProductPanel({
   onOpenTeam: () => void;
   onQuickCaptureSaved: () => Promise<unknown>;
 }) {
-  const matters = accounts.flatMap((account) => account.opportunities.map((matter) => ({ account, matter })));
   if (id === 'today') {
-    return accounts.length === 0
-      ? <EmptyState>今天还没有需要处理的客户或事项。</EmptyState>
-      : <div className="commercial-shell-summary">当前关注 {accounts.length} 个客户、{matters.length} 个事项。</div>;
+    return <TodayPanel />;
   }
+  const matters = accounts.flatMap((account) => account.opportunities.map((matter) => ({ account, matter })));
   if (id === 'customers') {
     return accounts.length === 0 ? <EmptyState>还没有客户档案。</EmptyState> : (
       <div className="commercial-shell-list">
