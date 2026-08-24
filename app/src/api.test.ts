@@ -454,6 +454,53 @@ describe('typed API failures', () => {
     ]);
   });
 
+  it('reads and runtime-validates the strict generic CRM context snapshot', async () => {
+    const validContext = {
+      generatedAtUtc: '2026-08-23T23:50:00.000Z',
+      customers: [{
+        id: 'customer-1', name: '通用客户', categoryKey: null,
+        primaryOwnerUserId: 'user-1', archivedAt: null, version: 0,
+      }],
+      matters: [{
+        id: 'matter-1', customerId: 'customer-1', title: '联合研究', kind: 'general',
+        lifecycleStatus: 'active', outcomeKey: null, priority: null, targetDate: null,
+        primaryOwnerUserId: 'user-1', archivedAt: null, version: 0,
+      }],
+      people: [{
+        id: 'person-1', customerId: 'customer-1', name: '李总', title: null,
+        archivedAt: null, version: 0,
+      }],
+      matterParticipants: [{
+        id: 'participant-1', customerId: 'customer-1', matterId: 'matter-1', personId: 'person-1',
+      }],
+      relations: [{
+        id: 'relation-1', customerId: 'customer-1', matterId: 'matter-1',
+        sourcePersonId: 'person-1', targetPersonId: 'person-1', kind: 'introduced_by',
+        label: null, directed: false, version: 0,
+      }],
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(200, validContext))
+      .mockResolvedValueOnce(response(200, {
+        ...validContext,
+        customers: [{ ...validContext.customers[0], customerType: 1 }],
+      }))
+      .mockResolvedValueOnce(response(200, {
+        ...validContext,
+        relations: [{ ...validContext.relations[0], targetPersonId: 'missing-person' }],
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.crmContext()).resolves.toEqual(validContext);
+    await expect(api.crmContext()).rejects.toMatchObject({ code: 'invalid_response', retryable: false });
+    await expect(api.crmContext()).rejects.toMatchObject({ code: 'invalid_response', retryable: false });
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'http://localhost:3001/api/crm/context',
+      'http://localhost:3001/api/crm/context',
+      'http://localhost:3001/api/crm/context',
+    ]);
+  });
+
   it('revalidates an exact Today source revision before drill-down', async () => {
     const sourceRef = {
       entityKind: 'commitment', entityId: 'commitment/1', version: 2, scheduleVersion: 3,

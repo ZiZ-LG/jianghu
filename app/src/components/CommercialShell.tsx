@@ -3,6 +3,7 @@ import type { Account } from '../types';
 import { resolveProductRoute } from '../lib/productRoutes';
 import { QuickCapture } from './QuickCapture';
 import { TodayPanel } from './TodayPanel';
+import { CrmContextPanel } from './CrmContextPages';
 
 function EmptyState({ children }: { children: string }) {
   return <div className="commercial-shell-empty">{children}</div>;
@@ -41,27 +42,8 @@ function ProductPanel({
     />;
   }
   const matters = accounts.flatMap((account) => account.opportunities.map((matter) => ({ account, matter })));
-  if (id === 'customers') {
-    return accounts.length === 0 ? <EmptyState>还没有客户档案。</EmptyState> : (
-      <div className="commercial-shell-list">
-        {accounts.map((account) => (
-          <div key={account.id} className="commercial-shell-row static">
-            <span>{account.name}</span><span>{account.persons.length} 位联系人</span>
-          </div>
-        ))}
-      </div>
-    );
-  }
-  if (id === 'matters') {
-    return matters.length === 0 ? <EmptyState>还没有进行中的事项。</EmptyState> : (
-      <div className="commercial-shell-list">
-        {matters.map(({ account, matter }) => (
-          <div key={matter.id} className="commercial-shell-row static">
-            <span>{matter.name}</span><span>{account.name}</span>
-          </div>
-        ))}
-      </div>
-    );
+  if (id === 'customers' || id === 'matters') {
+    return <CrmContextPanel mode={id} onQuickCapture={() => onNavigate('/quick-capture')} />;
   }
   if (id === 'quick-capture') {
     return <QuickCapture

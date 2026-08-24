@@ -4,10 +4,12 @@ import type { AiContextOptions, ContextManifest } from './aiContext';
 import { toWireAction } from './wireAction';
 import {
   CommitmentCommandReceiptSchema,
+  CrmContextSnapshotSchema,
   QuickCaptureCommandReceiptSchema,
   TodayReadModelSchema,
   TodaySourceViewSchema,
   type InterventionSourceRef,
+  type CrmContextSnapshot,
   type ProductAccess,
   type QuickCaptureCommand,
   type QuickCaptureCommandReceipt,
@@ -156,6 +158,19 @@ const invalidTodayResponse = (cause?: unknown): ApiError => new ApiError({
   retryable: false,
   cause,
 });
+
+const invalidCrmContextResponse = (cause?: unknown): ApiError => new ApiError({
+  code: 'invalid_response',
+  message: '服务返回的客户与事项上下文无效，请刷新后重试。',
+  retryable: false,
+  cause,
+});
+
+function parseCrmContextResponse(raw: unknown): CrmContextSnapshot {
+  const parsed = CrmContextSnapshotSchema.safeParse(raw);
+  if (!parsed.success) throw invalidCrmContextResponse(parsed.error);
+  return parsed.data;
+}
 
 function parseTodayResponse(raw: unknown): TodayReadModel {
   const parsed = TodayReadModelSchema.safeParse(raw);
@@ -372,6 +387,9 @@ export const api = {
     req('/api/auth/login', { method: 'POST', body: JSON.stringify(b) }),
   me: (): Promise<{ user: AuthResult['user']; tenant: AuthResult['tenant']; product: ProductAccess }> => req('/api/me'),
   getState: (): Promise<{ accounts: AccountState[] }> => req('/api/state'),
+  crmContext: async (): Promise<CrmContextSnapshot> => parseCrmContextResponse(
+    await req<unknown>('/api/crm/context'),
+  ),
   today: async (): Promise<TodayReadModel> => parseTodayResponse(await req<unknown>('/api/today')),
   todaySource: async (source: InterventionSourceRef): Promise<TodaySourceView> => parseTodaySourceResponse(
     await req<unknown>('/api/today/source', { method: 'POST', body: JSON.stringify(source) }),

@@ -36,7 +36,9 @@ describe('CommercialShell', () => {
       const routeHtml = renderShell(path);
       expect(routeHtml).toContain('data-product-panel');
       expect(routeHtml).toMatch(/<h1>[^<]+<\/h1>/);
-      expect(routeHtml).toContain('commercial-shell-empty');
+      expect(routeHtml).toContain('data-crm-context-state="loading"');
+      expect(routeHtml).not.toContain('还没有客户档案');
+      expect(routeHtml).not.toContain('还没有进行中的事项');
     }
     const quickCaptureHtml = renderShell('/quick-capture');
     expect(quickCaptureHtml).toContain('data-product-panel="quick-capture"');

@@ -42,6 +42,7 @@ describe('server product capability enforcement', () => {
     });
 
     expect((await context.app.inject({ method: 'GET', url: '/api/state', headers: auth(context.token) })).statusCode).toBe(200);
+    expect((await context.app.inject({ method: 'GET', url: '/api/crm/context', headers: auth(context.token) })).statusCode).toBe(200);
     expect((await context.app.inject({ method: 'GET', url: '/api/today', headers: auth(context.token) })).statusCode).toBe(200);
     expect((await context.app.inject({ method: 'POST', url: '/api/today/source', headers: auth(context.token), payload: {} })).statusCode).toBe(400);
     await expectDenied(context.app, context.token, 'POST', '/api/mutate', { action: {
@@ -137,6 +138,7 @@ describe('server product capability enforcement', () => {
     const me = await context.app.inject({ method: 'GET', url: '/api/me', headers: auth(context.token) });
     expect(me.json().product).toMatchObject({ valid: false, policy: { entitlements: [], permissions: [] } });
     await expectDenied(context.app, context.token, 'GET', '/api/state');
+    await expectDenied(context.app, context.token, 'GET', '/api/crm/context');
     await expectDenied(context.app, context.token, 'GET', '/api/today');
     await expectDenied(context.app, context.token, 'POST', '/api/today/source', {});
     await expectDenied(context.app, context.token, 'POST', '/api/mutate', {});

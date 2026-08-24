@@ -75,6 +75,61 @@ select { font-family: inherit; }
 button.commercial-shell-row { cursor: pointer; }
 button.commercial-shell-row:hover { background: var(--hover); }
 .commercial-shell-row span:last-child { color: var(--faint); font-size: 12px; }
+.crm-context-state { min-height: 136px; padding: 24px; border: 1px dashed var(--line); border-radius: 12px; display: grid; place-content: center; justify-items: center; gap: 12px; color: var(--ink-2); background: var(--panel-2); text-align: center; }
+.crm-context-state.error { border-style: solid; border-color: var(--danger); color: var(--danger); background: var(--panel); }
+.crm-context-state .btn { min-height: 44px; }
+.crm-context-refresh-error { margin-bottom: 14px; padding: 10px 12px; border: 1px solid var(--danger); border-radius: 9px; display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--danger); background: var(--panel); }
+.crm-context-refresh-error span { min-width: 0; overflow-wrap: anywhere; }
+.crm-context-refresh-error .btn { min-height: 44px; }
+.crm-context-refreshing { margin: 0 0 12px; color: var(--muted); font-size: 14px; }
+.crm-context-page, .crm-context-detail { min-width: 0; display: grid; gap: 16px; }
+.crm-context-toolbar { min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted); }
+.crm-context-toolbar .btn, .crm-context-detail-header .btn, .crm-relation-empty .btn { min-height: 44px; }
+.crm-context-list { display: grid; gap: 10px; }
+.crm-context-row { width: 100%; min-height: 64px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; display: flex; align-items: center; justify-content: space-between; gap: 14px; color: var(--ink); background: var(--panel); text-align: left; }
+.crm-context-row:hover { background: var(--hover); }
+.crm-context-row:focus-visible, .crm-context-back:focus-visible, .crm-relation-empty .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.crm-context-row > span { min-width: 0; display: grid; gap: 4px; }
+.crm-context-row > span:last-child { flex: 0 1 46%; color: var(--muted); font-size: 13px; text-align: right; overflow-wrap: anywhere; }
+.crm-context-row strong, .crm-context-row small { overflow-wrap: anywhere; }
+.crm-context-row small { color: var(--muted); }
+.crm-context-detail-header { padding-bottom: 14px; border-bottom: 1px solid var(--line); display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.crm-context-detail-header > div { min-width: 0; display: grid; justify-items: start; gap: 7px; }
+.crm-context-detail-header h2 { margin: 0; font-size: 22px; overflow-wrap: anywhere; }
+.crm-context-detail-header p { color: var(--muted); font-size: 14px; }
+.crm-context-back { min-height: 44px; padding: 7px 0; color: var(--accent-ink); font-size: 14px; font-weight: 700; }
+.crm-context-badges { display: flex; flex-wrap: wrap; gap: 7px; }
+.crm-context-badge { display: inline-flex; min-height: 28px; padding: 4px 9px; border-radius: 999px; align-items: center; color: var(--accent-ink); background: var(--accent-soft); font-size: 12px; font-weight: 700; overflow-wrap: anywhere; }
+.crm-context-summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.crm-context-summary-grid > div { padding: 14px; border: 1px solid var(--line); border-radius: 10px; display: grid; gap: 3px; color: var(--muted); background: var(--panel-2); text-align: center; }
+.crm-context-summary-grid strong { color: var(--ink); font-size: 22px; }
+.crm-context-section { min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: 12px; display: grid; gap: 12px; background: var(--panel-2); }
+.crm-context-section > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.crm-context-section h3 { margin: 0; font-size: 17px; }
+.crm-context-section header > span { color: var(--muted); font-size: 12px; text-align: right; }
+.crm-context-empty-copy { padding: 14px; border: 1px dashed var(--line); border-radius: 9px; color: var(--muted); background: var(--panel); text-align: center; }
+.crm-context-compact-list { margin: 0; padding: 0; display: grid; gap: 8px; list-style: none; }
+.crm-context-compact-list li { min-width: 0; padding: 11px 12px; border: 1px solid var(--line); border-radius: 9px; display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--ink); background: var(--panel); }
+.crm-context-compact-list span { color: var(--muted); font-size: 13px; text-align: right; overflow-wrap: anywhere; }
+.crm-context-meta { margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.crm-context-meta > div { min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 9px; display: grid; gap: 4px; background: var(--panel-2); }
+.crm-context-meta dt { color: var(--muted); font-size: 12px; }
+.crm-context-meta dd { margin: 0; overflow-wrap: anywhere; }
+.crm-relation-empty { padding: 20px; border: 1px dashed var(--line); border-radius: 10px; display: grid; justify-items: start; gap: 12px; color: var(--ink-2); background: var(--panel); }
+.crm-relation-empty p { line-height: 1.6; }
+.crm-relation-context { min-width: 0; display: grid; gap: 12px; }
+.crm-relation-canvas { width: 100%; min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.crm-relation-canvas svg { width: 100%; height: auto; min-height: 240px; display: block; }
+.crm-relation-line { stroke: var(--muted); stroke-width: 2.5; }
+.crm-relation-arrow { fill: var(--muted); }
+.crm-relation-node circle { fill: var(--node-fill); stroke: var(--node-stroke); stroke-width: 2; }
+.crm-relation-node text { fill: var(--node-text); font-size: 14px; font-weight: 700; paint-order: stroke; stroke: var(--node-halo); stroke-width: 3px; stroke-linejoin: round; }
+.crm-relation-list { margin: 0; padding: 0; display: grid; gap: 8px; list-style: none; }
+.crm-relation-list li { min-width: 0; padding: 11px 12px; border: 1px solid var(--line); border-radius: 9px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px 10px; background: var(--panel); }
+.crm-relation-list li > div { min-width: 0; display: grid; gap: 3px; }
+.crm-relation-list strong, .crm-relation-list span, .crm-relation-list small { overflow-wrap: anywhere; }
+.crm-relation-list li > div span, .crm-relation-list small { color: var(--muted); font-size: 12px; }
+.crm-relation-list small { grid-column: 1 / -1; }
 .today-panel-state { min-height: 128px; padding: 24px; border: 1px dashed var(--line); border-radius: 12px; display: grid; place-content: center; justify-items: center; gap: 12px; color: var(--ink-2); background: var(--panel-2); text-align: center; }
 .today-panel-state.error { border-style: solid; border-color: var(--danger); color: var(--danger); background: var(--panel); }
 .today-read-model { display: grid; gap: 14px; }
@@ -189,6 +244,14 @@ button.commercial-shell-row:hover { background: var(--hover); }
   .quick-capture-grid, .quick-capture-inline { grid-template-columns: 1fr; }
   .quick-capture-inline .btn { justify-self: start; }
   .quick-capture-draft > div:not(.commercial-shell-actions) { grid-template-columns: 1fr; gap: 3px; }
+  .crm-context-toolbar, .crm-context-detail-header, .crm-context-refresh-error, .crm-context-section > header, .crm-context-compact-list li { align-items: stretch; flex-direction: column; }
+  .crm-context-toolbar .btn, .crm-context-detail-header > .btn, .crm-context-refresh-error .btn { width: 100%; }
+  .crm-context-row { align-items: flex-start; flex-direction: column; }
+  .crm-context-row > span:last-child { max-width: none; text-align: left; }
+  .crm-context-summary-grid, .crm-context-meta { grid-template-columns: 1fr; }
+  .crm-context-section header > span, .crm-context-compact-list span { text-align: left; }
+  .crm-relation-canvas svg { min-height: 210px; }
+  .crm-relation-list li { grid-template-columns: 1fr; }
 }
 .app-upper { display: flex; flex: 1; min-height: 0; position: relative; } /* 上半区：侧栏 + 画布并排；坞提出后列①落在左栏正下方。relative=右栏面板(.drawer)的定位锚——面板底边天然止于坞顶（第9刀） */
 

@@ -6,6 +6,7 @@ import {
   CommitmentCommandReceiptSchema,
   CommitmentCommandSchema,
   CommitmentV2Schema,
+  CrmContextSnapshotSchema,
   CrmCommandSchema,
   CustomerCommandReceiptSchema,
   CustomerCreateCommandSchema,
@@ -14,6 +15,7 @@ import {
   MatterV2Schema,
   QuickCaptureCommandReceiptSchema,
   QuickCaptureCommandSchema,
+  RelationV2Schema,
 } from '../src/index.js';
 
 const NEW_CUSTOMER_ID = 'customer_00000000000000000000000000000001';
@@ -64,6 +66,49 @@ const COMMITMENT_CREATE_INPUT = {
   confirmationDueAtUtc: '2026-08-24T02:00:00Z',
   source: 'manual',
   sourceRef: null,
+} as const;
+
+const GENERIC_CONTEXT_SNAPSHOT = {
+  generatedAtUtc: '2026-08-23T23:50:00Z',
+  customers: [{
+    id: 'customer-1', name: '通用客户', categoryKey: null,
+    primaryOwnerUserId: 'user-1', archivedAt: null, version: 2,
+  }, {
+    id: 'customer-2', name: '另一客户', categoryKey: 'partner',
+    primaryOwnerUserId: null, archivedAt: null, version: 0,
+  }],
+  matters: [{
+    id: 'matter-general', customerId: 'customer-1', title: '联合研究', kind: 'general',
+    lifecycleStatus: 'active', outcomeKey: null, priority: null, targetDate: null,
+    primaryOwnerUserId: 'user-1', archivedAt: null, version: 1,
+  }, {
+    id: 'matter-sales', customerId: 'customer-1', title: '设备采购', kind: 'sales_opportunity',
+    lifecycleStatus: 'active', outcomeKey: null, priority: 'important', targetDate: '2026-10-01',
+    primaryOwnerUserId: 'user-1', archivedAt: null, version: 3,
+  }, {
+    id: 'matter-other-customer', customerId: 'customer-2', title: '联合培训', kind: 'training_program',
+    lifecycleStatus: 'paused', outcomeKey: null, priority: null, targetDate: null,
+    primaryOwnerUserId: null, archivedAt: null, version: 0,
+  }],
+  people: [{
+    id: 'person-1', customerId: 'customer-1', name: '李总', title: '负责人', archivedAt: null, version: 1,
+  }, {
+    id: 'person-2', customerId: 'customer-1', name: '王经理', title: null, archivedAt: null, version: 0,
+  }, {
+    id: 'person-3', customerId: 'customer-2', name: '赵老师', title: '项目负责人', archivedAt: null, version: 0,
+  }],
+  matterParticipants: [{
+    id: 'participant-1', customerId: 'customer-1', matterId: 'matter-general', personId: 'person-1',
+  }],
+  relations: [{
+    id: 'relation-1', customerId: 'customer-1', matterId: null,
+    sourcePersonId: 'person-1', targetPersonId: 'person-2', kind: 'trusted_advisor',
+    label: '可信顾问', directed: true, version: 4,
+  }, {
+    id: 'relation-2', customerId: 'customer-1', matterId: 'matter-sales',
+    sourcePersonId: 'person-2', targetPersonId: 'person-1', kind: 'unknown_open_relation',
+    label: null, directed: false, version: 0,
+  }],
 } as const;
 
 describe('neutral CRM V2 contracts', () => {
@@ -214,6 +259,74 @@ describe('neutral CRM V2 contracts', () => {
       ...TIMED_COMMITMENT_DTO, confirmationStatus: 'confirmed',
       confirmedAtUtc: '2026-08-24T01:00:00Z', confirmedByUserId: 'user-cao',
     }).success).toBe(true);
+  });
+});
+
+describe('generic CRM context snapshot', () => {
+  it('preserves open Relation kinds without exposing the sales layer adapter', () => {
+    expect(RelationV2Schema.safeParse(GENERIC_CONTEXT_SNAPSHOT.relations[1]).success).toBe(true);
+    expect(RelationV2Schema.safeParse({
+      ...GENERIC_CONTEXT_SNAPSHOT.relations[1],
+      layer: 'L4',
+    }).success).toBe(false);
+    expect(RelationV2Schema.safeParse({
+      ...GENERIC_CONTEXT_SNAPSHOT.relations[1],
+      role: 'D',
+      sentiment: 'star',
+    }).success).toBe(false);
+    expect(RelationV2Schema.safeParse({
+      ...GENERIC_CONTEXT_SNAPSHOT.relations[1],
+      kind: '   ',
+    }).success).toBe(false);
+  });
+
+  it('reads general, sales-opportunity, and unknown Matter kinds in one strict snapshot', () => {
+    expect(CrmContextSnapshotSchema.safeParse(GENERIC_CONTEXT_SNAPSHOT).success).toBe(true);
+    expect(CrmContextSnapshotSchema.safeParse({
+      ...GENERIC_CONTEXT_SNAPSHOT,
+      pipelineStage: '合同双签',
+    }).success).toBe(false);
+    expect(CrmContextSnapshotSchema.safeParse({
+      ...GENERIC_CONTEXT_SNAPSHOT,
+      matters: [{ ...GENERIC_CONTEXT_SNAPSHOT.matters[0], engageStage: '招采执行' }],
+    }).success).toBe(false);
+  });
+
+  it.each([
+    ['duplicate customer id', {
+      ...GENERIC_CONTEXT_SNAPSHOT,
+      customers: [...GENERIC_CONTEXT_SNAPSHOT.customers, GENERIC_CONTEXT_SNAPSHOT.customers[0]],
+    }],
+    ['missing Matter customer', {
+      ...GENERIC_CONTEXT_SNAPSHOT,
+      matters: [{ ...GENERIC_CONTEXT_SNAPSHOT.matters[0], customerId: 'missing-customer' }],
+    }],
+    ['missing Person customer', {
+      ...GENERIC_CONTEXT_SNAPSHOT,
+      people: [{ ...GENERIC_CONTEXT_SNAPSHOT.people[0], customerId: 'missing-customer' }],
+    }],
+    ['missing participant person', {
+      ...GENERIC_CONTEXT_SNAPSHOT,
+      matterParticipants: [{ ...GENERIC_CONTEXT_SNAPSHOT.matterParticipants[0], personId: 'missing-person' }],
+    }],
+    ['participant parent mismatch', {
+      ...GENERIC_CONTEXT_SNAPSHOT,
+      matterParticipants: [{ ...GENERIC_CONTEXT_SNAPSHOT.matterParticipants[0], matterId: 'matter-other-customer' }],
+    }],
+    ['missing relation endpoint', {
+      ...GENERIC_CONTEXT_SNAPSHOT,
+      relations: [{ ...GENERIC_CONTEXT_SNAPSHOT.relations[0], targetPersonId: 'missing-person' }],
+    }],
+    ['cross-customer relation endpoint', {
+      ...GENERIC_CONTEXT_SNAPSHOT,
+      relations: [{ ...GENERIC_CONTEXT_SNAPSHOT.relations[0], targetPersonId: 'person-3' }],
+    }],
+    ['relation Matter parent mismatch', {
+      ...GENERIC_CONTEXT_SNAPSHOT,
+      relations: [{ ...GENERIC_CONTEXT_SNAPSHOT.relations[0], matterId: 'matter-other-customer' }],
+    }],
+  ])('rejects a referentially open snapshot: %s', (_label, snapshot) => {
+    expect(CrmContextSnapshotSchema.safeParse(snapshot).success).toBe(false);
   });
 });
 

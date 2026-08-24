@@ -84,6 +84,201 @@ export const MatterV2Schema = matterObject.superRefine((value, ctx) => {
 
 export type MatterV2 = z.infer<typeof MatterV2Schema>;
 
+export const PersonSummaryV2Schema = z.object({
+  id,
+  customerId: id,
+  name: z.string().trim().min(1),
+  title: z.string().trim().min(1).nullable(),
+  archivedAt: instant.nullable(),
+  version,
+}).strict();
+
+export type PersonSummaryV2 = z.infer<typeof PersonSummaryV2Schema>;
+
+export const MatterParticipantV2Schema = z.object({
+  id,
+  customerId: id,
+  matterId: id,
+  personId: id,
+}).strict();
+
+export type MatterParticipantV2 = z.infer<typeof MatterParticipantV2Schema>;
+
+export const RelationV2Schema = z.object({
+  id,
+  customerId: id,
+  matterId: id.nullable(),
+  sourcePersonId: id,
+  targetPersonId: id,
+  kind: openKey,
+  label: z.string().trim().min(1).nullable(),
+  directed: z.boolean(),
+  version,
+}).strict();
+
+export type RelationV2 = z.infer<typeof RelationV2Schema>;
+
+function indexUniqueIds<T extends { id: string }>(
+  values: readonly T[],
+  path: string,
+  ctx: z.RefinementCtx,
+): Map<string, T> {
+  const byId = new Map<string, T>();
+  values.forEach((value, index) => {
+    if (byId.has(value.id)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [path, index, 'id'],
+        message: `duplicate ${path} id`,
+      });
+      return;
+    }
+    byId.set(value.id, value);
+  });
+  return byId;
+}
+
+export const CrmContextSnapshotSchema = z.object({
+  generatedAtUtc: instant,
+  customers: z.array(CustomerV2Schema),
+  matters: z.array(MatterV2Schema),
+  people: z.array(PersonSummaryV2Schema),
+  matterParticipants: z.array(MatterParticipantV2Schema),
+  relations: z.array(RelationV2Schema),
+}).strict().superRefine((value, ctx) => {
+  const customers = indexUniqueIds(value.customers, 'customers', ctx);
+  const matters = indexUniqueIds(value.matters, 'matters', ctx);
+  const people = indexUniqueIds(value.people, 'people', ctx);
+  indexUniqueIds(value.matterParticipants, 'matterParticipants', ctx);
+  indexUniqueIds(value.relations, 'relations', ctx);
+
+  value.matters.forEach((matter, index) => {
+    if (!customers.has(matter.customerId)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['matters', index, 'customerId'],
+        message: 'Matter customer must be present in the snapshot',
+      });
+    }
+  });
+
+  value.people.forEach((person, index) => {
+    if (!customers.has(person.customerId)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['people', index, 'customerId'],
+        message: 'Person customer must be present in the snapshot',
+      });
+    }
+  });
+
+  const participantKeys = new Set<string>();
+  value.matterParticipants.forEach((participant, index) => {
+    const key = `${participant.matterId}\u0000${participant.personId}`;
+    if (participantKeys.has(key)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['matterParticipants', index],
+        message: 'duplicate Matter participant',
+      });
+    }
+    participantKeys.add(key);
+
+    const matter = matters.get(participant.matterId);
+    const person = people.get(participant.personId);
+    if (!customers.has(participant.customerId)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['matterParticipants', index, 'customerId'],
+        message: 'Participant customer must be present in the snapshot',
+      });
+    }
+    if (!matter) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['matterParticipants', index, 'matterId'],
+        message: 'Participant Matter must be present in the snapshot',
+      });
+    } else if (matter.customerId !== participant.customerId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['matterParticipants', index, 'matterId'],
+        message: 'Participant Matter must belong to the same Customer',
+      });
+    }
+    if (!person) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['matterParticipants', index, 'personId'],
+        message: 'Participant Person must be present in the snapshot',
+      });
+    } else if (person.customerId !== participant.customerId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['matterParticipants', index, 'personId'],
+        message: 'Participant Person must belong to the same Customer',
+      });
+    }
+  });
+
+  value.relations.forEach((relation, index) => {
+    if (!customers.has(relation.customerId)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['relations', index, 'customerId'],
+        message: 'Relation customer must be present in the snapshot',
+      });
+    }
+    if (relation.matterId) {
+      const matter = matters.get(relation.matterId);
+      if (!matter) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['relations', index, 'matterId'],
+          message: 'Relation Matter must be present in the snapshot',
+        });
+      } else if (matter.customerId !== relation.customerId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['relations', index, 'matterId'],
+          message: 'Relation Matter must belong to the same Customer',
+        });
+      }
+    }
+
+    const source = people.get(relation.sourcePersonId);
+    const target = people.get(relation.targetPersonId);
+    if (!source) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['relations', index, 'sourcePersonId'],
+        message: 'Relation source Person must be present in the snapshot',
+      });
+    } else if (source.customerId !== relation.customerId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['relations', index, 'sourcePersonId'],
+        message: 'Relation source Person must belong to the same Customer',
+      });
+    }
+    if (!target) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['relations', index, 'targetPersonId'],
+        message: 'Relation target Person must be present in the snapshot',
+      });
+    } else if (target.customerId !== relation.customerId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['relations', index, 'targetPersonId'],
+        message: 'Relation target Person must belong to the same Customer',
+      });
+    }
+  });
+});
+
+export type CrmContextSnapshot = z.infer<typeof CrmContextSnapshotSchema>;
+
 const commitmentFields = {
   id,
   customerId: id,
