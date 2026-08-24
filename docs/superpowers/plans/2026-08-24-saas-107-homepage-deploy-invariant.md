@@ -63,7 +63,7 @@ git commit -m "docs(SAAS-107): start homepage deployment invariant"
 - Consumes: CLI arguments `--site`, `--artifact`, `--source-dir`, `--source-sha`, `--build-command`, and optional `--for-deploy`.
 - Produces: JSON on stdout with `siteId`, `sourceSha`, `buildCommand`, `artifactPath`, `artifactChecksum`, `destinationHost`, `destinationPath`, `canonicalUrl`, `title`, and `deployAllowed`; errors use prefix `PUBLIC_SITE_ARTIFACT_ERROR=` and a non-zero exit.
 
-- [ ] **Step 1: Write real CLI integration tests with temporary artifacts**
+- [x] **Step 1: Write real CLI integration tests with temporary artifacts**
 
 Use `node:test`, `mkdtempSync`, real files, and `spawnSync(process.execPath, [...])`. Cover these observable breaks:
 
@@ -75,7 +75,7 @@ Use `node:test`, `mkdtempSync`, real files, and `spawnSync(process.execPath, [..
 6. `--for-deploy` fails while the registry says either source authority or atomic runtime authority is unresolved;
 7. CRM and self-cultivation targets cannot be deployed by the public-edge guard.
 
-- [ ] **Step 2: Run the test and observe RED**
+- [x] **Step 2: Run the test and observe RED**
 
 ```bash
 node --test scripts/verify-public-site-artifact.test.mjs
@@ -95,11 +95,11 @@ Expected: FAIL because `deploy/public-site-targets.json` and `scripts/verify-pub
 - Each target declares canonical URL, source/build/artifact mapping, exact title, required/forbidden markers, destination host/path, Aliyun version root, Nginx server/location, manager, and deployment authority state.
 - `public-home.deployment.sourceAuthority = "unresolved"` and `public-home.deployment.atomicRuntimeAuthority = false` until a separately approved source/Nginx task closes both facts.
 
-- [ ] **Step 1: Add the smallest registry that captures verified reality**
+- [x] **Step 1: Add the smallest registry that captures verified reality**
 
 The public target records the current recovery lineage (`f4ef4a93adf4a795428233e4275139c14b2369e4` plus the filing-footer correction) but does not mislabel it as a reproducible main build. CRM maps `app/ → npm run build → app/dist/ → crm.lake2ocean.top`; self-cultivation maps its protected source/build/output and is marked `manager = "self-cultivation-thread"`.
 
-- [ ] **Step 2: Implement strict argument, Git provenance, and artifact-tree checks**
+- [x] **Step 2: Implement strict argument, Git provenance, and artifact-tree checks**
 
 The verifier must:
 
@@ -112,7 +112,7 @@ The verifier must:
 - never print file contents, environment values, keys, or secrets;
 - make `--for-deploy` fail unless source authority is authoritative, atomic runtime authority is true, and the target is managed by the public-edge release guard.
 
-- [ ] **Step 3: Run GREEN and mutation checks**
+- [x] **Step 3: Run GREEN and mutation checks**
 
 ```bash
 node --test scripts/verify-public-site-artifact.test.mjs
@@ -132,7 +132,7 @@ Expected: all tests pass. Then temporarily change a fixture title, remove a nav 
 - Without `--execute`, it is read-only.
 - With `--execute`, it must still fail before SSH while either registry authority gate is closed; no override environment variable or alternate registry argument exists.
 
-- [ ] **Step 1: Write the failing shell integration test**
+- [x] **Step 1: Write the failing shell integration test**
 
 Run the real guard against the valid temporary public fixture. Assert that plan mode prints all provenance fields, a wrong artifact fails before any fake SSH binary is invoked, and `--execute` fails with `PUBLIC_SITE_RELEASE_BLOCKED` while current authority gates are closed.
 
@@ -142,11 +142,11 @@ bash scripts/aliyun-edge-release.test.sh
 
 Expected: FAIL because `deploy/aliyun-edge-release.sh` does not exist.
 
-- [ ] **Step 2: Implement the minimal guarded launcher**
+- [x] **Step 2: Implement the minimal guarded launcher**
 
 The launcher calls the Node verifier, prints its JSON-derived provenance, requires the literal confirmation token `HOMEPAGE_DEPLOY_APPROVED=YES` for `--execute`, and then asks the verifier for `--for-deploy`. Because the committed registry is blocked, current execution stops before any `ssh`, `scp`, `tar`, Docker, symlink, Nginx, or curl mutation. The script documents, but does not fake, the future contract: immutable version directory, same-filesystem temporary link plus atomic rename, previous pointer retention, post-switch full three-site smoke, and rollback/re-smoke on any failure.
 
-- [ ] **Step 3: Run GREEN and syntax checks**
+- [x] **Step 3: Run GREEN and syntax checks**
 
 ```bash
 bash scripts/aliyun-edge-release.test.sh
@@ -165,19 +165,19 @@ Expected: all checks pass and the fake SSH sentinel remains untouched.
 - Consumes: the committed registry and read-only evidence from the active Aliyun edge/CRM containers.
 - Produces: one human authority page with the exact product/source/build/artifact/URL/version/Nginx matrix, incident facts, rollback sequence, and enablement gates.
 
-- [ ] **Step 1: Write the incident and invariant record**
+- [x] **Step 1: Write the incident and invariant record**
 
 Record that `app/dist` from `npm run build` produced the legacy CRM title/bundle and was copied into `/usr/share/nginx/jianghu`, where the root Nginx fallback served it. State explicitly that restoring the homepage did not delete the legacy CRM or data.
 
-- [ ] **Step 2: Write current and target deployment matrices**
+- [x] **Step 2: Write current and target deployment matrices**
 
 Include the three sites, the unresolved public-home source lineage, the active embedded-image fact, CRM Compose release directory, protected self-cultivation mapping, exact Nginx server/location behavior, and the rule that filenames alone never prove identity.
 
-- [ ] **Step 3: Write preflight, switch, smoke, and rollback gates**
+- [x] **Step 3: Write preflight, switch, smoke, and rollback gates**
 
 Require source SHA/build/artifact/checksum/destination/title confirmation; immutable version directories; no delete-current-first; public root/CRM/self-cultivation/ICP/police/API/login/health checks; immediate rollback and root+self-cultivation re-check on failure. State that enabling the switch requires a separate owner-approved shared Nginx/source task.
 
-- [ ] **Step 4: Replace stale top-level guidance with a pointer to the authority page**
+- [x] **Step 4: Replace stale top-level guidance with a pointer to the authority page**
 
 Keep historical generic Compose instructions clearly labeled as CRM-service guidance and make the three-site authority page the first stop for production routing or public-edge releases.
 
@@ -190,7 +190,7 @@ Keep historical generic Compose instructions clearly labeled as CRM-service guid
 - Consumes: all SAAS-107 tests and the protected/shared-path diff audit.
 - Produces: one implementation commit, one CI-backed completion record, a feature branch/PR, and no production mutation.
 
-- [ ] **Step 1: Run the complete local gate**
+- [x] **Step 1: Run the complete local gate**
 
 ```bash
 node --test scripts/verify-public-site-artifact.test.mjs
@@ -203,7 +203,7 @@ git status --short
 
 Additionally verify the diff contains no protected self-cultivation path and none of `app/package.json`, `app/package-lock.json`, Vite config, `app/dist/**`, `docker-compose.yml`, shared Nginx, or common CI.
 
-- [ ] **Step 2: Re-run live read-only homepage smoke**
+- [x] **Step 2: Re-run live read-only homepage smoke**
 
 Confirm public-home title/nav/no redirect, CRM entry/API/login, self-cultivation title/resources, ICP, police number/icon, and health endpoints. No SSH write command is permitted.
 

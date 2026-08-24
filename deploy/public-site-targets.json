@@ -1,0 +1,137 @@
+{
+  "schemaVersion": 1,
+  "targets": {
+    "public-home": {
+      "product": "公开网站首页",
+      "canonicalUrl": "https://lake2ocean.top/",
+      "source": {
+        "authority": "unresolved",
+        "directory": null,
+        "buildCommand": null,
+        "artifactPath": null,
+        "recoveryLineage": [
+          "codex/icp-crm-subdomain@f4ef4a93adf4a795428233e4275139c14b2369e4:app/",
+          "origin/main@81da993d76ce422eac89227aa6e8183314812d04 public-security filing footer"
+        ],
+        "reason": "The active homepage combines an unmerged homepage lineage with the later filing-footer correction; origin/main has no single reproducible public-home source directory."
+      },
+      "artifactIdentity": {
+        "title": "江湖 CRM｜自在江湖客户管理",
+        "requiredMarkers": [
+          "首页",
+          "自我修养",
+          "江湖 CRM",
+          "卧虎藏龙",
+          "进入江湖 CRM",
+          "京ICP备2026046195号-2",
+          "京公网安备11010802049879号"
+        ],
+        "requiredUrls": [
+          "https://crm.lake2ocean.top"
+        ],
+        "orderedMarkers": [
+          "首页",
+          "自我修养",
+          "江湖 CRM",
+          "卧虎藏龙"
+        ],
+        "forbiddenMarkers": [
+          "注册新工作区",
+          "销售干系人作战地图"
+        ]
+      },
+      "deployment": {
+        "manager": "public-edge-release-guard",
+        "destinationHost": "admin@47.95.13.214",
+        "destinationPath": "/usr/share/nginx/jianghu",
+        "versionRoot": "/home/admin/jianghu/deployments",
+        "versionDirectoryPattern": "edge-public-home-<source-sha>-<artifact-checksum-prefix>",
+        "atomicRuntimeAuthority": false,
+        "currentRuntime": "Static files are embedded in the active zizai-site image; /home/admin/zizai-site/current is not mounted or read by that container.",
+        "enablementGate": "A separately approved task must establish one authoritative public-home source/build and make the live edge consume a same-filesystem atomic release pointer."
+      },
+      "nginx": {
+        "serverName": "lake2ocean.top www.lake2ocean.top",
+        "root": "/usr/share/nginx/jianghu",
+        "location": "location / { try_files $uri $uri/ /index.html; }"
+      }
+    },
+    "crm": {
+      "product": "江湖 CRM（商业应用及保留的 legacy surface）",
+      "canonicalUrl": "https://crm.lake2ocean.top/",
+      "source": {
+        "authority": "authoritative",
+        "directory": "app",
+        "buildCommand": "cd app && npm ci --install-links && npm run build",
+        "artifactPath": "app/dist"
+      },
+      "artifactIdentity": {
+        "title": "江湖 · Game of JiangHu",
+        "requiredMarkers": [
+          "注册新工作区",
+          "轻量客户与事项",
+          "京ICP备2026046195号-2",
+          "京公网安备11010802049879号"
+        ],
+        "requiredUrls": [],
+        "orderedMarkers": [],
+        "forbiddenMarkers": [
+          "公开网站首页"
+        ]
+      },
+      "deployment": {
+        "manager": "crm-compose-release",
+        "destinationHost": "admin@47.95.13.214",
+        "destinationPath": "/usr/share/nginx/html",
+        "versionRoot": "/home/admin/jianghu/deployments",
+        "versionDirectoryPattern": "release-<source-sha>",
+        "atomicRuntimeAuthority": false,
+        "currentRuntime": "The edge crm server proxies / to the Compose web container and /api/ to the Compose server container."
+      },
+      "nginx": {
+        "serverName": "crm.lake2ocean.top",
+        "root": "proxy_pass http://web:80",
+        "location": "location / { proxy_pass http://web:80; } and location /api/ { proxy_pass http://server:3001; }"
+      }
+    },
+    "self-cultivation": {
+      "product": "自我修养公开站",
+      "canonicalUrl": "https://stephen.lake2ocean.top/",
+      "source": {
+        "authority": "authoritative",
+        "directory": "app/stephen",
+        "buildCommand": "cd app && npm ci --install-links && npm run build:stephen",
+        "artifactPath": "app/dist/stephen"
+      },
+      "artifactIdentity": {
+        "title": "自我修养｜AI 技术、大客户销售与岗位组织转型",
+        "requiredMarkers": [
+          "AI 技术",
+          "大客户销售",
+          "岗位组织转型",
+          "京ICP备2026046195号-2",
+          "京公网安备11010802049879号"
+        ],
+        "requiredUrls": [],
+        "orderedMarkers": [],
+        "forbiddenMarkers": [
+          "注册新工作区"
+        ]
+      },
+      "deployment": {
+        "manager": "self-cultivation-thread",
+        "destinationHost": "admin@47.95.13.214",
+        "destinationPath": "/usr/share/nginx/jianghu/stephen",
+        "versionRoot": "/home/admin/jianghu/deployments",
+        "versionDirectoryPattern": "edge-<source-sha>/stephen",
+        "atomicRuntimeAuthority": false,
+        "currentRuntime": "Static files are embedded in the active zizai-site edge image and are protected from CRM task writes."
+      },
+      "nginx": {
+        "serverName": "stephen.lake2ocean.top",
+        "root": "/usr/share/nginx/jianghu/stephen",
+        "location": "location / { try_files $uri $uri/ /index.html; }"
+      }
+    }
+  }
+}
