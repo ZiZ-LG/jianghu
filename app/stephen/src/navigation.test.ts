@@ -4,6 +4,7 @@ import { approvedSeedItems } from './content/items';
 import { knowledgeTopics } from './content/topics';
 import type { SeedCandidate } from './domain';
 import {
+  decodeHashTarget,
   desktopNavigation,
   filterKnowledgeItems,
   getKnowledgeItemBySlug,
@@ -42,6 +43,12 @@ describe('SAAS-602 Stephen navigation and selection', () => {
       slug: 'frontier-model-price-performance',
     });
     expect(parseRoute('/does-not-exist/')).toEqual({ name: 'not_found' });
+  });
+
+  it('decodes valid hash targets and tolerates malformed URL fragments', () => {
+    expect(decodeHashTarget('#correction%2Dform')).toBe('correction-form');
+    expect(decodeHashTarget('#%')).toBe('%');
+    expect(decodeHashTarget('')).toBe('');
   });
 
   it('keeps four primary destinations on both desktop and mobile', () => {

@@ -7,6 +7,7 @@ import InternalLink from './components/InternalLink';
 import SearchBox from './components/SearchBox';
 import type { Language } from './i18n';
 import {
+  decodeHashTarget,
   desktopNavigation,
   getKnowledgeItemBySlug,
   getKnowledgeTopicBySlug,
@@ -93,9 +94,8 @@ export default function App() {
     const root = document.documentElement;
     const previousBehavior = root.style.scrollBehavior;
     root.style.scrollBehavior = 'auto';
-    const target = location.hash
-      ? document.getElementById(decodeURIComponent(location.hash.slice(1)))
-      : null;
+    const hashTarget = decodeHashTarget(location.hash);
+    const target = hashTarget ? document.getElementById(hashTarget) : null;
     const top = target
       ? target.getBoundingClientRect().top + window.scrollY - 94
       : 0;

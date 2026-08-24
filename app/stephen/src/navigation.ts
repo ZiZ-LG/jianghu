@@ -49,6 +49,11 @@ function decodeSlug(value: string) {
   }
 }
 
+export function decodeHashTarget(hash: string) {
+  const value = hash.startsWith('#') ? hash.slice(1) : hash;
+  return decodeSlug(value);
+}
+
 export function parseRoute(pathname: string): AppRoute {
   const path = normalizePath(pathname);
   if (path === '/') return { name: 'today' };
