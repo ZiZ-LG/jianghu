@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
-> **Plan status:** `SYNCHRONIZED / SAAS-601_COMPLETE / SAAS-602_IMPLEMENTED_OWNER_REVIEW_PENDING / SAAS-603_COMPLETE / SAAS-604_LOCAL_RC_COMPLETE / PRODUCTION_NOT_AUTHORIZED`
+> **Plan status:** `SYNCHRONIZED / SAAS-601_COMPLETE / SAAS-602_COMPLETE / SAAS-603_COMPLETE / SAAS-604_LOCAL_RC_COMPLETE / REPOSITORY_LANDING_AUTHORIZED / PRODUCTION_NOT_AUTHORIZED`
 >
-> **Current authorization:** `SAAS-601` 已完成。项目所有者已授权按 `SAAS-602 → SAAS-603 → SAAS-604` 持续形成发布候选；生产部署、流量切换、自动发布启用、`main` 合并和 CRM 变更仍未授权。
+> **Current authorization:** 首批 30 条内容已由项目所有者逐条批准并完成公开内容旅程复测。项目所有者已授权以 `main@49a09f3411033e628e34213f5f8c9197f01de275` 为精确基线完成最小文档收口、创建 PR，并在 PR CI 全绿且审查无阻塞后使用 merge commit 合并；合并后必须等待 `main` 精确合并 SHA 的 CI 全绿。生产部署、流量切换、Nginx 修改、自动发布启用和 CRM 变更仍未授权。
 >
-> **Execution isolation:** branch `codex/stephen-knowledge-hub`; worktree `/Volumes/PowerData/江湖APP/.worktrees/stephen-knowledge-hub`; base `e20e6f76407389aefbac35ca184efbb5c2f83852`.
+> **Execution isolation:** branch `codex/stephen-knowledge-hub`; worktree `/Volumes/PowerData/江湖APP/.worktrees/stephen-knowledge-hub`; repository landing base `main@49a09f3411033e628e34213f5f8c9197f01de275`.
 
 **Goal:** 将 `stephen.lake2ocean.top` 从单篇“AI 销售面试手册”升级为面向传统 To B 销售个人的“AI 技术 × 大客户销售 × AI 岗位与组织转型”行动型知识库，同时完整保留现有手册。
 
@@ -32,7 +32,7 @@
 - 导航、按钮、状态、法律说明和页面元数据保留中英文；30 条内容、6 个专题和 8 个工具的完整中文是发布条件，英文正文不是第一阶段阻塞项。
 - 页面继续展示 `京ICP备2026046195号-2`、运营主体和江湖生态入口。
 - 不引入新的重依赖；MVP 复用 `app/package.json` 已有 React/Vite/Vitest。
-- 实施必须在上述独立 worktree/分支进行，可推送 feature branch，但不得合并或推送 `main`。
+- 实施必须在上述独立 worktree/分支进行；禁止直接推送 `main`，只允许在 PR CI 全绿且审查无阻塞后使用 merge commit 合并。
 - CRM `CORE-115` 正在 `/Volumes/PowerData/江湖APP/.worktrees/g3-lightweight-personal-crm` 独立执行；本计划不得进入该工作树，也不得修改 `docs/商业版开发待办清单v1.md`。
 - `app/package.json` 是唯一共享文件例外，只允许追加 `build:stephen` 和 `build:all`；现有 `"build": "vite build"` 必须保持 CRM-only 语义。禁止修改 `app/vite.config.ts`，禁止增加依赖或改动 lockfile。
 - 当前允许的实现文件仅限 `app/stephen/**`、`app/public/stephen/**`（只用于旧手册迁移）、`app/vite.stephen.config.ts`、`app/src/components/StephenSite.test.ts`、`deploy/stephen.nginx.conf`、`docs/content/stephen-*` 和两份 Stephen 方案文档。
@@ -318,7 +318,7 @@ docs/content/
 
   Commit: `feat(stephen): add standalone knowledge hub shell`
 
-> **SAAS-601 GATE RECORD:** 上述两项已完成并留下验证证据。项目所有者随后授权继续执行 `SAAS-602`～`SAAS-604` 发布候选；生产部署、流量切换、自动发布启用、`main` 合并和 CRM 变更仍禁止。
+> **SAAS-601 GATE RECORD:** 上述两项已完成并留下验证证据。项目所有者随后授权继续执行 `SAAS-602`～`SAAS-604` 发布候选；在该阶段门记录形成时，生产部署、流量切换、自动发布启用、`main` 合并和 CRM 变更均未获授权。
 
 `SAAS-601` 完成证据（2026-08-23）：
 
@@ -371,7 +371,9 @@ docs/content/
 
   Source-governance evidence（2026-08-23）：已通过项目规定的 `/browse` 实时打开并核验 10 个公开信源；登记文件、编辑与版权规则已建立；Stephen 独立测试必须使用 `npx vitest run --root stephen ...`，因为 CRM 主 Vitest 配置仅包含 `app/src/**/*.test.ts`。
 
-  Seed-review evidence（2026-08-23）：先写入 30/6/8 规模、分类配比、三域覆盖、时效窗口、信源引用和候选/公开集合隔离断言并得到缺少 `items.ts` 的预期 RED；随后完成 30 条候选、6 个专题、8 个工具和 `docs/content/stephen-seed-review-package.md`。独立内容测试 5/5 通过，Stephen TypeScript 检查通过；全部种子仍为 `candidate + manual + pending_owner_review`，`approvedKnowledgeItems` 仍为空，等待项目所有者整批终审，不构成 SAAS-602 最终批准。
+  Initial seed-review evidence（2026-08-23）：先写入 30/6/8 规模、分类配比、三域覆盖、时效窗口、信源引用和候选/公开集合隔离断言并得到缺少 `items.ts` 的预期 RED；随后完成 30 条候选、6 个专题、8 个工具和 `docs/content/stephen-seed-review-package.md`。独立内容测试 5/5 通过，Stephen TypeScript 检查通过；当时全部种子保持 `candidate + manual + pending_owner_review`，`approvedKnowledgeItems` 为空，未越过人工终审门。
+
+  Owner-approval evidence（2026-08-23）：项目所有者逐条批准终审包 v2 的 30 条内容；`publicItems.ts` 以 ST-001 至 ST-030 显式白名单纳入公开集合，随后完成公开卡片、30 条详情证据与原文、收藏/已读及非空日报/周报旅程复测。生产部署授权仍保持独立。
 
 ### Task 4: SAAS-602 实现今日、雷达、专题、工具与详情页
 
@@ -568,9 +570,11 @@ docs/content/
 
   Browser evidence（2026-08-23）：根页、雷达、六个专题、岗位、工具、学习、收藏、摘要、说明、旧手册及未批准详情 404 状态均可直接访问；移动端全部页面滚动到底，页脚不被固定导航遮挡；搜索、AND/OR、历史前进后退、工具保存/刷新/复制/下载/重置、工具进行中/完成/清除、损坏本机状态恢复、策略深链、旧手册术语/任务/题库/主题/打印均通过，控制台 0 错误。修复跳过链接焦点、旧手册 Google Fonts 外部请求和 375px 章节导航后复验通过。完成度审计又补测 768×1024，发现 760px 断点使平板头部四项中文导航逐字换行；新增失败回归测试后，将紧凑头部和底部导航断点独立提前至 920px，保留平板正文双栏。随后 375×812、768×1024、1280×720 响应式截图及平板主要路由、滚动、控制台复验通过。最终 Lighthouse mobile 为 Performance 100、Accessibility 100、Best Practices 100、SEO 100。
 
-- [ ] **Step 3b: Re-test approved public-content journeys after owner review**
+- [x] **Step 3b: Re-test approved public-content journeys after owner review**
 
   30 条内容获逐条批准并进入 `publicItems.ts` 后，重跑公开卡片、真实详情证据与原文、收藏/已读及非空日报/周报；在此之前不得为测试而把候选注入生产集合。
+
+  Approved-content journey evidence（2026-08-23）：30/30 人工批准内容已通过显式公开白名单进入构建；三视口公开卡片、ST-001 至 ST-030 详情证据与原文、收藏/已读、非空日报/周报及错误/撤回边界全部复测通过，详见 `docs/content/stephen-public-content-journey-retest-2026-08-23.md`。
 
 - [ ] **Step 4: Run a versioned candidate deployment**
 
