@@ -412,6 +412,18 @@ h2 {
   justify-content: flex-end;
 }
 
+.police-filing-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.police-filing-icon {
+  width: auto;
+  height: 20px;
+  flex: 0 0 auto;
+}
+
 .mobile-nav {
   display: none;
 }
@@ -1748,6 +1760,10 @@ h2 {
   .footer-links {
     display: grid;
     justify-content: start;
+  }
+
+  .police-filing-link {
+    justify-self: start;
   }
 
 }

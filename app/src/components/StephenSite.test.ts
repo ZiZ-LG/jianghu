@@ -9,6 +9,7 @@ const shellAppUrl = new URL('../../stephen/src/App.tsx', import.meta.url);
 const robotsUrl = new URL('../../stephen/public/robots.txt', import.meta.url);
 const sitemapUrl = new URL('../../stephen/public/sitemap.xml', import.meta.url);
 const shellStylesUrl = new URL('../../stephen/src/styles.css', import.meta.url);
+const policeIconUrl = new URL('../../stephen/public/beian-police.png', import.meta.url);
 const shellNavigationUrl = new URL('../../stephen/src/navigation.ts', import.meta.url);
 const shellI18nUrl = new URL('../../stephen/src/i18n.ts', import.meta.url);
 const todayPageUrl = new URL('../../stephen/src/pages/TodayPage.tsx', import.meta.url);
@@ -197,6 +198,10 @@ describe('Stephen self-cultivation site', () => {
     expect(shell).toMatch(/href=['"]\/fieldbook\/['"]/);
     expect(shell).toContain('1 / 7 / 30 / 90');
     expect(app).toContain('京ICP备2026046195号-2');
+    expect(app).toContain('京公网安备11010802049879号');
+    expect(app).toContain("src='/beian-police.png'");
+    expect(app).toContain('recordcode=11010802049879');
+    expect(existsSync(policeIconUrl)).toBe(true);
     expect(app).toContain('自在创造（北京）智慧科技有限公司');
     expect(shell).toContain('Chinese content');
     expect(app).toContain("document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en'");
@@ -263,6 +268,9 @@ describe('Stephen self-cultivation site', () => {
     expect(html).toContain('href="https://crm.lake2ocean.top"');
     expect(html).toContain('href="https://beian.miit.gov.cn/"');
     expect(html).toContain('京ICP备2026046195号-2');
+    expect(html).toContain('京公网安备11010802049879号');
+    expect(html).toContain('src="/beian-police.png"');
+    expect(html).toContain('recordcode=11010802049879');
     expect(html).toContain('自在创造（北京）智慧科技有限公司');
     expect(html).toContain('<link rel="canonical" href="https://stephen.lake2ocean.top/fieldbook/">');
   });
