@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { CommandContext } from '@jianghu/domain-contracts';
 import { handleMcpBody } from '../src/mcpServer.js';
 import { createTestContext } from './helpers/testApp.js';
+import { internalProductPolicy } from './helpers/productPolicy.js';
 
 const ctx: CommandContext = {
   tenantId: 'tenant-mcp-boundary',
@@ -34,7 +35,7 @@ async function callMcpTool(
     id,
     method: 'tools/call',
     params: { name, arguments: args },
-  });
+  }, internalProductPolicy);
 }
 
 describe('MCP public JSON-RPC boundary', () => {
@@ -62,7 +63,7 @@ describe('MCP public JSON-RPC boundary', () => {
       id: 1,
       method: 'tools/call',
       params: { name: 'upsert_account', arguments: 'not-an-object' },
-    });
+    }, internalProductPolicy);
 
     expect(response).toEqual({
       jsonrpc: '2.0',
@@ -75,7 +76,7 @@ describe('MCP public JSON-RPC boundary', () => {
     const response = await handleMcpBody(ctx, [
       42,
       { jsonrpc: '2.0', id: 2, method: 'ping' },
-    ]);
+    ], internalProductPolicy);
 
     expect(response).toEqual([
       { jsonrpc: '2.0', id: null, error: { code: -32600, message: '无效的 JSON-RPC 请求' } },
@@ -84,7 +85,7 @@ describe('MCP public JSON-RPC boundary', () => {
   });
 
   it('publishes profile and C3/C5 schemas aligned with the shared contract', async () => {
-    const response = await handleMcpBody(ctx, { jsonrpc: '2.0', id: 3, method: 'tools/list' });
+    const response = await handleMcpBody(ctx, { jsonrpc: '2.0', id: 3, method: 'tools/list' }, internalProductPolicy);
     const tools = (response as { result: { tools: Array<{ name: string; inputSchema: { properties: Record<string, unknown> } }> } }).result.tools;
     const account = tools.find((tool) => tool.name === 'upsert_account');
     const opportunity = tools.find((tool) => tool.name === 'upsert_opportunity');
@@ -163,7 +164,7 @@ describe('MCP public JSON-RPC boundary', () => {
             },
           },
         },
-      });
+      }, internalProductPolicy);
 
       expect(response).toMatchObject({ jsonrpc: '2.0', id: 4, result: { content: [{ type: 'text' }] } });
       expect(response).not.toMatchObject({ result: { isError: true } });

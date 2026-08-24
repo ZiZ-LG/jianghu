@@ -18,7 +18,7 @@ import { resolveEffectiveResourceScope } from './resourceScope.js';
 const accountPatchSchema = z.object({
   base: z.object({
     name: z.string().max(200),
-    customerType: z.number().int().min(1).max(4),
+    customerType: z.number().int().min(1).max(4).nullable(),
     primaryOwner: z.string().max(100),
     primaryOwnerUserId: z.string().max(100).nullable(),
   }).strict(),
@@ -99,6 +99,14 @@ async function writeRepairAudit(
 
 async function repairAccount(ctx: CommandContext, id: string, patch: z.infer<typeof accountPatchSchema>): Promise<void> {
   await prisma.$transaction(async (tx) => {
+    const scope = await resolveEffectiveResourceScope(tx, {
+      tenantId: ctx.tenantId,
+      userId: ctx.actorId,
+      role: ctx.actorRole,
+    });
+    if (scope.actorRole === 'viewer' || !scope.canReadAccountData(id)) {
+      throw new ScopedNotFoundError();
+    }
     const account = await requireScopedRow(tx.account.findFirst({
       where: { id, tenantId: ctx.tenantId, archivedAt: null },
       select: {

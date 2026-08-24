@@ -25,6 +25,40 @@ export interface SessionGuard {
   isCurrent: (ticket: SessionTicket, currentToken: string | null) => boolean;
 }
 
+export interface LatestRequestGuard {
+  begin: () => number;
+  invalidate: () => void;
+  isCurrent: (request: number) => boolean;
+}
+
+/** Resource-local generation prevents an older same-session response from replacing a newer one. */
+export function createLatestRequestGuard(): LatestRequestGuard {
+  let generation = 0;
+  return {
+    begin() {
+      generation += 1;
+      return generation;
+    },
+    invalidate() {
+      generation += 1;
+    },
+    isCurrent(request) {
+      return request === generation;
+    },
+  };
+}
+
+/** A stale session must not advance a resource guard or change its current request. */
+export function beginLatestSessionRequest(
+  session: SessionGuard,
+  ticket: SessionTicket,
+  currentToken: () => string | null,
+  resource: LatestRequestGuard,
+): number | null {
+  if (!session.isCurrent(ticket, currentToken())) return null;
+  return resource.begin();
+}
+
 /** Generation plus token prevents any previous tenant response from committing into a later session. */
 export function createSessionGuard(): SessionGuard {
   let generation = 0;

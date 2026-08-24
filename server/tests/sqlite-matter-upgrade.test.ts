@@ -141,6 +141,34 @@ async function createLegacyFixture(databasePath: string, databaseUrl: string): P
     ]) {
       await client.$executeRawUnsafe(`ALTER TABLE "Opportunity" DROP COLUMN "${column}"`);
     }
+    // Reconstruct the actual pre-CORE-115 Account contract. Dropping only the
+    // two new fields would leave customerType nullable and create a false
+    // legacy fixture that never proves the constraint release.
+    await client.$executeRawUnsafe('DROP TABLE "Account"');
+    await client.$executeRawUnsafe(`CREATE TABLE "Account" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "tenantId" TEXT NOT NULL,
+      "name" TEXT NOT NULL,
+      "customerType" INTEGER NOT NULL,
+      "unifiedCreditCode" TEXT,
+      "externalRef" TEXT,
+      "region" TEXT NOT NULL DEFAULT '',
+      "group" TEXT NOT NULL DEFAULT '',
+      "primaryOwner" TEXT NOT NULL DEFAULT '',
+      "primaryOwnerUserId" TEXT,
+      "profile" TEXT NOT NULL DEFAULT '{}',
+      "archivedAt" DATETIME,
+      "archivedBy" TEXT,
+      "archiveReason" TEXT NOT NULL DEFAULT '',
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "Account_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+    )`);
+    await client.$executeRawUnsafe('CREATE UNIQUE INDEX "Account_tenantId_id_key" ON "Account"("tenantId", "id")');
+    await client.$executeRawUnsafe('CREATE UNIQUE INDEX "Account_tenantId_externalRef_key" ON "Account"("tenantId", "externalRef")');
+    await client.$executeRawUnsafe('CREATE UNIQUE INDEX "Account_tenantId_unifiedCreditCode_key" ON "Account"("tenantId", "unifiedCreditCode")');
+    await client.$executeRawUnsafe('CREATE INDEX "Account_tenantId_idx" ON "Account"("tenantId")');
+    await client.$executeRawUnsafe('CREATE INDEX "Account_tenantId_primaryOwnerUserId_idx" ON "Account"("tenantId", "primaryOwnerUserId")');
+    await client.$executeRawUnsafe('CREATE INDEX "Account_tenantId_archivedAt_idx" ON "Account"("tenantId", "archivedAt")');
     await client.$executeRawUnsafe(
       `INSERT INTO "Tenant" (id, name) VALUES ('sqlite-upgrade-tenant', 'SQLite Upgrade Tenant')`,
     );
@@ -195,7 +223,7 @@ async function createLegacyFixture(databasePath: string, databaseUrl: string): P
   }
 }
 
-describe('CORE-103/105/106/108/109/110/111/113 SQLite schema upgrade', () => {
+describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () => {
   it('initializes a fresh SQLite database through the standard db:push wrapper', async () => {
     const directory = await mkdtemp(resolve('prisma/.matter-fresh-test-'));
     const relativeDirectory = basename(directory);
@@ -212,6 +240,15 @@ describe('CORE-103/105/106/108/109/110/111/113 SQLite schema upgrade', () => {
         'kind', 'lifecycleStatus', 'outcomeKey', 'priority', 'targetDate',
         'primaryOwnerUserId', 'activeMethodologyBindingId',
       ]));
+      const accountColumns = await client.$queryRawUnsafe<Array<{
+        name: string; notnull: number; dflt_value: string | null;
+      }>>('PRAGMA table_info("Account")');
+      expect(accountColumns.map((column) => column.name)).toEqual(expect.arrayContaining([
+        'categoryKey', 'customerType', 'version',
+      ]));
+      expect(Number(accountColumns.find((column) => column.name === 'customerType')?.notnull)).toBe(0);
+      expect(Number(accountColumns.find((column) => column.name === 'version')?.notnull)).toBe(1);
+      expect(accountColumns.find((column) => column.name === 'version')?.dflt_value).toBe('0');
       const tenantColumns = await client.$queryRawUnsafe<Array<{ name: string; dflt_value: string | null }>>(
         'PRAGMA table_info("Tenant")',
       );
@@ -279,6 +316,14 @@ describe('CORE-103/105/106/108/109/110/111/113 SQLite schema upgrade', () => {
       await expect(upgradedClient.$queryRawUnsafe<Array<{ dataScopePolicy: string }>>(
         'SELECT dataScopePolicy FROM "Tenant" WHERE id = \'sqlite-upgrade-tenant\'',
       )).resolves.toEqual([{ dataScopePolicy: 'legacy_tenant_shared' }]);
+      await expect(upgradedClient.account.findUniqueOrThrow({
+        where: { id: 'sqlite-upgrade-account' },
+        select: { customerType: true, categoryKey: true, version: true },
+      })).resolves.toEqual({ customerType: 1, categoryKey: null, version: 0 });
+      const upgradedAccountColumns = await upgradedClient.$queryRawUnsafe<Array<{ name: string; notnull: number }>>(
+        'PRAGMA table_info("Account")',
+      );
+      expect(Number(upgradedAccountColumns.find((column) => column.name === 'customerType')?.notnull)).toBe(0);
       await expect(upgradedClient.matterParticipant.findMany({
         orderBy: { personId: 'asc' },
         select: { opportunityId: true, personId: true },
@@ -353,6 +398,15 @@ describe('CORE-103/105/106/108/109/110/111/113 SQLite schema upgrade', () => {
         'PRAGMA table_info("Tenant")',
       );
       expect(restoredTenantColumns.map((column) => column.name)).not.toContain('dataScopePolicy');
+      const restoredAccountColumns = await restoredClient.$queryRawUnsafe<Array<{ name: string; notnull: number }>>(
+        'PRAGMA table_info("Account")',
+      );
+      expect(restoredAccountColumns.map((column) => column.name)).not.toContain('categoryKey');
+      expect(restoredAccountColumns.map((column) => column.name)).not.toContain('version');
+      expect(Number(restoredAccountColumns.find((column) => column.name === 'customerType')?.notnull)).toBe(1);
+      await expect(restoredClient.$queryRawUnsafe<Array<{ customerType: number }>>(
+        'SELECT "customerType" FROM "Account" WHERE id = \'sqlite-upgrade-account\'',
+      )).resolves.toEqual([{ customerType: 1 }]);
       const restoredEdgeColumns = await restoredClient.$queryRawUnsafe<Array<{ name: string }>>(
         'PRAGMA table_info("Edge")',
       );
@@ -399,6 +453,10 @@ describe('CORE-103/105/106/108/109/110/111/113 SQLite schema upgrade', () => {
         where: { id: 'sqlite-upgrade-won' },
         select: { status: true, lifecycleStatus: true, outcomeKey: true },
       })).resolves.toEqual({ status: 'won', lifecycleStatus: 'active', outcomeKey: null });
+      await expect(client.account.findUniqueOrThrow({
+        where: { id: 'sqlite-upgrade-account' },
+        select: { customerType: true, categoryKey: true, version: true },
+      })).resolves.toEqual({ customerType: 1, categoryKey: null, version: 0 });
       await expect(client.matterParticipant.count()).resolves.toBe(0);
       await expect(client.pdeDecisionContext.count()).resolves.toBe(0);
       await client.$disconnect();
@@ -421,6 +479,33 @@ describe('CORE-103/105/106/108/109/110/111/113 SQLite schema upgrade', () => {
         where: { id: 'sqlite-upgrade-action-planned' },
         select: { localDate: true, executionStatus: true, source: true },
       })).resolves.toEqual({ localDate: '2026-10-08', executionStatus: 'planned', source: 'workbuddy' });
+    } finally {
+      await client?.$disconnect();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('fails closed when only part of the Customer expansion exists', async () => {
+    const directory = await mkdtemp(resolve('prisma/.customer-partial-test-'));
+    const relativeDirectory = basename(directory);
+    const databaseUrl = `file:./${relativeDirectory}/partial.db`;
+    let client: PrismaClient | null = null;
+    try {
+      run(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], databaseUrl);
+      client = new PrismaClient({ datasourceUrl: databaseUrl });
+      await client.$executeRawUnsafe('ALTER TABLE "Account" DROP COLUMN "version"');
+      await client.$disconnect();
+      client = null;
+
+      const failed = spawnSync(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], {
+        cwd: serverRoot,
+        encoding: 'utf8',
+        env: { ...process.env, DATABASE_URL: databaseUrl, JIANGHU_SKIP_PRISMA_GENERATE: '1' },
+      });
+      expect(failed.status).not.toBe(0);
+      expect(`${failed.stdout}\n${failed.stderr}`).toContain(
+        'partial Customer category expansion detected; restore the latest backup before retrying',
+      );
     } finally {
       await client?.$disconnect();
       await rm(directory, { recursive: true, force: true });

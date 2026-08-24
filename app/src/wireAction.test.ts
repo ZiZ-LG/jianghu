@@ -5,7 +5,7 @@ import { toWireAction } from './wireAction';
 
 describe('toWireAction', () => {
   it('strips account read-model collections before mutation submission', () => {
-    const account: Account = {
+    const account: Account & { customerType: 2 } = {
       id: 'a',
       name: 'Account',
       customerType: 2,
@@ -119,7 +119,7 @@ describe('toWireAction', () => {
   });
 
   it('strips server-owned _mcpOrigin from account profile updates', () => {
-    const patch: Partial<Account> = {
+    const patch: Omit<Partial<Account>, 'customerType'> = {
       profile: {
         business: 'Human verified business',
         _mcpOrigin: { source: 'mcp', at: '2026-07-12T00:00:00.000Z', needsReview: true },

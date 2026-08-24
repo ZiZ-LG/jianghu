@@ -1,4 +1,10 @@
-import type { CommitmentV2, CrmCommandInput, CustomerV2, MatterV2 } from '../src/index.js';
+import type {
+  CommitmentV2,
+  CrmCommandInput,
+  CrmContextSnapshot,
+  CustomerV2,
+  MatterV2,
+} from '../src/index.js';
 
 export const lightweightCreateFixture: CrmCommandInput = {
   type: 'CREATE_MATTER',
@@ -60,4 +66,22 @@ export const g64111OffFixture: {
     archivedAt: null,
     version: 0,
   },
+};
+
+export const g64111OffContextFixture: CrmContextSnapshot = {
+  generatedAtUtc: '2026-08-23T23:50:00Z',
+  customers: [g64111OffFixture.customer],
+  matters: [g64111OffFixture.matter],
+  people: [{
+    id: 'person-1', customerId: 'customer-1', name: '联系人', title: null,
+    archivedAt: null, version: 0,
+  }],
+  matterParticipants: [{
+    id: 'participant-1', customerId: 'customer-1', matterId: 'matter-1', personId: 'person-1',
+  }],
+  relations: [{
+    id: 'relation-1', customerId: 'customer-1', matterId: 'matter-1',
+    sourcePersonId: 'person-1', targetPersonId: 'person-1', kind: 'introduced_by',
+    label: null, directed: false, version: 0,
+  }],
 };

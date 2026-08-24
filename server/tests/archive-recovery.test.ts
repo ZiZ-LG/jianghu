@@ -254,6 +254,8 @@ describe('INT-103 recoverable archive', () => {
         payload: { target: 'opportunity', id: tree.opportunityId, reason: 'closed duplicate' },
       });
       expect(response.statusCode).toBe(200);
+      await expect(context.prisma.opportunity.findUniqueOrThrow({ where: { id: tree.opportunityId } }))
+        .resolves.toMatchObject({ version: 1 });
       await expect(context.prisma.note.findUnique({ where: { id: tree.noteId } })).resolves.not.toBeNull();
 
       const hiddenState = await context.app.inject({ method: 'GET', url: '/api/state', headers: auth(context.token) });
@@ -267,6 +269,8 @@ describe('INT-103 recoverable archive', () => {
         payload: { target: 'opportunity', id: tree.opportunityId },
       });
       expect(restored.statusCode).toBe(200);
+      await expect(context.prisma.opportunity.findUniqueOrThrow({ where: { id: tree.opportunityId } }))
+        .resolves.toMatchObject({ version: 2 });
       const visibleState = await context.app.inject({ method: 'GET', url: '/api/state', headers: auth(context.token) });
       const visibleAccount = visibleState.json<{ accounts: Array<any> }>().accounts.find((item) => item.id === tree.accountId);
       expect(visibleAccount.opportunities).toContainEqual(expect.objectContaining({ id: tree.opportunityId }));

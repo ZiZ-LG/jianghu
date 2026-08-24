@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { clearSessionUi, commitSessionValue, createSessionGuard, createSessionLease, runSessionRequest } from './sessionLifecycle';
+import * as SessionLifecycle from './sessionLifecycle';
+
+const {
+  clearSessionUi, commitSessionValue, createSessionGuard, createSessionLease, runSessionRequest,
+} = SessionLifecycle;
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -22,6 +26,39 @@ describe('clearSessionUi', () => {
 });
 
 describe('session generation guard', () => {
+  it('lets only the newest same-session resource request commit', () => {
+    const createLatestRequestGuard = Reflect.get(SessionLifecycle, 'createLatestRequestGuard') as
+      | (() => { begin: () => number; invalidate: () => void; isCurrent: (request: number) => boolean })
+      | undefined;
+    expect(createLatestRequestGuard, 'createLatestRequestGuard must be exported').toBeDefined();
+    const guard = createLatestRequestGuard!();
+    const earlier = guard.begin();
+    const latest = guard.begin();
+    expect(guard.isCurrent(earlier)).toBe(false);
+    expect(guard.isCurrent(latest)).toBe(true);
+    guard.invalidate();
+    expect(guard.isCurrent(latest)).toBe(false);
+  });
+
+  it('does not let an old session invalidate the current resource request', () => {
+    const beginLatestSessionRequest = Reflect.get(SessionLifecycle, 'beginLatestSessionRequest') as
+      | ((...args: unknown[]) => number | null)
+      | undefined;
+    const createLatestRequestGuard = Reflect.get(SessionLifecycle, 'createLatestRequestGuard') as
+      () => { begin: () => number; invalidate: () => void; isCurrent: (request: number) => boolean };
+    expect(beginLatestSessionRequest, 'beginLatestSessionRequest must be exported').toBeDefined();
+    const session = createSessionGuard();
+    const resource = createLatestRequestGuard();
+    let token: string | null = 'token-a';
+    const oldTicket = session.begin(token);
+    token = 'token-b';
+    session.begin(token);
+    const currentRequest = resource.begin();
+
+    expect(beginLatestSessionRequest!(session, oldTicket, () => token, resource)).toBeNull();
+    expect(resource.isCurrent(currentRequest)).toBe(true);
+  });
+
   it('ignores an old inbox response that resolves after logout', async () => {
     const guard = createSessionGuard();
     let token: string | null = 'token-a';

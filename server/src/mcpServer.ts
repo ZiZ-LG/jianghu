@@ -12,7 +12,13 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { ACCOUNT_PROFILE_FIELDS, ActionSchema, type CommandContext } from '@jianghu/domain-contracts';
+import {
+  ACCOUNT_PROFILE_FIELDS,
+  ActionSchema,
+  capabilityPolicyAllows,
+  capabilityRequirementForActionType,
+  type CommandContext,
+} from '@jianghu/domain-contracts';
 import { prisma } from './prisma.js';
 import { applyAction } from './mutate.js';
 import { C5_ITEMS, scoreFromState, ITEM_LABEL, ITEM_MAX, type ItemKey } from './g64111.js';
@@ -23,13 +29,21 @@ import { resolveScopedRelSuggestions } from './suggestionScope.js';
 import { syncIntelBundle } from './mcp/syncBundle.js';
 import { ALL_ACCESS_SCOPES, scopesForCurrentRole, type AccessScope } from './accessToken.js';
 import { resolveEffectiveResourceScope } from './resourceScope.js';
+import { requireSalesCustomerType } from './salesClassification.js';
 
 // 每租户 pending 候选容量上限（防外部 agent 刷爆）
 const MAX_PENDING_PERSON_SUGG = 200;
 const MAX_PENDING_REL_SUGG = 200;
 
-const applyMcpAction = async (ctx: CommandContext, input: unknown): Promise<void> => {
-  await applyAction(ctx, ActionSchema.parse(input));
+const applyMcpAction = async (ctx: CommandContext, input: unknown, policyInput: unknown): Promise<void> => {
+  const action = ActionSchema.parse(input);
+  const requirement = capabilityRequirementForActionType(action.type);
+  if (!requirement || !capabilityPolicyAllows(policyInput, requirement)) throw new Error('能力未启用');
+  await applyAction(ctx, action);
+};
+
+const requireMcpSalesCapability = (policyInput: unknown): void => {
+  if (!capabilityPolicyAllows(policyInput, { entitlement: 'sales.workspace' })) throw new Error('能力未启用');
 };
 
 const PROTOCOL_VERSION = '2024-11-05';
@@ -481,6 +495,8 @@ const CUSTOMER_TYPE_LABEL: Record<number, string> = {
   3: '分布式头部民企',
   4: 'EPC总承包商',
 };
+const customerTypeLabel = (customerType: number | null): string =>
+  customerType === null ? '未设置销售分类' : CUSTOMER_TYPE_LABEL[customerType] ?? `类型${customerType}`;
 const LAYER_LABEL: Record<string, string> = {
   L1: 'L1 组织架构', L2: 'L2 决策权力', L3: 'L3 情感阵营', L4: 'L4 战略本质',
 };
@@ -530,7 +546,7 @@ async function listAccounts(ctx: CommandContext) {
         id: account.id,
         name: account.name,
         customerType: account.customerType,
-        customerTypeLabel: CUSTOMER_TYPE_LABEL[account.customerType] ?? `类型${account.customerType}`,
+        customerTypeLabel: customerTypeLabel(account.customerType),
         ...(full ? {
           externalRef: full.externalRef ?? undefined, // 为空 = 江湖原生建、WorkBuddy 尚未加工（认领判据）
           unifiedCreditCode: full.unifiedCreditCode ?? undefined,
@@ -582,7 +598,7 @@ async function getAccountDetail(ctx: CommandContext, accountId: string) {
   }
 
   return {
-    account: { id: account.id, name: account.name, externalRef: account.externalRef ?? undefined, customerType: account.customerType, customerTypeLabel: CUSTOMER_TYPE_LABEL[account.customerType] ?? `类型${account.customerType}` },
+    account: { id: account.id, name: account.name, externalRef: account.externalRef ?? undefined, customerType: account.customerType, customerTypeLabel: customerTypeLabel(account.customerType) },
     persons: account.persons.map((p) => ({
       id: p.id,
       name: p.name,
@@ -917,7 +933,7 @@ function projectAccountProfile(value: unknown): Record<string, string> {
   return projected;
 }
 
-async function upsertAccount(ctx: CommandContext, args: Record<string, unknown>) {
+async function upsertAccount(ctx: CommandContext, args: Record<string, unknown>, policyInput: unknown) {
   const { tenantId } = ctx;
   const externalRef = str(args.externalRef, 80).trim() || null;
   const unifiedCreditCode = str(args.unifiedCreditCode, 40).trim() || null;
@@ -925,7 +941,7 @@ async function upsertAccount(ctx: CommandContext, args: Record<string, unknown>)
 
   const name = str(args.name, 100).trim();
   const ct = num(args.customerType);
-  const customerType = ct && [1, 2, 3].includes(ct) ? ct : undefined;
+  const customerType = ct && [1, 2, 3, 4].includes(ct) ? ct : undefined;
   const profile = args.profile != null && typeof args.profile === 'object' ? projectAccountProfile(args.profile) : undefined;
 
   // 幂等查找（全程 where { tenantId }）：先主锚 externalRef，再副锚 unifiedCreditCode
@@ -949,18 +965,19 @@ async function upsertAccount(ctx: CommandContext, args: Record<string, unknown>)
     let curProfile: unknown = {};
     try { curProfile = JSON.parse(existing.profile || '{}'); } catch { /* 存量坏值，覆盖为空对象 */ }
     patch.profile = { ...projectAccountProfile(curProfile), ...(profile ?? {}) };
-    await applyMcpAction(ctx, { type: 'UPDATE_ACCOUNT', accId: existing.id, patch });
+    await applyMcpAction(ctx, { type: 'UPDATE_ACCOUNT', accId: existing.id, patch }, policyInput);
     return { id: existing.id, updated: true, origin: 'mcp', note: `已按幂等锚命中现有客户「${existing.name}」并更新（外部来源·待核，见客户卡）。` };
   }
 
   // 未命中 → CREATE（新建必须有 name）
   if (!name) throw new Error('未命中现有客户，新建需提供 name');
+  if (customerType === undefined) throw new Error('新建销售客户需明确 customerType（1–4）');
   const id = 'acc_' + randomUUID().replaceAll('-', '');
   await applyMcpAction(ctx, {
     type: 'ADD_ACCOUNT',
     account: {
       id, name,
-      customerType: customerType ?? 1,
+      customerType: requireSalesCustomerType(customerType),
       unifiedCreditCode: unifiedCreditCode ?? undefined,
       externalRef: externalRef ?? undefined,
       region: str(args.region, 40),
@@ -969,7 +986,7 @@ async function upsertAccount(ctx: CommandContext, args: Record<string, unknown>)
       primaryOwnerUserId: typeof args.primaryOwnerUserId === 'string' ? str(args.primaryOwnerUserId, 100) : undefined,
       profile: profile ?? {},
     },
-  });
+  }, policyInput);
   // 江湖自算：新建客户后后台入队 enrich 任务（企查查/AI 发现干系人 → 候选进收件箱人审，铁律②）。
   // 仅新建触发、不阻塞 upsert 返回；入队失败不影响客户落库。
   let selfCompute = false;
@@ -989,7 +1006,8 @@ const canonicalLegacyPayload = (value: unknown): unknown => {
 const legacySyncKey = (tool: string, args: Record<string, unknown>) => `legacy-${tool}-${createHash('sha256')
   .update(JSON.stringify(canonicalLegacyPayload(args))).digest('hex').slice(0, 32)}`;
 
-async function syncLegacyAccount(ctx: CommandContext, args: Record<string, unknown>) {
+async function syncLegacyAccount(ctx: CommandContext, args: Record<string, unknown>, policyInput: unknown) {
+  requireMcpSalesCapability(policyInput);
   const externalRef = str(args.externalRef, 80).trim();
   const unifiedCreditCode = str(args.unifiedCreditCode, 40).trim();
   let existing = externalRef ? await prisma.account.findFirst({ where: { tenantId: ctx.tenantId, externalRef } }) : null;
@@ -1001,13 +1019,15 @@ async function syncLegacyAccount(ctx: CommandContext, args: Record<string, unkno
   const name = str(args.name, 100).trim() || existing?.name;
   if (!name) throw new Error('未命中现有客户，新建需提供 name');
   const rawType = num(args.customerType);
-  const customerType = rawType && [1, 2, 3, 4].includes(rawType) ? rawType : existing?.customerType ?? 1;
+  if (rawType !== undefined && ![1, 2, 3, 4].includes(rawType)) throw new Error('customerType 必须是 1–4');
+  const customerType = rawType && [1, 2, 3, 4].includes(rawType) ? rawType : existing?.customerType;
   const syncReceipt = await syncIntelBundle(ctx, {
     idempotencyKey: legacySyncKey('upsert_account', args),
     bundle: { account: {
       ...(externalRef ? { externalRef } : {}),
       ...(unifiedCreditCode ? { unifiedCreditCode } : {}),
-      name, customerType,
+      name,
+      ...(customerType === null || customerType === undefined ? {} : { customerType }),
       ...(args.region !== undefined ? { region: str(args.region, 40) } : {}),
       ...(args.group !== undefined ? { group: str(args.group, 100) } : {}),
       ...(args.primaryOwner !== undefined ? { primaryOwner: str(args.primaryOwner, 40) } : {}),
@@ -1049,13 +1069,15 @@ async function resolveLegacySyncAccount(ctx: CommandContext, args: Record<string
   return account;
 }
 
-async function syncLegacyOpportunity(ctx: CommandContext, args: Record<string, unknown>) {
+async function syncLegacyOpportunity(ctx: CommandContext, args: Record<string, unknown>, policyInput: unknown) {
+  requireMcpSalesCapability(policyInput);
   const account = await resolveLegacySyncAccount(ctx, args);
   const externalRef = str(args.externalRef, 80).trim();
   if (!externalRef) throw new Error('缺少商机幂等锚 externalRef');
   const existing = await prisma.opportunity.findFirst({ where: { tenantId: ctx.tenantId, accountId: account.id, externalRef } });
   const name = str(args.name, 100).trim() || existing?.name;
   if (!name) throw new Error('未命中现有商机，新建需提供 name');
+  const customerType = existing ? undefined : requireSalesCustomerType(account.customerType);
   const pipelineInput = str(args.pipelineStage, 40) === '合同签约' ? '合同双签' : str(args.pipelineStage, 40);
   const pipelineStage = ['线索', '需求引导', '方案认可', '客户立项', '招投标', '合同谈判', '合同双签'].includes(pipelineInput)
     ? pipelineInput : existing?.pipelineStage;
@@ -1072,7 +1094,11 @@ async function syncLegacyOpportunity(ctx: CommandContext, args: Record<string, u
   const syncReceipt = await syncIntelBundle(ctx, {
     idempotencyKey: legacySyncKey('upsert_opportunity', args),
     bundle: {
-      account: { id: account.id, name: account.name, customerType: account.customerType },
+      account: {
+        id: account.id,
+        name: account.name,
+        ...(customerType === undefined ? {} : { customerType }),
+      },
       opportunity: {
         externalRef, name,
         ...(pipelineStage ? { pipelineStage } : {}),
@@ -1106,7 +1132,8 @@ async function syncLegacyOpportunity(ctx: CommandContext, args: Record<string, u
   };
 }
 
-async function syncLegacyVisit(ctx: CommandContext, args: Record<string, unknown>) {
+async function syncLegacyVisit(ctx: CommandContext, args: Record<string, unknown>, policyInput: unknown) {
+  requireMcpSalesCapability(policyInput);
   const account = await resolveLegacySyncAccount(ctx, args);
   const externalRef = str(args.externalRef, 120).trim();
   if (!externalRef) throw new Error('缺少拜访记录幂等锚 externalRef');
@@ -1130,7 +1157,11 @@ async function syncLegacyVisit(ctx: CommandContext, args: Record<string, unknown
   const syncReceipt = await syncIntelBundle(ctx, {
     idempotencyKey: legacySyncKey('append_visit_note', args),
     bundle: {
-      account: { id: account.id, name: account.name, customerType: account.customerType },
+      account: {
+        id: account.id,
+        name: account.name,
+        ...(account.customerType === null ? {} : { customerType: requireSalesCustomerType(account.customerType) }),
+      },
       ...(opportunity?.externalRef ? { opportunity: {
         externalRef: opportunity.externalRef, name: opportunity.name,
         pipelineStage: opportunity.pipelineStage, engageStage: opportunity.engageStage,
@@ -1155,7 +1186,7 @@ async function syncLegacyVisit(ctx: CommandContext, args: Record<string, unknown
 }
 
 /** upsert_opportunity：定位父客户 → 按商机 externalRef 幂等 upsert。守"winProbability 不由 WB 推/覆盖"。 */
-async function upsertOpportunity(ctx: CommandContext, args: Record<string, unknown>) {
+async function upsertOpportunity(ctx: CommandContext, args: Record<string, unknown>, policyInput: unknown) {
   const { tenantId } = ctx;
   // 1) 定位父客户（accountId / accountExternalRef / unifiedCreditCode 三选一，全程 where{tenantId}）
   const accId = str(args.accountId, 40).trim();
@@ -1218,19 +1249,20 @@ async function upsertOpportunity(ctx: CommandContext, args: Record<string, unkno
   }
 
   if (!name) throw new Error('未命中现有商机，新建需提供 name');
+  const customerType = requireSalesCustomerType(account.customerType);
   const id = 'opp_' + randomUUID().replaceAll('-', '');
   await applyMcpAction(ctx, {
     type: 'ADD_OPP', accId: account.id,
     opp: {
       id, name, externalRef: externalRef ?? undefined,
-      customerType: account.customerType,
+      customerType,
       pipelineStage: pipelineStage ?? '线索',
       engageStage: engageStage ?? '需求调研立项',
       status: status ?? 'active',
       ...fields,
       meta: { ...(fields.meta as Record<string, unknown> ?? {}), _mcpOrigin: mcpMark },
     },
-  });
+  }, policyInput);
   // 江湖自算：新建商机后后台入队关系推断（图算法+LLM 推断商机内关系 → 候选进收件箱人审）。不阻塞、失败不影响落库。
   let selfCompute = false;
   try { selfCompute = (await enqueueSuggestJob(tenantId, account.id, id)).enqueued; } catch { /* 超上限等，忽略 */ }
@@ -1238,7 +1270,7 @@ async function upsertOpportunity(ctx: CommandContext, args: Record<string, unkno
 }
 
 /** append_visit_note：定位父客户(+可选商机) → 按 externalRef 幂等 upsert 拜访记录。 */
-async function appendVisitNote(ctx: CommandContext, args: Record<string, unknown>) {
+async function appendVisitNote(ctx: CommandContext, args: Record<string, unknown>, policyInput: unknown) {
   const { tenantId } = ctx;
   // 1) 定位父客户（三选一，全程 where{tenantId}）
   const accId = str(args.accountId, 40).trim();
@@ -1281,7 +1313,7 @@ async function appendVisitNote(ctx: CommandContext, args: Record<string, unknown
     if (topic) patch.topic = topic;
     if (opportunityId) patch.opportunityId = opportunityId;
     if (participants !== undefined) patch.participants = participants;
-    await applyMcpAction(ctx, { type: 'UPDATE_VISIT', accId: account.id, visitId: existing.id, patch });
+    await applyMcpAction(ctx, { type: 'UPDATE_VISIT', accId: account.id, visitId: existing.id, patch }, policyInput);
     return { id: existing.id, accountId: account.id, opportunityId: opportunityId ?? existing.opportunityId ?? undefined, updated: true, origin: 'mcp', note: `已按 externalRef 命中拜访记录并更新（${date}·外部来源·待核）。` };
   }
 
@@ -1290,7 +1322,7 @@ async function appendVisitNote(ctx: CommandContext, args: Record<string, unknown
   await applyMcpAction(ctx, {
     type: 'ADD_VISIT', accId: account.id,
     visit: { id, opportunityId: opportunityId ?? undefined, externalRef: externalRef ?? undefined, date, topic, summary, participants: participants ?? [], origin: 'mcp' },
-  });
+  }, policyInput);
   return { id, accountId: account.id, opportunityId: opportunityId ?? undefined, created: true, origin: 'mcp', note: `已记录拜访（${date}·外部来源·待核）。` };
 }
 
@@ -1332,7 +1364,7 @@ const VALID_SENT = ['star', 'plus', 'neutral', 'unknown', 'minus', 'x'];
 const VALID_CONF = ['共识', '明确', '推理', '不清'];
 
 /** set_opportunity_roles：批量设 ADURC 角色（只对正式 Person，候选跳过并回报）。 */
-async function setOpportunityRoles(ctx: CommandContext, args: Record<string, unknown>) {
+async function setOpportunityRoles(ctx: CommandContext, args: Record<string, unknown>, policyInput: unknown) {
   const { tenantId } = ctx;
   const opp = await resolveOppFromArgs(tenantId, args);
   const rolesIn = Array.isArray(args.roles) ? (args.roles as any[]) : [];
@@ -1385,7 +1417,7 @@ async function setOpportunityRoles(ctx: CommandContext, args: Record<string, unk
       }
       continue;
     }
-    await applyMcpAction(ctx, { type: 'SET_ROLE', accId: opp.accountId, oppId: opp.id, personId: person.id, patch });
+    await applyMcpAction(ctx, { type: 'SET_ROLE', accId: opp.accountId, oppId: opp.id, personId: person.id, patch }, policyInput);
     applied.push({ personId: person.id, name: person.name, role, sentiment: (patch.sentiment as string) ?? 'unknown' });
   }
   const parts = [`已设 ${applied.length} 个角色`];
@@ -1395,7 +1427,7 @@ async function setOpportunityRoles(ctx: CommandContext, args: Record<string, unk
 }
 
 /** set_burning_issue：记某干系人的 BI（按 商机+人+category 幂等）。 */
-async function setBurningIssue(ctx: CommandContext, args: Record<string, unknown>) {
+async function setBurningIssue(ctx: CommandContext, args: Record<string, unknown>, policyInput: unknown) {
   const { tenantId } = ctx;
   const opp = await resolveOppFromArgs(tenantId, args);
   const person = await findPersonInAccount(tenantId, opp.accountId, str(args.personId, 40).trim(), str(args.personName, 40).trim());
@@ -1415,12 +1447,12 @@ async function setBurningIssue(ctx: CommandContext, args: Record<string, unknown
     return { id: existing.id, opportunityId: opp.id, personId: person.id, proposed, origin: 'workbuddy', note: `${proposed} 个 BI 字段变更转入收件箱待人审。` };
   }
   const id = 'bi_' + randomUUID().replaceAll('-', '');
-  await applyMcpAction(ctx, { type: 'ADD_BI', accId: opp.accountId, oppId: opp.id, bi: { id, personId: person.id, description, category, isPrivate, confidence } });
+  await applyMcpAction(ctx, { type: 'ADD_BI', accId: opp.accountId, oppId: opp.id, bi: { id, personId: person.id, description, category, isPrivate, confidence } }, policyInput);
   return { id, opportunityId: opp.id, personId: person.id, created: true, origin: 'workbuddy', note: `已记「${person.name}」的 BI（${category}）。` };
 }
 
 /** set_ucv：记针对某 BI 的 UCV（按 商机+targetBi 幂等）。 */
-async function setUcv(ctx: CommandContext, args: Record<string, unknown>) {
+async function setUcv(ctx: CommandContext, args: Record<string, unknown>, policyInput: unknown) {
   const { tenantId } = ctx;
   const opp = await resolveOppFromArgs(tenantId, args);
   let targetBiId = str(args.targetBiId, 40).trim();
@@ -1449,13 +1481,15 @@ async function setUcv(ctx: CommandContext, args: Record<string, unknown>) {
     return { id: existing.id, opportunityId: opp.id, targetBiId, proposed, origin: 'workbuddy', note: `${proposed} 个 UCV 字段变更转入收件箱待人审。` };
   }
   const id = 'ucv_' + randomUUID().replaceAll('-', '');
-  await applyMcpAction(ctx, { type: 'ADD_UCV', accId: opp.accountId, oppId: opp.id, ucv: { id, targetBiId, description, competitorCannot, status } });
+  await applyMcpAction(ctx, { type: 'ADD_UCV', accId: opp.accountId, oppId: opp.id, ucv: { id, targetBiId, description, competitorCannot, status } }, policyInput);
   return { id, opportunityId: opp.id, targetBiId, created: true, origin: 'workbuddy', note: '已记 UCV。' };
 }
 
 // ───────────────────────── 工具分发 ─────────────────────────
 
-async function callTool(ctx: CommandContext, name: string, args: Record<string, unknown>) {
+export async function executeMcpTool(ctx: CommandContext, name: string, args: Record<string, unknown>, policyInput: unknown) {
+  requireMcpSalesCapability(policyInput);
+  if (canCallTool(ctx, name, args) === false) throw new Error('权限不足：该令牌无权调用此工具');
   const { tenantId, actorId: userId } = ctx;
   switch (name) {
     case 'sync_intel_bundle':
@@ -1479,17 +1513,17 @@ async function callTool(ctx: CommandContext, name: string, args: Record<string, 
     case 'list_pending':
       return listPending(ctx, typeof args.accountId === 'string' ? args.accountId : '');
     case 'upsert_account':
-      return syncLegacyAccount(ctx, args);
+      return syncLegacyAccount(ctx, args, policyInput);
     case 'upsert_opportunity':
-      return syncLegacyOpportunity(ctx, args);
+      return syncLegacyOpportunity(ctx, args, policyInput);
     case 'append_visit_note':
-      return syncLegacyVisit(ctx, args);
+      return syncLegacyVisit(ctx, args, policyInput);
     case 'set_opportunity_roles':
-      return setOpportunityRoles(ctx, args);
+      return setOpportunityRoles(ctx, args, policyInput);
     case 'set_burning_issue':
-      return setBurningIssue(ctx, args);
+      return setBurningIssue(ctx, args, policyInput);
     case 'set_ucv':
-      return setUcv(ctx, args);
+      return setUcv(ctx, args, policyInput);
     default:
       throw new Error(`未知工具：${name}`);
   }
@@ -1503,7 +1537,7 @@ async function callTool(ctx: CommandContext, name: string, args: Record<string, 
  * - 其余返回 JsonRpcResponse。
  * 所有数据读写通过 tenantId 隔离（铁律）；写工具用 userId 记 proposedBy。
  */
-export async function handleMcpMessage(ctx: CommandContext, msg: JsonRpcRequest): Promise<JsonRpcResponse | null> {
+export async function handleMcpMessage(ctx: CommandContext, msg: JsonRpcRequest, policyInput: unknown): Promise<JsonRpcResponse | null> {
   const id = msg.id ?? null;
   const method = msg.method;
 
@@ -1535,10 +1569,7 @@ export async function handleMcpMessage(ctx: CommandContext, msg: JsonRpcRequest)
         if (!params.success) return err(id, -32602, '无效的 tool params');
         const { name, arguments: args = {} } = params.data;
         try {
-          if (canCallTool(ctx, name, args) === false) {
-            return ok(id, toolError('权限不足：该令牌无权调用此工具'));
-          }
-          const result = await callTool(ctx, name, args);
+          const result = await executeMcpTool(ctx, name, args, policyInput);
           return ok(id, toolText(result));
         } catch (e: unknown) {
           // 工具级错误用 isError content 返回（MCP 约定：工具失败不是协议错误）
@@ -1561,25 +1592,25 @@ function requestIdOf(input: unknown): string | number | null {
   return parsed.success ? parsed.data : null;
 }
 
-async function handleUnknownMcpMessage(ctx: CommandContext, input: unknown): Promise<JsonRpcResponse | null> {
+async function handleUnknownMcpMessage(ctx: CommandContext, input: unknown, policyInput: unknown): Promise<JsonRpcResponse | null> {
   const parsed = JsonRpcRequestSchema.safeParse(input);
   if (!parsed.success) return err(requestIdOf(input), -32600, '无效的 JSON-RPC 请求');
-  return handleMcpMessage(ctx, parsed.data);
+  return handleMcpMessage(ctx, parsed.data, policyInput);
 }
 
 /**
  * 处理一个请求体（可能是单条消息，也可能是 JSON-RPC 批量数组）。
  * 返回值：要发回客户端的 JSON（单对象 / 数组 / null）。null 表示纯通知、无响应体（HTTP 204）。
  */
-export async function handleMcpBody(ctx: CommandContext, body: unknown): Promise<JsonRpcResponse | JsonRpcResponse[] | null> {
+export async function handleMcpBody(ctx: CommandContext, body: unknown, policyInput: unknown): Promise<JsonRpcResponse | JsonRpcResponse[] | null> {
   if (Array.isArray(body)) {
     if (body.length === 0) return err(null, -32600, '无效的 JSON-RPC 请求');
     const responses: JsonRpcResponse[] = [];
     for (const m of body) {
-      const r = await handleUnknownMcpMessage(ctx, m);
+      const r = await handleUnknownMcpMessage(ctx, m, policyInput);
       if (r) responses.push(r);
     }
     return responses.length ? responses : null;
   }
-  return handleUnknownMcpMessage(ctx, body);
+  return handleUnknownMcpMessage(ctx, body, policyInput);
 }

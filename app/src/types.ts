@@ -379,7 +379,11 @@ export interface StrategyResource {
 export interface Account {
   id: string;
   name: string;
-  customerType: CustomerType;
+  /** Legacy sales classification; null means that no sales adapter classification was supplied. */
+  customerType: CustomerType | null;
+  /** Generic Customer classification authority; open and independently nullable. */
+  categoryKey?: string | null;
+  version?: number;
   unifiedCreditCode?: string;
   externalRef?: string;     // 销售包 customer_id，跨系统幂等主锚（WorkBuddy 集成）
   region?: string;          // 大区
@@ -435,6 +439,8 @@ export const LAYER_LABEL: Record<Layer, string> = {
 export const CUSTOMER_TYPE_LABEL: Record<CustomerType, string> = {
   1: '央企发电集团（五大六小）', 2: '地方能源国企', 3: '分布式头部民企', 4: 'EPC总承包商',
 };
+export const customerTypeLabel = (customerType: CustomerType | null): string =>
+  customerType === null ? '未设置销售分类' : CUSTOMER_TYPE_LABEL[customerType];
 export const PIPELINE_STAGES: PipelineStage[] = ['线索', '需求引导', '方案认可', '客户立项', '招投标', '合同谈判', '合同双签'];
 export const ENGAGE_STAGES: EngageStage[] = ['需求调研立项', '方案可研', '预算批复', '招标论证', '招采执行'];
 export const CHANGE_MODES: { v: ChangeMode; label: string }[] = [

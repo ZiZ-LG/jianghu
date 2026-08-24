@@ -12,6 +12,7 @@ import { ScopedNotFoundError } from './mutation/scopeGuards.js';
 import { activePersonWhere } from './activePerson.js';
 import { pickKeyInfluencerKeeper } from './g64111.js';
 import { createPdeDecisionContext } from './pde/context.js';
+import { requireSalesCustomerType, SalesClassificationRequiredError } from './salesClassification.js';
 
 export const CloneOpportunitySchema = z.object({
   accountId: z.string().min(1),
@@ -31,13 +32,14 @@ export async function cloneOpportunityInTransaction(
   const tenantId = ctx.tenantId;
   const acc = await db.account.findFirst({ where: { id: accountId, tenantId } });
   if (!acc) throw new ScopedNotFoundError();
+  const customerType = requireSalesCustomerType(acc.customerType);
   const validIds = personIds.length
     ? (await db.person.findMany({ where: { tenantId, accountId, id: { in: personIds }, ...activePersonWhere }, select: { id: true } })).map((x) => x.id)
     : [];
   const sel = new Set(validIds);
   const oppId = 'opp_' + randomUUID().replaceAll('-', '');
   await db.opportunity.create({ data: {
-    id: oppId, tenantId, accountId, name: name.slice(0, 100), customerType: acc.customerType,
+    id: oppId, tenantId, accountId, name: name.slice(0, 100), customerType,
     pipelineStage: '线索', engageStage: '需求调研立项', memberScoped: true,
   } });
   await createPdeDecisionContext(db, { tenantId, opportunityId: oppId });
@@ -81,6 +83,9 @@ export function opportunityRoutes(app: FastifyInstance) {
       return await prisma.$transaction((tx) => cloneOpportunityInTransaction(ctx, p.data, tx));
     } catch (error: any) {
       if (error instanceof ScopedNotFoundError || error?.scopedNotFound) return reply.code(404).send({ error: '资源不存在' });
+      if (error instanceof SalesClassificationRequiredError) {
+        return reply.code(409).send({ error: '请先为客户设置销售分类，再创建商机', code: error.code });
+      }
       throw error;
     }
   });

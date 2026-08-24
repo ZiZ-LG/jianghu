@@ -120,6 +120,71 @@ describe('CORE-107 Commitment command path', () => {
     }
   });
 
+  it('fails closed for malformed or schema-valid mismatched replay receipts', async () => {
+      const context = await createTestContext();
+    try {
+      const tree = await seedTree(context, 'corrupt-replay');
+      const payload = timedCreate(tree, context.owner.id, commitmentId('9'));
+      const key = 'commitment-corrupt-replay-stable';
+      const first = await command(context, key, payload);
+      expect(first.statusCode, first.body).toBe(200);
+      const { replayed: _replayed, ...receipt } = first.json();
+      const runWhere = { tenantId: context.tenant.id, kind: 'commitment' };
+
+      await context.prisma.commandRun.updateMany({
+        where: runWhere,
+        data: { resultSummary: JSON.stringify({ ...receipt, version: 'corrupt' }) },
+      });
+      const malformed = await command(context, key, payload);
+      expect(malformed.statusCode, malformed.body).toBe(500);
+      expect(malformed.json()).toEqual({ error: '跟进承诺命令失败' });
+
+      await context.prisma.commandRun.updateMany({
+        where: runWhere,
+        data: { resultSummary: JSON.stringify({
+          ...receipt,
+          commitmentId: commitmentId('8'),
+        }) },
+      });
+      const mismatched = await command(context, key, payload);
+      expect(mismatched.statusCode, mismatched.body).toBe(500);
+      expect(mismatched.json()).toEqual({ error: '跟进承诺命令失败' });
+    } finally {
+      await context.cleanup();
+    }
+  });
+
+  it('binds a non-create replay receipt to the tenant-scoped authoritative Matter', async () => {
+    const context = await createTestContext();
+    try {
+      const tree = await seedTree(context, 'parent-replay');
+      const id = commitmentId('7');
+      expect((await command(context, 'commitment-parent-create', timedCreate(tree, context.owner.id, id))).statusCode).toBe(200);
+      const payload = {
+        type: 'CONFIRM_COMMITMENT', customerId: tree.customerId, commitmentId: id,
+        baseVersion: 0, expectedScheduleVersion: 0, confirmedAtUtc: '2026-09-09T03:00:00Z',
+      };
+      const first = await command(context, 'commitment-parent-confirm', payload);
+      expect(first.statusCode, first.body).toBe(200);
+      const runs = await context.prisma.commandRun.findMany({
+        where: { tenantId: context.tenant.id, kind: 'commitment', status: 'completed' },
+      });
+      const confirmRun = runs.find((run) => JSON.parse(run.resultSummary).version === 1);
+      expect(confirmRun).toBeDefined();
+      const receipt = JSON.parse(confirmRun!.resultSummary);
+      await context.prisma.commandRun.update({
+        where: { id: confirmRun!.id },
+        data: { resultSummary: JSON.stringify({ ...receipt, matterId: 'cross-tenant-matter-id' }) },
+      });
+
+      const replay = await command(context, 'commitment-parent-confirm', payload);
+      expect(replay.statusCode, replay.body).toBe(500);
+      expect(replay.json()).toEqual({ error: '跟进承诺命令失败' });
+    } finally {
+      await context.cleanup();
+    }
+  });
+
   it('fails closed for viewer, invalid parentage and unauthorized assignment', async () => {
     const context = await createTestContext();
     try {
@@ -163,6 +228,77 @@ describe('CORE-107 Commitment command path', () => {
       expect(await context.prisma.auditEvent.count({
         where: { tenantId: context.tenant.id, entityKind: 'commitment' },
       })).toBe(0);
+    } finally {
+      await context.cleanup();
+    }
+  });
+
+  it('fails closed when a scoped member forges an in-tenant Customer or Commitment id', async () => {
+    const context = await createTestContext();
+    try {
+      const tree = await seedTree(context, 'effective-scope');
+      const existingId = commitmentId('d');
+      expect((await command(
+        context,
+        'commitment-effective-scope-seed',
+        timedCreate(tree, context.owner.id, existingId),
+      )).statusCode).toBe(200);
+
+      const member = await context.prisma.user.create({ data: {
+        tenantId: context.tenant.id,
+        email: `scoped-member-${randomUUID()}@example.test`,
+        passwordHash: 'unused',
+        name: 'Scoped Member',
+        role: 'member',
+      } });
+      await context.prisma.tenant.update({
+        where: { id: context.tenant.id },
+        data: { dataScopePolicy: 'scoped' },
+      });
+      const memberToken = context.app.jwt.sign({
+        userId: member.id, tenantId: context.tenant.id, role: 'member',
+      });
+
+      const forgedCreate = timedCreate(tree, member.id, commitmentId('e'));
+      const createAttempt = await command(
+        context, 'commitment-effective-scope-create-denied', forgedCreate, memberToken,
+      );
+      const confirmAttempt = await command(context, 'commitment-effective-scope-update-denied', {
+        type: 'CONFIRM_COMMITMENT',
+        customerId: tree.customerId,
+        commitmentId: existingId,
+        baseVersion: 0,
+        expectedScheduleVersion: 0,
+        confirmedAtUtc: '2026-09-09T03:00:00Z',
+      }, memberToken);
+
+      expect(createAttempt.statusCode, createAttempt.body).toBe(404);
+      expect(confirmAttempt.statusCode, confirmAttempt.body).toBe(404);
+      expect(await context.prisma.planAction.count({ where: { tenantId: context.tenant.id } })).toBe(1);
+      expect(await context.prisma.auditEvent.count({
+        where: { tenantId: context.tenant.id, actorId: member.id, entityKind: 'commitment' },
+      })).toBe(0);
+
+      await context.prisma.opportunity.update({
+        where: { id: tree.matterId },
+        data: { primaryOwnerUserId: member.id },
+      });
+      const allowedPayload = timedCreate(tree, member.id, commitmentId('f'));
+      allowedPayload.commitment.personId = null;
+      const allowedCreate = await command(
+        context, 'commitment-effective-scope-create-allowed', allowedPayload, memberToken,
+      );
+      expect(allowedCreate.statusCode, allowedCreate.body).toBe(200);
+      const allowedConfirm = await command(context, 'commitment-effective-scope-update-allowed', {
+        type: 'CONFIRM_COMMITMENT', customerId: tree.customerId,
+        commitmentId: allowedPayload.commitment.id,
+        baseVersion: 0, expectedScheduleVersion: 0,
+        confirmedAtUtc: '2026-09-09T03:00:00Z',
+      }, memberToken);
+      expect(allowedConfirm.statusCode, allowedConfirm.body).toBe(200);
+      expect(await context.prisma.auditEvent.count({
+        where: { tenantId: context.tenant.id, actorId: member.id, entityKind: 'commitment' },
+      })).toBe(2);
     } finally {
       await context.cleanup();
     }
@@ -300,6 +436,23 @@ describe('CORE-107 Commitment command path', () => {
       next.title = '形成下一步行动';
       next.confirmationStatus = 'not_required';
       next.confirmationDueAtUtc = null;
+      await context.prisma.opportunity.create({ data: {
+        id: 'commitment-next-other-matter', tenantId: context.tenant.id,
+        accountId: tree.customerId, name: '同客户的其他事项', customerType: 1,
+        pipelineStage: '线索', engageStage: '需求调研立项', memberScoped: true,
+      } });
+      const wrongMatter = await command(context, 'commitment-create-next-wrong-matter', {
+        type: 'CREATE_NEXT_COMMITMENT', previousCommitmentId: completedId,
+        expectedPreviousVersion: 1,
+        commitment: {
+          ...next,
+          id: commitmentId('0'),
+          matterId: 'commitment-next-other-matter',
+          personId: null,
+        },
+      });
+      expect(wrongMatter.statusCode).toBe(409);
+      expect(wrongMatter.json()).toMatchObject({ code: 'commitment_state_conflict' });
       const createNextPayload = {
         type: 'CREATE_NEXT_COMMITMENT', previousCommitmentId: completedId,
         expectedPreviousVersion: 1, commitment: next,

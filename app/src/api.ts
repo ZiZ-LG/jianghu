@@ -2,6 +2,24 @@ import type { Action } from './store';
 import type { AccountState, CommitmentCommand, CommitmentCommandReceipt, PipelineStage } from './types';
 import type { AiContextOptions, ContextManifest } from './aiContext';
 import { toWireAction } from './wireAction';
+import {
+  ActorRoleSchema,
+  CommitmentCommandReceiptSchema,
+  commitmentReceiptMatchesCommand,
+  CrmContextSnapshotSchema,
+  ProductAccessSchema,
+  QuickCaptureCommandReceiptSchema,
+  TodayReadModelSchema,
+  TodaySourceViewSchema,
+  type InterventionSourceRef,
+  type CrmContextSnapshot,
+  type CommandContext,
+  type ProductAccess,
+  type QuickCaptureCommand,
+  type QuickCaptureCommandReceipt,
+  type TodayReadModel,
+  type TodaySourceView,
+} from '@jianghu/domain-contracts';
 
 // 生产构建把 VITE_API_URL 设为空串 "" → 走同源相对路径 /api（由 Nginx 反代到后端）。
 // 开发未设(undefined) → 回退本地后端。用 ?? 而非 ||，确保空串不被误回退。
@@ -123,16 +141,184 @@ const commandReq = async <T>(path: string, opts: RequestInit, requestOptions: { 
     return request<T>(path, frozenOptions, requestOptions); // 固定认证头与 Idempotency-Key，重试不得跨会话。
   }
 };
+
+const invalidQuickCaptureResponse = (cause?: unknown): ApiError => new ApiError({
+  code: 'invalid_response',
+  message: '服务返回的快速记录结果无效，请刷新后确认正式记录。',
+  retryable: false,
+  cause,
+});
+
+const invalidCommitmentResponse = (cause?: unknown): ApiError => new ApiError({
+  code: 'invalid_response',
+  message: '服务返回的下一步操作结果无效，请刷新后确认正式记录。',
+  retryable: false,
+  cause,
+});
+
+const invalidTodayResponse = (cause?: unknown): ApiError => new ApiError({
+  code: 'invalid_response',
+  message: '服务返回的今日干预数据无效，请刷新后重试。',
+  retryable: false,
+  cause,
+});
+
+const invalidCrmContextResponse = (cause?: unknown): ApiError => new ApiError({
+  code: 'invalid_response',
+  message: '服务返回的客户与事项上下文无效，请刷新后重试。',
+  retryable: false,
+  cause,
+});
+
+function parseCrmContextResponse(raw: unknown): CrmContextSnapshot {
+  const parsed = CrmContextSnapshotSchema.safeParse(raw);
+  if (!parsed.success) throw invalidCrmContextResponse(parsed.error);
+  return parsed.data;
+}
+
+function parseTodayResponse(raw: unknown): TodayReadModel {
+  const parsed = TodayReadModelSchema.safeParse(raw);
+  if (!parsed.success) throw invalidTodayResponse(parsed.error);
+  return parsed.data;
+}
+
+function parseTodaySourceResponse(raw: unknown, expected: InterventionSourceRef): TodaySourceView {
+  const parsed = TodaySourceViewSchema.safeParse(raw);
+  if (!parsed.success) throw invalidTodayResponse(parsed.error);
+  const actual = parsed.data.sourceRef;
+  if (actual.entityKind !== expected.entityKind
+    || actual.entityId !== expected.entityId
+    || actual.version !== expected.version
+    || actual.scheduleVersion !== expected.scheduleVersion) {
+    throw invalidTodayResponse(new Error('Today source revision mismatch'));
+  }
+  return parsed.data;
+}
+
+function parseQuickCaptureResponse(
+  raw: unknown,
+  command: QuickCaptureCommand,
+): QuickCaptureCommandReceipt & { replayed: boolean } {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw invalidQuickCaptureResponse();
+  const { replayed, ...receiptValue } = raw as Record<string, unknown>;
+  if (typeof replayed !== 'boolean') throw invalidQuickCaptureResponse();
+  const parsed = QuickCaptureCommandReceiptSchema.safeParse(receiptValue);
+  if (!parsed.success) throw invalidQuickCaptureResponse(parsed.error);
+
+  const expectedCustomerId = command.customer.mode === 'existing'
+    ? command.customer.customerId
+    : command.customer.command.customer.id;
+  const expectedMatterId = command.commitment.commitment.matterId;
+  const customerReceiptMatches = command.customer.mode === 'existing'
+    ? parsed.data.customer === null
+    : parsed.data.customer?.customerId === expectedCustomerId;
+  if (!customerReceiptMatches
+    || parsed.data.commitment.commitmentId !== command.commitment.commitment.id
+    || parsed.data.commitment.customerId !== expectedCustomerId
+    || parsed.data.commitment.matterId !== expectedMatterId) {
+    throw invalidQuickCaptureResponse();
+  }
+  return { ...parsed.data, replayed };
+}
+
+function parseCommitmentResponse(
+  raw: unknown,
+  command: CommitmentCommand,
+): CommitmentCommandReceipt & { replayed: boolean } {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw invalidCommitmentResponse();
+  const { replayed, ...receiptValue } = raw as Record<string, unknown>;
+  if (typeof replayed !== 'boolean') throw invalidCommitmentResponse();
+  const parsed = CommitmentCommandReceiptSchema.safeParse(receiptValue);
+  if (!parsed.success) throw invalidCommitmentResponse(parsed.error);
+  if (!commitmentReceiptMatchesCommand(parsed.data, command)) {
+    throw invalidCommitmentResponse(new Error('Commitment command receipt mismatch'));
+  }
+  return { ...parsed.data, replayed };
+}
 export const newIdempotencyKey = (): string => crypto.randomUUID();
 
 export interface AuthResult {
   token: string;
-  user: { id: string; phone: string | null; email: string | null; name: string; role: string };
+  user: { id: string; phone: string | null; email: string | null; name: string; role: CommandContext['actorRole'] };
   tenant: { id: string; name: string; plan: string; subscriptionStatus: string; seatLimit: number };
+  product: ProductAccess;
 }
 export interface Credentials { phone?: string; email?: string; password: string }
 // 登录命中「同一手机号/邮箱在多个工作区都有账号」时，后端返回候选工作区让用户选（而非直接发 token）
 export interface WorkspaceChoice { needWorkspace: true; workspaces: { tenantId: string; tenantName: string }[] }
+
+const invalidAuthResponse = (cause?: unknown): ApiError => new ApiError({
+  code: 'invalid_response',
+  message: '服务返回的登录身份或产品能力配置无效，请联系管理员。',
+  retryable: false,
+  cause,
+});
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function requiredString(value: unknown, field: string): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw invalidAuthResponse(new Error(`${field} must be a non-empty string`));
+  }
+  return value;
+}
+
+function nullableString(value: unknown, field: string): string | null {
+  if (value === null) return null;
+  return requiredString(value, field);
+}
+
+function parseSessionIdentity(raw: unknown): Omit<AuthResult, 'token'> {
+  if (!isRecord(raw) || !isRecord(raw.user) || !isRecord(raw.tenant)) throw invalidAuthResponse();
+  const product = ProductAccessSchema.safeParse(raw.product);
+  if (!product.success) throw invalidAuthResponse(product.error);
+  const role = ActorRoleSchema.safeParse(raw.user.role);
+  if (!role.success) throw invalidAuthResponse(role.error);
+  if (!Number.isSafeInteger(raw.tenant.seatLimit) || Number(raw.tenant.seatLimit) < 0) {
+    throw invalidAuthResponse(new Error('tenant.seatLimit must be a non-negative safe integer'));
+  }
+  return {
+    user: {
+      id: requiredString(raw.user.id, 'user.id'),
+      phone: nullableString(raw.user.phone, 'user.phone'),
+      email: nullableString(raw.user.email, 'user.email'),
+      name: requiredString(raw.user.name, 'user.name'),
+      role: role.data,
+    },
+    tenant: {
+      id: requiredString(raw.tenant.id, 'tenant.id'),
+      name: requiredString(raw.tenant.name, 'tenant.name'),
+      plan: requiredString(raw.tenant.plan, 'tenant.plan'),
+      subscriptionStatus: requiredString(raw.tenant.subscriptionStatus, 'tenant.subscriptionStatus'),
+      seatLimit: Number(raw.tenant.seatLimit),
+    },
+    product: product.data,
+  };
+}
+
+function parseAuthResult(raw: unknown): AuthResult {
+  if (!isRecord(raw)) throw invalidAuthResponse();
+  return { token: requiredString(raw.token, 'token'), ...parseSessionIdentity(raw) };
+}
+
+function parseLoginResult(raw: unknown): AuthResult | WorkspaceChoice {
+  if (isRecord(raw) && raw.needWorkspace === true) {
+    if (!Array.isArray(raw.workspaces) || raw.workspaces.length === 0) throw invalidAuthResponse();
+    return {
+      needWorkspace: true,
+      workspaces: raw.workspaces.map((workspace, index) => {
+        if (!isRecord(workspace)) throw invalidAuthResponse();
+        return {
+          tenantId: requiredString(workspace.tenantId, `workspaces[${index}].tenantId`),
+          tenantName: requiredString(workspace.tenantName, `workspaces[${index}].tenantName`),
+        };
+      }),
+    };
+  }
+  return parseAuthResult(raw);
+}
 // 录音转写（列表脱敏：不含正文，只有元数据 + hasContent 标志）
 export interface Transcript {
   id: string; source: string; title: string;
@@ -157,7 +343,7 @@ export interface ArchivedEntity {
 export interface AccountRepairPatch {
   base: {
     name: string;
-    customerType: 1 | 2 | 3 | 4;
+    customerType: 1 | 2 | 3 | 4 | null;
     primaryOwner: string;
     primaryOwnerUserId: string | null;
   };
@@ -223,12 +409,24 @@ export const api = {
     unauthorizedListeners.add(listener);
     return () => { unauthorizedListeners.delete(listener); };
   },
-  register: (b: Credentials & { name: string; tenantName: string }): Promise<AuthResult> =>
-    req('/api/auth/register', { method: 'POST', body: JSON.stringify(b) }),
-  login: (b: Credentials & { tenantId?: string }): Promise<AuthResult | WorkspaceChoice> =>
-    req('/api/auth/login', { method: 'POST', body: JSON.stringify(b) }),
-  me: (): Promise<{ user: AuthResult['user']; tenant: AuthResult['tenant'] }> => req('/api/me'),
+  register: async (b: Credentials & { name: string; tenantName: string }): Promise<AuthResult> => parseAuthResult(
+    await req<unknown>('/api/auth/register', { method: 'POST', body: JSON.stringify(b) }),
+  ),
+  login: async (b: Credentials & { tenantId?: string }): Promise<AuthResult | WorkspaceChoice> => parseLoginResult(
+    await req<unknown>('/api/auth/login', { method: 'POST', body: JSON.stringify(b) }),
+  ),
+  me: async (): Promise<{ user: AuthResult['user']; tenant: AuthResult['tenant']; product: ProductAccess }> => parseSessionIdentity(
+    await req<unknown>('/api/me'),
+  ),
   getState: (): Promise<{ accounts: AccountState[] }> => req('/api/state'),
+  crmContext: async (): Promise<CrmContextSnapshot> => parseCrmContextResponse(
+    await req<unknown>('/api/crm/context'),
+  ),
+  today: async (): Promise<TodayReadModel> => parseTodayResponse(await req<unknown>('/api/today')),
+  todaySource: async (source: InterventionSourceRef): Promise<TodaySourceView> => parseTodaySourceResponse(
+    await req<unknown>('/api/today/source', { method: 'POST', body: JSON.stringify(source) }),
+    source,
+  ),
   mutate: (action: Action): Promise<{ ok: true }> => req('/api/mutate', { method: 'POST', body: JSON.stringify({ action: toWireAction(action) }) }),
   // 录入情报：口述文字 → 后端 LLM 抽取 + 双轨落库 → 回执
   voiceExtract: (b: { text: string; accountId?: string; opportunityId?: string; personId?: string; priorText?: string; sourceVisitId?: string }, idempotencyKey: string): Promise<any> =>
@@ -250,10 +448,16 @@ export const api = {
     commandReq('/api/commands/action-feedback', { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(b) }),
   inboxBatch: (b: { items: Array<{ kind: 'proposal' | 'person' | 'rel' | 'evidence' | 'reminder'; id: string; decision: 'accept' | 'reject'; overrideValue?: string; personOverride?: { name?: string; title?: string }; relOverride?: { layer?: string; label?: string }; direction?: -1 | 0 | 1 }> }, idempotencyKey: string): Promise<{ items: Array<{ kind: string; id: string; status: string }>; replayed: boolean }> =>
     commandReq('/api/commands/inbox-batch', { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(b) }),
-  commitment: (command: CommitmentCommand, idempotencyKey: string): Promise<CommitmentCommandReceipt & { replayed: boolean }> =>
-    commandReq('/api/commands/commitment', {
+  commitment: async (command: CommitmentCommand, idempotencyKey: string): Promise<CommitmentCommandReceipt & { replayed: boolean }> =>
+    parseCommitmentResponse(await commandReq<unknown>('/api/commands/commitment', {
       method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(command),
-    }),
+    }), command),
+  quickCapture: async (command: QuickCaptureCommand, idempotencyKey: string): Promise<QuickCaptureCommandReceipt & { replayed: boolean }> => {
+    const raw = await commandReq<unknown>('/api/commands/quick-capture', {
+      method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(command),
+    });
+    return parseQuickCaptureResponse(raw, command);
+  },
   demo: (): Promise<{ ok: true }> => req('/api/demo', { method: 'POST' }),
   archive: (target: 'account' | 'opportunity', id: string, reason: string): Promise<{ ok: true }> =>
     req('/api/archive', { method: 'POST', body: JSON.stringify({ target, id, reason }) }),

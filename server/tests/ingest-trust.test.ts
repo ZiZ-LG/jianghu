@@ -6,6 +6,7 @@ import { handleMcpBody } from '../src/mcpServer.js';
 import { applyAction, machineActionPolicy } from '../src/mutate.js';
 import { acceptProposal } from '../src/proposals.js';
 import { createTestContext } from './helpers/testApp.js';
+import { internalProductPolicy } from './helpers/productPolicy.js';
 
 const webCtx: CommandContext = {
   tenantId: 'tenant-ingest-trust',
@@ -89,7 +90,7 @@ describe('machine ingest trust boundary', () => {
       const call = (id: number, confidence: string) => handleMcpBody(ctx, {
         jsonrpc: '2.0', id, method: 'tools/call',
         params: { name: 'set_opportunity_roles', arguments: { opportunityId, roles: [{ personId, role: 'D', confidence }] } },
-      });
+      }, internalProductPolicy);
 
       await call(1, '明确');
       await call(2, '不清');

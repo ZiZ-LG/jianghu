@@ -26,6 +26,7 @@ import {
   requireOpportunity,
   requirePerson,
 } from './mutation/scopeGuards.js';
+import { requireSalesCustomerType } from './salesClassification.js';
 
 const applyIngestActionWithDb = async (ctx: CommandContext, input: unknown, db: DbClient): Promise<void> => {
   await applyAction(ctx, ActionSchema.parse(input), db);
@@ -296,6 +297,20 @@ export async function ingestVoiceText(
     const name = S(ex.account.name, 100);
     if (!acc) acc = await db.account.findFirst({ where: { tenantId, name }, include: { persons: { where: activePersonWhere }, opportunities: true } });
     if (acc) {
+      const requestedOpportunityName = S(ex.opportunity?.name, 100);
+      const selectedOpportunityExists = Boolean(
+        input.opportunityId && acc.opportunities.some((opportunity) => opportunity.id === input.opportunityId),
+      );
+      const namedOpportunityExists = Boolean(
+        requestedOpportunityName && acc.opportunities.some((opportunity) => opportunity.name === requestedOpportunityName),
+      );
+      if (requestedOpportunityName && !selectedOpportunityExists && !namedOpportunityExists && acc.customerType === null) {
+        return {
+          ok: false,
+          status: 409,
+          body: { error: '请先为客户设置销售分类，再创建商机', code: 'sales_customer_type_required' },
+        };
+      }
       if (isExplicit(ex.account) && S(ex.account.region)) await applyIngestAction(structuredCtxFor(ex.account), { type: 'UPDATE_ACCOUNT', accId: acc.id, patch: { region: S(ex.account.region, 40) } }, db);
       receipt.account = { id: acc.id, name: acc.name, status: 'matched' };
     } else {
@@ -303,8 +318,16 @@ export async function ingestVoiceText(
       const others = await db.account.findMany({ where: { tenantId }, select: { name: true } });
       const sim = others.find((o) => isSimilarName(stripCompany(o.name), stripCompany(name)));
       const id = 'acc_' + randomUUID().replaceAll('-', '');
-      const ct = [1, 2, 3].includes(N(ex.account.customerType) as number) ? (N(ex.account.customerType) as number) : 2;
-      await applyIngestAction(structuredCtxFor(ex.account), { type: 'ADD_ACCOUNT', account: { id, name, customerType: ct, region: S(ex.account.region, 40) } }, db);
+      const rawCustomerType = N(ex.account.customerType);
+      if (rawCustomerType !== 1 && rawCustomerType !== 2 && rawCustomerType !== 3 && rawCustomerType !== 4) {
+        return {
+          ok: false,
+          status: 400,
+          body: { error: '请明确客户的销售分类（1–4）后再用口述创建客户', code: 'sales_customer_type_required' },
+        };
+      }
+      const customerType = requireSalesCustomerType(rawCustomerType);
+      await applyIngestAction(structuredCtxFor(ex.account), { type: 'ADD_ACCOUNT', account: { id, name, customerType, region: S(ex.account.region, 40) } }, db);
       acc = await db.account.findFirst({ where: { id, tenantId }, include: { persons: { where: activePersonWhere }, opportunities: true } });
       receipt.account = { id, name, status: 'created' };
       if (sim) receipt.dupWarnings.push({ kind: 'account', name, similarTo: sim.name });
@@ -321,10 +344,18 @@ export async function ingestVoiceText(
     const oname = S(ex.opportunity.name, 100);
     opp = acc.opportunities.find((o) => o.name === oname) ?? null;
     if (!opp) {
+      if (acc.customerType === null) {
+        return {
+          ok: false,
+          status: 409,
+          body: { error: '请先为客户设置销售分类，再创建商机', code: 'sales_customer_type_required' },
+        };
+      }
       const simOpp = acc.opportunities.find((o) => isSimilarName(o.name, oname)); // 同客户内相似商机名
       const id = 'opp_' + randomUUID().replaceAll('-', '');
       const stage = PIPELINE.includes(S(ex.opportunity.pipelineStage)) ? S(ex.opportunity.pipelineStage) : '线索';
-      await applyIngestAction(structuredCtxFor(ex.opportunity), { type: 'ADD_OPP', accId: acc.id, opp: { id, name: oname, customerType: acc.customerType, pipelineStage: stage, engageStage: '需求调研立项', competitor: S(ex.opportunity.competitor, 200) } }, db);
+      const customerType = requireSalesCustomerType(acc.customerType);
+      await applyIngestAction(structuredCtxFor(ex.opportunity), { type: 'ADD_OPP', accId: acc.id, opp: { id, name: oname, customerType, pipelineStage: stage, engageStage: '需求调研立项', competitor: S(ex.opportunity.competitor, 200) } }, db);
       opp = { id, name: oname } as any;
       receipt.opportunity = { id, name: oname, status: 'created' };
       if (simOpp) receipt.dupWarnings.push({ kind: 'opportunity', name: oname, similarTo: simOpp.name });

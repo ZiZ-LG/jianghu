@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { Account, CustomerType } from '../types';
-import { CUSTOMER_TYPE_LABEL } from '../types';
+import { CUSTOMER_TYPE_LABEL, customerTypeLabel } from '../types';
 import { Modal } from './Modal';
 import { OverflowMenu } from './OverflowMenu';
 import { EnginePulse } from './EnginePulse';
@@ -180,7 +180,7 @@ export function CustomerHub({
                   onClick={(e) => { e.stopPropagation(); requestArchive(a); }}>🗄️</button>}
               </div>
               <div className="acc-name">{a.name}</div>
-              <div className="acc-type">{CUSTOMER_TYPE_LABEL[a.customerType]}</div>
+              <div className="acc-type">{customerTypeLabel(a.customerType)}</div>
               {(a.region || a.group || a.primaryOwner) && (
                 <div className="acc-sub">{[a.region, a.group, a.primaryOwner].filter(Boolean).join(' · ')}</div>
               )}

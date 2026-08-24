@@ -4,7 +4,7 @@
 // 字段级 HTML 注释 <!-- f:xxx --> 作为结构锚点，供块C「MD→系统」回写解析定位。
 import { c5WriteItems, type Account, type Opportunity, type VisitNote, type Person, type OppRole, type AccountProfile } from '../types';
 import {
-  CUSTOMER_TYPE_LABEL, ROLE_LABEL, SENTIMENT_CHAR, FAMILY_7Q, C3_ITEMS, C5_ITEMS,
+  customerTypeLabel, ROLE_LABEL, SENTIMENT_CHAR, FAMILY_7Q, C3_ITEMS, C5_ITEMS,
   PROCUREMENT_TYPE_LABEL, PROCUREMENT_STATUS_LABEL, CHANGE_MODES,
 } from '../types';
 import { scoreFromDomain, BAND_LABEL, BAND_STRATEGY, ITEM_MAX, type ItemKey } from './g64111';
@@ -54,7 +54,7 @@ export function renderCustomerMd(account: Account, log: VersionLogEntry[] = []):
 
   L.push(`# ${account.name} · 客户档案（数字能源 G64111 作战地图）`, '');
   L.push('<!-- f:account.meta -->');
-  L.push(`> **客户全称**：${account.name}　|　**客户类型**：${CUSTOMER_TYPE_LABEL[account.customerType]}（type=${account.customerType}）`);
+  L.push(`> **客户全称**：${account.name}　|　**客户类型**：${customerTypeLabel(account.customerType)}${account.customerType === null ? '' : `（type=${account.customerType}）`}`);
   L.push(`> **大区**：${v(account.region)}　|　**集团/母公司**：${v(account.group)}　|　**主负责人**：${v(account.primaryOwner)}`);
   if (account.unifiedCreditCode) L.push(`> **统一社会信用代码**：${account.unifiedCreditCode}`);
   L.push(`> **在跟商机数**：${account.opportunities.length}　|　**最高趋赢力**：${best ? `${pct(best.b.percent)} · ${BAND_LABEL[best.b.band]}（${best.o.name}）` : '—'}`);
@@ -66,7 +66,7 @@ export function renderCustomerMd(account: Account, log: VersionLogEntry[] = []):
   L.push('<!-- f:account.profile -->');
   L.push('| 维度 | 内容 |', '|------|------|');
   const pf = account.profile ?? {};
-  L.push(`| 客户类型 | ${CUSTOMER_TYPE_LABEL[account.customerType]} |`);
+  L.push(`| 客户类型 | ${customerTypeLabel(account.customerType)} |`);
   L.push(`| 工商基础 | ${v(pf.business)} |`);
   L.push(`| 集团关系 | ${v(pf.group)} |`);
   L.push(`| 招投标 | ${v(pf.bidding)} |`);

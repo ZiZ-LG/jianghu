@@ -15,24 +15,24 @@ function executableTypeScriptFiles(directory) {
   });
 }
 
-function findExecutableConsumers(token) {
+function findExecutableConsumers(tokens) {
   const roots = ['app/src', 'server/src', 'server/scripts', 'packages/domain-contracts/src'];
   return roots
     .flatMap((root) => executableTypeScriptFiles(join(REPO_ROOT, root)))
     .filter((file) => relative(REPO_ROOT, file) !== 'packages/domain-contracts/src/authority.ts')
-    .filter((file) => readFileSync(file, 'utf8').includes(token))
+    .filter((file) => tokens.some((token) => readFileSync(file, 'utf8').includes(token)))
     .map((file) => relative(REPO_ROOT, file).split('\\').join('/'))
     .sort();
 }
 
 describe('CRM authority source inventory', () => {
-  it('fails when an executable customerType reference is absent from the machine inventory', () => {
+  it('fails when an executable categoryKey or customerType reference is absent from the machine inventory', () => {
     const authority = getCrmFieldAuthority('customer.category');
     expect([
       ...(authority?.consumers.reads ?? []),
       ...(authority?.consumers.writes ?? []),
       ...(authority?.consumers.adapters ?? []),
       ...(authority?.consumers.migrations ?? []),
-    ].sort()).toEqual(findExecutableConsumers('customerType'));
+    ].sort()).toEqual(findExecutableConsumers(['categoryKey', 'customerType']));
   });
 });

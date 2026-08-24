@@ -29,7 +29,7 @@ export function saveState(s: StoreState): void {
 export const uid = (p = 'id'): string => createOpaqueEntityId(p);
 
 // ── 工厂 ──
-export function newAccount(name: string, customerType: CustomerType): Account {
+export function newAccount(name: string, customerType: CustomerType): Account & { customerType: CustomerType } {
   return { id: uid('acc'), name, customerType, persons: [], baseEdges: [], opportunities: [] };
 }
 export function newOpportunity(accountId: string, name: string, customerType: CustomerType): Opportunity {
