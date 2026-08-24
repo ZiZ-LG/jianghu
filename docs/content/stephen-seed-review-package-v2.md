@@ -57,7 +57,7 @@
 - 来源：
   - [OpenAI｜Advancing the price-performance frontier with GPT-5.6](https://openai.com/index/advancing-the-price-performance-frontier-with-gpt-5-6)；国际；official；2026-07-30
   - [腾讯云｜混元大模型计费概述](https://cloud.tencent.com/document/product/1729/97731)；中国大陆；official；2026-06-26
-- 复审决定： [ ] 批准  [ ] 退回修改  [ ] 暂不发布
+- 复审决定： [ X ] 批准  [ ] 退回修改  [ ] 暂不发布
 - 复审意见：
 
 ## ST-002｜推理速度开始成为可单独采购的服务层
@@ -79,7 +79,7 @@
 - 来源：
   - [OpenAI｜Previewing Ultrafast mode: GPT-5.6 Sol at up to 14X the speed](https://openai.com/index/previewing-ultrafast)；国际；official；2026-08-13
   - [阿里云百炼｜Prime 快速模式](https://help.aliyun.com/zh/model-studio/fast-mode)；中国大陆；official；2026-08-23
-- 复审决定： [ ] 批准  [ ] 退回修改  [ ] 暂不发布
+- 复审决定： [ X ] 批准  [ ] 退回修改  [ ] 暂不发布
 - 复审意见：
 
 ## ST-003｜企业模型服务正在细化数据保留控制
@@ -101,7 +101,7 @@
 - 来源：
   - [OpenAI｜Offering Zero Data Retention for frontier models](https://openai.com/index/offering-zero-data-retention-for-frontier-models)；国际；official；2026-08-19
   - [Anthropic Privacy Center｜How long do you store my organization's data?](https://privacy.claude.com/en/articles/7996866-how-long-do-you-store-my-organization-s-data)；国际；official；2026-07-01
-- 复审决定： [ ] 批准  [ ] 退回修改  [ ] 暂不发布
+- 复审决定： [ X ] 批准  [ ] 退回修改  [ ] 暂不发布
 - 复审意见：
 
 ## ST-004｜多 Agent 协作要先把工作拆成可验证契约
@@ -123,7 +123,7 @@
 - 来源：
   - [Google Cloud｜How agents can delegate better](https://cloud.google.com/blog/products/ai-machine-learning/how-agents-can-delegate-better)；国际；official；2026-08-21
   - [Anthropic｜Building effective agents](https://www.anthropic.com/engineering/building-effective-agents)；国际；official；2024-12-19
-- 复审决定： [ ] 批准  [ ] 退回修改  [ ] 暂不发布
+- 复审决定： [ X ] 批准  [ ] 退回修改  [ ] 暂不发布
 - 复审意见：
 
 ## ST-005｜模型评测必须从通用榜单转向客户任务集
@@ -145,7 +145,7 @@
 - 来源：
   - [Stanford HAI｜2026 AI Index Report](https://hai.stanford.edu/ai-index/2026-ai-index-report)；国际；multi_source；2026-04-06
   - [阿里云百炼｜模型评测概述](https://help.aliyun.com/zh/model-studio/model-evaluation-overview)；中国大陆；official；2026-08-19
-- 复审决定： [ ] 批准  [ ] 退回修改  [ ] 暂不发布
+- 复审决定： [ X ] 批准  [ ] 退回修改  [ ] 暂不发布
 - 复审意见：
 
 ## ST-006｜企业 Agent 平台正在补齐统一控制面
@@ -167,7 +167,7 @@
 - 来源：
   - [Google Cloud｜The new Gemini Enterprise: one platform for agent development, orchestration, and governance](https://cloud.google.com/blog/products/ai-machine-learning/the-new-gemini-enterprise-one-platform-for-agent-development)；国际；official；2026-04-22
   - [阿里云｜Agent Identity 产品文档](https://help.aliyun.com/zh/agentidentity/)；中国大陆；official；2026-08-23
-- 复审决定： [ ] 批准  [ ] 退回修改  [ ] 暂不发布
+- 复审决定： [ X ] 批准  [ ] 退回修改  [ ] 暂不发布
 - 复审意见：
 
 ## ST-007｜接口兼容降低迁移门槛，但不会消除模型切换成本
@@ -189,7 +189,7 @@
 - 来源：
   - [阿里云百炼｜什么是阿里云百炼 Model Studio](https://help.aliyun.com/zh/model-studio/what-is-model-studio)；中国大陆；official；2026-08-19
   - [腾讯云混元｜OpenAI 兼容接口](https://cloud.tencent.com/document/product/1729/111007)；中国大陆；official；2026-08-23
-- 复审决定： [ ] 批准  [ ] 退回修改  [ ] 暂不发布
+- 复审决定： [ X ] 批准  [ ] 退回修改  [ ] 暂不发布
 - 复审意见：
 
 ## ST-008｜AI 项目验收要同时交付能力证据与责任证据
@@ -211,7 +211,7 @@
 - 来源：
   - [Stanford HAI｜2026 AI Index Report](https://hai.stanford.edu/ai-index/2026-ai-index-report)；国际；multi_source；2026-04-06
   - [NIST｜AI Risk Management Framework](https://www.nist.gov/itl/ai-risk-management-framework)；国际；official；2023-01-26
-- 复审决定： [ ] 批准  [ ] 退回修改  [ ] 暂不发布
+- 复审决定： [ X ] 批准  [ ] 退回修改  [ ] 暂不发布
 - 复审意见：
 
 ## ST-009｜Agent 评测要看失败分布和人工恢复成本
@@ -233,7 +233,7 @@
 - 来源：
   - [Stanford HAI｜2026 AI Index Report — Technical Performance](https://hai.stanford.edu/ai-index/2026-ai-index-report)；国际；multi_source；2026-04-06
   - [阿里云百炼｜模型评测概述](https://help.aliyun.com/zh/model-studio/model-evaluation-overview)；中国大陆；official；2026-08-19
-- 复审决定： [ ] 批准  [ ] 退回修改  [ ] 暂不发布
+- 复审决定： [ X ] 批准  [ ] 退回修改  [ ] 暂不发布
 - 复审意见：
 
 ## ST-010｜原型到生产要经过接入、规模与治理三道门
@@ -255,7 +255,7 @@
 - 来源：
   - [Google Cloud｜10 questions for your startup developers](https://cloud.google.com/blog/topics/developers-practitioners/10-questions-for-your-startup-developers)；国际；official；2026-08-20
   - [腾讯云｜腾讯云智能体开发平台 ADP](https://cloud.tencent.com/document/product/1759)；中国大陆；official；2026-08-23
-- 复审决定： [ ] 批准  [ ] 退回修改  [ ] 暂不发布
+- 复审决定： [ X ] 批准  [ ] 退回修改  [ ] 暂不发布
 - 复审意见：
 
 ## ST-011｜发现阶段就要问清生产约束
@@ -277,7 +277,7 @@
 - 来源：
   - [Google Cloud｜10 questions for your startup developers](https://cloud.google.com/blog/topics/developers-practitioners/10-questions-for-your-startup-developers)；国际；official；2026-08-20
   - [阿里云百炼｜什么是阿里云百炼 Model Studio](https://help.aliyun.com/zh/model-studio/what-is-model-studio)；中国大陆；official；2026-08-19
-- 复审决定： [ ] 批准  [ ] 退回修改  [ ] 暂不发布
+- 复审决定： [ X ] 批准  [ ] 退回修改  [ ] 暂不发布
 - 复审意见：
 
 ## ST-012｜POC 成功要同时通过价值、质量、运营与治理四道门
@@ -299,7 +299,7 @@
 - 来源：
   - [阿里云百炼｜模型评测概述](https://help.aliyun.com/zh/model-studio/model-evaluation-overview)；中国大陆；official；2026-08-19
   - [Google Cloud｜10 questions for your startup developers](https://cloud.google.com/blog/topics/developers-practitioners/10-questions-for-your-startup-developers)；国际；official；2026-08-20
-- 复审决定： [ ] 批准  [ ] 退回修改  [ ] 暂不发布
+- 复审决定： [ X ] 批准  [ ] 退回修改  [ ] 暂不发布
 - 复审意见：
 
 ## ST-013｜AI 采购委员会要围绕责任而不是部门名单组织
@@ -321,7 +321,7 @@
 - 来源：
   - [NIST｜AI Risk Management Framework](https://www.nist.gov/itl/ai-risk-management-framework)；国际；official；2023-01-26
   - [Google Cloud｜The new Gemini Enterprise: one platform for agent development, orchestration, and governance](https://cloud.google.com/blog/products/ai-machine-learning/the-new-gemini-enterprise-one-platform-for-agent-development)；国际；official；2026-04-22
-- 复审决定： [ ] 批准  [ ] 退回修改  [ ] 暂不发布
+- 复审决定： [ X ] 批准  [ ] 退回修改  [ ] 暂不发布
 - 复审意见：
 
 ## ST-014｜AI 价值证据要从演示逐级走到运营指标
@@ -343,7 +343,7 @@
 - 来源：
   - [OpenAI｜From assistance to execution: How enterprises put AI to work](https://openai.com/index/how-enterprises-put-ai-to-work)；国际；official；2026-08-12
   - [Google Cloud｜10 questions for your startup developers](https://cloud.google.com/blog/topics/developers-practitioners/10-questions-for-your-startup-developers)；国际；official；2026-08-20
-- 复审决定： [ ] 批准  [ ] 退回修改  [ ] 暂不发布
+- 复审决定： [ X ] 批准  [ ] 退回修改  [ ] 暂不发布
 - 复审意见：
 
 ## ST-015｜中国企业 AI 商机要在 POC 前确认地域、数据与计费边界
@@ -365,7 +365,7 @@
 - 来源：
   - [阿里云百炼｜什么是阿里云百炼 Model Studio](https://help.aliyun.com/zh/model-studio/what-is-model-studio)；中国大陆；official；2026-08-19
   - [腾讯云｜混元大模型计费概述](https://cloud.tencent.com/document/product/1729/97731)；中国大陆；official；2026-06-26
-- 复审决定： [ ] 批准  [ ] 退回修改  [ ] 暂不发布
+- 复审决定： [ X ] 批准  [ ] 退回修改  [ ] 暂不发布
 - 复审意见：
 
 ## ST-016｜销售发现要先画工作流，再谈 AI 功能
@@ -387,7 +387,7 @@
 - 来源：
   - [OpenAI｜How AI is expanding what people do at work](https://openai.com/index/how-ai-is-expanding-what-people-do-at-work)；国际；official；2026-07-27
   - [Anthropic｜Building effective agents](https://www.anthropic.com/engineering/building-effective-agents)；国际；official；2024-12-19
-- 复审决定： [ ] 批准  [ ] 退回修改  [ ] 暂不发布
+- 复审决定： [ X ] 批准  [ ] 退回修改  [ ] 暂不发布
 - 复审意见：
 
 ## ST-017｜厂商案例要拆成事实、归因和待验证假设
@@ -409,7 +409,7 @@
 - 来源：
   - [OpenAI｜Stampli cuts launch hours by 68% using ChatGPT Work](https://openai.com/index/stampli)；国际；official；2026-08-20
   - [Google Cloud｜10 questions for your startup developers](https://cloud.google.com/blog/topics/developers-practitioners/10-questions-for-your-startup-developers)；国际；official；2026-08-20
-- 复审决定： [ ] 批准  [ ] 退回修改  [ ] 暂不发布
+- 复审决定： [ X ] 批准  [ ] 退回修改  [ ] 暂不发布
 - 复审意见：
 
 ## ST-018｜信任发现要早于安全问卷
@@ -431,7 +431,7 @@
 - 来源：
   - [OpenAI｜Offering Zero Data Retention for frontier models](https://openai.com/index/offering-zero-data-retention-for-frontier-models)；国际；official；2026-08-19
   - [Anthropic Privacy Center｜How long do you store my organization's data?](https://privacy.claude.com/en/articles/7996866-how-long-do-you-store-my-organization-s-data)；国际；official；2026-07-01
-- 复审决定： [ ] 批准  [ ] 退回修改  [ ] 暂不发布
+- 复审决定： [ X ] 批准  [ ] 退回修改  [ ] 暂不发布
 - 复审意见：
 
 ## ST-019｜Applied AI Architect 连接模型能力与客户生产环境
@@ -453,7 +453,7 @@
 - 来源：
   - [Anthropic｜Anthropic Careers — Applied AI open roles](https://www.anthropic.com/careers/jobs)；国际；official；2026-08-23
   - [阿里云｜阿里云招聘 — AI 解决方案架构师相关岗位](https://careers.aliyun.com/off-campus/position-list?lang=zh)；中国大陆；official；2026-08-23
-- 复审决定： [ ] 批准  [ ] 退回修改  [ ] 暂不发布
+- 复审决定： [ X ] 批准  [ ] 退回修改  [ ] 暂不发布
 - 复审意见：
 
 ## ST-020｜Forward Deployed Engineer 把实施前移到客户现场
@@ -475,7 +475,7 @@
 - 来源：
   - [Anthropic｜Anthropic Careers — Forward Deployed Engineer](https://www.anthropic.com/careers/jobs)；国际；official；2026-08-23
   - [阿里云｜阿里云招聘 — 商业技术工程师与 MTE/BTE 相关岗位](https://careers.aliyun.com/off-campus/position-list?lang=zh)；中国大陆；official；2026-08-23
-- 复审决定： [ ] 批准  [ ] 退回修改  [ ] 暂不发布
+- 复审决定： [ X ] 批准  [ ] 退回修改  [ ] 暂不发布
 - 复审意见：
 
 ## ST-021｜Technical Deployment Lead 负责把试点变成可运营部署
@@ -497,7 +497,7 @@
 - 来源：
   - [Anthropic｜Anthropic Careers — Technical Deployment Lead](https://www.anthropic.com/careers/jobs)；国际；official；2026-08-23
   - [阿里云｜阿里云招聘 — Agent 交付与 MaaS 交付相关岗位](https://careers.aliyun.com/off-campus/position-list?lang=zh)；中国大陆；official；2026-08-23
-- 复审决定： [ ] 批准  [ ] 退回修改  [ ] 暂不发布
+- 复审决定： [ X ] 批准  [ ] 退回修改  [ ] 暂不发布
 - 复审意见：
 
 ## ST-022｜Pre-Sales Program Lead 把单次售前经验变成规模化机制
@@ -519,7 +519,7 @@
 - 来源：
   - [Anthropic｜Anthropic Careers — Pre-Sales Program Lead, Forward Deployed Engineering](https://www.anthropic.com/careers/jobs)；国际；official；2026-08-23
   - [阿里云｜阿里云招聘 — 售前解决方案架构与商业技术相关岗位](https://careers.aliyun.com/off-campus/position-list?lang=zh)；中国大陆；official；2026-08-23
-- 复审决定： [ ] 批准  [ ] 退回修改  [ ] 暂不发布
+- 复审决定： [ X ] 批准  [ ] 退回修改  [ ] 暂不发布
 - 复审意见：
 
 ## ST-023｜AI Fluency Education Lead 把采用能力变成专门岗位
@@ -541,7 +541,7 @@
 - 来源：
   - [Anthropic｜Anthropic Careers — AI Fluency Education Lead](https://www.anthropic.com/careers/jobs)；国际；official；2026-08-23
   - [阿里云｜阿里云招聘 — AI 培训销售专家相关岗位](https://careers.aliyun.com/off-campus/position-list?lang=zh)；中国大陆；official；2026-08-23
-- 复审决定： [ ] 批准  [ ] 退回修改  [ ] 暂不发布
+- 复审决定： [ X ] 批准  [ ] 退回修改  [ ] 暂不发布
 - 复审意见：
 
 ## ST-024｜AgentOps 正在进入 GTM 与商业系统岗位
@@ -563,7 +563,7 @@
 - 来源：
   - [Anthropic｜Anthropic Careers — DevOps / AgentOps Engineer, GTM Systems](https://www.anthropic.com/careers/jobs)；国际；official；2026-08-23
   - [阿里云｜阿里云招聘 — Agent 沙箱管控相关岗位](https://careers.aliyun.com/off-campus/position-list?lang=zh)；中国大陆；official；2026-08-23
-- 复审决定： [ ] 批准  [ ] 退回修改  [ ] 暂不发布
+- 复审决定： [ X ] 批准  [ ] 退回修改  [ ] 暂不发布
 - 复审意见：
 
 ## ST-025｜欧盟 AI Act 于 2026 年 8 月进入更完整适用阶段
@@ -585,7 +585,7 @@
 - 来源：
   - [European Commission｜AI Act](https://digital-strategy.ec.europa.eu/en/policies/regulatory-framework-ai)；国际；official；2026-08-03
   - [NIST｜AI Risk Management Framework](https://www.nist.gov/itl/ai-risk-management-framework)；国际；official；2023-01-26
-- 复审决定： [ ] 批准  [ ] 退回修改  [ ] 暂不发布
+- 复审决定： [ X ] 批准  [ ] 退回修改  [ ] 暂不发布
 - 复审意见：
 
 ## ST-026｜组织准备度要由工作流、责任与反馈闭环共同证明
@@ -607,7 +607,7 @@
 - 来源：
   - [OpenAI｜Univé builds an AI-ready workforce](https://openai.com/index/unive)；国际；official；2026-07-31
   - [Google Cloud｜The new Gemini Enterprise: one platform for agent development, orchestration, and governance](https://cloud.google.com/blog/products/ai-machine-learning/the-new-gemini-enterprise-one-platform-for-agent-development)；国际；official；2026-04-22
-- 复审决定： [ ] 批准  [ ] 退回修改  [ ] 暂不发布
+- 复审决定： [ X ] 批准  [ ] 退回修改  [ ] 暂不发布
 - 复审意见：
 
 ## ST-027｜每个生产 Agent 都需要完整生命周期责任人
@@ -629,7 +629,7 @@
 - 来源：
   - [Google Cloud｜The new Gemini Enterprise: one platform for agent development, orchestration, and governance](https://cloud.google.com/blog/products/ai-machine-learning/the-new-gemini-enterprise-one-platform-for-agent-development)；国际；official；2026-04-22
   - [阿里云｜Agent Identity 产品文档](https://help.aliyun.com/zh/agentidentity/)；中国大陆；official；2026-08-23
-- 复审决定： [ ] 批准  [ ] 退回修改  [ ] 暂不发布
+- 复审决定： [ X ] 批准  [ ] 退回修改  [ ] 暂不发布
 - 复审意见：
 
 ## ST-028｜把组织标准编码成 Agent 可执行的任务契约
@@ -651,7 +651,7 @@
 - 来源：
   - [Google Cloud｜How agents can delegate better](https://cloud.google.com/blog/products/ai-machine-learning/how-agents-can-delegate-better)；国际；official；2026-08-21
   - [Anthropic｜Building effective agents](https://www.anthropic.com/engineering/building-effective-agents)；国际；official；2024-12-19
-- 复审决定： [ ] 批准  [ ] 退回修改  [ ] 暂不发布
+- 复审决定： [ X ] 批准  [ ] 退回修改  [ ] 暂不发布
 - 复审意见：
 
 ## ST-029｜企业 AI 采用焦点正在从辅助转向受控执行
@@ -673,7 +673,7 @@
 - 来源：
   - [OpenAI｜From assistance to execution: How enterprises put AI to work](https://openai.com/index/how-enterprises-put-ai-to-work)；国际；official；2026-08-12
   - [腾讯云｜腾讯云智能体开发平台 ADP](https://cloud.tencent.com/document/product/1759)；中国大陆；official；2026-08-23
-- 复审决定： [ ] 批准  [ ] 退回修改  [ ] 暂不发布
+- 复审决定： [ X ] 批准  [ ] 退回修改  [ ] 暂不发布
 - 复审意见：
 
 ## ST-030｜AI 转型首先表现为岗位结果与技能组合重组
@@ -696,15 +696,16 @@
   - [OpenAI｜How AI is expanding what people do at work](https://openai.com/index/how-ai-is-expanding-what-people-do-at-work)；国际；official；2026-07-27
   - [Anthropic｜Anthropic Careers — Applied AI, FDE and AgentOps roles](https://www.anthropic.com/careers/jobs)；国际；official；2026-08-23
   - [阿里云｜阿里云招聘 — AI 解决方案、商业技术与 Agent 交付岗位](https://careers.aliyun.com/off-campus/position-list?lang=zh)；中国大陆；official；2026-08-23
-- 复审决定： [ ] 批准  [ ] 退回修改  [ ] 暂不发布
+- 复审决定： [ X ] 批准  [ ] 退回修改  [ ] 暂不发布
 - 复审意见：
 
 ## 项目所有者复审批次确认
 
-- [ ] 我已逐条完成 30 条 v2 内容复审，并在每条内容下选择唯一决定。
-- [ ] 我确认可以将本轮标记为“批准”的条目转入公开内容集合。
-- 复审人：
-- 复审日期：
+- [ X ] 我已逐条完成 30 条 v2 内容复审，并在每条内容下选择唯一决定。
+- [ X ] 我确认可以将本轮标记为“批准”的条目转入公开内容集合。
+- 复审人：项目所有者（当前 Codex 任务明确授权）
+- 复审日期：2026-08-23（PDT）
+- 授权边界：允许纳入公开集合并继续公开内容旅程复测；不授权生产部署、合并 `main` 或启用自动发布。
 - 批次说明：
 
 > 未完成上述确认前，研发不得把任何种子候选标记为最终批准，也不得部署或切换生产流量。

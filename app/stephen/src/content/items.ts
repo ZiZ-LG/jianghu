@@ -10,7 +10,7 @@ import type {
   SeedReview,
 } from '../domain';
 
-const REVIEW_FROZEN_AT = '2026-08-24T03:30:00.000Z';
+const OWNER_APPROVED_AT = '2026-08-24T04:39:04.000Z';
 
 interface EvidenceInput {
   readonly sourceId: string;
@@ -92,7 +92,7 @@ function defineCandidate(input: CandidateInput): SeedCandidate {
     toolIds: input.toolIds,
     audience: input.audience ?? ['transitioning_seller', 'ai_ae', 'solution'],
     publishedAt: input.publishedAt,
-    updatedAt: REVIEW_FROZEN_AT,
+    updatedAt: OWNER_APPROVED_AT,
     freshness: input.freshness,
     whyItMatters: { zh: input.whyItMatters },
     salesImplication: { zh: input.salesImplication },
@@ -100,20 +100,20 @@ function defineCandidate(input: CandidateInput): SeedCandidate {
     nextAction: { zh: input.nextAction },
     evidence,
     relatedItemIds: [],
-    editorialStatus: 'candidate',
+    editorialStatus: 'approved',
     riskLevel: input.riskLevel,
     publicationMode: 'manual',
     seedContent: true,
     audit: {
       sourceFingerprint: `source-ref:${input.slug}:2026-08-24`,
-      ruleVersion: 'saas-602-seed-review-v2',
-      processedAt: REVIEW_FROZEN_AT,
-      releaseVersion: 'seed-review-v2-2026-08-24',
+      ruleVersion: 'saas-602-owner-approved-v1',
+      processedAt: OWNER_APPROVED_AT,
+      releaseVersion: 'seed-public-v1-2026-08-24',
       rollbackState: 'available',
     },
     review: {
-      status: 'pending_owner_review',
-      verifiedAt: REVIEW_FROZEN_AT,
+      status: 'approved',
+      verifiedAt: OWNER_APPROVED_AT,
       changeWindow: input.changeWindow,
       factType: input.factType,
       verificationNotes: input.verificationNotes,
@@ -121,7 +121,7 @@ function defineCandidate(input: CandidateInput): SeedCandidate {
   };
 }
 
-export const seedCandidates = [
+export const approvedSeedItems = [
   defineCandidate({
     id: 'ST-001', slug: 'frontier-model-price-performance', seedCategory: 'ai_technology', conclusionScope: 'cross_organization',
     title: '模型价格性能比正在重写企业选型账本',

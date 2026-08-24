@@ -52,8 +52,8 @@ export default function RolesPage({
         ) : (
           <div className='empty-state'>
             {language === 'zh'
-              ? '岗位与组织种子内容仍在人工终审。你可以先使用岗位研究与能力差距工具。'
-              : 'Role and organization seed items are under review. The research tools remain available.'}
+              ? '岗位与组织领域当前没有已批准内容；岗位研究与能力差距工具仍可使用。'
+              : 'No approved role or organization items are available; the research tools remain usable.'}
           </div>
         )}
       </section>

@@ -69,11 +69,11 @@ export default function TodayPage({
           </div>
         ) : (
           <div className='empty-state'>
-            <strong>{language === 'zh' ? '首批内容仍在人工终审' : 'The seed collection is under human review'}</strong>
+            <strong>{language === 'zh' ? '当前没有可公开内容' : 'No public items are available'}</strong>
             <p>
               {language === 'zh'
-                ? '公开集合目前保持为空。内容负责人批准后，首页会展示 3–5 条高价值内容；不会用占位内容凑数。'
-                : 'The public collection remains empty. After approval, this page will show 3–5 high-value items without filler.'}
+                ? '首页只展示已经批准且仍然有效的内容；内容不足时保持空白，不用占位条目凑数。'
+                : 'This page shows only approved, current items and stays empty instead of padding the edition.'}
             </p>
           </div>
         )}

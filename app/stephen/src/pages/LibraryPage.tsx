@@ -113,8 +113,8 @@ export default function LibraryPage({
           <strong>{language === 'zh' ? '从一条内容或一个工具开始' : 'Start with one item or tool'}</strong>
           <p>
             {language === 'zh'
-              ? '内容终审完成后可以收藏条目；现在已经可以使用 8 个本机工具。'
-              : 'Bookmarks open after content approval; all eight local tools are available now.'}
+              ? '可以从雷达收藏公开条目，也可以直接使用 8 个本机工具。'
+              : 'Bookmark public items from Radar, or start with any of the eight local tools.'}
           </p>
           <div className='hero-actions'>
             <InternalLink className='primary-action' href='/tools/'>

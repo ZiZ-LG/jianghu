@@ -92,8 +92,8 @@ export default function TopicPage({
         ) : (
           <div className='empty-state'>
             {language === 'zh'
-              ? '该专题关联的种子内容仍在人工终审，公开集合暂不展示。'
-              : 'Related seed items remain under human review and are not public yet.'}
+              ? '该专题当前没有已批准且仍然有效的公开内容。'
+              : 'This topic currently has no approved, active public items.'}
           </div>
         )}
       </section>

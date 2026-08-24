@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { seedCandidates } from './content/items';
+import { approvedSeedItems } from './content/items';
 import { knowledgeTopics } from './content/topics';
+import type { SeedCandidate } from './domain';
 import {
   desktopNavigation,
   filterKnowledgeItems,
@@ -12,6 +13,17 @@ import {
   selectTodayItems,
   toKnowledgeCardModel,
 } from './navigation';
+
+function asReviewCandidate(item: SeedCandidate): SeedCandidate {
+  return {
+    ...item,
+    editorialStatus: 'candidate',
+    review: {
+      ...item.review,
+      status: 'pending_owner_review',
+    },
+  };
+}
 
 describe('SAAS-602 Stephen navigation and selection', () => {
   it('parses every stable first-release path and returns an internal 404 for unknown paths', () => {
@@ -42,16 +54,17 @@ describe('SAAS-602 Stephen navigation and selection', () => {
   });
 
   it('selects at most five high-value items without padding and never publishes candidates by default', () => {
-    expect(selectTodayItems(seedCandidates)).toEqual([]);
+    const reviewCandidates = approvedSeedItems.map(asReviewCandidate);
+    expect(selectTodayItems(reviewCandidates)).toEqual([]);
 
-    const reviewSelection = selectTodayItems(seedCandidates, {
+    const reviewSelection = selectTodayItems(reviewCandidates, {
       includeCandidates: true,
       limit: 5,
     });
     expect(reviewSelection).toHaveLength(5);
     expect(reviewSelection.every((item) => item.editorialStatus === 'candidate')).toBe(true);
 
-    const onlyTwo = selectTodayItems(seedCandidates.slice(0, 2), {
+    const onlyTwo = selectTodayItems(reviewCandidates.slice(0, 2), {
       includeCandidates: true,
       limit: 5,
     });
@@ -59,7 +72,7 @@ describe('SAAS-602 Stephen navigation and selection', () => {
   });
 
   it('supports explicit AND and OR domain filters', () => {
-    const andResult = filterKnowledgeItems(seedCandidates, {
+    const andResult = filterKnowledgeItems(approvedSeedItems, {
       domains: ['ai_technology', 'enterprise_sales'],
       mode: 'and',
     });
@@ -68,7 +81,7 @@ describe('SAAS-602 Stephen navigation and selection', () => {
       item.domains.includes('ai_technology') && item.domains.includes('enterprise_sales')))
       .toBe(true);
 
-    const orResult = filterKnowledgeItems(seedCandidates, {
+    const orResult = filterKnowledgeItems(approvedSeedItems, {
       domains: ['ai_technology', 'role_org'],
       mode: 'or',
     });
@@ -79,16 +92,16 @@ describe('SAAS-602 Stephen navigation and selection', () => {
   });
 
   it('resolves known content and topics while missing slugs remain not found', () => {
-    expect(getKnowledgeItemBySlug(seedCandidates, 'frontier-model-price-performance')?.id)
+    expect(getKnowledgeItemBySlug(approvedSeedItems, 'frontier-model-price-performance')?.id)
       .toBe('ST-001');
-    expect(getKnowledgeItemBySlug(seedCandidates, 'missing-item')).toBeNull();
+    expect(getKnowledgeItemBySlug(approvedSeedItems, 'missing-item')).toBeNull();
     expect(getKnowledgeTopicBySlug(knowledgeTopics, 'ai-poc-scale')?.slug)
       .toBe('ai-poc-scale');
     expect(getKnowledgeTopicBySlug(knowledgeTopics, 'missing-topic')).toBeNull();
   });
 
   it('builds card data with why-it-matters, action and traceable evidence', () => {
-    const card = toKnowledgeCardModel(seedCandidates[0]);
+    const card = toKnowledgeCardModel(approvedSeedItems[0]);
     expect(card.whyItMatters.zh.trim().length).toBeGreaterThan(0);
     expect(card.nextAction.zh.trim().length).toBeGreaterThan(0);
     expect(card.evidenceHref).toMatch(/^https:\/\//);

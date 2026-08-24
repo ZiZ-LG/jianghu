@@ -16,7 +16,6 @@ const learnPageUrl = new URL('../../stephen/src/pages/LearnPage.tsx', import.met
 const itemPageUrl = new URL('../../stephen/src/pages/ItemPage.tsx', import.meta.url);
 const policyPageUrl = new URL('../../stephen/src/pages/PolicyPage.tsx', import.meta.url);
 const knowledgeCardUrl = new URL('../../stephen/src/components/KnowledgeCard.tsx', import.meta.url);
-const publicItemsUrl = new URL('../../stephen/src/content/publicItems.ts', import.meta.url);
 const stephenConfigUrl = new URL('../../vite.stephen.config.ts', import.meta.url);
 const packageUrl = new URL('../../package.json', import.meta.url);
 const nginxUrl = new URL('../../../deploy/stephen.nginx.conf', import.meta.url);
@@ -160,7 +159,6 @@ describe('Stephen self-cultivation site', () => {
     const index = readRequiredFile(shellIndexUrl);
     const app = readRequiredFile(shellAppUrl);
     const styles = readRequiredFile(shellStylesUrl);
-    const publicItems = readRequiredFile(publicItemsUrl);
     const shell = [
       app,
       readRequiredFile(shellNavigationUrl),
@@ -205,7 +203,6 @@ describe('Stephen self-cultivation site', () => {
     expect(app).not.toContain('/api/');
     expect(app).toContain("from './content/publicItems'");
     expect(app).not.toContain('seedCandidates');
-    expect(publicItems).not.toContain("from './items'");
     expect(styles).not.toMatch(/body\s*\{[^}]*overflow\s*:\s*hidden/s);
   });
 

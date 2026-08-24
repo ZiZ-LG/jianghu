@@ -132,8 +132,8 @@ export default function DigestPage({
             <strong>{language === 'zh' ? '暂无可发布的今日简报' : 'No publishable daily digest yet'}</strong>
             <p>
               {language === 'zh'
-                ? '首批 30 条仍在项目所有者终审，公开集合保持为空。终审通过前不会展示候选摘要。'
-                : 'The first 30 items remain under owner review. Candidate summaries stay out of the public collection until approval.'}
+                ? '今天没有符合简报规则的已批准内容；系统不会用候选或低价值条目凑数。'
+                : 'No approved item meets today’s digest rules; candidates and low-value filler stay out.'}
             </p>
           </div>
         )}

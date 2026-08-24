@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { SeedCandidate } from '../domain';
-import { seedCandidates } from './items';
+import { approvedSeedItems } from './items';
 import { knowledgeTools } from './tools';
 import {
   createDailyDigest,
@@ -23,15 +23,26 @@ function approve(
   };
 }
 
+function asReviewCandidate(item: SeedCandidate): SeedCandidate {
+  return {
+    ...item,
+    editorialStatus: 'candidate',
+    review: {
+      ...item.review,
+      status: 'pending_owner_review',
+    },
+  };
+}
+
 describe('SAAS-603 reviewed digest projections', () => {
   it('only projects approved content and never leaks candidate or archived entries', () => {
-    const approved = approve(seedCandidates[0]);
+    const approved = approve(approvedSeedItems[0]);
     const archived = {
-      ...approve(seedCandidates[1]),
+      ...approve(approvedSeedItems[1]),
       editorialStatus: 'archived' as const,
     };
     const digest = createDailyDigest(
-      [approved, seedCandidates[2], archived],
+      [approved, asReviewCandidate(approvedSeedItems[2]), archived],
       { digestDate: '2026-08-23' },
     );
 
@@ -40,7 +51,7 @@ describe('SAAS-603 reviewed digest projections', () => {
   });
 
   it('selects at most five items with cross-domain coverage and action metadata', () => {
-    const approved = seedCandidates.slice(0, 12).map((item) => approve(item));
+    const approved = approvedSeedItems.slice(0, 12).map((item) => approve(item));
     const digest = createDailyDigest(approved, { digestDate: '2026-08-23' });
 
     expect(digest.entries.length).toBeGreaterThanOrEqual(3);
@@ -57,17 +68,17 @@ describe('SAAS-603 reviewed digest projections', () => {
   });
 
   it('deduplicates a related event and normalized primary evidence URL', () => {
-    const first = approve(seedCandidates[0], {
+    const first = approve(approvedSeedItems[0], {
       id: 'DIGEST-EVENT-A',
       slug: 'digest-event-a',
       relatedItemIds: ['DIGEST-EVENT-B'],
     });
-    const related = approve(seedCandidates[1], {
+    const related = approve(approvedSeedItems[1], {
       id: 'DIGEST-EVENT-B',
       slug: 'digest-event-b',
       relatedItemIds: ['DIGEST-EVENT-A'],
     });
-    const sameUrl = approve(seedCandidates[2], {
+    const sameUrl = approve(approvedSeedItems[2], {
       id: 'DIGEST-SAME-URL',
       slug: 'digest-same-url',
       evidence: [{
@@ -87,29 +98,29 @@ describe('SAAS-603 reviewed digest projections', () => {
   });
 
   it('allows a short or empty edition instead of padding with unapproved content', () => {
-    const twoApproved = seedCandidates.slice(0, 2).map((item) => approve(item));
+    const twoApproved = approvedSeedItems.slice(0, 2).map((item) => approve(item));
     expect(createDailyDigest(twoApproved, { digestDate: '2026-08-23' }).entries)
       .toHaveLength(2);
-    expect(createDailyDigest(seedCandidates, { digestDate: '2026-08-23' }).entries)
+    expect(createDailyDigest(approvedSeedItems.map(asReviewCandidate), { digestDate: '2026-08-23' }).entries)
       .toEqual([]);
   });
 
   it('builds a weekly view from new or substantively updated items only', () => {
     const weeklyItems = [
-      approve(seedCandidates[10], {
+      approve(approvedSeedItems[10], {
         publishedAt: '2026-08-18T08:00:00.000Z',
         updatedAt: '2026-08-18T08:00:00.000Z',
         relatedItemIds: ['WEEK-CONTINUING'],
       }),
-      approve(seedCandidates[20], {
+      approve(approvedSeedItems[20], {
         publishedAt: '2026-07-01T08:00:00.000Z',
         updatedAt: '2026-08-20T08:00:00.000Z',
       }),
-      approve(seedCandidates[25], {
+      approve(approvedSeedItems[25], {
         publishedAt: '2026-08-22T08:00:00.000Z',
         updatedAt: '2026-08-22T08:00:00.000Z',
       }),
-      approve(seedCandidates[5], {
+      approve(approvedSeedItems[5], {
         publishedAt: '2026-07-01T08:00:00.000Z',
         updatedAt: '2026-07-01T08:00:00.000Z',
       }),

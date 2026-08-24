@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { seedCandidates } from '../content/items';
+import { approvedSeedItems } from '../content/items';
 import { knowledgeTools } from '../content/tools';
 import {
   LIBRARY_STORAGE_KEY,
@@ -30,22 +30,22 @@ class MemoryStorage {
   }
 }
 
-const itemIds = seedCandidates.map((item) => item.id);
+const itemIds = approvedSeedItems.map((item) => item.id);
 const toolIds = knowledgeTools.map((tool) => tool.id);
 const now = '2026-08-23T20:00:00.000Z';
 
 describe('SAAS-603 local Stephen library', () => {
   it('searches Chinese fields and English original titles case-insensitively', () => {
-    expect(searchKnowledge(seedCandidates, '数据保留').map((item) => item.id))
+    expect(searchKnowledge(approvedSeedItems, '数据保留').map((item) => item.id))
       .toContain('ST-003');
-    expect(searchKnowledge(seedCandidates, 'FORWARD DEPLOYED ENGINEER').map((item) => item.id))
+    expect(searchKnowledge(approvedSeedItems, 'FORWARD DEPLOYED ENGINEER').map((item) => item.id))
       .toContain('ST-020');
-    expect(searchKnowledge(seedCandidates, 'poc 成功').length).toBeGreaterThan(0);
-    expect(searchKnowledge(seedCandidates, '不存在的关键词')).toEqual([]);
+    expect(searchKnowledge(approvedSeedItems, 'poc 成功').length).toBeGreaterThan(0);
+    expect(searchKnowledge(approvedSeedItems, '不存在的关键词')).toEqual([]);
   });
 
   it('combines search with explicit AND and OR domain filters', () => {
-    const andResult = searchKnowledge(seedCandidates, 'AI', {
+    const andResult = searchKnowledge(approvedSeedItems, 'AI', {
       domains: ['ai_technology', 'enterprise_sales'],
       mode: 'and',
     });
@@ -54,7 +54,7 @@ describe('SAAS-603 local Stephen library', () => {
       item.domains.includes('ai_technology') && item.domains.includes('enterprise_sales')))
       .toBe(true);
 
-    const orResult = searchKnowledge(seedCandidates, 'AI', {
+    const orResult = searchKnowledge(approvedSeedItems, 'AI', {
       domains: ['ai_technology', 'role_org'],
       mode: 'or',
     });

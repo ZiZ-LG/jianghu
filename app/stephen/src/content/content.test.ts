@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { seedCandidates } from './items';
+import { approvedSeedItems } from './items';
 import { approvedKnowledgeItems } from './publicItems';
 import { sourceRegistry, validateSourceRegistry } from './sources';
 import { knowledgeTools } from './tools';
 import { knowledgeTopics } from './topics';
-import { validateSeedCandidates } from './validate';
+import { validateApprovedSeedItems, validateKnowledgeItems } from './validate';
 
 describe('Stephen source governance', () => {
   it('keeps the first release within ten active, independently identified public sources', () => {
@@ -40,20 +40,23 @@ describe('Stephen source governance', () => {
 });
 
 describe('SAAS-602 seed review collection', () => {
-  it('contains exactly 30 review-only candidates while pure AI technology stays below 20%', () => {
-    expect(seedCandidates).toHaveLength(30);
-    expect(approvedKnowledgeItems).toEqual([]);
-    expect(() => validateSeedCandidates(seedCandidates)).not.toThrow();
+  it('publishes exactly 30 owner-approved seeds manually while pure AI technology stays below 20%', () => {
+    expect(approvedSeedItems).toHaveLength(30);
+    expect(() => validateApprovedSeedItems(approvedSeedItems)).not.toThrow();
+    expect(approvedKnowledgeItems).toHaveLength(30);
+    expect(approvedKnowledgeItems.map((item) => item.id))
+      .toEqual(approvedSeedItems.map((item) => item.id));
+    expect(() => validateKnowledgeItems(approvedKnowledgeItems)).not.toThrow();
 
-    const pureAiTechnologyCount = seedCandidates
+    const pureAiTechnologyCount = approvedSeedItems
       .filter((item) => item.seedCategory === 'ai_technology').length;
-    expect(pureAiTechnologyCount / seedCandidates.length).toBeLessThan(0.2);
+    expect(pureAiTechnologyCount / approvedSeedItems.length).toBeLessThan(0.2);
 
-    for (const item of seedCandidates) {
-      expect(item.editorialStatus).toBe('candidate');
+    for (const item of approvedKnowledgeItems) {
+      expect(item.editorialStatus).toBe('approved');
       expect(item.publicationMode).toBe('manual');
       expect(item.seedContent).toBe(true);
-      expect(item.review.status).toBe('pending_owner_review');
+      expect(item.review.status).toBe('approved');
       expect(item.title.zh.trim().length).toBeGreaterThan(0);
       expect(item.summary.zh.trim().length).toBeGreaterThan(0);
       expect(item.whyItMatters.zh.trim().length).toBeGreaterThan(0);
@@ -67,7 +70,7 @@ describe('SAAS-602 seed review collection', () => {
   });
 
   it('grounds every conclusion in two traceable facts and cross-organization evidence', () => {
-    const candidates = seedCandidates;
+    const candidates = approvedSeedItems;
 
     for (const item of candidates) {
       expect(item.supportingFacts.length, `${item.id} supporting facts`).toBeGreaterThanOrEqual(2);
@@ -99,7 +102,7 @@ describe('SAAS-602 seed review collection', () => {
         .filter((source) => source.originRegion === 'mainland_china')
         .map((source) => source.id),
     );
-    const mainlandItems = seedCandidates.filter((item) => {
+    const mainlandItems = approvedSeedItems.filter((item) => {
       const evidenceById = new Map(item.evidence.map((evidence) => [evidence.id, evidence]));
       return item.supportingFacts.some((fact) => fact.evidenceIds.some((evidenceId) => {
         const evidence = evidenceById.get(evidenceId);
@@ -111,7 +114,7 @@ describe('SAAS-602 seed review collection', () => {
   });
 
   it('keeps Agent terminology in English and adds a mechanism-to-value boundary analysis', () => {
-    const candidates = seedCandidates;
+    const candidates = approvedSeedItems;
 
     for (const item of candidates) {
       const authoredChinese = [
@@ -136,28 +139,28 @@ describe('SAAS-602 seed review collection', () => {
   });
 
   it('rejects a seed whose conclusion drops below the two-fact gate', () => {
-    const [first, ...rest] = seedCandidates;
+    const [first, ...rest] = approvedSeedItems;
     const invalidBatch = [{
       ...first,
       supportingFacts: first.supportingFacts.slice(0, 1),
     }, ...rest];
 
-    expect(() => validateSeedCandidates(invalidBatch))
+    expect(() => validateApprovedSeedItems(invalidBatch))
       .toThrow('ST-001 requires at least two supporting facts');
   });
 
   it('meets three-domain, cross-domain, action and freshness coverage', () => {
     for (const domain of ['ai_technology', 'enterprise_sales', 'role_org'] as const) {
-      expect(seedCandidates.filter((item) => item.domains.includes(domain)).length)
+      expect(approvedSeedItems.filter((item) => item.domains.includes(domain)).length)
         .toBeGreaterThanOrEqual(10);
     }
-    expect(seedCandidates.filter((item) => item.domains.length >= 2).length)
+    expect(approvedSeedItems.filter((item) => item.domains.length >= 2).length)
       .toBeGreaterThanOrEqual(12);
-    expect(seedCandidates.filter((item) => item.toolIds.length > 0).length)
+    expect(approvedSeedItems.filter((item) => item.toolIds.length > 0).length)
       .toBeGreaterThanOrEqual(12);
-    expect(seedCandidates.filter((item) => item.review.changeWindow === 'within_30_days').length)
+    expect(approvedSeedItems.filter((item) => item.review.changeWindow === 'within_30_days').length)
       .toBeGreaterThanOrEqual(6);
-    expect(seedCandidates.filter((item) =>
+    expect(approvedSeedItems.filter((item) =>
       ['within_30_days', 'within_90_days'].includes(item.review.changeWindow)).length)
       .toBeGreaterThanOrEqual(12);
   });
@@ -166,7 +169,7 @@ describe('SAAS-602 seed review collection', () => {
     expect(knowledgeTopics).toHaveLength(6);
     expect(knowledgeTools).toHaveLength(8);
 
-    const itemIds = new Set(seedCandidates.map((item) => item.id));
+    const itemIds = new Set(approvedSeedItems.map((item) => item.id));
     const toolIds = new Set(knowledgeTools.map((tool) => tool.id));
     for (const topic of knowledgeTopics) {
       expect(topic.title.zh.trim().length).toBeGreaterThan(0);

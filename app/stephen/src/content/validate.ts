@@ -124,9 +124,17 @@ export function validateKnowledgeItems(items: readonly KnowledgeItem[]) {
   }
 }
 
-export function validateSeedCandidates(
+interface SeedLifecycleGate {
+  readonly editorialStatus: SeedCandidate['editorialStatus'];
+  readonly reviewStatus: SeedCandidate['review']['status'];
+  readonly collectionError: string;
+  readonly reviewError: string;
+}
+
+function validateSeedCollection(
   items: readonly SeedCandidate[],
-  sources: readonly SourceRegistryEntry[] = sourceRegistry,
+  sources: readonly SourceRegistryEntry[],
+  lifecycle: SeedLifecycleGate,
 ) {
   validateUniqueItems(items);
 
@@ -140,14 +148,14 @@ export function validateSeedCandidates(
   const conclusionScopes = new Set(['single_authority', 'cross_organization', 'editorial_synthesis']);
 
   for (const item of items) {
-    if (!item.seedContent || item.editorialStatus !== 'candidate') {
-      throw new Error('seed review collection requires candidate seed content');
+    if (!item.seedContent || item.editorialStatus !== lifecycle.editorialStatus) {
+      throw new Error(lifecycle.collectionError);
     }
     if (item.publicationMode !== 'manual') {
       throw new Error('seed content requires manual approval');
     }
-    if (item.review.status !== 'pending_owner_review') {
-      throw new Error('seed candidate is not pending owner review');
+    if (item.review.status !== lifecycle.reviewStatus) {
+      throw new Error(lifecycle.reviewError);
     }
     validateIsoDate(item.review.verifiedAt, 'review verifiedAt');
     if (item.tags.length === 0) {
@@ -227,4 +235,28 @@ export function validateSeedCandidates(
       throw new Error('Mainland China-supported content must reach at least 25%');
     }
   }
+}
+
+export function validateSeedCandidates(
+  items: readonly SeedCandidate[],
+  sources: readonly SourceRegistryEntry[] = sourceRegistry,
+) {
+  validateSeedCollection(items, sources, {
+    editorialStatus: 'candidate',
+    reviewStatus: 'pending_owner_review',
+    collectionError: 'seed review collection requires candidate seed content',
+    reviewError: 'seed candidate is not pending owner review',
+  });
+}
+
+export function validateApprovedSeedItems(
+  items: readonly SeedCandidate[],
+  sources: readonly SourceRegistryEntry[] = sourceRegistry,
+) {
+  validateSeedCollection(items, sources, {
+    editorialStatus: 'approved',
+    reviewStatus: 'approved',
+    collectionError: 'approved seed collection requires approved seed content',
+    reviewError: 'approved seed is missing owner approval',
+  });
 }

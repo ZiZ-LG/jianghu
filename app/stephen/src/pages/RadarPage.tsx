@@ -108,7 +108,7 @@ export default function RadarPage({
                 ? (language === 'zh' ? '尝试更短的关键词、原文岗位标题，或清除搜索。' : 'Try a shorter keyword, an original job title, or clear search.')
                 : selectedDomains.length > 0
                 ? (language === 'zh' ? '尝试清除筛选或切换 AND / OR。' : 'Clear filters or switch AND / OR.')
-                : (language === 'zh' ? '首批 30 条仍在项目所有者终审。' : 'The first 30 items remain under owner review.')}
+                : (language === 'zh' ? '当前公开集合暂无内容，请稍后再试。' : 'The public collection is currently empty. Please check back later.')}
             </p>
           </div>
         )}

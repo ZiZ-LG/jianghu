@@ -68,8 +68,8 @@ function NotFoundPage({ language }: { readonly language: Language }) {
       <h1>{language === 'zh' ? '这一页不在当前知识地图中。' : 'This page is not in the current knowledge map.'}</h1>
       <p>
         {language === 'zh'
-          ? '链接可能已失效，或候选内容尚未通过人工终审。'
-          : 'The link may be stale, or candidate content may still be under review.'}
+          ? '链接可能已失效，或相关内容已撤回、尚未公开。'
+          : 'The link may be stale, withdrawn, or not publicly available.'}
       </p>
       <div className='hero-actions'>
         <InternalLink className='primary-action' href='/'>
