@@ -2,7 +2,7 @@
 
 > 当前结论：`NO-GO FOR PRODUCTION / LOCAL RELEASE CANDIDATE COMPLETE`
 >
-> 原因：首批 30 条内容已经项目所有者逐条批准并进入人工公开集合，完整公开内容旅程复测通过；但生产部署、流量切换、`main` 合并和自动发布启用仍未获授权。真实生产 Nginx、证书和共享 Host 回归只能在另行授权的发布窗口执行。本清单不是部署指令。
+> 原因：首批 30 条内容已经项目所有者逐条批准并进入人工公开集合，完整公开内容旅程复测通过。项目所有者已授权本分支以 `main@49a09f3411033e628e34213f5f8c9197f01de275` 为基线，在 PR CI 全绿并完成审查后使用 merge commit 合并；生产部署、流量切换、Nginx 修改和自动发布启用仍未获授权。本清单不是部署指令。
 
 ## 1. 本次发布范围
 
@@ -19,7 +19,7 @@
 
 - CRM 代码、API、数据库、租户、权限或客户数据；
 - 账号、云同步、付费、论坛、公共评论、公开投稿和作品集生成；
-- 生产部署、流量切换、`main` 合并；
+- 生产部署、流量切换、直接推送 `main`、Nginx 修改；
 - crawler、公网候选写入接口和 auto-publish endpoint；
 - 自动发布启用。默认必须保持 `autoPublishingEnabled=false`、`stopSwitchEngaged=true`。
 
@@ -33,9 +33,10 @@
 | SAAS-603 本机状态与工具 | PASS | 搜索、localStorage 版本恢复、工具复制/下载、移动端实测 |
 | SAAS-603 候选管线与摘要 | PASS | 自动发布双重关闭、风险队列、去重、日报/周报测试 |
 | SAAS-604 发布契约 | **LOCAL RC PASS / PROD DEFERRED** | 本清单、第 3–7 节本地证据；第 8 节等待生产授权 |
+| 仓库落地授权 | **AUTHORIZED / GATED** | 仅限 `codex/stephen-knowledge-hub` 面向 `main@49a09f3` 的 PR；PR CI 全绿并完成审查后使用 merge commit |
 | 生产部署授权 | **NOT GRANTED / BLOCKING** | 项目所有者另行书面批准 |
 
-只要任一 `BLOCKING` 项未清零，结论必须保持 `NO-GO`。
+生产部署的任一 `BLOCKING` 项未清零，生产结论必须保持 `NO-GO`；本次仓库落地授权不解除任何生产门禁。
 
 ## 3. 内容与合规检查
 
@@ -188,7 +189,15 @@ rollback_verified_at=
 
 回滚动作仅在另行部署授权后执行：恢复上一静态版本和 Nginx 配置，`nginx -t`，reload，再重跑五个 Host 与 Stephen 关键路径。不得通过删除卷、重建 CRM 数据库或覆盖历史审计实现回滚。
 
-## 10. 最终签署
+## 10. 仓库落地主门
+
+- 基线：`main@49a09f3411033e628e34213f5f8c9197f01de275`；
+- 来源分支：`codex/stephen-knowledge-hub`；
+- 允许动作：最小文档收口、创建面向 `main` 的 PR、等待 PR CI 与审查、使用 merge commit 合并、等待合并后 `main` 精确 SHA 的 CI；
+- 禁止动作：直接推送 `main`、squash/rebase merge、生产部署、流量切换、Nginx 修改、自动发布启用；
+- 合并门槛：PR 全部必需检查成功，审查无未解决的阻断项，合并方法明确为 merge commit。
+
+## 11. 最终签署
 
 | 角色 | 结论 | 姓名 | 时间 | 证据 |
 |---|---|---|---|---|
@@ -196,6 +205,7 @@ rollback_verified_at=
 | 工程门禁 | PASS | Codex | 2026-08-23 | App 248、Stephen 35、G64111 32、三端类型、双构建与扫描通过 |
 | 浏览器验收 | PASS / CONTENT RETEST COMPLETE | Codex | 2026-08-23 | 30 条详情、桌面/平板/移动、交互、网络与控制台；复测报告记录本地健康分 100 |
 | Nginx/镜像 | LOCAL BUNDLE PASS / PROD PENDING | Codex | 2026-08-23 | 本机静态包 digest 已记录；真实 `nginx -t`、证书和共享 Host 回归待授权 |
+| 项目所有者仓库落地授权 | **GO / CONDITIONAL** | 项目所有者（本任务授权） | 2026-08-24 | PR CI 全绿并完成审查后使用 merge commit；合并后等待 `main` 精确 SHA CI 全绿 |
 | 项目所有者生产授权 | **NOT GRANTED** |  |  | 另行明确授权 |
 
-只有五行全部具备可追溯证据，且最后一行为明确 `GO`，才可执行生产部署或流量切换。
+仓库落地仅按第 10 节执行。只有生产相关证据全部具备且“项目所有者生产授权”为明确 `GO`，才可执行生产部署或流量切换。
