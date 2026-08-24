@@ -1,4 +1,4 @@
-import type { SeedCandidate } from '../domain';
+import type { ReviewedKnowledgeItem } from '../domain';
 import type { Language } from '../i18n';
 import InternalLink from '../components/InternalLink';
 import KnowledgeCard from '../components/KnowledgeCard';
@@ -7,7 +7,7 @@ export default function RolesPage({
   items,
   language,
 }: {
-  readonly items: readonly SeedCandidate[];
+  readonly items: readonly ReviewedKnowledgeItem[];
   readonly language: Language;
 }) {
   const roleItems = items.filter((item) =>

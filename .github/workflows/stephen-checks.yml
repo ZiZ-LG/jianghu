@@ -1,0 +1,65 @@
+name: Stephen checks
+
+on:
+  push:
+    branches:
+      - main
+      - 'codex/stephen-*'
+    paths:
+      - 'app/stephen/**'
+      - 'app/public/stephen/**'
+      - 'app/src/components/StephenSite.test.ts'
+      - 'deploy/stephen*'
+      - 'docs/content/stephen-*'
+      - 'docs/content/stephen-*/**'
+      - '.github/workflows/stephen-*.yml'
+  pull_request:
+    paths:
+      - 'app/stephen/**'
+      - 'app/public/stephen/**'
+      - 'app/src/components/StephenSite.test.ts'
+      - 'deploy/stephen*'
+      - 'docs/content/stephen-*'
+      - 'docs/content/stephen-*/**'
+      - '.github/workflows/stephen-*.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stephen-checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --install-links
+
+      - name: Type-check Stephen site
+        run: npx tsc --noEmit -p stephen/tsconfig.json
+
+      - name: Type-check editorial intake
+        run: npx tsc --noEmit -p stephen/tsconfig.editorial.json
+
+      - name: Test Stephen site and intake
+        run: npx vitest run --root stephen
+
+      - name: Build Stephen site
+        run: npm run build:stephen

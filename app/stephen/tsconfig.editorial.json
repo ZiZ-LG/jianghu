@@ -1,0 +1,14 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    "types": ["vite/client"]
+  },
+  "include": [
+    "scripts/**/*.ts",
+    "src/content/intake.ts",
+    "src/content/pipeline.ts",
+    "src/content/sources.ts",
+    "src/domain.ts"
+  ]
+}

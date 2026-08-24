@@ -4,7 +4,9 @@ import type { KnowledgeItem } from '../domain';
 import { sourceRegistry } from './sources';
 import {
   DEFAULT_PIPELINE_CONTROLS,
+  createSourceFingerprint,
   createPublicationRecord,
+  normalizeCanonicalUrl,
   processEditorialCandidates,
   rollbackRelease,
   selectDeterministicAuditSample,
@@ -107,6 +109,23 @@ describe('SAAS-603 deterministic editorial pipeline', () => {
       disposition: 'auto_ready',
     });
     expect(result.autoReady[0].audit.ruleVersion).toBe(DEFAULT_PIPELINE_CONTROLS.ruleVersion);
+  });
+
+  it('keeps the stop switch authoritative when automatic publishing is otherwise enabled', () => {
+    const result = processEditorialCandidates(
+      [candidate()],
+      sourceRegistry,
+      {
+        ...DEFAULT_PIPELINE_CONTROLS,
+        autoPublishingEnabled: true,
+        stopSwitchEngaged: true,
+      },
+    );
+
+    expect(result.autoReady).toEqual([]);
+    expect(result.manualReview).toHaveLength(1);
+    expect(result.manualReview[0].reasons)
+      .toContain('publishing stop switch is engaged');
   });
 
   it('derives medium and high risk deterministically and ignores an intake item\'s proposed risk', () => {
@@ -251,6 +270,45 @@ describe('SAAS-603 deterministic editorial pipeline', () => {
     expect(result.duplicates.map((entry) => entry.duplicateReason))
       .toEqual(['normalized_url', 'event_key', 'source_fingerprint']);
     expect(result.audit.filter((event) => event.action === 'duplicate_detected')).toHaveLength(3);
+  });
+
+  it('consults persisted URL, event and fingerprint history across separate runs', () => {
+    const urlDuplicate = processEditorialCandidates(
+      [candidate()],
+      sourceRegistry,
+      DEFAULT_PIPELINE_CONTROLS,
+      {
+        normalizedUrls: new Set([normalizeCanonicalUrl(baseItem.evidence[0].url)]),
+        eventKeys: new Set(),
+        sourceFingerprints: new Set(),
+      },
+    );
+    const eventDuplicate = processEditorialCandidates(
+      [candidate()],
+      sourceRegistry,
+      DEFAULT_PIPELINE_CONTROLS,
+      {
+        normalizedUrls: new Set(),
+        eventKeys: new Set(['openai-product-update-2026-08-23']),
+        sourceFingerprints: new Set(),
+      },
+    );
+    const fingerprintDuplicate = processEditorialCandidates(
+      [candidate()],
+      sourceRegistry,
+      DEFAULT_PIPELINE_CONTROLS,
+      {
+        normalizedUrls: new Set(),
+        eventKeys: new Set(),
+        sourceFingerprints: new Set([createSourceFingerprint(candidate())]),
+      },
+    );
+
+    expect([
+      urlDuplicate.duplicates[0]?.duplicateReason,
+      eventDuplicate.duplicates[0]?.duplicateReason,
+      fingerprintDuplicate.duplicates[0]?.duplicateReason,
+    ]).toEqual(['normalized_url', 'event_key', 'source_fingerprint']);
   });
 
   it('rejects unsafe evidence URLs before any publication eligibility decision', () => {

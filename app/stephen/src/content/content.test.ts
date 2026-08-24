@@ -37,6 +37,71 @@ describe('Stephen source governance', () => {
     })))
       .toThrow('full-text redistribution is not allowed');
   });
+
+  it('exposes machine ingestion only for the two owner-approved RSS sources', () => {
+    const machineSources = sourceRegistry.flatMap((source) => (
+      'ingestion' in source
+        ? [{ id: source.id, ingestion: source.ingestion }]
+        : []
+    ));
+
+    expect(machineSources.map((source) => source.id))
+      .toEqual(['openai-news-rss', 'google-cloud-ai-blog']);
+    expect(machineSources.map((source) => source.ingestion.endpoint))
+      .toEqual([
+        'https://openai.com/news/rss.xml',
+        'https://cloudblog.withgoogle.com/products/ai-machine-learning/rss/',
+      ]);
+    expect(machineSources.every((source) => source.ingestion.protocol === 'rss2'))
+      .toBe(true);
+  });
+
+  it('rejects an RSS endpoint whose host is outside its explicit fetch allowlist', () => {
+    const [first, ...rest] = sourceRegistry;
+    expect('ingestion' in first).toBe(true);
+    if (!('ingestion' in first)) return;
+    const invalid = [{
+      ...first,
+      ingestion: {
+        ...first.ingestion,
+        endpoint: 'https://unapproved.example/news.xml',
+      },
+    }, ...rest];
+
+    expect(() => validateSourceRegistry(invalid))
+      .toThrow('source ingestion endpoint host must be allowlisted');
+  });
+
+  it('limits the cold-start machine surface to at most three approved sources', () => {
+    const third = {
+      ...sourceRegistry[1],
+      ingestion: {
+        ...sourceRegistry[0].ingestion,
+        endpoint: 'https://www.anthropic.com/news.xml',
+        allowedEndpointHosts: ['www.anthropic.com'],
+        allowedItemHosts: ['www.anthropic.com'],
+      },
+    };
+    const fourth = {
+      ...sourceRegistry[3],
+      ingestion: {
+        ...sourceRegistry[0].ingestion,
+        endpoint: 'https://www.anthropic.com/careers.xml',
+        allowedEndpointHosts: ['www.anthropic.com'],
+        allowedItemHosts: ['www.anthropic.com'],
+      },
+    };
+    const invalid = [
+      sourceRegistry[0],
+      third,
+      sourceRegistry[2],
+      fourth,
+      ...sourceRegistry.slice(4),
+    ];
+
+    expect(() => validateSourceRegistry(invalid))
+      .toThrow('cold-start release requires 2-3 machine sources');
+  });
 });
 
 describe('SAAS-602 seed review collection', () => {

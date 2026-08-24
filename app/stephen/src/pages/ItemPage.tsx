@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 
-import type { KnowledgeTool, KnowledgeTopic, SeedCandidate } from '../domain';
+import type { KnowledgeTool, KnowledgeTopic, ReviewedKnowledgeItem } from '../domain';
 import { domainLabels, isChineseFallback, localize, type Language } from '../i18n';
 import { useLibrary } from '../state/LibraryContext';
 import EvidenceBadge from '../components/EvidenceBadge';
@@ -19,7 +19,7 @@ export default function ItemPage({
   tools,
   language,
 }: {
-  readonly item: SeedCandidate;
+  readonly item: ReviewedKnowledgeItem;
   readonly topics: readonly KnowledgeTopic[];
   readonly tools: readonly KnowledgeTool[];
   readonly language: Language;
