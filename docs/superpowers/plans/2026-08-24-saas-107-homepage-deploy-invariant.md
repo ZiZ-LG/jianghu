@@ -207,7 +207,7 @@ Additionally verify the diff contains no protected self-cultivation path and non
 
 Confirm public-home title/nav/no redirect, CRM entry/API/login, self-cultivation title/resources, ICP, police number/icon, and health endpoints. No SSH write command is permitted.
 
-- [ ] **Step 3: Commit and push the implementation**
+- [x] **Step 3: Commit and push the implementation**
 
 ```bash
 git add deploy/public-site-targets.json deploy/aliyun-edge-release.sh scripts/verify-public-site-artifact.mjs scripts/verify-public-site-artifact.test.mjs scripts/aliyun-edge-release.test.sh docs/部署上线指南.md docs/部署-公网三站与主页不变量.md
@@ -215,11 +215,11 @@ git commit -m "feat(SAAS-107): guard public homepage deployments"
 git push -u origin codex/saas-107-homepage-deploy-invariant
 ```
 
-- [ ] **Step 4: Wait for the implementation commit's exact SHA CI**
+- [x] **Step 4: Wait for the implementation commit's exact SHA CI**
 
 Use `gh run list`/`gh run view` and require every job for that exact SHA to succeed. Do not infer success from another branch or parent SHA.
 
-- [ ] **Step 5: Close the checklist in a docs-only commit**
+- [x] **Step 5: Close the checklist in a docs-only commit**
 
 Mark SAAS-107 `DONE`, restore “CRM no IN_PROGRESS”, record the implementation SHA, tests, CI run URL, no-production statement, and next gate. Push the docs-only commit and require its exact SHA CI to succeed before reporting completion or starting anything else.
 
