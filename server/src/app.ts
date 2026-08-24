@@ -99,20 +99,14 @@ const serviceCapabilityRules: ReadonlyArray<{
 }> = [
   {
     requirement: { entitlement: 'crm.core' },
-    matches: (pathname) => pathname === '/api/state'
-      || pathname === '/api/crm/context'
+    matches: (pathname) => pathname === '/api/crm/context'
       || pathname === '/api/today'
       || pathname === '/api/today/source'
-      || pathname === '/api/mutate'
-      || pathname === '/api/demo'
       || pathname === '/api/donate'
-      || pathname === '/api/archive'
-      || pathname.startsWith('/api/archive/')
       || pathname === '/api/commands/customer'
       || pathname === '/api/commands/commitment'
       || pathname === '/api/commands/quick-capture'
-      || pathname === '/api/commands/matter-participant'
-      || pathname.startsWith('/api/repair/account/'),
+      || pathname === '/api/commands/matter-participant',
   },
   {
     requirement: { entitlement: 'team.operations' },
@@ -120,7 +114,13 @@ const serviceCapabilityRules: ReadonlyArray<{
   },
   {
     requirement: { entitlement: 'sales.workspace' },
-    matches: (pathname) => pathname.startsWith('/api/opportunity/')
+    matches: (pathname) => pathname === '/api/state'
+      || pathname === '/api/mutate'
+      || pathname === '/api/demo'
+      || pathname === '/api/archive'
+      || pathname.startsWith('/api/archive/')
+      || pathname.startsWith('/api/repair/')
+      || pathname.startsWith('/api/opportunity/')
       || pathname === '/api/commands/opportunity-skeleton'
       || pathname.startsWith('/api/strategy/')
       || pathname.startsWith('/api/advisor/'),

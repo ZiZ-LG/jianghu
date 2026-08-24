@@ -22,6 +22,7 @@ interface DeploymentFixture {
   aiSecret: string;
   edition: 'commercial' | 'internal';
   entitlements: string;
+  customerCommands: '0' | '1';
   methodologyCommands: '0' | '1';
   port: string;
 }
@@ -37,6 +38,7 @@ const commercialFixture = (): DeploymentFixture => ({
   aiSecret: secret('4'),
   edition: 'commercial',
   entitlements: '',
+  customerCommands: '1',
   methodologyCommands: '0',
   port: '18080',
 });
@@ -52,6 +54,7 @@ const internalFixture = (): DeploymentFixture => ({
   aiSecret: secret('8'),
   edition: 'internal',
   entitlements: '',
+  customerCommands: '1',
   methodologyCommands: '0',
   port: '18081',
 });
@@ -74,6 +77,7 @@ function writeDeployment(
     `JWT_SECRET=${fixture.jwtSecret}`,
     `AI_KEY_SECRET=${fixture.aiSecret}`,
     'OUTBOUND_ALLOWED_HOSTS=example.com',
+    `CUSTOMER_COMMANDS_ENABLED=${fixture.customerCommands}`,
     'COMMITMENT_COMMANDS_ENABLED=1',
     `METHODOLOGY_COMMANDS_ENABLED=${fixture.methodologyCommands}`,
     `PRODUCT_EDITION=${fixture.edition}`,
@@ -132,6 +136,7 @@ describe('SAAS-106 G3 deployment isolation verifier', () => {
     expect(result.stdout).toContain('G3_DEPLOYMENT_ISOLATION_OK=1');
     expect(result.stdout).toContain('commercial_project=jianghu-commercial-g3-test');
     expect(result.stdout).toContain('internal_project=jianghu-internal-g3-test');
+    expect(result.stdout).toContain('commercial_customer_commands=1');
     for (const value of [
       commercial.databasePassword,
       commercial.backupSecret,
@@ -144,6 +149,27 @@ describe('SAAS-106 G3 deployment isolation verifier', () => {
     ]) {
       expect(output).not.toContain(value);
     }
+  });
+
+  it('renders and reports the explicit commercial Customer command rollback state', () => {
+    const result = runVerifier(
+      { ...commercialFixture(), customerCommands: '0' },
+      internalFixture(),
+    );
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).toBe(0);
+    expect(result.stdout).toContain('commercial_customer_commands=0');
+  });
+
+  it('fails closed when CUSTOMER_COMMANDS_ENABLED is absent from the deployment env file', () => {
+    const result = runVerifier(commercialFixture(), internalFixture(), {
+      omitCommercialKeys: ['CUSTOMER_COMMANDS_ENABLED'],
+    });
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).toBe(1);
+    expect(result.stderr).toContain('G3_DEPLOYMENT_ISOLATION_ERROR=');
   });
 
   it('fails closed when a required env-file secret exists only in the ambient process', () => {

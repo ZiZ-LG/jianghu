@@ -65,6 +65,28 @@ export interface MatterContext {
   relations: RelationV2[];
 }
 
+export interface QuickCaptureAccountOption {
+  id: string;
+  name: string;
+  opportunities: Array<{ id: string; name: string }>;
+  persons: Array<{ id: string; name: string }>;
+}
+
+/** Minimal Quick Capture lookup derived without legacy sales or methodology fields. */
+export function toQuickCaptureAccounts(snapshot: CrmContextSnapshot | null): QuickCaptureAccountOption[] {
+  if (!snapshot) return [];
+  return snapshot.customers.map((customer) => ({
+    id: customer.id,
+    name: customer.name,
+    opportunities: snapshot.matters
+      .filter((matter) => matter.customerId === customer.id)
+      .map((matter) => ({ id: matter.id, name: matter.title })),
+    persons: snapshot.people
+      .filter((person) => person.customerId === customer.id)
+      .map((person) => ({ id: person.id, name: person.name })),
+  }));
+}
+
 export function selectCustomerContext(
   snapshot: CrmContextSnapshot,
   customerId: string,

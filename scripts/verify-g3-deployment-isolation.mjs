@@ -114,6 +114,7 @@ function deploymentIdentity(label, values, rendered) {
     publishedPort: String(publishedPort),
     edition: server.PRODUCT_EDITION,
     entitlements: server.PRODUCT_ENTITLEMENTS,
+    customerCommands: server.CUSTOMER_COMMANDS_ENABLED,
     methodologyCommands: server.METHODOLOGY_COMMANDS_ENABLED,
   };
 }
@@ -140,6 +141,15 @@ function assertG3Policies(commercial, internal) {
   if (commercial.edition !== 'commercial') throw new Error('commercial deployment must use commercial edition');
   if (internal.edition !== 'internal') throw new Error('internal deployment must use internal edition');
   if (commercial.entitlements !== '') throw new Error('commercial G3 deployment must use Free entitlements');
+  for (const deployment of [commercial, internal]) {
+    const configured = required(deployment.values, 'CUSTOMER_COMMANDS_ENABLED', deployment.label);
+    if (configured !== '0' && configured !== '1') {
+      throw new Error(`${deployment.label} CUSTOMER_COMMANDS_ENABLED must be 0 or 1`);
+    }
+    if (deployment.customerCommands !== configured) {
+      throw new Error(`${deployment.label} Compose did not render CUSTOMER_COMMANDS_ENABLED from its env file`);
+    }
+  }
   if (commercial.methodologyCommands !== '0') {
     throw new Error('commercial G3 deployment must keep methodology commands disabled');
   }
@@ -151,14 +161,24 @@ try {
   const internalValues = parseEnvFile(internalEnv);
   const commercial = renderCompose('commercial', commercialEnv, commercialValues);
   const internal = renderCompose('internal', internalEnv, internalValues);
-  const commercialIdentity = deploymentIdentity('commercial', commercialValues, commercial);
-  const internalIdentity = deploymentIdentity('internal', internalValues, internal);
+  const commercialIdentity = {
+    ...deploymentIdentity('commercial', commercialValues, commercial),
+    label: 'commercial',
+    values: commercialValues,
+  };
+  const internalIdentity = {
+    ...deploymentIdentity('internal', internalValues, internal),
+    label: 'internal',
+    values: internalValues,
+  };
   assertPhysicalIsolation(commercialIdentity, internalIdentity);
   assertG3Policies(commercialIdentity, internalIdentity);
 
   for (const line of [
     ...safeResourceSummary('commercial', commercial),
+    `commercial_customer_commands=${commercialIdentity.customerCommands}`,
     ...safeResourceSummary('internal', internal),
+    `internal_customer_commands=${internalIdentity.customerCommands}`,
     'G3_DEPLOYMENT_ISOLATION_OK=1',
   ]) console.log(line);
 } catch (error) {

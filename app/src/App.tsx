@@ -36,12 +36,12 @@ import { createCommitScheduler } from './lib/sync/commitScheduler';
 import { createMutationCoordinator, createMutationExecutionGate, entityKeyForAction } from './lib/sync/mutationCoordinator';
 import { localYmd } from './lib/dateYmd';
 import { clearStableBatchItemKey, runBatchWithProgress, stableBatchItemKey, type StableBatchKeyCache } from './lib/reviewBatch';
-import { capabilityPolicyAllows, type ProductAccess } from '@jianghu/domain-contracts';
+import { capabilityPolicyAllows, type CrmContextSnapshot, type ProductAccess } from '@jianghu/domain-contracts';
 import { GlobalDialogs, type GlobalInboxProps } from './components/GlobalDialogs';
 import { CommercialShell } from './components/CommercialShell';
 import { InternalRootAdapter } from './components/InternalRootAdapter';
 import { resolveProductRoute } from './lib/productRoutes';
-import { selectAppRootSurface } from './lib/appProductShell';
+import { selectAppRootSurface, shouldLoadLegacyState } from './lib/appProductShell';
 import {
   appShellUiReducer,
   createInitialAppShellUiState,
@@ -62,6 +62,7 @@ import {
 export default function App() {
   const [state, dispatch] = useReducer(reducer, { accounts: [] });
   const [auth, setAuth] = useState<AuthResult | null>(null);
+  const [commercialContext, setCommercialContext] = useState<CrmContextSnapshot | null>(null);
   const [commercialPath, setCommercialPath] = useState(window.location.pathname);
   const [booting, setBooting] = useState(true);
   const [syncErr, setSyncErr] = useState('');
@@ -197,6 +198,27 @@ export default function App() {
     dispatch({ type: 'HYDRATE', accounts: result.value.accounts });
     return result.value;
   }, []);
+  const refreshCrmContext = useCallback(async (ticket: SessionTicket = sessionGuard.current.capture()) => {
+    const result = await runSessionRequest(sessionGuard.current, ticket, api.crmContext, api.getToken);
+    if (!result.current) return null;
+    setCommercialContext(result.value);
+    return result.value;
+  }, []);
+  const loadProductData = useCallback(async (product: ProductAccess, ticket: SessionTicket) => {
+    const needsLegacyState = shouldLoadLegacyState(product);
+    const [legacyState] = await Promise.all([
+      needsLegacyState ? refreshState(ticket) : Promise.resolve({ accounts: [] }),
+      product.shell === 'commercial' ? refreshCrmContext(ticket) : Promise.resolve(null),
+    ]);
+    if (!sessionGuard.current.isCurrent(ticket, api.getToken())) return null;
+    if (needsLegacyState && !legacyState) return null;
+    if (!needsLegacyState) {
+      stateRef.current = { accounts: [] };
+      dispatch({ type: 'HYDRATE', accounts: [] });
+    }
+    if (product.shell !== 'commercial') setCommercialContext(null);
+    return legacyState;
+  }, [refreshCrmContext, refreshState]);
   const renderedSessionTicket = sessionGuard.current.capture();
   const sessionLease = useMemo(
     () => createSessionLease(sessionGuard.current, renderedSessionTicket, api.getToken),
@@ -212,6 +234,7 @@ export default function App() {
     if (!token) {
       sessionGuard.current.begin(null);
       setInbox(emptyInbox);
+      setCommercialContext(null);
       setBooting(false);
       return;
     }
@@ -222,7 +245,7 @@ export default function App() {
     try {
       const meResult = await runSessionRequest(sessionGuard.current, sessionTicket, api.me, api.getToken);
       if (!meResult.current) return;
-      const st = await refreshState(sessionTicket);
+      const st = await loadProductData(meResult.value.product, sessionTicket);
       if (!st) return;
       const me = meResult.value;
       setAuth({ token, user: me.user, tenant: me.tenant, product: me.product });
@@ -235,6 +258,7 @@ export default function App() {
         sessionGuard.current.begin(null);
         setInbox(emptyInbox);
         setAuth(null);
+        setCommercialContext(null);
         stateRef.current = { accounts: [] };
         dispatch({ type: 'HYDRATE', accounts: [] });
         setBooting(false);
@@ -244,14 +268,14 @@ export default function App() {
     } finally {
       if (sessionGuard.current.isCurrent(sessionTicket, api.getToken())) setBooting(false);
     }
-  }, [applyAuthenticatedRoute, loadInbox, refreshState]);
+  }, [applyAuthenticatedRoute, loadInbox, loadProductData]);
   // 启动：有 token 则恢复会话 + 拉取云端数据
   useEffect(() => { void restoreSession(); }, [restoreSession]);
 
   const onAuthed = async (res: AuthResult) => {
     const sessionTicket = sessionGuard.current.begin(res.token);
     setInbox(emptyInbox);
-    const st = await refreshState(sessionTicket);
+    const st = await loadProductData(res.product, sessionTicket);
     if (!st) return;
     setAuth(res);
     applyAuthenticatedRoute(res.product, st.accounts);
@@ -268,7 +292,7 @@ export default function App() {
     sessionGuard.current.begin(null);
     appShellUiDispatch({ type: 'RESET_SESSION_TRANSIENT' });
     setInbox(clearedUi.inbox);
-    api.setToken(null); setAuth(null); setAccId(null); setOppId(null); setSelectedId(null);
+    api.setToken(null); setAuth(null); setCommercialContext(null); setAccId(null); setOppId(null); setSelectedId(null);
     stateRef.current = { accounts: [] };
     dispatch({ type: 'HYDRATE', accounts: [] });
     setSyncErr(clearedUi.syncErr);
@@ -829,13 +853,15 @@ export default function App() {
           access={auth.product}
           pathname={commercialPath}
           accounts={state.accounts}
+          crmContext={commercialContext}
           actorUserId={auth.user.id}
           readonly={readonly}
           onNavigate={navigateCommercial}
           onOpenLegacy={salesWorkspaceEnabled ? openAccount : () => setSyncErr('当前版本未启用复杂销售工作台')}
           onOpenTeam={() => setGlobalDialogOpen('team', true)}
           onQuickCaptureSaved={async () => {
-            await refreshRenderedState();
+            await refreshCrmContext(renderedSessionTicket);
+            if (salesWorkspaceEnabled) await refreshRenderedState();
             if (sessionLease.isCurrent()) setSyncErr('');
           }}
           onLogout={logout}

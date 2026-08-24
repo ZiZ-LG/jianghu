@@ -99,6 +99,14 @@ async function writeRepairAudit(
 
 async function repairAccount(ctx: CommandContext, id: string, patch: z.infer<typeof accountPatchSchema>): Promise<void> {
   await prisma.$transaction(async (tx) => {
+    const scope = await resolveEffectiveResourceScope(tx, {
+      tenantId: ctx.tenantId,
+      userId: ctx.actorId,
+      role: ctx.actorRole,
+    });
+    if (scope.actorRole === 'viewer' || !scope.canReadAccountData(id)) {
+      throw new ScopedNotFoundError();
+    }
     const account = await requireScopedRow(tx.account.findFirst({
       where: { id, tenantId: ctx.tenantId, archivedAt: null },
       select: {

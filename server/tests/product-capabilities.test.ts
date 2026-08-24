@@ -21,7 +21,7 @@ async function contextFor(config: {
 
 const auth = (token: string) => ({ authorization: `Bearer ${token}` });
 
-async function expectDenied(app: FastifyInstance, token: string, method: 'GET' | 'POST', url: string, payload?: Record<string, unknown>) {
+async function expectDenied(app: FastifyInstance, token: string, method: 'GET' | 'POST' | 'PATCH', url: string, payload?: Record<string, unknown>) {
   const response = await app.inject({ method, url, headers: auth(token), payload });
   expect(response.statusCode, response.body).toBe(403);
   expect(response.json()).toEqual({ error: '能力未启用', code: 'capability_denied' });
@@ -41,10 +41,20 @@ describe('server product capability enforcement', () => {
       policy: { entitlements: ['crm.core'], permissions: [] },
     });
 
-    expect((await context.app.inject({ method: 'GET', url: '/api/state', headers: auth(context.token) })).statusCode).toBe(200);
+    await expectDenied(context.app, context.token, 'GET', '/api/state');
     expect((await context.app.inject({ method: 'GET', url: '/api/crm/context', headers: auth(context.token) })).statusCode).toBe(200);
     expect((await context.app.inject({ method: 'GET', url: '/api/today', headers: auth(context.token) })).statusCode).toBe(200);
     expect((await context.app.inject({ method: 'POST', url: '/api/today/source', headers: auth(context.token), payload: {} })).statusCode).toBe(400);
+    await expectDenied(context.app, context.token, 'POST', '/api/demo');
+    await expectDenied(context.app, context.token, 'GET', '/api/archive');
+    await expectDenied(context.app, context.token, 'PATCH', '/api/repair/account/missing-account', {
+      base: { name: 'Missing', customerType: 1, primaryOwner: '', primaryOwnerUserId: null },
+      name: 'Forbidden repair',
+    });
+    await expectDenied(context.app, context.token, 'POST', '/api/mutate', { action: {
+      type: 'ADD_ACCOUNT',
+      account: { id: 'free-legacy-account', name: 'Free legacy bypass', customerType: 1, primaryOwner: '', primaryOwnerUserId: null },
+    } });
     await expectDenied(context.app, context.token, 'POST', '/api/mutate', { action: {
       type: 'ADD_OPP', accId: 'missing-account',
       opp: { id: 'missing-opportunity', name: 'Direct bypass', customerType: 1, pipelineStage: '线索', engageStage: '需求调研立项' },
@@ -62,6 +72,8 @@ describe('server product capability enforcement', () => {
     });
     await expectDenied(context.app, context.token, 'POST', '/api/commands/methodology', {});
     await expectDenied(context.app, context.token, 'GET', '/api/pde/missing/ev');
+    expect(await context.prisma.account.count({ where: { tenantId: context.tenant.id } })).toBe(0);
+    expect(await context.prisma.opportunity.count({ where: { tenantId: context.tenant.id } })).toBe(0);
   });
 
   it('denies a commercial Free MCP compound write before shared action or direct bundle mutation', async () => {
@@ -120,6 +132,7 @@ describe('server product capability enforcement', () => {
     });
 
     expect((await context.app.inject({ method: 'GET', url: '/api/members', headers: auth(context.token) })).statusCode).toBe(200);
+    expect((await context.app.inject({ method: 'GET', url: '/api/state', headers: auth(context.token) })).statusCode).toBe(200);
     expect((await context.app.inject({ method: 'POST', url: '/api/opportunity/clone', headers: auth(context.token), payload: {} })).statusCode).not.toBe(403);
     expect((await context.app.inject({ method: 'POST', url: '/api/commands/methodology', headers: auth(context.token), payload: {} })).statusCode).not.toBe(403);
     expect((await context.app.inject({ method: 'GET', url: '/api/pde/missing/ev', headers: auth(context.token) })).statusCode).not.toBe(403);

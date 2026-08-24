@@ -1,7 +1,7 @@
 import { CUSTOMER_NAME_MAX_LENGTH, QUICK_CAPTURE_TITLE_MAX_LENGTH } from '@jianghu/domain-contracts';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import type { Account } from '../types';
 import { api } from '../api';
+import type { QuickCaptureAccountOption } from '../lib/crmContext';
 import {
   buildQuickCaptureDraft,
   parseNaturalQuickCapture,
@@ -20,7 +20,7 @@ export function QuickCapture({
   readonly,
   onSaved,
 }: {
-  accounts: Account[];
+  accounts: QuickCaptureAccountOption[];
   actorUserId: string;
   readonly: boolean;
   onSaved: () => Promise<unknown>;

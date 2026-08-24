@@ -4,10 +4,20 @@ import { createElement } from 'react';
 import { assembleProductAccess } from '@jianghu/domain-contracts';
 import { CommercialShell } from './CommercialShell';
 
+const EMPTY_CRM_CONTEXT = {
+  generatedAtUtc: '2026-08-24T00:00:00Z',
+  customers: [],
+  matters: [],
+  people: [],
+  matterParticipants: [],
+  relations: [],
+};
+
 const renderShell = (pathname: string, enabledEntitlements?: string[], readonly = false) => renderToStaticMarkup(createElement(CommercialShell, {
   access: assembleProductAccess({ edition: 'commercial', ...(enabledEntitlements ? { enabledEntitlements } : {}) }),
   pathname,
   accounts: [],
+  crmContext: EMPTY_CRM_CONTEXT,
   actorUserId: 'user-cao',
   readonly,
   onNavigate: () => undefined,
@@ -64,5 +74,30 @@ describe('CommercialShell', () => {
     const html = renderShell(path, [entitlement]);
     expect(html).toContain(`data-capability-surface="${surface}"`);
     expect(html).not.toContain('当前版本未启用复杂销售工作台');
+  });
+
+  it('renders Quick Capture customer choices from the neutral CRM snapshot without legacy state', () => {
+    const html = renderToStaticMarkup(createElement(CommercialShell, {
+      access: assembleProductAccess({ edition: 'commercial' }),
+      pathname: '/quick-capture',
+      accounts: [],
+      crmContext: {
+        ...EMPTY_CRM_CONTEXT,
+        customers: [{
+          id: 'neutral-customer', name: '中性客户档案', categoryKey: null,
+          primaryOwnerUserId: 'user-cao', archivedAt: null, version: 0,
+        }],
+      },
+      actorUserId: 'user-cao',
+      readonly: false,
+      onNavigate: () => undefined,
+      onOpenLegacy: () => undefined,
+      onOpenTeam: () => undefined,
+      onQuickCaptureSaved: async () => undefined,
+      onLogout: () => undefined,
+    }));
+
+    expect(html).toContain('中性客户档案');
+    expect(html).not.toContain('复杂销售');
   });
 });

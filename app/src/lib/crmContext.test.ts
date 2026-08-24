@@ -7,6 +7,7 @@ import {
   relationKindLabel,
   selectCustomerContext,
   selectMatterContext,
+  toQuickCaptureAccounts,
 } from './crmContext';
 
 const SNAPSHOT = {
@@ -96,5 +97,29 @@ describe('generic CRM context presentation helpers', () => {
     const emptyRelations: CrmContextSnapshot = { ...SNAPSHOT, relations: [] };
     expect(selectCustomerContext(emptyRelations, 'customer-1')?.relations).toEqual([]);
     expect(selectMatterContext(emptyRelations, 'matter-general')?.relations).toEqual([]);
+  });
+
+  it('derives Quick Capture choices only from the neutral CRM context contract', () => {
+    expect(toQuickCaptureAccounts(SNAPSHOT)).toEqual([
+      {
+        id: 'customer-1',
+        name: '通用客户',
+        opportunities: [
+          { id: 'matter-general', name: '联合研究' },
+          { id: 'matter-sales', name: '设备采购' },
+        ],
+        persons: [
+          { id: 'person-1', name: '李总' },
+          { id: 'person-2', name: '王经理' },
+          { id: 'person-3', name: '陈顾问' },
+        ],
+      },
+      {
+        id: 'customer-2',
+        name: '另一客户',
+        opportunities: [{ id: 'matter-unknown', name: '生态共建' }],
+        persons: [{ id: 'person-4', name: '赵老师' }],
+      },
+    ]);
   });
 });
