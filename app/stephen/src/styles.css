@@ -1140,6 +1140,62 @@ h2 {
   margin: 6px 0 0;
 }
 
+.analysis-evidence {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.analysis-evidence > div {
+  min-width: 0;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--page);
+}
+
+.analysis-evidence h2 {
+  margin: 8px 0 16px;
+  font-family: inherit;
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.supporting-facts ol {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding-left: 22px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.deeper-analysis dl,
+.deeper-analysis dd {
+  margin: 0;
+}
+
+.deeper-analysis dl {
+  display: grid;
+  gap: 14px;
+}
+
+.deeper-analysis dl > div {
+  padding-left: 14px;
+  border-left: 3px solid var(--accent);
+}
+
+.deeper-analysis dt {
+  margin-bottom: 4px;
+  font-weight: 800;
+}
+
+.deeper-analysis dd {
+  color: var(--muted);
+  line-height: 1.7;
+}
+
 .evidence-section {
   display: grid;
   grid-template-columns: minmax(200px, 0.38fr) 1fr;
@@ -1617,12 +1673,17 @@ h2 {
   .topic-grid,
   .topic-framework,
   .item-interpretation,
+  .analysis-evidence,
   .evidence-section,
   .related-grid,
   .tool-columns,
   .path-grid,
   .library-grid {
     grid-template-columns: 1fr;
+  }
+
+  .verification-note {
+    grid-column: 1;
   }
 
   .digest-metrics,

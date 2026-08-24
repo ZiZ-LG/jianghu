@@ -40,24 +40,14 @@ describe('Stephen source governance', () => {
 });
 
 describe('SAAS-602 seed review collection', () => {
-  it('contains exactly 30 review-only candidates with the approved category mix', () => {
+  it('contains exactly 30 review-only candidates while pure AI technology stays below 20%', () => {
     expect(seedCandidates).toHaveLength(30);
     expect(approvedKnowledgeItems).toEqual([]);
     expect(() => validateSeedCandidates(seedCandidates)).not.toThrow();
 
-    const categoryCounts = Object.fromEntries(
-      ['ai_technology', 'enterprise_sales_method', 'ai_role_change', 'org_adoption']
-        .map((category) => [
-          category,
-          seedCandidates.filter((item) => item.seedCategory === category).length,
-        ]),
-    );
-    expect(categoryCounts).toEqual({
-      ai_technology: 10,
-      enterprise_sales_method: 8,
-      ai_role_change: 6,
-      org_adoption: 6,
-    });
+    const pureAiTechnologyCount = seedCandidates
+      .filter((item) => item.seedCategory === 'ai_technology').length;
+    expect(pureAiTechnologyCount / seedCandidates.length).toBeLessThan(0.2);
 
     for (const item of seedCandidates) {
       expect(item.editorialStatus).toBe('candidate');
@@ -74,6 +64,86 @@ describe('SAAS-602 seed review collection', () => {
       expect(item.evidence.every((evidence) =>
         sourceRegistry.some((source) => source.id === evidence.sourceId))).toBe(true);
     }
+  });
+
+  it('grounds every conclusion in two traceable facts and cross-organization evidence', () => {
+    const candidates = seedCandidates;
+
+    for (const item of candidates) {
+      expect(item.supportingFacts.length, `${item.id} supporting facts`).toBeGreaterThanOrEqual(2);
+      const evidenceById = new Map(item.evidence.map((evidence) => [evidence.id, evidence]));
+      const factStatements = new Set<string>();
+      const supportingSourceIds = new Set<string>();
+
+      for (const fact of item.supportingFacts) {
+        expect(fact.statement.trim().length, `${item.id} fact statement`).toBeGreaterThan(0);
+        expect(fact.evidenceIds.length, `${item.id} fact evidence`).toBeGreaterThan(0);
+        factStatements.add(fact.statement.trim());
+        for (const evidenceId of fact.evidenceIds) {
+          const evidence = evidenceById.get(evidenceId);
+          expect(evidence, `${item.id} missing evidence ${evidenceId}`).toBeDefined();
+          if (evidence) supportingSourceIds.add(evidence.sourceId);
+        }
+      }
+
+      expect(factStatements.size, `${item.id} duplicated facts`).toBe(item.supportingFacts.length);
+      if (item.conclusionScope === 'cross_organization') {
+        expect(supportingSourceIds.size, `${item.id} source diversity`).toBeGreaterThanOrEqual(2);
+      }
+    }
+  });
+
+  it('uses Mainland China factual support in at least 25% of the 30 seeds', () => {
+    const mainlandSourceIds = new Set<string>(
+      sourceRegistry
+        .filter((source) => source.originRegion === 'mainland_china')
+        .map((source) => source.id),
+    );
+    const mainlandItems = seedCandidates.filter((item) => {
+      const evidenceById = new Map(item.evidence.map((evidence) => [evidence.id, evidence]));
+      return item.supportingFacts.some((fact) => fact.evidenceIds.some((evidenceId) => {
+        const evidence = evidenceById.get(evidenceId);
+        return evidence ? mainlandSourceIds.has(evidence.sourceId) : false;
+      }));
+    });
+
+    expect(mainlandItems.length).toBeGreaterThanOrEqual(8);
+  });
+
+  it('keeps Agent terminology in English and adds a mechanism-to-value boundary analysis', () => {
+    const candidates = seedCandidates;
+
+    for (const item of candidates) {
+      const authoredChinese = [
+        item.title.zh,
+        item.summary.zh,
+        item.whyItMatters.zh,
+        item.salesImplication.zh,
+        item.roleOrgImplication.zh,
+        item.nextAction.zh,
+        item.review.verificationNotes,
+        ...item.supportingFacts.map((fact) => fact.statement),
+        item.deeperAnalysis.mechanism,
+        item.deeperAnalysis.businessValue,
+        item.deeperAnalysis.boundary,
+      ].join('\n');
+
+      expect(authoredChinese, `${item.id} translated Agent terminology`).not.toContain('代理');
+      expect(item.deeperAnalysis.mechanism.trim().length, `${item.id} mechanism`).toBeGreaterThan(0);
+      expect(item.deeperAnalysis.businessValue.trim().length, `${item.id} business value`).toBeGreaterThan(0);
+      expect(item.deeperAnalysis.boundary.trim().length, `${item.id} boundary`).toBeGreaterThan(0);
+    }
+  });
+
+  it('rejects a seed whose conclusion drops below the two-fact gate', () => {
+    const [first, ...rest] = seedCandidates;
+    const invalidBatch = [{
+      ...first,
+      supportingFacts: first.supportingFacts.slice(0, 1),
+    }, ...rest];
+
+    expect(() => validateSeedCandidates(invalidBatch))
+      .toThrow('ST-001 requires at least two supporting facts');
   });
 
   it('meets three-domain, cross-domain, action and freshness coverage', () => {

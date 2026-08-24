@@ -6,6 +6,7 @@ import {
   type LocalizedText,
   type SeedCandidate,
 } from '../domain';
+import { sourceRegistry, type SourceRegistryEntry } from './sources';
 
 function requireText(value: unknown, message: string): asserts value is string {
   if (typeof value !== 'string' || value.trim() === '') {
@@ -123,8 +124,20 @@ export function validateKnowledgeItems(items: readonly KnowledgeItem[]) {
   }
 }
 
-export function validateSeedCandidates(items: readonly SeedCandidate[]) {
+export function validateSeedCandidates(
+  items: readonly SeedCandidate[],
+  sources: readonly SourceRegistryEntry[] = sourceRegistry,
+) {
   validateUniqueItems(items);
+
+  const sourceById = new Map(sources.map((source) => [source.id, source]));
+  const mainlandSourceIds = new Set(
+    sources
+      .filter((source) => source.originRegion === 'mainland_china')
+      .map((source) => source.id),
+  );
+  const mainlandItemIds = new Set<string>();
+  const conclusionScopes = new Set(['single_authority', 'cross_organization', 'editorial_synthesis']);
 
   for (const item of items) {
     if (!item.seedContent || item.editorialStatus !== 'candidate') {
@@ -142,6 +155,76 @@ export function validateSeedCandidates(items: readonly SeedCandidate[]) {
     }
     if (item.evidence.some((evidence) => !evidence.allowlisted)) {
       throw new Error('seed candidate evidence must be allowlisted');
+    }
+    if (item.evidence.some((evidence) => !sourceById.has(evidence.sourceId))) {
+      throw new Error(`${item.id} evidence source is not registered`);
+    }
+    if (!conclusionScopes.has(item.conclusionScope)) {
+      throw new Error(`${item.id} conclusion scope is invalid`);
+    }
+    if (item.supportingFacts.length < 2) {
+      throw new Error(`${item.id} requires at least two supporting facts`);
+    }
+
+    const evidenceById = new Map(item.evidence.map((evidence) => [evidence.id, evidence]));
+    const factStatements = new Set<string>();
+    const supportingSourceIds = new Set<string>();
+    for (const fact of item.supportingFacts) {
+      requireText(fact.id, `${item.id} supporting fact id is required`);
+      requireText(fact.statement, `${item.id} supporting fact statement is required`);
+      const normalizedStatement = fact.statement.trim();
+      if (factStatements.has(normalizedStatement)) {
+        throw new Error(`${item.id} supporting facts must be unique`);
+      }
+      factStatements.add(normalizedStatement);
+      if (fact.evidenceIds.length === 0) {
+        throw new Error(`${item.id} supporting fact requires evidence`);
+      }
+      for (const evidenceId of fact.evidenceIds) {
+        const evidence = evidenceById.get(evidenceId);
+        if (!evidence) {
+          throw new Error(`${item.id} supporting fact references missing evidence`);
+        }
+        supportingSourceIds.add(evidence.sourceId);
+        if (mainlandSourceIds.has(evidence.sourceId)) {
+          mainlandItemIds.add(item.id);
+        }
+      }
+    }
+    if (item.conclusionScope === 'cross_organization' && supportingSourceIds.size < 2) {
+      throw new Error(`${item.id} cross-organization conclusion requires two sources`);
+    }
+
+    requireText(item.deeperAnalysis.mechanism, `${item.id} mechanism is required`);
+    requireText(item.deeperAnalysis.businessValue, `${item.id} business value is required`);
+    requireText(item.deeperAnalysis.boundary, `${item.id} boundary is required`);
+
+    const authoredChinese = [
+      item.title.zh,
+      item.summary.zh,
+      item.whyItMatters.zh,
+      item.salesImplication.zh,
+      item.roleOrgImplication.zh,
+      item.nextAction.zh,
+      item.review.verificationNotes,
+      ...item.supportingFacts.map((fact) => fact.statement),
+      item.deeperAnalysis.mechanism,
+      item.deeperAnalysis.businessValue,
+      item.deeperAnalysis.boundary,
+    ].join('\n');
+    if (authoredChinese.includes('代理')) {
+      throw new Error(`${item.id} must keep Agent terminology in English`);
+    }
+  }
+
+  if (items.length === 30) {
+    const pureAiTechnologyCount = items
+      .filter((item) => item.seedCategory === 'ai_technology').length;
+    if (pureAiTechnologyCount / items.length >= 0.2) {
+      throw new Error('pure AI technology content must stay below 20%');
+    }
+    if (mainlandItemIds.size < Math.ceil(items.length * 0.25)) {
+      throw new Error('Mainland China-supported content must reach at least 25%');
     }
   }
 }

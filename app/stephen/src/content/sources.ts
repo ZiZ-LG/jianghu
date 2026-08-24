@@ -1,6 +1,7 @@
 export type SourceKind =
   | 'official_product_news'
   | 'official_engineering_blog'
+  | 'official_documentation'
   | 'official_careers'
   | 'government_policy'
   | 'original_research'
@@ -24,7 +25,8 @@ export interface SourceRegistryEntry {
   readonly homepage: string;
   readonly kind: SourceKind;
   readonly authority: SourceAuthority;
-  readonly language: 'en' | 'multilingual';
+  readonly language: 'zh' | 'en' | 'multilingual';
+  readonly originRegion: 'mainland_china' | 'international';
   readonly cadence: SourceCadence;
   readonly redistributionPolicy: 'metadata_short_summary_link_only';
   readonly automaticEligibility: SourceAutomaticEligibility;
@@ -40,6 +42,7 @@ interface SourceRegistryInput {
   readonly redistributionPolicy?: unknown;
   readonly active?: unknown;
   readonly lastVerifiedAt?: unknown;
+  readonly originRegion?: unknown;
 }
 
 export const sourceRegistry = [
@@ -50,6 +53,7 @@ export const sourceRegistry = [
     kind: 'official_product_news',
     authority: 'vendor_official',
     language: 'en',
+    originRegion: 'international',
     cadence: 'twice_daily',
     redistributionPolicy: 'metadata_short_summary_link_only',
     automaticEligibility: 'eligible_low_risk_facts',
@@ -64,12 +68,13 @@ export const sourceRegistry = [
     kind: 'official_product_news',
     authority: 'vendor_official',
     language: 'en',
+    originRegion: 'international',
     cadence: 'daily',
     redistributionPolicy: 'metadata_short_summary_link_only',
     automaticEligibility: 'eligible_low_risk_facts',
     active: true,
     lastVerifiedAt: '2026-08-23T17:40:00.000Z',
-    notes: '产品、公司与经济研究公告分开标注；不把厂商主张写成独立验证事实。',
+    notes: '新闻、工程方法、隐私说明和岗位事实分别核验；不把厂商主张写成独立验证事实。',
   },
   {
     id: 'google-cloud-ai-blog',
@@ -78,6 +83,7 @@ export const sourceRegistry = [
     kind: 'official_engineering_blog',
     authority: 'vendor_official',
     language: 'en',
+    originRegion: 'international',
     cadence: 'daily',
     redistributionPolicy: 'metadata_short_summary_link_only',
     automaticEligibility: 'eligible_low_risk_facts',
@@ -86,40 +92,13 @@ export const sourceRegistry = [
     notes: '只自动处理官方产品和工程事实；客户案例、效果与方法建议进入人工复核。',
   },
   {
-    id: 'aws-ai-blog-rss',
-    name: 'AWS Artificial Intelligence Blog RSS',
-    homepage: 'https://aws.amazon.com/blogs/machine-learning/feed/',
-    kind: 'official_engineering_blog',
-    authority: 'vendor_official',
-    language: 'en',
-    cadence: 'twice_daily',
-    redistributionPolicy: 'metadata_short_summary_link_only',
-    automaticEligibility: 'eligible_low_risk_facts',
-    active: true,
-    lastVerifiedAt: '2026-08-23T17:50:00.000Z',
-    notes: 'RSS 只用于候选发现；架构建议、示例指标与合规表述必须保留 AWS 自述属性。',
-  },
-  {
-    id: 'microsoft-worklab',
-    name: 'Microsoft WorkLab',
-    homepage: 'https://www.microsoft.com/en-us/worklab/',
-    kind: 'corporate_research',
-    authority: 'company_primary_research',
-    language: 'en',
-    cadence: 'weekly',
-    redistributionPolicy: 'metadata_short_summary_link_only',
-    automaticEligibility: 'manual_review_only',
-    active: true,
-    lastVerifiedAt: '2026-08-23T17:44:00.000Z',
-    notes: '组织与工作趋势内容必须标为 Microsoft 研究或企业案例，不自动外推为普遍结论。',
-  },
-  {
     id: 'anthropic-careers',
     name: 'Anthropic Careers',
     homepage: 'https://www.anthropic.com/careers/jobs',
     kind: 'official_careers',
     authority: 'vendor_official',
     language: 'en',
+    originRegion: 'international',
     cadence: 'daily',
     redistributionPolicy: 'metadata_short_summary_link_only',
     automaticEligibility: 'manual_review_only',
@@ -134,6 +113,7 @@ export const sourceRegistry = [
     kind: 'government_policy',
     authority: 'government_official',
     language: 'en',
+    originRegion: 'international',
     cadence: 'weekly',
     redistributionPolicy: 'metadata_short_summary_link_only',
     automaticEligibility: 'manual_review_only',
@@ -148,6 +128,7 @@ export const sourceRegistry = [
     kind: 'government_policy',
     authority: 'government_official',
     language: 'multilingual',
+    originRegion: 'international',
     cadence: 'daily',
     redistributionPolicy: 'metadata_short_summary_link_only',
     automaticEligibility: 'manual_review_only',
@@ -156,32 +137,64 @@ export const sourceRegistry = [
     notes: '法律、适用范围与时间线一律高风险人工终审；产品不提供法律建议。',
   },
   {
-    id: 'linkedin-economic-graph',
-    name: 'LinkedIn Economic Graph',
-    homepage: 'https://economicgraph.linkedin.com/research/work-change-report',
-    kind: 'corporate_research',
-    authority: 'company_primary_research',
-    language: 'en',
-    cadence: 'quarterly',
-    redistributionPolicy: 'metadata_short_summary_link_only',
-    automaticEligibility: 'manual_review_only',
-    active: true,
-    lastVerifiedAt: '2026-08-23T17:47:00.000Z',
-    notes: '引用研究口径与样本边界；不把平台数据趋势等同于全部劳动力市场。',
-  },
-  {
     id: 'stanford-ai-index-2026',
     name: 'Stanford HAI 2026 AI Index',
     homepage: 'https://hai.stanford.edu/ai-index/2026-ai-index-report',
     kind: 'original_research',
     authority: 'academic_primary',
     language: 'en',
+    originRegion: 'international',
     cadence: 'quarterly',
     redistributionPolicy: 'metadata_short_summary_link_only',
     automaticEligibility: 'manual_review_only',
     active: true,
     lastVerifiedAt: '2026-08-23T17:49:00.000Z',
     notes: '只引用报告公开指标并保留章节口径；不转载图表、长段落或报告全文。',
+  },
+  {
+    id: 'aliyun-model-studio',
+    name: '阿里云百炼 Model Studio 官方文档',
+    homepage: 'https://help.aliyun.com/zh/model-studio/',
+    kind: 'official_documentation',
+    authority: 'vendor_official',
+    language: 'zh',
+    originRegion: 'mainland_china',
+    cadence: 'daily',
+    redistributionPolicy: 'metadata_short_summary_link_only',
+    automaticEligibility: 'manual_review_only',
+    active: true,
+    lastVerifiedAt: '2026-08-23T20:20:00.000Z',
+    notes: '记录中国大陆产品、区域、计费、评测、隐私和 Agent 身份能力；不同套餐与地域条款分开核验。',
+  },
+  {
+    id: 'aliyun-careers',
+    name: '阿里云社会招聘',
+    homepage: 'https://careers.aliyun.com/off-campus/position-list?lang=zh',
+    kind: 'official_careers',
+    authority: 'vendor_official',
+    language: 'zh',
+    originRegion: 'mainland_china',
+    cadence: 'daily',
+    redistributionPolicy: 'metadata_short_summary_link_only',
+    automaticEligibility: 'manual_review_only',
+    active: true,
+    lastVerifiedAt: '2026-08-23T20:40:00.000Z',
+    notes: '岗位名称与数量仅作为核验当日快照；能力趋势属于跨岗位编辑归纳，发布前重新观察。',
+  },
+  {
+    id: 'tencent-cloud-ai',
+    name: '腾讯云 AI 官方文档',
+    homepage: 'https://cloud.tencent.com/document/product/1729',
+    kind: 'official_documentation',
+    authority: 'vendor_official',
+    language: 'zh',
+    originRegion: 'mainland_china',
+    cadence: 'daily',
+    redistributionPolicy: 'metadata_short_summary_link_only',
+    automaticEligibility: 'manual_review_only',
+    active: true,
+    lastVerifiedAt: '2026-08-23T21:00:00.000Z',
+    notes: '核验混元、ADP、API 兼容和计费等大陆产品事实；不把产品页能力声明当成客户成效。',
   },
 ] as const satisfies readonly SourceRegistryEntry[];
 
@@ -203,6 +216,9 @@ export function validateSourceRegistry(sources: readonly SourceRegistryInput[]) 
     requireNonEmpty(source.name, 'source name');
     requireNonEmpty(source.homepage, 'source homepage');
     requireNonEmpty(source.lastVerifiedAt, 'source lastVerifiedAt');
+    if (source.originRegion !== 'mainland_china' && source.originRegion !== 'international') {
+      throw new Error('source originRegion is invalid');
+    }
 
     let homepage: URL;
     try {

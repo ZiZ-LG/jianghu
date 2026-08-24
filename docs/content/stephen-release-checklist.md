@@ -29,7 +29,7 @@
 |---|---|---|
 | SAAS-601 独立外壳与旧手册 | PASS | 内容契约、独立构建、旧手册 8/32/45/22/6 保护测试 |
 | SAAS-602 信源、30/6/8 候选 | IMPLEMENTED | 10 个白名单信源、30 条候选、6 个专题、8 个工具、终审包 |
-| SAAS-602 项目所有者终审 | **PENDING / BLOCKING** | `docs/content/stephen-seed-review-package.md` 逐条明确结论 |
+| SAAS-602 项目所有者复审 | **PENDING / BLOCKING** | `docs/content/stephen-seed-review-package-v2.md` 逐条明确结论；v1 保留为上一轮审计记录 |
 | SAAS-603 本机状态与工具 | PASS | 搜索、localStorage 版本恢复、工具复制/下载、移动端实测 |
 | SAAS-603 候选管线与摘要 | PASS | 自动发布双重关闭、风险队列、去重、日报/周报测试 |
 | SAAS-604 发布契约 | **LOCAL RC PASS / PROD DEFERRED** | 本清单、第 3–7 节本地证据；第 8 节等待生产授权 |

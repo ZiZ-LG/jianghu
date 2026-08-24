@@ -126,8 +126,28 @@ export interface SeedReview {
   readonly verificationNotes: string;
 }
 
+export type ConclusionScope =
+  | 'single_authority'
+  | 'cross_organization'
+  | 'editorial_synthesis';
+
+export interface SupportingFact {
+  readonly id: string;
+  readonly statement: string;
+  readonly evidenceIds: readonly string[];
+}
+
+export interface DeeperAnalysis {
+  readonly mechanism: string;
+  readonly businessValue: string;
+  readonly boundary: string;
+}
+
 export interface SeedCandidate extends KnowledgeItem {
   readonly seedCategory: SeedContentCategory;
+  readonly conclusionScope: ConclusionScope;
+  readonly supportingFacts: readonly SupportingFact[];
+  readonly deeperAnalysis: DeeperAnalysis;
   readonly originalTitle?: string;
   readonly tags: readonly string[];
   readonly toolIds: readonly string[];

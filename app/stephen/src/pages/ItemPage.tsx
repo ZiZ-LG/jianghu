@@ -95,6 +95,38 @@ export default function ItemPage({
         </section>
       </div>
 
+      <section className='analysis-evidence' aria-labelledby='analysis-evidence-title'>
+        <div className='supporting-facts'>
+          <p className='section-index'>TWO-FACT CHECK</p>
+          <h2 id='analysis-evidence-title'>
+            {language === 'zh' ? '至少两项事实支撑' : 'At least two supporting facts'}
+          </h2>
+          <ol>
+            {item.supportingFacts.map((fact) => (
+              <li key={fact.id}>{fact.statement}</li>
+            ))}
+          </ol>
+        </div>
+        <div className='deeper-analysis'>
+          <p className='section-index'>ONE LEVEL DEEPER</p>
+          <h2>{language === 'zh' ? '再深一层的价值分析' : 'One-level-deeper value analysis'}</h2>
+          <dl>
+            <div>
+              <dt>{language === 'zh' ? '为什么会发生' : 'Mechanism'}</dt>
+              <dd>{item.deeperAnalysis.mechanism}</dd>
+            </div>
+            <div>
+              <dt>{language === 'zh' ? '为业务带来什么' : 'Business value'}</dt>
+              <dd>{item.deeperAnalysis.businessValue}</dd>
+            </div>
+            <div>
+              <dt>{language === 'zh' ? '何时不成立' : 'Boundary'}</dt>
+              <dd>{item.deeperAnalysis.boundary}</dd>
+            </div>
+          </dl>
+        </div>
+      </section>
+
       <section className='evidence-section' aria-labelledby='evidence-title'>
         <div>
           <p className='section-index'>EVIDENCE</p>

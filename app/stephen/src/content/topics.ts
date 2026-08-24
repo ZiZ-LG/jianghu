@@ -30,7 +30,7 @@ export const knowledgeTopics = [
   {
     slug: 'agent-business-model',
     title: zh('Agent 商业模式与价值证据'),
-    summary: zh('从模型单价、代理能力、运营成本和业务结果四层判断 Agent 是否具备可持续商业价值。'),
+    summary: zh('从模型单价、Agent 能力、运营成本和业务结果四层判断 Agent 是否具备可持续商业价值。'),
     domains: ['ai_technology', 'enterprise_sales', 'role_org'],
     itemIds: ['ST-001', 'ST-002', 'ST-004', 'ST-006', 'ST-007', 'ST-014', 'ST-017', 'ST-024', 'ST-029'],
     problemDefinition: zh('Agent 容易把能力演示、速度承诺或厂商案例误当成客户自己的经济价值与生产可用性。'),
@@ -46,7 +46,7 @@ export const knowledgeTopics = [
     domains: ['role_org', 'enterprise_sales', 'ai_technology'],
     itemIds: ['ST-019', 'ST-020', 'ST-021', 'ST-022', 'ST-023', 'ST-024', 'ST-030'],
     problemDefinition: zh('传统 To B 销售常按岗位名称判断机会，却不清楚 AI 商业岗位实际负责的结果、协作边界和技术证据。'),
-    keyChanges: zh('岗位正在围绕客户共创、快速部署、规模运营、采用教育和代理治理重新组合，而非简单更换名称。'),
+    keyChanges: zh('岗位正在围绕客户共创、快速部署、规模运营、采用教育和 Agent 治理重新组合，而非简单更换名称。'),
     salesJudgment: zh('转岗者应把过往复杂销售经历映射到目标岗位结果，并对缺口安排可验证的补证动作。'),
     roleOrgImpact: zh('个人需要持续更新技能组合，组织也要明确前线交付、平台治理和采用运营之间的责任。'),
     toolIds: ['company-role-research', 'transition-evidence', 'role-gap-analysis'],
