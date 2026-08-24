@@ -15,7 +15,13 @@ export function Footer() {
         </a>
       )}
       {POLICE && (
-        <a href={POLICE_URL || 'https://www.beian.gov.cn/'} target="_blank" rel="noreferrer noopener">
+        <a
+          className="beian-police-link"
+          href={POLICE_URL || 'https://www.beian.gov.cn/'}
+          target="_blank"
+          rel="noreferrer noopener"
+        >
+          <img className="beian-police-icon" src="/beian-police.png" alt="" />
           {POLICE}
         </a>
       )}

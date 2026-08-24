@@ -1237,6 +1237,7 @@ export default function App() {
       <SyncStatus coordinator={coordinator} onViewCloud={discardToCloudState} />
       {syncErr && <div className="sync-toast">{syncErr}</div>}
       {undoHint && <div className="undo-toast">{undoHint}</div>}
+      <Footer />
     </div>
   );
 }

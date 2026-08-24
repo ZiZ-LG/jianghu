@@ -227,6 +227,15 @@ export default function App() {
           <a href='https://lake2ocean.top' rel='noreferrer'>{language === 'zh' ? '返回江湖首页' : 'Back to Jianghu'}</a>
           <a href='https://crm.lake2ocean.top' rel='noreferrer'>{language === 'zh' ? '进入江湖 CRM' : 'Open Jianghu CRM'}</a>
           <a href='https://beian.miit.gov.cn/' target='_blank' rel='noreferrer'>京ICP备2026046195号-2</a>
+          <a
+            className='police-filing-link'
+            href='http://www.beian.gov.cn/portal/registerSystemInfo?recordcode=11010802049879'
+            target='_blank'
+            rel='noreferrer noopener'
+          >
+            <img className='police-filing-icon' src='/beian-police.png' alt='' />
+            京公网安备11010802049879号
+          </a>
         </div>
       </footer>
 

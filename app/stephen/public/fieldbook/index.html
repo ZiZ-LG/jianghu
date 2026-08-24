@@ -1346,6 +1346,18 @@
       text-underline-offset: 3px;
     }
 
+    .footer .police-filing-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .police-filing-icon {
+      width: auto;
+      height: 20px;
+      flex: 0 0 auto;
+    }
+
     .empty-state {
       padding: 30px;
       color: var(--muted);
@@ -2236,6 +2248,7 @@
         <div class="footer-legal">
           <span>© 2026 自在创造（北京）智慧科技有限公司</span>
           <a href="https://beian.miit.gov.cn/" target="_blank" rel="noreferrer noopener">京ICP备2026046195号-2</a>
+          <a class="police-filing-link" href="http://www.beian.gov.cn/portal/registerSystemInfo?recordcode=11010802049879" target="_blank" rel="noreferrer noopener"><img class="police-filing-icon" src="/beian-police.png" alt="">京公网安备11010802049879号</a>
         </div>
         <button class="quiet-button" id="clearProgress" type="button">清除学习进度</button>
       </footer>
