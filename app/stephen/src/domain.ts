@@ -143,7 +143,7 @@ export interface DeeperAnalysis {
   readonly boundary: string;
 }
 
-export interface SeedCandidate extends KnowledgeItem {
+export interface ReviewedKnowledgeItem extends KnowledgeItem {
   readonly seedCategory: SeedContentCategory;
   readonly conclusionScope: ConclusionScope;
   readonly supportingFacts: readonly SupportingFact[];
@@ -152,6 +152,10 @@ export interface SeedCandidate extends KnowledgeItem {
   readonly tags: readonly string[];
   readonly toolIds: readonly string[];
   readonly review: SeedReview;
+}
+
+export interface SeedCandidate extends ReviewedKnowledgeItem {
+  readonly seedContent: true;
 }
 
 export interface KnowledgeTopic {

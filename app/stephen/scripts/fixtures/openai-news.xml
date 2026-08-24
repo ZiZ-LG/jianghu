@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>OpenAI News</title>
+    <link>https://openai.com/news</link>
+    <item>
+      <title><![CDATA[Introducing a verified API capability]]></title>
+      <description><![CDATA[
+        <p>OpenAI describes a new API capability for production workflows. The source paragraph is intentionally long so the intake layer must retain only a short excerpt, not the complete feed body. This sentence adds more source material for the same boundary check. This sentence adds even more source material for the same boundary check. This sentence makes the fixture longer than the allowed short-summary limit. DO_NOT_STORE_FULL_TEXT</p>
+      ]]></description>
+      <link>https://openai.com/index/verified-api-capability?utm_source=rss#details</link>
+      <guid>https://openai.com/index/verified-api-capability</guid>
+      <pubDate>Thu, 20 Aug 2026 07:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

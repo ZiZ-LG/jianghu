@@ -2,8 +2,8 @@ import type {
   KnowledgeItem,
   PublicationAudit,
   RiskLevel,
-} from '../domain';
-import type { SourceRegistryEntry } from './sources';
+} from '../domain.ts';
+import type { SourceRegistryEntry } from './sources.ts';
 
 export type EditorialRiskSignal =
   | 'ordinary_product_fact'
@@ -81,6 +81,12 @@ export interface EditorialPipelineResult {
   readonly rejected: readonly PipelineDecision[];
   readonly duplicates: readonly PipelineDecision[];
   readonly audit: readonly PipelineAuditEvent[];
+}
+
+export interface EditorialDedupeHistory {
+  readonly normalizedUrls?: ReadonlySet<string>;
+  readonly eventKeys?: ReadonlySet<string>;
+  readonly sourceFingerprints?: ReadonlySet<string>;
 }
 
 function normalizeText(value: string) {
@@ -190,13 +196,20 @@ const lowRiskSignals = new Set<EditorialRiskSignal>([
   'research_metadata',
 ]);
 
-export function deriveRiskLevel(candidate: EditorialPipelineCandidate): RiskLevel {
-  if (candidate.sourceConflict) return 'high';
-  if (candidate.riskSignals.length === 0) return 'high';
-  if (candidate.riskSignals.some((signal) => highRiskSignals.has(signal))) return 'high';
-  if (candidate.riskSignals.some((signal) => mediumRiskSignals.has(signal))) return 'medium';
-  if (candidate.riskSignals.every((signal) => lowRiskSignals.has(signal))) return 'low';
+export function deriveRiskLevelFromSignals(
+  riskSignals: readonly EditorialRiskSignal[],
+  sourceConflict: boolean,
+): RiskLevel {
+  if (sourceConflict) return 'high';
+  if (riskSignals.length === 0) return 'high';
+  if (riskSignals.some((signal) => highRiskSignals.has(signal))) return 'high';
+  if (riskSignals.some((signal) => mediumRiskSignals.has(signal))) return 'medium';
+  if (riskSignals.every((signal) => lowRiskSignals.has(signal))) return 'low';
   return 'high';
+}
+
+export function deriveRiskLevel(candidate: EditorialPipelineCandidate): RiskLevel {
+  return deriveRiskLevelFromSignals(candidate.riskSignals, candidate.sourceConflict);
 }
 
 function publicationAudit(
@@ -294,11 +307,20 @@ export function processEditorialCandidates(
   candidates: readonly EditorialPipelineCandidate[],
   sources: readonly SourceRegistryEntry[],
   controls: EditorialPipelineControls,
+  history: EditorialDedupeHistory = {},
 ): EditorialPipelineResult {
   const sourceById = new Map(sources.map((source) => [source.id, source]));
-  const seenUrls = new Set<string>();
-  const seenEvents = new Set<string>();
-  const seenFingerprints = new Set<string>();
+  const seenUrls = new Set(
+    [...(history.normalizedUrls ?? [])]
+      .map(normalizeCanonicalUrl)
+      .filter(Boolean),
+  );
+  const seenEvents = new Set(
+    [...(history.eventKeys ?? [])]
+      .map(normalizeText)
+      .filter(Boolean),
+  );
+  const seenFingerprints = new Set(history.sourceFingerprints ?? []);
   const decisions: PipelineDecision[] = [];
   const audit: PipelineAuditEvent[] = [];
 

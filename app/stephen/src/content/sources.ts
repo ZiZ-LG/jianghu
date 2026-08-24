@@ -19,6 +19,17 @@ export type SourceAutomaticEligibility =
   | 'eligible_low_risk_facts'
   | 'manual_review_only';
 
+export interface SourceRssIngestion {
+  readonly protocol: 'rss2';
+  readonly endpoint: string;
+  readonly allowedEndpointHosts: readonly string[];
+  readonly allowedItemHosts: readonly string[];
+  readonly maxBytes: number;
+  readonly maxItems: number;
+  readonly maxRedirects: number;
+  readonly timeoutMs: number;
+}
+
 export interface SourceRegistryEntry {
   readonly id: string;
   readonly name: string;
@@ -30,6 +41,7 @@ export interface SourceRegistryEntry {
   readonly cadence: SourceCadence;
   readonly redistributionPolicy: 'metadata_short_summary_link_only';
   readonly automaticEligibility: SourceAutomaticEligibility;
+  readonly ingestion?: SourceRssIngestion;
   readonly active: true;
   readonly lastVerifiedAt: string;
   readonly notes: string;
@@ -43,6 +55,7 @@ interface SourceRegistryInput {
   readonly active?: unknown;
   readonly lastVerifiedAt?: unknown;
   readonly originRegion?: unknown;
+  readonly ingestion?: unknown;
 }
 
 export const sourceRegistry = [
@@ -57,8 +70,18 @@ export const sourceRegistry = [
     cadence: 'twice_daily',
     redistributionPolicy: 'metadata_short_summary_link_only',
     automaticEligibility: 'eligible_low_risk_facts',
+    ingestion: {
+      protocol: 'rss2',
+      endpoint: 'https://openai.com/news/rss.xml',
+      allowedEndpointHosts: ['openai.com'],
+      allowedItemHosts: ['openai.com'],
+      maxBytes: 1_000_000,
+      maxItems: 40,
+      maxRedirects: 2,
+      timeoutMs: 10_000,
+    },
     active: true,
-    lastVerifiedAt: '2026-08-23T17:33:08.000Z',
+    lastVerifiedAt: '2026-08-24T15:27:00.000Z',
     notes: '仅登记官方标题、日期、链接与自有短摘要；公司案例中的效果数字按企业自述标识。',
   },
   {
@@ -87,8 +110,18 @@ export const sourceRegistry = [
     cadence: 'daily',
     redistributionPolicy: 'metadata_short_summary_link_only',
     automaticEligibility: 'eligible_low_risk_facts',
+    ingestion: {
+      protocol: 'rss2',
+      endpoint: 'https://cloudblog.withgoogle.com/products/ai-machine-learning/rss/',
+      allowedEndpointHosts: ['cloudblog.withgoogle.com'],
+      allowedItemHosts: ['cloud.google.com'],
+      maxBytes: 1_000_000,
+      maxItems: 40,
+      maxRedirects: 2,
+      timeoutMs: 10_000,
+    },
     active: true,
-    lastVerifiedAt: '2026-08-23T17:42:00.000Z',
+    lastVerifiedAt: '2026-08-24T15:31:00.000Z',
     notes: '只自动处理官方产品和工程事实；客户案例、效果与方法建议进入人工复核。',
   },
   {
@@ -204,6 +237,65 @@ function requireNonEmpty(value: unknown, label: string): asserts value is string
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function requireHostList(value: unknown, label: string): readonly string[] {
+  if (!Array.isArray(value) || value.length === 0 || value.some((host) => (
+    typeof host !== 'string'
+    || host.trim() === ''
+    || host !== host.toLocaleLowerCase()
+    || host.includes('/')
+    || host.includes('*')
+  ))) {
+    throw new Error(`${label} must contain exact lowercase hosts`);
+  }
+  return value as readonly string[];
+}
+
+function requireBoundedInteger(
+  value: unknown,
+  label: string,
+  minimum: number,
+  maximum: number,
+) {
+  if (!Number.isInteger(value) || (value as number) < minimum || (value as number) > maximum) {
+    throw new Error(`${label} is outside the allowed range`);
+  }
+}
+
+function validateIngestionConfig(value: unknown) {
+  if (!isRecord(value) || value.protocol !== 'rss2') {
+    throw new Error('source ingestion protocol must be rss2');
+  }
+  requireNonEmpty(value.endpoint, 'source ingestion endpoint');
+  const endpointHosts = requireHostList(
+    value.allowedEndpointHosts,
+    'source ingestion allowedEndpointHosts',
+  );
+  requireHostList(value.allowedItemHosts, 'source ingestion allowedItemHosts');
+
+  let endpoint: URL;
+  try {
+    endpoint = new URL(value.endpoint);
+  } catch {
+    throw new Error('source ingestion endpoint must use HTTPS');
+  }
+  if (endpoint.protocol !== 'https:') {
+    throw new Error('source ingestion endpoint must use HTTPS');
+  }
+  if (!endpointHosts.includes(endpoint.hostname)) {
+    throw new Error('source ingestion endpoint host must be allowlisted');
+  }
+  requireBoundedInteger(value.maxBytes, 'source ingestion maxBytes', 1, 1_000_000);
+  requireBoundedInteger(value.maxItems, 'source ingestion maxItems', 1, 50);
+  requireBoundedInteger(value.maxRedirects, 'source ingestion maxRedirects', 0, 3);
+  requireBoundedInteger(value.timeoutMs, 'source ingestion timeoutMs', 1_000, 30_000);
+
+  return endpoint.href;
+}
+
 export function validateSourceRegistry(sources: readonly SourceRegistryInput[]) {
   if (sources.length < 6 || sources.length > 10) {
     throw new Error('first release requires 6-10 sources');
@@ -211,6 +303,8 @@ export function validateSourceRegistry(sources: readonly SourceRegistryInput[]) 
 
   const ids = new Set<string>();
   const homepages = new Set<string>();
+  const ingestionEndpoints = new Set<string>();
+  let machineSourceCount = 0;
   for (const source of sources) {
     requireNonEmpty(source.id, 'source id');
     requireNonEmpty(source.name, 'source name');
@@ -244,7 +338,19 @@ export function validateSourceRegistry(sources: readonly SourceRegistryInput[]) 
     if (homepages.has(homepage.href)) {
       throw new Error(`duplicate source homepage: ${homepage.href}`);
     }
+    if (source.ingestion !== undefined) {
+      const endpoint = validateIngestionConfig(source.ingestion);
+      if (ingestionEndpoints.has(endpoint)) {
+        throw new Error(`duplicate source ingestion endpoint: ${endpoint}`);
+      }
+      ingestionEndpoints.add(endpoint);
+      machineSourceCount += 1;
+    }
     ids.add(source.id);
     homepages.add(homepage.href);
+  }
+
+  if (machineSourceCount < 2 || machineSourceCount > 3) {
+    throw new Error('cold-start release requires 2-3 machine sources');
   }
 }
