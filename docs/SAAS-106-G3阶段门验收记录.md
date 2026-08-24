@@ -1,13 +1,15 @@
 # SAAS-106｜G3 商业轻量个人 CRM 阶段门验收记录
 
-> 验收日期：2026-08-23；PR 前安全复核：2026-08-24
+> 验收日期：2026-08-23；PR 前独立终审：2026-08-24
 > 分支：`codex/g3-lightweight-personal-crm`
 > Worktree：`/Volumes/PowerData/江湖APP/.worktrees/g3-lightweight-personal-crm`
 > 计划：`docs/superpowers/plans/2026-08-23-saas-106-g3-stage-gate.md`
 
 ## 1. 结论
 
-SAAS-106 业务验收候选提交 `e9464935a4f64f39741571f6142310905b36d025` 首次通过阶段门。PR 前覆盖审计随后发现 legacy full-state/写入口仍被 `crm.core` 放行、Account 纠错缺少 live effective-scope 写保护，以及 `CUSTOMER_COMMANDS_ENABLED` 未透传生产 Compose。最小安全加固提交 `6990ef56e732aebd61739bafb5293685199da56e` 已关闭这些旁路并 push，[GitHub Actions 32702783202](https://github.com/ZiZ-LG/jianghu/actions/runs/32702783202) 对应该精确 SHA，12/12 jobs 全部成功。G3 的产品旅程、租户/权限、跨库迁移恢复、部署隔离、桌面/移动端及 internal legacy 回归均已取得通过证据。
+SAAS-106 业务验收候选提交 `e9464935a4f64f39741571f6142310905b36d025` 首次通过阶段门。PR 前覆盖审计随后发现 legacy full-state/写入口仍被 `crm.core` 放行、Account 纠错缺少 live effective-scope 写保护，以及 `CUSTOMER_COMMANDS_ENABLED` 未透传生产 Compose。最小安全加固提交 `6990ef56e732aebd61739bafb5293685199da56e` 已关闭这些旁路并 push，[GitHub Actions 32702783202](https://github.com/ZiZ-LG/jianghu/actions/runs/32702783202) 对应该精确 SHA，12/12 jobs 全部成功。
+
+PR 前独立终审又关闭了运行时 ProductAccess、ActorRole、用户/租户身份响应失败关闭，无导航配置直达路由拒绝，唯一 CRM 上下文与同会话 latest-request-wins，旧会话请求预检，Today 来源 revision 主动失效，以及 Customer、Quick Capture、Commitment 回放回执按原命令语义校验。Commitment 回放进一步绑定 tenant-scoped 权威 Matter 父级；Customer.categoryKey/customerType 的机器消费者清单同步补全。修复提交 `c517d013d12be054d3354ebd789f6fa5d74281e3` 已 push，[GitHub Actions 32710272630](https://github.com/ZiZ-LG/jianghu/actions/runs/32710272630) 对应该精确 SHA，12/12 jobs 全部成功。G3 的产品旅程、租户/权限、跨库迁移恢复、部署隔离、桌面/移动端及 internal legacy 回归均已取得通过证据。
 
 本次判定：
 
@@ -17,6 +19,8 @@ SAAS-106 业务验收候选提交 `e9464935a4f64f39741571f6142310905b36d025` 首
 - 未部署、未修改生产、未读写内部真实客户数据。
 
 本文件与商业清单以独立 docs commit 收口；只有该 docs commit 的精确 SHA CI 同样全绿后，线程才对外宣告 G3 最终关闭。
+
+该 docs commit push 后，只有其精确 SHA 成为 PR head 且 PR CI 12/12 全绿，才允许合并；合并后必须再以 main merge commit 的精确 SHA 验证 main CI 12/12 全绿。任一阶段失败即停止，不部署、不启动 G4。
 
 ## 2. G3 必须证据对照
 
@@ -39,15 +43,15 @@ SAAS-106 业务验收候选提交 `e9464935a4f64f39741571f6142310905b36d025` 首
 | `packages/domain-contracts: npm run typecheck && npm test` | 8 files / 87 tests，全绿 |
 | `packages/g64111: npm run typecheck && npm test` | 2 files / 32 tests，全绿 |
 | `packages/pde-kernel: npx tsc --noEmit && npm test` | 3 files / 25 tests，全绿；oracle/golden 未修改 |
-| `app: npm ci --install-links && npm run typecheck && npm test` | 40 files / 304 tests，全绿；0 vulnerabilities |
+| `app: npm ci --install-links && npm run typecheck && npm test` | 40 files / 313 tests，全绿；0 vulnerabilities |
 | App production build | 119 modules，全绿；仅有存量 chunk size 提示，构建产物未纳入提交 |
-| `server: npm ci --install-links && npm run generate && npm run schema:postgres:check && npm run typecheck && npm test` | 最终 65 files / 497 tests，全绿；0 vulnerabilities |
+| `server: npm ci --install-links && npm run generate && npm run schema:postgres:check && npm run typecheck && npm test` | 最终 65 files / 503 tests，全绿；0 vulnerabilities |
 | SQLite/PostgreSQL Prisma validate | `prisma/schema.prisma` 与 `prisma/postgres/schema.prisma` 均 valid |
-| `bash scripts/test-postgres-ops-integration.sh` | exit 0；旧库回填、未知值/非法日期失败关闭、提交前重试、提交后采用、并发加密备份、隔离恢复、fresh install 双遍全绿；随机 project/volume 已清理 |
+| `bash scripts/test-postgres-ops-integration.sh` | exit 0；旧库回填、未知值/非法日期失败关闭、提交前重试、提交后采用、并发加密备份、隔离恢复、fresh install 双遍全绿；fresh-install fixture 同时覆盖当前 `server` 与 `packages` 快照，随机 project/volume 已清理 |
 | `server/tests/g3-deployment-isolation.test.ts` | 16/16；包含 8 类物理碰撞、4 类版本/权益政策错误、Customer 命令开关 `1/0` 透传、缺失开关、密钥不回显与终端环境污染失败关闭 |
 | 隔离 CLI / Compose 手工执行 | 指定 env 与仓库 Compose 渲染通过；`CUSTOMER_COMMANDS_ENABLED=0` 精确进入 server 容器配置，输出 `G3_DEPLOYMENT_ISOLATION_OK=1` |
 | 本地终审 | `git diff --check`、未跟踪文件行尾空白、CLI `node --check`、受保护/共享路径审计全绿 |
-| 远端精确 SHA CI | `6990ef56e732aebd61739bafb5293685199da56e`，[Actions 32702783202](https://github.com/ZiZ-LG/jianghu/actions/runs/32702783202)，12/12 jobs success |
+| 远端精确 SHA CI | `c517d013d12be054d3354ebd789f6fa5d74281e3`，[Actions 32710272630](https://github.com/ZiZ-LG/jianghu/actions/runs/32710272630)，12/12 jobs success |
 
 ## 4. commercial Free 首日旅程
 
@@ -105,9 +109,10 @@ SAAS-106 业务验收候选提交 `e9464935a4f64f39741571f6142310905b36d025` 首
 | SAAS-106 计划 checkpoint | `8fe37b5ccb4b8d6749c05fc5e2aed03b48fe5825` / Actions `32690654029` 12/12 | 固定范围、停止条件和验收命令 |
 | SAAS-106 业务验收提交 | `e9464935a4f64f39741571f6142310905b36d025` / [Actions 32696251118](https://github.com/ZiZ-LG/jianghu/actions/runs/32696251118) 12/12 | 跨功能旅程、隔离 CLI/回归测试、商业壳层 44px 触控修复 |
 | SAAS-106 PR 前安全加固 | `6990ef56e732aebd61739bafb5293685199da56e` / [Actions 32702783202](https://github.com/ZiZ-LG/jianghu/actions/runs/32702783202) 12/12 | Free legacy service 封堵、中性上下文启动、repair effective-scope、Customer 开关生产透传 |
+| SAAS-106 PR 前独立终审修复 | `c517d013d12be054d3354ebd789f6fa5d74281e3` / [Actions 32710272630](https://github.com/ZiZ-LG/jianghu/actions/runs/32710272630) 12/12 | authority inventory、运行时身份与产品策略失败关闭、唯一 CRM 上下文与会话并发隔离、Today 来源失效、命令绑定回放回执、tenant-scoped Commitment 父级校验及跨包 fresh-install 验证 |
 
 本任务没有 schema/migration 或生产数据变更：
 
-- 部署前可先 revert `6990ef56e732aebd61739bafb5293685199da56e` 回到初始验收候选，或整体 revert `e9464935a4f64f39741571f6142310905b36d025`，移除验收测试/只读 CLI 并恢复头部原触控高度；
-- 也可回到计划 checkpoint `8fe37b5ccb4b8d6749c05fc5e2aed03b48fe5825`；
+- `c517d013d12be054d3354ebd789f6fa5d74281e3` 的父提交为 `ce82d73614088926a0af40c27039a4e62eb982a2`；如 PR 前撤回 `c517d013d12be054d3354ebd789f6fa5d74281e3`，只能用于暂停并重新修复，旧树会重新打开已确认的终审缺口，不得作为合并候选；此次修复无 schema、migration 或业务数据回滚，部署后应优先前向修复；
+- `6990ef56e732aebd61739bafb5293685199da56e`、`e9464935a4f64f39741571f6142310905b36d025` 与计划 checkpoint `8fe37b5ccb4b8d6749c05fc5e2aed03b48fe5825` 仅保留为暂停、诊断或整体放弃 G3 的历史点；回到任一点都会重新打开已关闭的阶段门，不得直接合并或部署，必须重新修复、独立复审并取得精确 SHA CI 全绿；
 - 未部署，因此无生产数据回滚、容器回滚或流量切换动作。
