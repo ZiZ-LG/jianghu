@@ -111,6 +111,23 @@ describe('SAAS-603 deterministic editorial pipeline', () => {
     expect(result.autoReady[0].audit.ruleVersion).toBe(DEFAULT_PIPELINE_CONTROLS.ruleVersion);
   });
 
+  it('keeps the stop switch authoritative when automatic publishing is otherwise enabled', () => {
+    const result = processEditorialCandidates(
+      [candidate()],
+      sourceRegistry,
+      {
+        ...DEFAULT_PIPELINE_CONTROLS,
+        autoPublishingEnabled: true,
+        stopSwitchEngaged: true,
+      },
+    );
+
+    expect(result.autoReady).toEqual([]);
+    expect(result.manualReview).toHaveLength(1);
+    expect(result.manualReview[0].reasons)
+      .toContain('publishing stop switch is engaged');
+  });
+
   it('derives medium and high risk deterministically and ignores an intake item\'s proposed risk', () => {
     const result = processEditorialCandidates([
       candidate({

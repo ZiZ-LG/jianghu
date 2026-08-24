@@ -80,25 +80,37 @@ describe('SAAS-605 optional editorial AI boundary', () => {
   });
 
   it('keeps the timeout active while reading the model response body', async () => {
-    const slowBodyFetch = (async (_input: URL | RequestInfo, init?: RequestInit) => ({
-      ok: true,
-      status: 200,
-      headers: new Headers({ 'content-type': 'application/json' }),
-      json: async () => {
-        await new Promise((resolve) => setTimeout(resolve, 10));
-        if (init?.signal?.aborted) throw new DOMException('aborted', 'AbortError');
-        return {
-          choices: [{ message: { content: JSON.stringify({
-            titleZh: '不应采用的慢响应',
-            summaryZh: '不应采用的慢响应。',
-            whyItMattersZh: '不应采用。',
-            salesImplicationZh: '不应采用。',
-            roleOrgImplicationZh: '不应采用。',
-            nextActionZh: '不应采用。',
-          }) } }],
-        };
-      },
-    } as Response)) as typeof fetch;
+    const slowBodyFetch = (async (_input: URL | RequestInfo, init?: RequestInit) => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const complete = () => {
+            if (init?.signal?.aborted) {
+              controller.error(new DOMException('aborted', 'AbortError'));
+              return;
+            }
+            controller.enqueue(new TextEncoder().encode(JSON.stringify({
+              choices: [{ message: { content: JSON.stringify({
+                titleZh: '不应采用的慢响应',
+                summaryZh: '不应采用的慢响应。',
+                whyItMattersZh: '不应采用。',
+                salesImplicationZh: '不应采用。',
+                roleOrgImplicationZh: '不应采用。',
+                nextActionZh: '不应采用。',
+              }) } }],
+            })));
+            controller.close();
+          };
+          setTimeout(complete, 10);
+          init?.signal?.addEventListener('abort', () => {
+            controller.error(new DOMException('aborted', 'AbortError'));
+          }, { once: true });
+        },
+      });
+      return new Response(body, {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
     const result = await draftEditorialCopy(input, {
       config: {
         baseUrl: 'https://model.example/v1',
@@ -111,5 +123,41 @@ describe('SAAS-605 optional editorial AI boundary', () => {
 
     expect(result.mode).toBe('deterministic_fallback');
     expect(result.fallbackReason).toBe('ai_unavailable');
+  });
+
+  it('cancels a chunked model response before it exceeds the configured byte limit', async () => {
+    let emittedChunks = 0;
+    let cancelled = false;
+    const oversizedFetch = (async () => new Response(new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (emittedChunks >= 100) {
+          controller.close();
+          return;
+        }
+        emittedChunks += 1;
+        controller.enqueue(new Uint8Array(8).fill(65));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })) as typeof fetch;
+
+    const result = await draftEditorialCopy(input, {
+      config: {
+        baseUrl: 'https://model.example/v1',
+        model: 'editorial-model',
+        apiKey: 'secret',
+      },
+      fetchImpl: oversizedFetch,
+      maxResponseBytes: 16,
+    });
+
+    expect(result.mode).toBe('deterministic_fallback');
+    expect(result.fallbackReason).toBe('ai_unavailable');
+    expect(cancelled).toBe(true);
+    expect(emittedChunks).toBeLessThan(100);
   });
 });

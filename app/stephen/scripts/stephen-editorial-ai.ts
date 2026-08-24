@@ -1,3 +1,5 @@
+import { readBoundedResponseBody } from './stephen-bounded-response.ts';
+
 export interface EditorialDraftInput {
   readonly originalTitle: string;
   readonly sourceName: string;
@@ -36,6 +38,8 @@ const copyFields = [
   'roleOrgImplicationZh',
   'nextActionZh',
 ] as const;
+
+const DEFAULT_AI_MAX_RESPONSE_BYTES = 256_000;
 
 function deterministicFallback(
   input: EditorialDraftInput,
@@ -86,6 +90,7 @@ export async function draftEditorialCopy(
     readonly config?: EditorialAiConfig;
     readonly fetchImpl?: typeof fetch;
     readonly timeoutMs?: number;
+    readonly maxResponseBytes?: number;
   },
 ): Promise<EditorialDraftCopy> {
   if (!isConfigured(options.config)) {
@@ -131,7 +136,15 @@ export async function draftEditorialCopy(
       if (!contentType.startsWith('application/json')) {
         throw new Error('AI response content type is invalid');
       }
-      const copy = parseEditorialCopy(await response.json() as ModelPayload);
+      const body = await readBoundedResponseBody(
+        response,
+        options.maxResponseBytes ?? DEFAULT_AI_MAX_RESPONSE_BYTES,
+        controller.signal,
+      );
+      const payload = JSON.parse(
+        new TextDecoder('utf-8', { fatal: true }).decode(body),
+      ) as ModelPayload;
+      const copy = parseEditorialCopy(payload);
       if (controller.signal.aborted) throw new Error('AI request timed out');
       return { mode: 'ai', ...copy };
     } finally {

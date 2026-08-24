@@ -1,4 +1,7 @@
-import { buildEditorialIntake } from '../src/content/intake.ts';
+import {
+  buildEditorialIntake,
+  type EditorialIntakeHistory,
+} from '../src/content/intake.ts';
 import {
   DEFAULT_PIPELINE_CONTROLS,
   processEditorialCandidates,
@@ -12,6 +15,7 @@ import {
   draftEditorialCopy,
   type EditorialAiConfig,
 } from './stephen-editorial-ai.ts';
+import { runSequentialEditorialScans } from './stephen-editorial-runner.ts';
 import { fetchAllowlistedRss, parseRss2Feed } from './stephen-rss.ts';
 
 type MachineSource = SourceRegistryEntry & { readonly ingestion: SourceRssIngestion };
@@ -43,6 +47,7 @@ async function scanSource(
   source: MachineSource,
   fetchedAt: string,
   aiConfig: EditorialAiConfig | undefined,
+  history: EditorialIntakeHistory,
 ) {
   const fetched = await fetchAllowlistedRss(source);
   const feed = parseRss2Feed(fetched.xml, { maxItems: source.ingestion.maxItems });
@@ -52,6 +57,7 @@ async function scanSource(
     fetchedAt,
     feedUrl: fetched.finalUrl,
     contentType: fetched.contentType,
+    history,
   });
   const governable = intake.records.filter((record) => (
     record.disposition !== 'duplicate'
@@ -83,19 +89,22 @@ async function scanSource(
   }));
 
   return {
-    sourceId: source.id,
-    feedUrl: fetched.finalUrl,
-    channelTitle: feed.channelTitle,
-    scanned: intake.scanned,
-    candidates: intake.candidates.length,
-    manualReview: intake.manualReview.length,
-    duplicates: intake.duplicates.length,
-    governance: {
-      autoReady: governance.autoReady.length,
-      manualReview: governance.manualReview.length,
-      rejected: governance.rejected.length,
+    report: {
+      sourceId: source.id,
+      feedUrl: fetched.finalUrl,
+      channelTitle: feed.channelTitle,
+      scanned: intake.scanned,
+      candidates: intake.candidates.length,
+      manualReview: intake.manualReview.length,
+      duplicates: intake.duplicates.length,
+      governance: {
+        autoReady: governance.autoReady.length,
+        manualReview: governance.manualReview.length,
+        rejected: governance.rejected.length,
+      },
+      records,
     },
-    records,
+    nextHistory: intake.nextHistory,
   };
 }
 
@@ -103,16 +112,15 @@ async function main() {
   const fetchedAt = new Date().toISOString();
   const aiConfig = loadAiConfig();
   const sources = sourceRegistry.filter(isMachineSource);
-  const scans = [];
-  const failures = [];
-
-  for (const source of sources) {
-    try {
-      scans.push(await scanSource(source, fetchedAt, aiConfig));
-    } catch (error) {
-      failures.push({ sourceId: source.id, error: safeErrorMessage(error) });
-    }
-  }
+  const scanResult = await runSequentialEditorialScans(
+    sources,
+    (source, history) => scanSource(source, fetchedAt, aiConfig, history),
+  );
+  const scans = scanResult.reports;
+  const failures = scanResult.failures.map((failure) => ({
+    sourceId: failure.sourceId,
+    error: safeErrorMessage(failure.error),
+  }));
 
   const report = {
     task: 'SAAS-605',

@@ -11,7 +11,7 @@ import {
 import type { SourceRegistryEntry } from './sources.ts';
 import type { RssFeedEntry } from '../../scripts/stephen-rss.ts';
 
-export const INTAKE_RULE_VERSION = 'stephen-intake-v1';
+export const INTAKE_RULE_VERSION = 'stephen-intake-v2';
 
 export type IntakeDisposition = 'candidate' | 'manual_review' | 'duplicate';
 export type IntakeDuplicateReason = 'normalized_url' | 'event_key' | 'source_fingerprint';
@@ -68,6 +68,7 @@ export interface EditorialIntakeBatch {
   readonly candidates: readonly EditorialIntakeRecord[];
   readonly manualReview: readonly EditorialIntakeRecord[];
   readonly duplicates: readonly EditorialIntakeRecord[];
+  readonly nextHistory: Required<EditorialIntakeHistory>;
 }
 
 function normalizeText(value: string) {
@@ -215,10 +216,15 @@ function createRecord(
   const guidBasis = normalizeCanonicalUrl(entry.guid) || normalizeText(entry.guid);
   const identityBasis = canonicalUrl || guidBasis || `${normalizeText(originalTitle)}|${publishedAt ?? ''}`;
   const candidateId = `ED-${stableHash64(`${sourceId}|${identityBasis}`).toLocaleUpperCase()}`;
-  const eventKey = `event-${stableHash64(`${sourceId}|${guidBasis || identityBasis}`)}`;
+  const normalizedTitle = normalizeText(originalTitle);
+  const eventWindow = publishedAt?.slice(0, 10) ?? 'undated';
+  const eventBasis = normalizedTitle
+    ? `${normalizedTitle}|${eventWindow}`
+    : `${sourceId}|${guidBasis || identityBasis}|${eventWindow}`;
+  const eventKey = `event-${stableHash64(eventBasis)}`;
   const contentFingerprint = stableHash64([
-    sourceId,
-    normalizeText(originalTitle),
+    normalizedTitle,
+    normalizeText(entry.descriptionText),
     publishedAt ?? '',
   ].join('|'));
   const conflictingUrls = new Set(
@@ -313,12 +319,12 @@ export function buildEditorialIntake(input: EditorialIntakeInput): EditorialInta
         reasons: [`duplicate detected by ${duplicateReason}`],
         duplicateReason,
       });
-      continue;
+    } else {
+      records.push(record);
     }
     if (record.canonicalUrl) seenUrls.add(record.canonicalUrl);
     seenEvents.add(normalizedEvent);
     seenFingerprints.add(record.contentFingerprint);
-    records.push(record);
   }
 
   return {
@@ -327,5 +333,10 @@ export function buildEditorialIntake(input: EditorialIntakeInput): EditorialInta
     candidates: records.filter((record) => record.disposition === 'candidate'),
     manualReview: records.filter((record) => record.disposition === 'manual_review'),
     duplicates: records.filter((record) => record.disposition === 'duplicate'),
+    nextHistory: {
+      normalizedUrls: new Set(seenUrls),
+      eventKeys: new Set(seenEvents),
+      sourceFingerprints: new Set(seenFingerprints),
+    },
   };
 }

@@ -71,19 +71,84 @@ describe('SAAS-605 RSS intake boundary', () => {
       ...openAiSource,
       ingestion: { ...openAiSource.ingestion, timeoutMs: 1 },
     };
-    const slowBodyFetch = (async (_input: URL | RequestInfo, init?: RequestInit) => ({
-      ok: true,
-      status: 200,
-      headers: new Headers({ 'content-type': 'text/xml' }),
-      arrayBuffer: async () => {
-        await new Promise((resolve) => setTimeout(resolve, 10));
-        if (init?.signal?.aborted) throw new DOMException('aborted', 'AbortError');
-        return new TextEncoder().encode(openAiFixture).buffer;
-      },
-    } as Response)) as typeof fetch;
+    const slowBodyFetch = (async (_input: URL | RequestInfo, init?: RequestInit) => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const complete = () => {
+            if (init?.signal?.aborted) {
+              controller.error(new DOMException('aborted', 'AbortError'));
+              return;
+            }
+            controller.enqueue(new TextEncoder().encode(openAiFixture));
+            controller.close();
+          };
+          setTimeout(complete, 10);
+          init?.signal?.addEventListener('abort', () => {
+            controller.error(new DOMException('aborted', 'AbortError'));
+          }, { once: true });
+        },
+      });
+      return new Response(body, {
+        status: 200,
+        headers: { 'content-type': 'text/xml' },
+      });
+    }) as typeof fetch;
 
     await expect(fetchAllowlistedRss(timeoutSource, { fetchImpl: slowBodyFetch }))
       .rejects.toThrow('RSS request timed out');
+  });
+
+  it('stops reading an undeclared oversized response at the configured byte boundary', async () => {
+    expect(openAiSource).toBeDefined();
+    if (!openAiSource?.ingestion) return;
+    const boundedSource = {
+      ...openAiSource,
+      ingestion: { ...openAiSource.ingestion, maxBytes: 16 },
+    };
+    let emittedChunks = 0;
+    let cancelled = false;
+    const oversizedFetch = (async () => new Response(new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (emittedChunks >= 100) {
+          controller.close();
+          return;
+        }
+        emittedChunks += 1;
+        controller.enqueue(new Uint8Array(8).fill(65));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'text/xml' },
+    })) as typeof fetch;
+
+    await expect(fetchAllowlistedRss(boundedSource, { fetchImpl: oversizedFetch }))
+      .rejects.toThrow('RSS response exceeds the byte limit');
+    expect(cancelled).toBe(true);
+    expect(emittedChunks).toBeLessThan(100);
+  });
+
+  it('cancels a declared oversized response before consuming its body', async () => {
+    expect(openAiSource).toBeDefined();
+    if (!openAiSource?.ingestion) return;
+    let cancelled = false;
+    const declaredOversizedFetch = (async () => new Response(new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled = true;
+      },
+    }), {
+      status: 200,
+      headers: {
+        'content-type': 'text/xml',
+        'content-length': String(openAiSource.ingestion!.maxBytes + 1),
+      },
+    })) as typeof fetch;
+
+    await expect(fetchAllowlistedRss(openAiSource, { fetchImpl: declaredOversizedFetch }))
+      .rejects.toThrow('RSS response exceeds the byte limit');
+    expect(cancelled).toBe(true);
   });
 });
 
@@ -184,5 +249,123 @@ describe('SAAS-605 candidate discovery model', () => {
       .toContain('source is missing or not registered');
     expect(highRisk.manualReview[0].riskSignals).toContain('security_privacy');
     expect(highRisk.manualReview[0].reasons).toContain('high risk requires manual review');
+  });
+
+  it('routes an HTTPS item on an off-allowlist host to manual review', () => {
+    expect(openAiSource).toBeDefined();
+    if (!openAiSource) return;
+    const validEntry = parseRss2Feed(openAiFixture, { maxItems: 20 }).entries[0];
+    const intake = buildEditorialIntake({
+      source: openAiSource,
+      entries: [{
+        ...validEntry,
+        guid: 'https-off-allowlist',
+        link: 'https://unapproved.example/product-update',
+      }],
+      fetchedAt: '2026-08-24T07:30:00.000Z',
+      feedUrl: 'https://openai.com/news/rss.xml',
+      contentType: 'text/xml',
+    });
+
+    expect(intake.candidates).toEqual([]);
+    expect(intake.manualReview[0].canonicalUrl).toBeNull();
+    expect(intake.manualReview[0].reasons)
+      .toContain('canonical URL host is not allowlisted');
+  });
+
+  it('exposes history for URL, event and fingerprint dedupe across separate batches', () => {
+    expect(openAiSource).toBeDefined();
+    if (!openAiSource) return;
+    const entry = parseRss2Feed(openAiFixture, { maxItems: 20 }).entries[0];
+    const first = buildEditorialIntake({
+      source: openAiSource,
+      entries: [entry],
+      fetchedAt: '2026-08-24T07:30:00.000Z',
+      feedUrl: 'https://openai.com/news/rss.xml',
+      contentType: 'text/xml',
+    });
+
+    const urlDuplicate = buildEditorialIntake({
+      source: openAiSource,
+      entries: [{ ...entry, guid: 'url-duplicate' }],
+      fetchedAt: '2026-08-24T08:30:00.000Z',
+      feedUrl: 'https://openai.com/news/rss.xml',
+      contentType: 'text/xml',
+      history: { normalizedUrls: first.nextHistory.normalizedUrls },
+    });
+    const eventDuplicate = buildEditorialIntake({
+      source: openAiSource,
+      entries: [{
+        ...entry,
+        guid: 'event-duplicate',
+        link: 'https://openai.com/index/event-duplicate',
+        descriptionText: 'Different short source description.',
+      }],
+      fetchedAt: '2026-08-24T08:30:00.000Z',
+      feedUrl: 'https://openai.com/news/rss.xml',
+      contentType: 'text/xml',
+      history: { eventKeys: first.nextHistory.eventKeys },
+    });
+    const fingerprintDuplicate = buildEditorialIntake({
+      source: openAiSource,
+      entries: [{
+        ...entry,
+        title: 'Different title for the fingerprint history check',
+        guid: 'fingerprint-duplicate',
+        link: 'https://openai.com/index/fingerprint-duplicate',
+      }],
+      fetchedAt: '2026-08-24T08:30:00.000Z',
+      feedUrl: 'https://openai.com/news/rss.xml',
+      contentType: 'text/xml',
+      history: {
+        sourceFingerprints: new Set([buildEditorialIntake({
+          source: openAiSource,
+          entries: [{
+            ...entry,
+            title: 'Different title for the fingerprint history check',
+            guid: 'fingerprint-source',
+            link: 'https://openai.com/index/fingerprint-source',
+          }],
+          fetchedAt: '2026-08-24T07:30:00.000Z',
+          feedUrl: 'https://openai.com/news/rss.xml',
+          contentType: 'text/xml',
+        }).records[0].contentFingerprint]),
+      },
+    });
+
+    expect(urlDuplicate.duplicates[0]?.duplicateReason).toBe('normalized_url');
+    expect(eventDuplicate.duplicates[0]?.duplicateReason).toBe('event_key');
+    expect(fingerprintDuplicate.duplicates[0]?.duplicateReason).toBe('source_fingerprint');
+  });
+
+  it('uses a source-independent deterministic event key within one publication day', () => {
+    expect(openAiSource).toBeDefined();
+    expect(googleCloudSource).toBeDefined();
+    if (!openAiSource || !googleCloudSource) return;
+    const baseEntry = parseRss2Feed(openAiFixture, { maxItems: 20 }).entries[0];
+    const sharedTitle = 'A shared official product event';
+    const first = buildEditorialIntake({
+      source: openAiSource,
+      entries: [{ ...baseEntry, title: sharedTitle }],
+      fetchedAt: '2026-08-24T07:30:00.000Z',
+      feedUrl: 'https://openai.com/news/rss.xml',
+      contentType: 'text/xml',
+    });
+    const second = buildEditorialIntake({
+      source: googleCloudSource,
+      entries: [{
+        ...baseEntry,
+        title: `  ${sharedTitle.toLocaleUpperCase()}  `,
+        guid: 'google-shared-event',
+        link: 'https://cloud.google.com/blog/products/ai-machine-learning/shared-event',
+      }],
+      fetchedAt: '2026-08-24T07:31:00.000Z',
+      feedUrl: 'https://cloudblog.withgoogle.com/products/ai-machine-learning/rss/',
+      contentType: 'application/xml',
+      history: first.nextHistory,
+    });
+
+    expect(first.records[0].eventKey).toBe(second.records[0].eventKey);
+    expect(second.duplicates[0]?.duplicateReason).toBe('event_key');
   });
 });

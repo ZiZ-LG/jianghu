@@ -1,4 +1,8 @@
 import type { SourceRegistryEntry } from '../src/content/sources.ts';
+import {
+  readBoundedResponseBody,
+  ResponseBodyByteLimitError,
+} from './stephen-bounded-response.ts';
 
 export interface RssFeedEntry {
   readonly title: string;
@@ -169,24 +173,23 @@ export async function fetchAllowlistedRss(
       clearTimeout(timeout);
       throw new Error('RSS response content type is not allowlisted');
     }
-    const declaredBytes = Number(response.headers.get('content-length') ?? '0');
-    if (Number.isFinite(declaredBytes) && declaredBytes > ingestion.maxBytes) {
-      clearTimeout(timeout);
-      throw new Error('RSS response exceeds the byte limit');
-    }
-    let body: ArrayBuffer;
+    let body: Uint8Array;
     try {
-      body = await response.arrayBuffer();
-    } catch {
+      body = await readBoundedResponseBody(
+        response,
+        ingestion.maxBytes,
+        controller.signal,
+      );
+    } catch (error) {
       clearTimeout(timeout);
       if (controller.signal.aborted) throw new Error('RSS request timed out');
+      if (error instanceof ResponseBodyByteLimitError) {
+        throw new Error('RSS response exceeds the byte limit');
+      }
       throw new Error('RSS response body could not be read');
     }
     clearTimeout(timeout);
     if (controller.signal.aborted) throw new Error('RSS request timed out');
-    if (body.byteLength > ingestion.maxBytes) {
-      throw new Error('RSS response exceeds the byte limit');
-    }
     const xml = new TextDecoder('utf-8', { fatal: true }).decode(body);
     if (!xml.trim()) throw new Error('RSS response body is empty');
 
