@@ -82,6 +82,15 @@ export interface ProductEntryDefinition {
   requirement: CapabilityRequirement;
 }
 
+export const ProductEntryDefinitionSchema: z.ZodType<ProductEntryDefinition> = z.object({
+  id: ProductEntryIdSchema,
+  label: z.string().trim().min(1),
+  path: z.string().startsWith('/'),
+  title: z.string().trim().min(1),
+  description: z.string().trim().min(1),
+  requirement: CapabilityRequirementSchema,
+}).strict();
+
 export const PRODUCT_ENTRY_REGISTRY: readonly ProductEntryDefinition[] = Object.freeze([
   {
     id: 'today', label: '今日', path: '/today', title: '今日',
@@ -133,6 +142,46 @@ export interface ProductAccess {
   policy: CapabilityPolicy;
   navigation: readonly ProductEntryDefinition[];
 }
+
+export const ProductAccessSchema: z.ZodType<ProductAccess> = z.object({
+  valid: z.boolean(),
+  edition: ProductEditionSchema.nullable(),
+  shell: z.enum(['commercial', 'internal_legacy']),
+  policy: CapabilityPolicySchema,
+  navigation: z.array(ProductEntryDefinitionSchema),
+}).strict().superRefine((value, ctx) => {
+  if (!value.valid) {
+    if (value.edition !== null
+      || value.shell !== 'commercial'
+      || value.policy.entitlements.length !== 0
+      || value.policy.permissions.length !== 0
+      || value.navigation.length !== 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'invalid product access must grant nothing' });
+    }
+    return;
+  }
+  if (value.edition === 'internal') {
+    if (value.shell !== 'internal_legacy'
+      || value.navigation.length !== 0
+      || ENTITLEMENT_KEYS.some((key) => !value.policy.entitlements.includes(key))
+      || PERMISSION_KEYS.some((key) => !value.policy.permissions.includes(key))) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'internal product access is inconsistent' });
+    }
+    return;
+  }
+  if (value.edition !== 'commercial'
+    || value.shell !== 'commercial'
+    || !value.policy.entitlements.includes('crm.core')
+    || value.policy.permissions.length !== 0) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'commercial product access is inconsistent' });
+    return;
+  }
+  const expectedNavigation = PRODUCT_ENTRY_REGISTRY
+    .filter((entry) => capabilityPolicyAllows(value.policy, entry.requirement));
+  if (JSON.stringify(value.navigation) !== JSON.stringify(expectedNavigation)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['navigation'], message: 'product navigation does not match policy' });
+  }
+});
 
 const ACTION_ENTITLEMENTS: Record<ActionType, EntitlementKey> = {
   ADD_ACCOUNT: 'crm.core',
@@ -201,22 +250,22 @@ export function capabilityRequirementForActionType(actionType: unknown): Capabil
 export function assembleProductAccess(input: unknown): ProductAccess {
   const parsed = ProductAccessConfigSchema.safeParse(input);
   if (!parsed.success) {
-    return {
+    return ProductAccessSchema.parse({
       valid: false,
       edition: null,
       shell: 'commercial',
       policy: { entitlements: [], permissions: [] },
       navigation: [],
-    };
+    });
   }
   if (parsed.data.edition === 'internal') {
-    return {
+    return ProductAccessSchema.parse({
       valid: true,
       edition: 'internal',
       shell: 'internal_legacy',
       policy: { entitlements: [...ENTITLEMENT_KEYS], permissions: [...PERMISSION_KEYS] },
       navigation: [],
-    };
+    });
   }
 
   const entitlements = [
@@ -224,13 +273,13 @@ export function assembleProductAccess(input: unknown): ProductAccess {
     ...(parsed.data.enabledEntitlements ?? []).filter((key) => key !== 'crm.core'),
   ];
   const policy: CapabilityPolicy = { entitlements, permissions: [] };
-  return {
+  return ProductAccessSchema.parse({
     valid: true,
     edition: 'commercial',
     shell: 'commercial',
     policy,
     navigation: PRODUCT_ENTRY_REGISTRY.filter((entry) => capabilityPolicyAllows(policy, entry.requirement)),
-  };
+  });
 }
 
 /** Shared fail-closed policy primitive. Resource scope and sensitive ACL remain separate intersections. */

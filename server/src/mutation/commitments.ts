@@ -5,6 +5,7 @@ import {
   ActorRoleSchema,
   CommandContextSchema,
   CommitmentCommandReceiptSchema,
+  commitmentReceiptMatchesCommand,
   CommitmentCommandSchema,
   type CommandContext,
   type CommitmentCommand,
@@ -584,6 +585,23 @@ const sendError = (req: any, reply: any, error: unknown) => {
   return reply.code(500).send({ error: '跟进承诺命令失败' });
 };
 
+async function assertCommitmentReceiptParent(
+  ctx: CommandContext,
+  receiptValue: CommitmentCommandReceipt,
+): Promise<void> {
+  const parent = await prisma.planAction.findFirst({
+    where: {
+      id: receiptValue.commitmentId,
+      tenantId: ctx.tenantId,
+      accountId: receiptValue.customerId,
+    },
+    select: { opportunityId: true },
+  });
+  if (!parent || parent.opportunityId !== receiptValue.matterId) {
+    throw new Error('Commitment command receipt parent mismatch');
+  }
+}
+
 export function commitmentRoutes(app: FastifyInstance): void {
   app.post('/api/commands/commitment', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (!canWrite(req, reply)) return;
@@ -603,10 +621,15 @@ export function commitmentRoutes(app: FastifyInstance): void {
         (tx) => executeCommitmentCommand(ctx, input, tx),
         prisma,
       );
-      if (!result.replayed) {
-        void syncCommitmentToWeCom(ctx.tenantId, result.result.commitmentId).catch(() => {});
+      const receipt = CommitmentCommandReceiptSchema.parse(result.result);
+      if (!commitmentReceiptMatchesCommand(receipt, input)) {
+        throw new Error('Commitment command receipt mismatch');
       }
-      return { ...result.result, replayed: result.replayed };
+      await assertCommitmentReceiptParent(ctx, receipt);
+      if (!result.replayed) {
+        void syncCommitmentToWeCom(ctx.tenantId, receipt.commitmentId).catch(() => {});
+      }
+      return { ...receipt, replayed: result.replayed };
     } catch (error) {
       return sendError(req, reply, error);
     }

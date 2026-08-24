@@ -3,6 +3,16 @@ import { assembleProductAccess } from '@jianghu/domain-contracts';
 import { resolveProductRoute } from './productRoutes';
 
 describe('commercial product routes', () => {
+  it('fails closed instead of synthesizing Today for invalid product access', () => {
+    const access = assembleProductAccess({
+      edition: 'commercial',
+      enabledEntitlements: ['not-a-real-entitlement'],
+    });
+
+    expect(access.valid).toBe(false);
+    expect(() => resolveProductRoute('/today', access)).toThrow('产品能力配置无效');
+  });
+
   it('resolves every Free entry to a non-empty surface and rejects gated direct routes', () => {
     const access = assembleProductAccess({ edition: 'commercial' });
 

@@ -59,8 +59,11 @@ export const CRM_FIELD_AUTHORITY: CrmAuthorityEntry[] = CrmAuthorityMapSchema.pa
     currentAuthority: { kind: 'core_path', path: 'Customer.categoryKey' },
     targetAuthority: { kind: 'core_path', path: 'Customer.categoryKey' },
     consumers: {
-      reads: [],
-      writes: [],
+      reads: [
+        'app/src/components/CrmContextPages.tsx', 'app/src/lib/crmContext.ts',
+        'server/src/crmContext.ts',
+      ],
+      writes: ['app/src/lib/quickCapture.ts', 'server/src/mutation/customers.ts'],
       adapters: [
         'app/src/aiContext.ts', 'app/src/api.ts', 'app/src/components/CustomerHub.tsx',
         'app/src/components/MdDocPanel.tsx', 'app/src/components/MdDocView.tsx',
@@ -70,6 +73,7 @@ export const CRM_FIELD_AUTHORITY: CrmAuthorityEntry[] = CrmAuthorityMapSchema.pa
         'server/src/opp.ts', 'server/src/repair.ts', 'server/src/salesClassification.ts', 'server/src/state.ts',
         'app/src/wireAction.ts', 'server/src/mutate.ts', 'server/src/voice.ts',
         'app/src/types.ts', 'packages/domain-contracts/src/actions.ts',
+        'packages/domain-contracts/src/crm.ts',
       ],
       migrations: [
         'app/src/data/seed.ts', 'server/scripts/migrate-adurc-v1.1.ts', 'server/src/seed-demo.ts',

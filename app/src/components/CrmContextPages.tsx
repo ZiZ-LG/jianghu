@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useId, useState } from 'react';
 import type {
   CrmContextSnapshot,
   PersonSummaryV2,
   RelationV2,
 } from '@jianghu/domain-contracts';
-import { api, toApiError } from '../api';
 import {
   customerCategoryLabel,
   matterKindLabel,
@@ -396,53 +395,17 @@ export function CrmContextPanelStateView({
   );
 }
 
-export function CrmContextPanel({ mode, onQuickCapture }: {
+export function CrmContextPanel({ mode, state, onRetry, onQuickCapture }: {
   mode: ContextMode;
+  state: CrmContextPanelState;
+  onRetry: () => void;
   onQuickCapture: () => void;
 }) {
-  const [state, setState] = useState<CrmContextPanelState>({ status: 'loading' });
-  const requestGeneration = useRef(0);
-
-  const refresh = useCallback(async () => {
-    const generation = ++requestGeneration.current;
-    setState((current) => current.status === 'ready'
-      ? { ...current, refreshing: true, refreshError: null }
-      : { status: 'loading' });
-    try {
-      const snapshot = await api.crmContext();
-      if (requestGeneration.current !== generation) return;
-      setState({ status: 'ready', snapshot, refreshing: false, refreshError: null });
-    } catch (cause) {
-      if (requestGeneration.current !== generation) return;
-      const message = toApiError(cause).message;
-      setState((current) => current.status === 'ready'
-        ? { ...current, refreshing: false, refreshError: message }
-        : { status: 'error', message });
-    }
-  }, []);
-
-  useEffect(() => {
-    void refresh();
-    const interval = window.setInterval(() => { void refresh(); }, CRM_CONTEXT_REFRESH_INTERVAL_MS);
-    const onFocus = () => { void refresh(); };
-    const onVisibility = () => {
-      if (document.visibilityState === 'visible') void refresh();
-    };
-    window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', onVisibility);
-    return () => {
-      requestGeneration.current += 1;
-      window.clearInterval(interval);
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onVisibility);
-    };
-  }, [refresh]);
-
   return (
     <CrmContextPanelStateView
       mode={mode}
       state={state}
-      onRetry={() => { void refresh(); }}
+      onRetry={onRetry}
       onQuickCapture={onQuickCapture}
     />
   );

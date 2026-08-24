@@ -777,11 +777,11 @@ deployment_git_in_dir "$fresh_root/repo" switch -q -C "$fresh_branch"
 deployment_git_in_dir "$fresh_root/repo" remote set-url origin "file://$fresh_origin"
 deployment_git_in_dir "$fresh_root/repo" push -qu -u origin "$fresh_branch"
 [[ "$(deployment_git_in_dir "$fresh_root/repo" rev-parse --abbrev-ref '@{upstream}')" == "origin/$fresh_branch" ]]
-# Local pre-commit runs clone HEAD, so overlay the current server snapshot to
-# exercise the exact migration under review. CI normally has no overlay diff.
-tar -cf - --exclude='node_modules' --exclude='dist' --exclude='*.db' server \
+# Local pre-commit runs clone HEAD, so overlay the current server and workspace
+# package snapshots to exercise their exact cross-package contract. CI normally has no overlay diff.
+tar -cf - --exclude='node_modules' --exclude='dist' --exclude='*.db' server packages \
   | tar -xf - -C "$fresh_root/repo"
-deployment_git_in_dir "$fresh_root/repo" -c user.name=CI -c user.email=ci@example.invalid add server
+deployment_git_in_dir "$fresh_root/repo" -c user.name=CI -c user.email=ci@example.invalid add server packages
 if ! deployment_git_in_dir "$fresh_root/repo" diff --cached --quiet; then
   deployment_git_in_dir "$fresh_root/repo" -c user.name=CI -c user.email=ci@example.invalid commit -qm 'current server snapshot'
 fi

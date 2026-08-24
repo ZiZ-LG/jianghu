@@ -3,13 +3,17 @@ import type { AccountState, CommitmentCommand, CommitmentCommandReceipt, Pipelin
 import type { AiContextOptions, ContextManifest } from './aiContext';
 import { toWireAction } from './wireAction';
 import {
+  ActorRoleSchema,
   CommitmentCommandReceiptSchema,
+  commitmentReceiptMatchesCommand,
   CrmContextSnapshotSchema,
+  ProductAccessSchema,
   QuickCaptureCommandReceiptSchema,
   TodayReadModelSchema,
   TodaySourceViewSchema,
   type InterventionSourceRef,
   type CrmContextSnapshot,
+  type CommandContext,
   type ProductAccess,
   type QuickCaptureCommand,
   type QuickCaptureCommandReceipt,
@@ -217,55 +221,6 @@ function parseQuickCaptureResponse(
   return { ...parsed.data, replayed };
 }
 
-function receiptMatchesCommitmentCommand(
-  receipt: CommitmentCommandReceipt,
-  command: CommitmentCommand,
-): boolean {
-  if (command.type === 'CREATE_COMMITMENT') {
-    return receipt.commitmentId === command.commitment.id
-      && receipt.customerId === command.commitment.customerId
-      && receipt.matterId === command.commitment.matterId
-      && receipt.executionStatus === 'planned'
-      && receipt.confirmationStatus === command.commitment.confirmationStatus
-      && receipt.version === 0
-      && receipt.scheduleVersion === 0
-      && receipt.nextCommitmentId === null
-      && receipt.linkedFromCommitmentId === null;
-  }
-  if (command.type === 'CREATE_NEXT_COMMITMENT') {
-    return receipt.commitmentId === command.commitment.id
-      && receipt.customerId === command.commitment.customerId
-      && receipt.matterId === command.commitment.matterId
-      && receipt.executionStatus === 'planned'
-      && receipt.confirmationStatus === command.commitment.confirmationStatus
-      && receipt.version === 0
-      && receipt.scheduleVersion === 0
-      && receipt.nextCommitmentId === null
-      && receipt.linkedFromCommitmentId === command.previousCommitmentId;
-  }
-  if (receipt.commitmentId !== command.commitmentId
-    || receipt.customerId !== command.customerId
-    || receipt.version !== command.baseVersion + 1
-    || receipt.scheduleVersion !== command.expectedScheduleVersion
-      + (command.type === 'RESCHEDULE_COMMITMENT' ? 1 : 0)
-    || receipt.linkedFromCommitmentId !== null) {
-    return false;
-  }
-  if (command.type === 'RESCHEDULE_COMMITMENT') {
-    return receipt.executionStatus === 'planned'
-      && receipt.confirmationStatus === (command.schedule.requiresConfirmation ? 'pending' : 'not_required');
-  }
-  if (command.type === 'CONFIRM_COMMITMENT') {
-    return receipt.executionStatus === 'planned' && receipt.confirmationStatus === 'confirmed';
-  }
-  if (command.type === 'DECLINE_COMMITMENT') {
-    return receipt.executionStatus === 'planned' && receipt.confirmationStatus === 'declined';
-  }
-  if (command.type === 'COMPLETE_COMMITMENT') return receipt.executionStatus === 'completed';
-  if (command.type === 'CANCEL_COMMITMENT') return receipt.executionStatus === 'canceled';
-  return receipt.executionStatus === 'missed';
-}
-
 function parseCommitmentResponse(
   raw: unknown,
   command: CommitmentCommand,
@@ -275,7 +230,7 @@ function parseCommitmentResponse(
   if (typeof replayed !== 'boolean') throw invalidCommitmentResponse();
   const parsed = CommitmentCommandReceiptSchema.safeParse(receiptValue);
   if (!parsed.success) throw invalidCommitmentResponse(parsed.error);
-  if (!receiptMatchesCommitmentCommand(parsed.data, command)) {
+  if (!commitmentReceiptMatchesCommand(parsed.data, command)) {
     throw invalidCommitmentResponse(new Error('Commitment command receipt mismatch'));
   }
   return { ...parsed.data, replayed };
@@ -284,13 +239,86 @@ export const newIdempotencyKey = (): string => crypto.randomUUID();
 
 export interface AuthResult {
   token: string;
-  user: { id: string; phone: string | null; email: string | null; name: string; role: string };
+  user: { id: string; phone: string | null; email: string | null; name: string; role: CommandContext['actorRole'] };
   tenant: { id: string; name: string; plan: string; subscriptionStatus: string; seatLimit: number };
   product: ProductAccess;
 }
 export interface Credentials { phone?: string; email?: string; password: string }
 // 登录命中「同一手机号/邮箱在多个工作区都有账号」时，后端返回候选工作区让用户选（而非直接发 token）
 export interface WorkspaceChoice { needWorkspace: true; workspaces: { tenantId: string; tenantName: string }[] }
+
+const invalidAuthResponse = (cause?: unknown): ApiError => new ApiError({
+  code: 'invalid_response',
+  message: '服务返回的登录身份或产品能力配置无效，请联系管理员。',
+  retryable: false,
+  cause,
+});
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function requiredString(value: unknown, field: string): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw invalidAuthResponse(new Error(`${field} must be a non-empty string`));
+  }
+  return value;
+}
+
+function nullableString(value: unknown, field: string): string | null {
+  if (value === null) return null;
+  return requiredString(value, field);
+}
+
+function parseSessionIdentity(raw: unknown): Omit<AuthResult, 'token'> {
+  if (!isRecord(raw) || !isRecord(raw.user) || !isRecord(raw.tenant)) throw invalidAuthResponse();
+  const product = ProductAccessSchema.safeParse(raw.product);
+  if (!product.success) throw invalidAuthResponse(product.error);
+  const role = ActorRoleSchema.safeParse(raw.user.role);
+  if (!role.success) throw invalidAuthResponse(role.error);
+  if (!Number.isSafeInteger(raw.tenant.seatLimit) || Number(raw.tenant.seatLimit) < 0) {
+    throw invalidAuthResponse(new Error('tenant.seatLimit must be a non-negative safe integer'));
+  }
+  return {
+    user: {
+      id: requiredString(raw.user.id, 'user.id'),
+      phone: nullableString(raw.user.phone, 'user.phone'),
+      email: nullableString(raw.user.email, 'user.email'),
+      name: requiredString(raw.user.name, 'user.name'),
+      role: role.data,
+    },
+    tenant: {
+      id: requiredString(raw.tenant.id, 'tenant.id'),
+      name: requiredString(raw.tenant.name, 'tenant.name'),
+      plan: requiredString(raw.tenant.plan, 'tenant.plan'),
+      subscriptionStatus: requiredString(raw.tenant.subscriptionStatus, 'tenant.subscriptionStatus'),
+      seatLimit: Number(raw.tenant.seatLimit),
+    },
+    product: product.data,
+  };
+}
+
+function parseAuthResult(raw: unknown): AuthResult {
+  if (!isRecord(raw)) throw invalidAuthResponse();
+  return { token: requiredString(raw.token, 'token'), ...parseSessionIdentity(raw) };
+}
+
+function parseLoginResult(raw: unknown): AuthResult | WorkspaceChoice {
+  if (isRecord(raw) && raw.needWorkspace === true) {
+    if (!Array.isArray(raw.workspaces) || raw.workspaces.length === 0) throw invalidAuthResponse();
+    return {
+      needWorkspace: true,
+      workspaces: raw.workspaces.map((workspace, index) => {
+        if (!isRecord(workspace)) throw invalidAuthResponse();
+        return {
+          tenantId: requiredString(workspace.tenantId, `workspaces[${index}].tenantId`),
+          tenantName: requiredString(workspace.tenantName, `workspaces[${index}].tenantName`),
+        };
+      }),
+    };
+  }
+  return parseAuthResult(raw);
+}
 // 录音转写（列表脱敏：不含正文，只有元数据 + hasContent 标志）
 export interface Transcript {
   id: string; source: string; title: string;
@@ -381,11 +409,15 @@ export const api = {
     unauthorizedListeners.add(listener);
     return () => { unauthorizedListeners.delete(listener); };
   },
-  register: (b: Credentials & { name: string; tenantName: string }): Promise<AuthResult> =>
-    req('/api/auth/register', { method: 'POST', body: JSON.stringify(b) }),
-  login: (b: Credentials & { tenantId?: string }): Promise<AuthResult | WorkspaceChoice> =>
-    req('/api/auth/login', { method: 'POST', body: JSON.stringify(b) }),
-  me: (): Promise<{ user: AuthResult['user']; tenant: AuthResult['tenant']; product: ProductAccess }> => req('/api/me'),
+  register: async (b: Credentials & { name: string; tenantName: string }): Promise<AuthResult> => parseAuthResult(
+    await req<unknown>('/api/auth/register', { method: 'POST', body: JSON.stringify(b) }),
+  ),
+  login: async (b: Credentials & { tenantId?: string }): Promise<AuthResult | WorkspaceChoice> => parseLoginResult(
+    await req<unknown>('/api/auth/login', { method: 'POST', body: JSON.stringify(b) }),
+  ),
+  me: async (): Promise<{ user: AuthResult['user']; tenant: AuthResult['tenant']; product: ProductAccess }> => parseSessionIdentity(
+    await req<unknown>('/api/me'),
+  ),
   getState: (): Promise<{ accounts: AccountState[] }> => req('/api/state'),
   crmContext: async (): Promise<CrmContextSnapshot> => parseCrmContextResponse(
     await req<unknown>('/api/crm/context'),

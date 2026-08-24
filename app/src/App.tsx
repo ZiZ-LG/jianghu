@@ -5,7 +5,7 @@ import {
   reducer, computeInverse, injectBaseVersion, alignVersionAfterRetry, invalidateHistory, transitionHistory,
   newAccount, newPerson, uid, type Action, type HistoryItem, type HistoryTransitionLock,
 } from './store';
-import { api, ApiError, isConfirmedAuthFailure, newIdempotencyKey, type AuthResult, type Suggestion } from './api';
+import { api, ApiError, isConfirmedAuthFailure, newIdempotencyKey, toApiError, type AuthResult, type Suggestion } from './api';
 import { scoreFromDomain } from './lib/g64111';
 import { usePersistentState, useTheme, useViewport } from './ui';
 import { Auth } from './components/Auth';
@@ -36,9 +36,10 @@ import { createCommitScheduler } from './lib/sync/commitScheduler';
 import { createMutationCoordinator, createMutationExecutionGate, entityKeyForAction } from './lib/sync/mutationCoordinator';
 import { localYmd } from './lib/dateYmd';
 import { clearStableBatchItemKey, runBatchWithProgress, stableBatchItemKey, type StableBatchKeyCache } from './lib/reviewBatch';
-import { capabilityPolicyAllows, type CrmContextSnapshot, type ProductAccess } from '@jianghu/domain-contracts';
+import { capabilityPolicyAllows, type ProductAccess } from '@jianghu/domain-contracts';
 import { GlobalDialogs, type GlobalInboxProps } from './components/GlobalDialogs';
 import { CommercialShell } from './components/CommercialShell';
+import { CRM_CONTEXT_REFRESH_INTERVAL_MS, type CrmContextPanelState } from './components/CrmContextPages';
 import { InternalRootAdapter } from './components/InternalRootAdapter';
 import { resolveProductRoute } from './lib/productRoutes';
 import { selectAppRootSurface, shouldLoadLegacyState } from './lib/appProductShell';
@@ -50,7 +51,9 @@ import {
 } from './lib/appShellUi';
 import {
   clearSessionUi,
+  beginLatestSessionRequest,
   commitSessionValue,
+  createLatestRequestGuard,
   createSessionGuard,
   createSessionLease,
   emptyInbox,
@@ -59,10 +62,12 @@ import {
   type SessionTicket,
 } from './lib/sessionLifecycle';
 
+const INVALID_PRODUCT_CONFIGURATION_MESSAGE = '产品能力配置无效，请联系部署管理员。';
+
 export default function App() {
   const [state, dispatch] = useReducer(reducer, { accounts: [] });
   const [auth, setAuth] = useState<AuthResult | null>(null);
-  const [commercialContext, setCommercialContext] = useState<CrmContextSnapshot | null>(null);
+  const [commercialContextState, setCommercialContextState] = useState<CrmContextPanelState>({ status: 'loading' });
   const [commercialPath, setCommercialPath] = useState(window.location.pathname);
   const [booting, setBooting] = useState(true);
   const [syncErr, setSyncErr] = useState('');
@@ -80,7 +85,12 @@ export default function App() {
   const historyRecovery = useRef<'refreshed' | 'refresh-failed'>('refreshed');
   const inboxBatchKeys = useRef<StableBatchKeyCache>(new Map());
   const sessionGuard = useRef(createSessionGuard());
+  const crmContextRequestGuard = useRef(createLatestRequestGuard());
   const [appShellUi, appShellUiDispatch] = useReducer(appShellUiReducer, undefined, createInitialAppShellUiState);
+  const resetCommercialContext = useCallback(() => {
+    crmContextRequestGuard.current.invalidate();
+    setCommercialContextState({ status: 'loading' });
+  }, []);
   const setGlobalDialogOpen = useCallback((dialog: SettableGlobalDialog, open: boolean) => {
     appShellUiDispatch({ type: 'SET_DIALOG', dialog, open });
   }, []);
@@ -170,6 +180,13 @@ export default function App() {
   }, []);
 
   const applyAuthenticatedRoute = useCallback((product: ProductAccess, accounts: { id: string; externalRef?: string; opportunities: { id: string; externalRef?: string }[] }[]) => {
+    if (!product.valid) {
+      pendingRoute.current = null;
+      setCommercialPath('/today');
+      setAccId(null); setOppId(null); setSelectedId(null);
+      setSyncErr(INVALID_PRODUCT_CONFIGURATION_MESSAGE);
+      return;
+    }
     if (product.shell === 'internal_legacy') {
       applyRoute(accounts);
       return;
@@ -199,12 +216,39 @@ export default function App() {
     return result.value;
   }, []);
   const refreshCrmContext = useCallback(async (ticket: SessionTicket = sessionGuard.current.capture()) => {
-    const result = await runSessionRequest(sessionGuard.current, ticket, api.crmContext, api.getToken);
-    if (!result.current) return null;
-    setCommercialContext(result.value);
-    return result.value;
+    const request = beginLatestSessionRequest(
+      sessionGuard.current,
+      ticket,
+      api.getToken,
+      crmContextRequestGuard.current,
+    );
+    if (request === null) return null;
+    setCommercialContextState((current) => current.status === 'ready'
+      ? { ...current, refreshing: true, refreshError: null }
+      : { status: 'loading' });
+    try {
+      const result = await runSessionRequest(sessionGuard.current, ticket, api.crmContext, api.getToken);
+      if (!result.current || !crmContextRequestGuard.current.isCurrent(request)) return null;
+      setCommercialContextState({ status: 'ready', snapshot: result.value, refreshing: false, refreshError: null });
+      return result.value;
+    } catch (cause) {
+      if (!sessionGuard.current.isCurrent(ticket, api.getToken())
+        || !crmContextRequestGuard.current.isCurrent(request)) return null;
+      const message = toApiError(cause).message;
+      setCommercialContextState((current) => current.status === 'ready'
+        ? { ...current, refreshing: false, refreshError: message }
+        : { status: 'error', message });
+      throw cause;
+    }
   }, []);
   const loadProductData = useCallback(async (product: ProductAccess, ticket: SessionTicket) => {
+    if (!product.valid) {
+      if (!sessionGuard.current.isCurrent(ticket, api.getToken())) return null;
+      stateRef.current = { accounts: [] };
+      dispatch({ type: 'HYDRATE', accounts: [] });
+      resetCommercialContext();
+      return { accounts: [] };
+    }
     const needsLegacyState = shouldLoadLegacyState(product);
     const [legacyState] = await Promise.all([
       needsLegacyState ? refreshState(ticket) : Promise.resolve({ accounts: [] }),
@@ -216,9 +260,9 @@ export default function App() {
       stateRef.current = { accounts: [] };
       dispatch({ type: 'HYDRATE', accounts: [] });
     }
-    if (product.shell !== 'commercial') setCommercialContext(null);
+    if (product.shell !== 'commercial') resetCommercialContext();
     return legacyState;
-  }, [refreshCrmContext, refreshState]);
+  }, [refreshCrmContext, refreshState, resetCommercialContext]);
   const renderedSessionTicket = sessionGuard.current.capture();
   const sessionLease = useMemo(
     () => createSessionLease(sessionGuard.current, renderedSessionTicket, api.getToken),
@@ -234,7 +278,7 @@ export default function App() {
     if (!token) {
       sessionGuard.current.begin(null);
       setInbox(emptyInbox);
-      setCommercialContext(null);
+      resetCommercialContext();
       setBooting(false);
       return;
     }
@@ -258,7 +302,7 @@ export default function App() {
         sessionGuard.current.begin(null);
         setInbox(emptyInbox);
         setAuth(null);
-        setCommercialContext(null);
+        resetCommercialContext();
         stateRef.current = { accounts: [] };
         dispatch({ type: 'HYDRATE', accounts: [] });
         setBooting(false);
@@ -268,9 +312,36 @@ export default function App() {
     } finally {
       if (sessionGuard.current.isCurrent(sessionTicket, api.getToken())) setBooting(false);
     }
-  }, [applyAuthenticatedRoute, loadInbox, loadProductData]);
+  }, [applyAuthenticatedRoute, loadInbox, loadProductData, resetCommercialContext]);
   // 启动：有 token 则恢复会话 + 拉取云端数据
   useEffect(() => { void restoreSession(); }, [restoreSession]);
+
+  useEffect(() => {
+    if (!auth?.product.valid || auth.product.shell !== 'commercial') return;
+    const refresh = () => {
+      const ticket = sessionGuard.current.capture();
+      void refreshCrmContext(ticket).then((snapshot) => {
+        if (snapshot && sessionGuard.current.isCurrent(ticket, api.getToken())) {
+          setSyncErr((current) => current.startsWith('客户与事项刷新失败：') ? '' : current);
+        }
+      }).catch((cause) => {
+        if (sessionGuard.current.isCurrent(ticket, api.getToken())) {
+          setSyncErr(`客户与事项刷新失败：${toApiError(cause).message}`);
+        }
+      });
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    const interval = window.setInterval(refreshWhenVisible, CRM_CONTEXT_REFRESH_INTERVAL_MS);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+      window.clearInterval(interval);
+    };
+  }, [auth?.product.shell, auth?.product.valid, auth?.token, refreshCrmContext]);
 
   const onAuthed = async (res: AuthResult) => {
     const sessionTicket = sessionGuard.current.begin(res.token);
@@ -292,7 +363,7 @@ export default function App() {
     sessionGuard.current.begin(null);
     appShellUiDispatch({ type: 'RESET_SESSION_TRANSIENT' });
     setInbox(clearedUi.inbox);
-    api.setToken(null); setAuth(null); setCommercialContext(null); setAccId(null); setOppId(null); setSelectedId(null);
+    api.setToken(null); setAuth(null); resetCommercialContext(); setAccId(null); setOppId(null); setSelectedId(null);
     stateRef.current = { accounts: [] };
     dispatch({ type: 'HYDRATE', accounts: [] });
     setSyncErr(clearedUi.syncErr);
@@ -306,12 +377,12 @@ export default function App() {
     pendingRoute.current = null;
     setCommercialPath('/today');
     window.history.replaceState(null, '', '/'); // 登出清 URL，避免登录页残留目标路径造成误解（重新登录会重新解析）
-  }, []);
+  }, [resetCommercialContext]);
   useEffect(() => api.onUnauthorized(() => logout()), [logout]);
 
   // 选中客户/商机 ↔ URL 双向同步：导航 pushState 入历史；popstate（前进/后退）解析回状态并规范化 URL
   useEffect(() => {
-    if (!auth || pendingRoute.current) return; // 未登录不动 URL（保住 deep link 目标）；待解析目标不被覆盖
+    if (!auth?.product.valid || pendingRoute.current) return; // 未登录/配置无效不动 URL；待解析目标不被覆盖
     if (auth.product.shell === 'commercial' && !accId) return;
     const path = buildPath(accId, oppId);
     if (window.location.pathname !== path) window.history.pushState(null, '', path);
@@ -319,7 +390,7 @@ export default function App() {
   useEffect(() => {
     const onPop = () => {
       const t = parsePath(window.location.pathname);
-      if (auth?.product.shell === 'commercial' && !t) {
+      if (auth?.product.valid && auth.product.shell === 'commercial' && !t) {
         const route = resolveProductRoute(window.location.pathname, auth.product);
         if (route.denied) setSyncErr('当前版本未启用该能力');
         if (window.location.pathname !== route.canonicalPath) window.history.replaceState(null, '', route.canonicalPath);
@@ -328,7 +399,7 @@ export default function App() {
         return;
       }
       if (!t) { setAccId(null); setOppId(null); setSelectedId(null); return; }
-      if (auth?.product.shell === 'commercial' && !capabilityPolicyAllows(auth.product.policy, { entitlement: 'sales.workspace' })) {
+      if (auth?.product.valid && auth.product.shell === 'commercial' && !capabilityPolicyAllows(auth.product.policy, { entitlement: 'sales.workspace' })) {
         const route = resolveProductRoute('/today', auth.product);
         window.history.replaceState(null, '', route.canonicalPath);
         setCommercialPath(route.canonicalPath);
@@ -542,7 +613,7 @@ export default function App() {
     setAccId(id); setOppId(a?.opportunities[0]?.id ?? null); setSelectedId(null); setVisibleLayers(new Set(['L1']));
   };
   const navigateCommercial = (path: string) => {
-    if (!auth || auth.product.shell !== 'commercial') return;
+    if (!auth?.product.valid || auth.product.shell !== 'commercial') return;
     const route = resolveProductRoute(path, auth.product);
     if (route.denied) {
       setSyncErr('当前版本未启用该能力');
@@ -845,6 +916,15 @@ export default function App() {
     </div>}
   </>;
 
+  if (!auth.product.valid) {
+    return (
+      <div className="boot" role="alert">
+        <span>{INVALID_PRODUCT_CONFIGURATION_MESSAGE}</span>
+        <button className="btn ghost sm" onClick={logout}>退出登录</button>
+      </div>
+    );
+  }
+
   const rootSurface = selectAppRootSurface(auth.product, Boolean(account));
   if (!account && rootSurface === 'commercial_shell') {
     return (
@@ -853,16 +933,23 @@ export default function App() {
           access={auth.product}
           pathname={commercialPath}
           accounts={state.accounts}
-          crmContext={commercialContext}
+          crmContextState={commercialContextState}
           actorUserId={auth.user.id}
           readonly={readonly}
           onNavigate={navigateCommercial}
           onOpenLegacy={salesWorkspaceEnabled ? openAccount : () => setSyncErr('当前版本未启用复杂销售工作台')}
           onOpenTeam={() => setGlobalDialogOpen('team', true)}
           onQuickCaptureSaved={async () => {
-            await refreshCrmContext(renderedSessionTicket);
-            if (salesWorkspaceEnabled) await refreshRenderedState();
-            if (sessionLease.isCurrent()) setSyncErr('');
+            try {
+              await refreshCrmContext(renderedSessionTicket);
+              if (salesWorkspaceEnabled) await refreshRenderedState();
+              if (sessionLease.isCurrent()) setSyncErr('');
+            } catch (cause) {
+              if (sessionLease.isCurrent()) {
+                setSyncErr(`客户与事项刷新失败：${toApiError(cause).message}`);
+              }
+              throw cause;
+            }
           }}
           onLogout={logout}
         />

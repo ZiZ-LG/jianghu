@@ -3,7 +3,7 @@ import type { Account } from '../types';
 import { resolveProductRoute } from '../lib/productRoutes';
 import { QuickCapture } from './QuickCapture';
 import { TodayPanel } from './TodayPanel';
-import { CrmContextPanel } from './CrmContextPages';
+import { CrmContextPanel, type CrmContextPanelState } from './CrmContextPages';
 import { toQuickCaptureAccounts, type QuickCaptureAccountOption } from '../lib/crmContext';
 
 function EmptyState({ children }: { children: string }) {
@@ -24,10 +24,11 @@ function LegacyAccountList({ accounts, onOpenLegacy }: { accounts: Account[]; on
 }
 
 function ProductPanel({
-  id, accounts, quickCaptureAccounts, actorUserId, readonly, onNavigate, onOpenLegacy, onOpenTeam, onQuickCaptureSaved,
+  id, accounts, crmContextState, quickCaptureAccounts, actorUserId, readonly, onNavigate, onOpenLegacy, onOpenTeam, onQuickCaptureSaved,
 }: {
   id: ProductEntryId;
   accounts: Account[];
+  crmContextState: CrmContextPanelState;
   quickCaptureAccounts: QuickCaptureAccountOption[];
   actorUserId: string;
   readonly: boolean;
@@ -45,7 +46,12 @@ function ProductPanel({
   }
   const matters = accounts.flatMap((account) => account.opportunities.map((matter) => ({ account, matter })));
   if (id === 'customers' || id === 'matters') {
-    return <CrmContextPanel mode={id} onQuickCapture={() => onNavigate('/quick-capture')} />;
+    return <CrmContextPanel
+      mode={id}
+      state={crmContextState}
+      onRetry={() => { void onQuickCaptureSaved().catch(() => undefined); }}
+      onQuickCapture={() => onNavigate('/quick-capture')}
+    />;
   }
   if (id === 'quick-capture') {
     return <QuickCapture
@@ -89,12 +95,12 @@ function ProductPanel({
 }
 
 export function CommercialShell({
-  access, pathname, accounts, crmContext, actorUserId, readonly, onNavigate, onOpenLegacy, onOpenTeam, onQuickCaptureSaved, onLogout,
+  access, pathname, accounts, crmContextState, actorUserId, readonly, onNavigate, onOpenLegacy, onOpenTeam, onQuickCaptureSaved, onLogout,
 }: {
   access: ProductAccess;
   pathname: string;
   accounts: Account[];
-  crmContext: CrmContextSnapshot | null;
+  crmContextState: CrmContextPanelState;
   actorUserId: string;
   readonly: boolean;
   onNavigate: (path: string) => void;
@@ -104,6 +110,9 @@ export function CommercialShell({
   onLogout: () => void;
 }) {
   const route = resolveProductRoute(pathname, access);
+  const crmContext: CrmContextSnapshot | null = crmContextState.status === 'ready'
+    ? crmContextState.snapshot
+    : null;
   const quickCaptureAccounts = toQuickCaptureAccounts(crmContext);
   return (
     <div className="commercial-shell">
@@ -129,6 +138,7 @@ export function CommercialShell({
         <ProductPanel
           id={route.entry.id}
           accounts={accounts}
+          crmContextState={crmContextState}
           quickCaptureAccounts={quickCaptureAccounts}
           actorUserId={actorUserId}
           readonly={readonly}

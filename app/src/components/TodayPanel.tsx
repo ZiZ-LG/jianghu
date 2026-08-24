@@ -254,6 +254,21 @@ type TodaySourceState =
   | { status: 'ready'; source: TodaySourceView }
   | { status: 'error'; message: string };
 
+export function invalidateTodaySourceInspection(request: number) {
+  return { request: request + 1, state: { status: 'idle' } as const };
+}
+
+export function settleTodaySourceInspectionAfterRefresh(
+  request: number,
+  outcome: 'accepted' | 'failed',
+) {
+  return outcome === 'accepted' ? invalidateTodaySourceInspection(request) : null;
+}
+
+export function shouldInvalidateTodaySourceForCommandError(status: number | undefined): boolean {
+  return status === 409;
+}
+
 function TodaySourceInspector({ state, onClose }: { state: TodaySourceState; onClose: () => void }) {
   const inspectorRef = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -354,6 +369,9 @@ export function TodayPanel({
     try {
       const model = await api.today();
       if (todayRequest.current !== request) return model;
+      const sourceUpdate = settleTodaySourceInspectionAfterRefresh(sourceRequest.current, 'accepted');
+      sourceRequest.current = sourceUpdate!.request;
+      setSourceState(sourceUpdate!.state);
       setState({ status: 'ready', model });
       const active = activeActionRef.current;
       if (invalidateActive && active && !savingRef.current && !containsExactRevision(model, active.item)) {
@@ -368,6 +386,12 @@ export function TodayPanel({
     }
   }, [closeAction]);
 
+  const invalidateSourceInspection = useCallback(() => {
+    const invalidated = invalidateTodaySourceInspection(sourceRequest.current);
+    sourceRequest.current = invalidated.request;
+    setSourceState(invalidated.state);
+  }, []);
+
   useEffect(() => {
     void loadToday({ invalidateActive: false }).catch(() => undefined);
     return () => { todayRequest.current += 1; };
@@ -375,8 +399,6 @@ export function TodayPanel({
 
   useEffect(() => {
     const refresh = () => {
-      sourceRequest.current += 1;
-      setSourceState({ status: 'idle' });
       void loadToday().catch(() => undefined);
     };
     const refreshWhenVisible = () => {
@@ -459,10 +481,14 @@ export function TodayPanel({
     savingRef.current = true;
     setSaving(true);
     setActionError(null);
+    invalidateSourceInspection();
     void saveAndRefreshTodayCommitmentActionDraft(
       draft,
       api.commitment,
-      () => loadToday({ invalidateActive: false }),
+      () => {
+        invalidateSourceInspection();
+        return loadToday({ invalidateActive: false });
+      },
       () => Promise.resolve(onDataChangedRef.current()),
     ).then((result) => {
       const fullyRefreshed = result.todayRefreshed && result.stateRefreshed;
@@ -472,7 +498,8 @@ export function TodayPanel({
     }).catch((cause) => {
       const error = toApiError(cause);
       setActionError(error.message);
-      if (error.status === 409) {
+      if (shouldInvalidateTodaySourceForCommandError(error.status)) {
+        invalidateSourceInspection();
         void loadToday().then(() => {
           if (!activeActionRef.current) setActionNotice(error.message);
         }).catch(() => {
@@ -498,8 +525,6 @@ export function TodayPanel({
         readonly={readonly}
         onAction={openAction}
         onRetry={() => {
-          sourceRequest.current += 1;
-          setSourceState({ status: 'idle' });
           void loadToday({ showLoading: true }).catch(() => undefined);
         }}
         onOpenSource={openSource}
@@ -519,10 +544,7 @@ export function TodayPanel({
       ) : null}
       <TodaySourceInspector
         state={sourceState}
-        onClose={() => {
-          sourceRequest.current += 1;
-          setSourceState({ status: 'idle' });
-        }}
+        onClose={invalidateSourceInspection}
       />
     </div>
   );

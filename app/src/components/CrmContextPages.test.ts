@@ -22,6 +22,13 @@ type CrmContextPanelStateViewComponent = (props: {
   onQuickCapture: () => void;
 }) => ReturnType<typeof createElement>;
 
+type CrmContextPanelComponent = (props: {
+  mode: 'customers' | 'matters';
+  state: Parameters<CrmContextPanelStateViewComponent>[0]['state'];
+  onRetry: () => void;
+  onQuickCapture: () => void;
+}) => ReturnType<typeof createElement>;
+
 const SNAPSHOT = CrmContextSnapshotSchema.parse({
   generatedAtUtc: '2026-08-23T23:50:00Z',
   customers: [{
@@ -177,5 +184,19 @@ describe('SAAS-105 generic CRM context pages', () => {
     expect(retainedHtml).toContain('刷新失败，已保留上次数据');
     expect(retainedHtml).toContain('远山制造');
     expect(retainedHtml).toContain('再次刷新');
+  });
+
+  it('preserves the shared owner refresh error and retry action through CrmContextPanel', () => {
+    const Panel = Reflect.get(CrmContextComponents, 'CrmContextPanel') as CrmContextPanelComponent | undefined;
+    expect(Panel, 'CrmContextPanel must be exported').toBeDefined();
+    const html = renderToStaticMarkup(createElement(Panel!, {
+      mode: 'customers',
+      state: { status: 'ready', snapshot: SNAPSHOT, refreshing: false, refreshError: '共享刷新失败' },
+      onRetry: () => undefined,
+      onQuickCapture: () => undefined,
+    }));
+    expect(html).toContain('共享刷新失败');
+    expect(html).toContain('再次刷新');
+    expect(html).toContain('远山制造');
   });
 });

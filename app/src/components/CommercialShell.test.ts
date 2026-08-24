@@ -17,7 +17,7 @@ const renderShell = (pathname: string, enabledEntitlements?: string[], readonly 
   access: assembleProductAccess({ edition: 'commercial', ...(enabledEntitlements ? { enabledEntitlements } : {}) }),
   pathname,
   accounts: [],
-  crmContext: EMPTY_CRM_CONTEXT,
+  crmContextState: { status: 'loading' },
   actorUserId: 'user-cao',
   readonly,
   onNavigate: () => undefined,
@@ -81,12 +81,15 @@ describe('CommercialShell', () => {
       access: assembleProductAccess({ edition: 'commercial' }),
       pathname: '/quick-capture',
       accounts: [],
-      crmContext: {
-        ...EMPTY_CRM_CONTEXT,
-        customers: [{
-          id: 'neutral-customer', name: '中性客户档案', categoryKey: null,
-          primaryOwnerUserId: 'user-cao', archivedAt: null, version: 0,
-        }],
+      crmContextState: {
+        status: 'ready', refreshing: false, refreshError: null,
+        snapshot: {
+          ...EMPTY_CRM_CONTEXT,
+          customers: [{
+            id: 'neutral-customer', name: '中性客户档案', categoryKey: null,
+            primaryOwnerUserId: 'user-cao', archivedAt: null, version: 0,
+          }],
+        },
       },
       actorUserId: 'user-cao',
       readonly: false,
@@ -99,5 +102,32 @@ describe('CommercialShell', () => {
 
     expect(html).toContain('中性客户档案');
     expect(html).not.toContain('复杂销售');
+  });
+
+  it('renders Customer pages from the same neutral snapshot used by Quick Capture', () => {
+    const context = {
+      ...EMPTY_CRM_CONTEXT,
+      customers: [{
+        id: 'shared-customer', name: '共享上下文客户', categoryKey: null,
+        primaryOwnerUserId: 'user-cao', archivedAt: null, version: 0,
+      }],
+    };
+    const html = renderToStaticMarkup(createElement(CommercialShell, {
+      access: assembleProductAccess({ edition: 'commercial' }),
+      pathname: '/customers',
+      accounts: [],
+      crmContextState: { status: 'ready', snapshot: context, refreshing: false, refreshError: null },
+      actorUserId: 'user-cao',
+      readonly: false,
+      onNavigate: () => undefined,
+      onOpenLegacy: () => undefined,
+      onOpenTeam: () => undefined,
+      onQuickCaptureSaved: async () => undefined,
+      onLogout: () => undefined,
+    }));
+
+    expect(html).toContain('共享上下文客户');
+    expect(html).toContain('data-crm-context-state="ready"');
+    expect(html).not.toContain('data-crm-context-state="loading"');
   });
 });

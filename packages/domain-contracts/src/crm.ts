@@ -791,6 +791,70 @@ export const CommitmentCommandReceiptSchema = z.object({
 
 export type CommitmentCommandReceipt = z.infer<typeof CommitmentCommandReceiptSchema>;
 
+function hasExactRepairCommands(
+  receipt: CommitmentCommandReceipt,
+  expected: CommitmentCommandReceipt['repairCommands'],
+): boolean {
+  return receipt.repairCommands.length === expected.length
+    && receipt.repairCommands.every((command, index) => command === expected[index]);
+}
+
+/** A structurally valid journal receipt must still belong to the exact command being replayed. */
+export function commitmentReceiptMatchesCommand(
+  receipt: CommitmentCommandReceipt,
+  command: CommitmentCommand,
+): boolean {
+  if (command.type === 'CREATE_COMMITMENT' || command.type === 'CREATE_NEXT_COMMITMENT') {
+    const linkedFromCommitmentId = command.type === 'CREATE_NEXT_COMMITMENT'
+      ? command.previousCommitmentId
+      : null;
+    return receipt.commitmentId === command.commitment.id
+      && receipt.customerId === command.commitment.customerId
+      && receipt.matterId === command.commitment.matterId
+      && receipt.executionStatus === 'planned'
+      && receipt.confirmationStatus === command.commitment.confirmationStatus
+      && receipt.version === 0
+      && receipt.scheduleVersion === 0
+      && receipt.nextCommitmentId === null
+      && receipt.linkedFromCommitmentId === linkedFromCommitmentId
+      && receipt.undoable === false
+      && hasExactRepairCommands(receipt, ['RESCHEDULE_COMMITMENT', 'CANCEL_COMMITMENT']);
+  }
+  if (receipt.commitmentId !== command.commitmentId
+    || receipt.customerId !== command.customerId
+    || receipt.version !== command.baseVersion + 1
+    || receipt.scheduleVersion !== command.expectedScheduleVersion
+      + (command.type === 'RESCHEDULE_COMMITMENT' ? 1 : 0)
+    || receipt.nextCommitmentId !== null
+    || receipt.linkedFromCommitmentId !== null
+    || receipt.undoable !== false) {
+    return false;
+  }
+  if (command.type === 'RESCHEDULE_COMMITMENT') {
+    return receipt.executionStatus === 'planned'
+      && receipt.confirmationStatus === (command.schedule.requiresConfirmation ? 'pending' : 'not_required')
+      && hasExactRepairCommands(receipt, ['RESCHEDULE_COMMITMENT', 'CANCEL_COMMITMENT']);
+  }
+  if (command.type === 'CONFIRM_COMMITMENT') {
+    return receipt.executionStatus === 'planned'
+      && receipt.confirmationStatus === 'confirmed'
+      && hasExactRepairCommands(receipt, ['RESCHEDULE_COMMITMENT', 'CANCEL_COMMITMENT']);
+  }
+  if (command.type === 'DECLINE_COMMITMENT') {
+    return receipt.executionStatus === 'planned'
+      && receipt.confirmationStatus === 'declined'
+      && hasExactRepairCommands(receipt, ['RESCHEDULE_COMMITMENT', 'CANCEL_COMMITMENT']);
+  }
+  if (command.type === 'COMPLETE_COMMITMENT') {
+    return receipt.executionStatus === 'completed'
+      && hasExactRepairCommands(receipt, ['CREATE_NEXT_COMMITMENT']);
+  }
+  if (command.type === 'CANCEL_COMMITMENT') {
+    return receipt.executionStatus === 'canceled' && hasExactRepairCommands(receipt, []);
+  }
+  return receipt.executionStatus === 'missed' && hasExactRepairCommands(receipt, []);
+}
+
 /** Non-sensitive replay summary for the atomic Quick Capture application command. */
 export const QuickCaptureCommandReceiptSchema = z.object({
   customer: CustomerCommandReceiptSchema.nullable(),

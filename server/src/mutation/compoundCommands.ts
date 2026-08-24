@@ -6,6 +6,7 @@ import {
   ActorRoleSchema,
   QuickCaptureCommandReceiptSchema,
   QuickCaptureCommandSchema,
+  commitmentReceiptMatchesCommand,
   capabilityPolicyAllows,
   capabilityRequirementForActionType,
   type CapabilityPolicy,
@@ -25,7 +26,7 @@ import { ScopedNotFoundError } from './scopeGuards.js';
 import { runCommand } from './commandRunner.js';
 import { syncCommitmentToWeCom } from '../wecom.js';
 import { resolveEffectiveResourceScope } from '../resourceScope.js';
-import { executeCustomerCommand } from './customers.js';
+import { executeCustomerCommand, parseCustomerCommandReceiptForCommand } from './customers.js';
 import { executeCommitmentCommand } from './commitments.js';
 
 class ActionAlreadyCompletedError extends Error {
@@ -353,6 +354,25 @@ export async function executeQuickCapture(
   return QuickCaptureCommandReceiptSchema.parse({ customer, commitment: commitmentReceipt });
 }
 
+function parseQuickCaptureReceiptForCommand(
+  raw: unknown,
+  input: QuickCaptureCommand,
+): QuickCaptureCommandReceipt {
+  const receipt = QuickCaptureCommandReceiptSchema.parse(raw);
+  const expectedCustomerId = input.customer.mode === 'existing'
+    ? input.customer.customerId
+    : input.customer.command.customer.id;
+  let customerMatches = receipt.customer === null;
+  if (input.customer.mode === 'create') {
+    customerMatches = receipt.customer !== null;
+    if (receipt.customer) parseCustomerCommandReceiptForCommand(receipt.customer, input.customer.command);
+  }
+  const commitmentMatches = receipt.commitment.customerId === expectedCustomerId
+    && commitmentReceiptMatchesCommand(receipt.commitment, input.commitment);
+  if (!customerMatches || !commitmentMatches) throw new Error('Quick Capture command receipt mismatch');
+  return receipt;
+}
+
 const idempotencyKey = (req: any, reply: any): string | undefined => {
   const value = req.headers['idempotency-key'];
   if (typeof value !== 'string' || value.trim().length < 8 || value.length > 200) {
@@ -399,10 +419,11 @@ export function compoundCommandRoutes(app: FastifyInstance, product: ProductAcce
         { kind: 'quick-capture', idempotencyKey: key, payload: body.data },
         (tx) => executeQuickCapture(ctx, body.data, tx, product.policy),
       );
+      const receipt = parseQuickCaptureReceiptForCommand(result.result, body.data);
       if (!result.replayed) {
-        void syncCommitmentToWeCom(ctx.tenantId, result.result.commitment.commitmentId).catch(() => {});
+        void syncCommitmentToWeCom(ctx.tenantId, receipt.commitment.commitmentId).catch(() => {});
       }
-      return { ...result.result, replayed: result.replayed };
+      return { ...receipt, replayed: result.replayed };
     } catch (error) { return commandFailure(req, reply, error, '快速记录失败'); }
   });
 

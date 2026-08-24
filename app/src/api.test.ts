@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { assembleProductAccess } from '@jianghu/domain-contracts';
 import { ApiError, api, isConfirmedAuthFailure, request } from './api';
 
 const response = (status: number, body: unknown) => ({
@@ -21,6 +22,33 @@ function deferred<T>() {
 }
 
 describe('typed API failures', () => {
+  it('rejects a successful auth envelope when product access is missing or malformed', async () => {
+    const base = {
+      token: 'token-1',
+      user: { id: 'user-1', phone: null, email: 'user@example.test', name: 'User', role: 'owner' },
+      tenant: { id: 'tenant-1', name: 'Tenant', plan: 'free', subscriptionStatus: 'active', seatLimit: 50 },
+    };
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(response(200, base))
+      .mockResolvedValueOnce(response(200, {
+        ...base,
+        product: { valid: true, edition: 'commercial', shell: 'unknown', policy: {}, navigation: [] },
+      }))
+      .mockResolvedValueOnce(response(200, {
+        ...base,
+        user: { ...base.user, role: 'root' },
+        product: assembleProductAccess({ edition: 'commercial' }),
+      })));
+
+    await expect(api.login({ email: 'user@example.test', password: 'password-123' }))
+      .rejects.toMatchObject({ code: 'invalid_response', retryable: false });
+    await expect(api.me())
+      .rejects.toMatchObject({ code: 'invalid_response', retryable: false });
+    await expect(api.register({
+      email: 'user@example.test', password: 'password-123', name: 'User', tenantName: 'Tenant',
+    })).rejects.toMatchObject({ code: 'invalid_response', retryable: false });
+  });
+
   it('preserves HTTP status/code and notifies the centralized 401 handler', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => response(401, { code: 'token_expired', error: 'expired' })));
     const seen: ApiError[] = [];

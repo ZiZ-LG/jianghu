@@ -163,6 +163,53 @@ describe('SAAS-102 atomic Quick Capture command', () => {
     }
   });
 
+  it('fails closed when a completed Quick Capture replay summary is malformed', async () => {
+    const context = await createTestContext({ productAccess: { edition: 'commercial' } });
+    try {
+      const customerId = opaqueId('customer', 'quick-malformed-replay-customer');
+      const commitmentId = opaqueId('commitment', 'quick-malformed-replay-commitment');
+      const payload = inlinePayload(customerId, commitmentId, context.owner.id);
+      const key = 'quick-malformed-replay-stable';
+      expect((await send(context, payload, key)).statusCode).toBe(200);
+      await context.prisma.commandRun.updateMany({
+        where: { tenantId: context.tenant.id, kind: 'quick-capture' },
+        data: { resultSummary: JSON.stringify({ customer: null, commitment: { version: 'corrupt' } }) },
+      });
+
+      const replay = await send(context, payload, key);
+      expect(replay.statusCode, replay.body).toBe(500);
+      expect(replay.json()).toEqual({ error: '快速记录失败' });
+    } finally {
+      await context.cleanup();
+    }
+  });
+
+  it('fails closed when a completed Quick Capture replay summary belongs to another command', async () => {
+    const context = await createTestContext({ productAccess: { edition: 'commercial' } });
+    try {
+      const customerId = opaqueId('customer', 'quick-mismatched-replay-customer');
+      const commitmentId = opaqueId('commitment', 'quick-mismatched-replay-commitment');
+      const payload = inlinePayload(customerId, commitmentId, context.owner.id);
+      const key = 'quick-mismatched-replay-stable';
+      const first = await send(context, payload, key);
+      expect(first.statusCode, first.body).toBe(200);
+      const { replayed: _replayed, ...receipt } = first.json();
+      await context.prisma.commandRun.updateMany({
+        where: { tenantId: context.tenant.id, kind: 'quick-capture' },
+        data: { resultSummary: JSON.stringify({
+          ...receipt,
+          commitment: { ...receipt.commitment, commitmentId: opaqueId('commitment', 'different-command') },
+        }) },
+      });
+
+      const replay = await send(context, payload, key);
+      expect(replay.statusCode, replay.body).toBe(500);
+      expect(replay.json()).toEqual({ error: '快速记录失败' });
+    } finally {
+      await context.cleanup();
+    }
+  });
+
   it('rejects inline Customer self-assignment bypass without completed business writes', async () => {
     const context = await createTestContext({ productAccess: { edition: 'commercial' } });
     try {

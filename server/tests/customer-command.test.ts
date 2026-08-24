@@ -158,6 +158,50 @@ describe('CORE-115 create-only Customer command', () => {
     }
   });
 
+  it('fails closed when a completed Customer replay summary is malformed', async () => {
+    const context = await createTestContext({ productAccess: { edition: 'commercial' } });
+    try {
+      const payload = createPayload(customerId('malformed-replay'));
+      const key = 'customer-malformed-replay-stable';
+      expect((await command(context, key, payload)).statusCode).toBe(200);
+      await context.prisma.commandRun.updateMany({
+        where: { tenantId: context.tenant.id, kind: 'customer' },
+        data: { resultSummary: JSON.stringify({ customerId: payload.customer.id, version: 'corrupt' }) },
+      });
+
+      const replay = await command(context, key, payload);
+      expect(replay.statusCode, replay.body).toBe(500);
+      expect(replay.json()).toEqual({ error: '客户命令失败' });
+    } finally {
+      await context.cleanup();
+    }
+  });
+
+  it('fails closed when a completed Customer replay summary belongs to another command', async () => {
+    const context = await createTestContext({ productAccess: { edition: 'commercial' } });
+    try {
+      const payload = createPayload(customerId('mismatched-replay'), '匹配客户', 'ecosystem_partner', context.owner.id);
+      const key = 'customer-mismatched-replay-stable';
+      expect((await command(context, key, payload)).statusCode).toBe(200);
+      await context.prisma.commandRun.updateMany({
+        where: { tenantId: context.tenant.id, kind: 'customer' },
+        data: { resultSummary: JSON.stringify({
+          customerId: customerId('different-command'),
+          categoryKey: payload.customer.categoryKey,
+          primaryOwnerUserId: payload.customer.primaryOwnerUserId,
+          version: 0,
+          undoable: false,
+        }) },
+      });
+
+      const replay = await command(context, key, payload);
+      expect(replay.statusCode, replay.body).toBe(500);
+      expect(replay.json()).toEqual({ error: '客户命令失败' });
+    } finally {
+      await context.cleanup();
+    }
+  });
+
   it('returns the same generic conflict for same-tenant and cross-tenant duplicate ids', async () => {
     const context = await createTestContext({ productAccess: { edition: 'commercial' } });
     try {

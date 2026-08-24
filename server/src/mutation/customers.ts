@@ -74,6 +74,21 @@ const isUniqueConflict = (error: unknown): boolean => (
   Boolean(error && typeof error === 'object' && 'code' in error && error.code === 'P2002')
 );
 
+export function parseCustomerCommandReceiptForCommand(
+  raw: unknown,
+  input: CustomerCreateCommand,
+): CustomerCommandReceipt {
+  const receipt = CustomerCommandReceiptSchema.parse(raw);
+  if (receipt.customerId !== input.customer.id
+    || receipt.categoryKey !== input.customer.categoryKey
+    || receipt.primaryOwnerUserId !== input.customer.primaryOwnerUserId
+    || receipt.version !== 0
+    || receipt.undoable !== false) {
+    throw new Error('Customer command receipt mismatch');
+  }
+  return receipt;
+}
+
 export async function executeCustomerCommand(
   ctx: CommandContext,
   rawInput: CustomerCreateCommand,
@@ -185,7 +200,8 @@ export function customerRoutes(app: FastifyInstance, policy: CapabilityPolicy): 
         (tx) => executeCustomerCommand(ctx, input, tx, policy),
         prisma,
       );
-      return { ...result.result, replayed: result.replayed };
+      const receipt = parseCustomerCommandReceiptForCommand(result.result, input);
+      return { ...receipt, replayed: result.replayed };
     } catch (error) {
       return sendError(req, reply, error);
     }

@@ -25,6 +25,33 @@ const source = (entityKind: 'commitment' | 'matter', entityId: string, version: 
 });
 
 describe('SAAS-103 Today surface', () => {
+  it('invalidates an exact-revision source inspection before a mutation refresh', () => {
+    const invalidate = Reflect.get(TodayComponents, 'invalidateTodaySourceInspection') as
+      | ((request: number) => { request: number; state: { status: 'idle' } })
+      | undefined;
+    expect(invalidate, 'invalidateTodaySourceInspection must be exported').toBeDefined();
+    expect(invalidate!(7)).toEqual({ request: 8, state: { status: 'idle' } });
+  });
+
+  it('invalidates source inspection only when a new Today model is accepted', () => {
+    const settle = Reflect.get(TodayComponents, 'settleTodaySourceInspectionAfterRefresh') as
+      | ((request: number, outcome: 'accepted' | 'failed') => { request: number; state: { status: 'idle' } } | null)
+      | undefined;
+    expect(settle, 'settleTodaySourceInspectionAfterRefresh must be exported').toBeDefined();
+    expect(settle!(4, 'failed')).toBeNull();
+    expect(settle!(4, 'accepted')).toEqual({ request: 5, state: { status: 'idle' } });
+  });
+
+  it('invalidates a known-stale source immediately on a command version conflict', () => {
+    const shouldInvalidate = Reflect.get(TodayComponents, 'shouldInvalidateTodaySourceForCommandError') as
+      | ((status: number | undefined) => boolean)
+      | undefined;
+    expect(shouldInvalidate, 'shouldInvalidateTodaySourceForCommandError must be exported').toBeDefined();
+    expect(shouldInvalidate!(409)).toBe(true);
+    expect(shouldInvalidate!(500)).toBe(false);
+    expect(shouldInvalidate!(undefined)).toBe(false);
+  });
+
   it('renders a recoverable read failure without showing stale local aggregation', () => {
     const TodayPanelStateView = Reflect.get(TodayComponents, 'TodayPanelStateView') as TodayPanelStateViewComponent | undefined;
     expect(TodayPanelStateView, 'TodayPanelStateView must be exported').toBeDefined();

@@ -16,6 +16,7 @@ import {
   QuickCaptureCommandReceiptSchema,
   QuickCaptureCommandSchema,
   RelationV2Schema,
+  commitmentReceiptMatchesCommand,
 } from '../src/index.js';
 
 const NEW_CUSTOMER_ID = 'customer_00000000000000000000000000000001';
@@ -386,6 +387,16 @@ describe('generic CRM commands', () => {
     };
     expect(CommitmentCommandReceiptSchema.safeParse(receipt).success).toBe(true);
     expect(CommitmentCommandReceiptSchema.safeParse({ ...receipt, title: '不得进入幂等摘要' }).success).toBe(false);
+    const command = CommitmentCommandSchema.parse({
+      type: 'CREATE_COMMITMENT', commitment: COMMITMENT_CREATE_INPUT,
+    });
+    expect(commitmentReceiptMatchesCommand(CommitmentCommandReceiptSchema.parse(receipt), command)).toBe(true);
+    expect(commitmentReceiptMatchesCommand(CommitmentCommandReceiptSchema.parse({
+      ...receipt, commitmentId: NEXT_COMMITMENT_ID,
+    }), command)).toBe(false);
+    expect(commitmentReceiptMatchesCommand(CommitmentCommandReceiptSchema.parse({
+      ...receipt, repairCommands: [],
+    }), command)).toBe(false);
   });
 
   it('composes inline Customer and Commitment creation without permitting partial or cross-customer payloads', () => {

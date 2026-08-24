@@ -98,6 +98,15 @@ describe('CRM field authority map', () => {
 
   it('registers the exact executable customer.category consumer inventory', () => {
     const category = getCrmFieldAuthority('customer.category');
+    expect(category?.consumers.reads).toEqual([
+      'app/src/components/CrmContextPages.tsx',
+      'app/src/lib/crmContext.ts',
+      'server/src/crmContext.ts',
+    ]);
+    expect(category?.consumers.writes).toEqual([
+      'app/src/lib/quickCapture.ts',
+      'server/src/mutation/customers.ts',
+    ]);
     expect([
       ...(category?.consumers.reads ?? []),
       ...(category?.consumers.writes ?? []),
@@ -107,23 +116,29 @@ describe('CRM field authority map', () => {
       'app/src/aiContext.ts',
       'app/src/api.ts',
       'app/src/components/CustomerHub.tsx',
+      'app/src/components/CrmContextPages.tsx',
       'app/src/components/MdDocPanel.tsx',
       'app/src/components/MdDocView.tsx',
       'app/src/components/NewOpportunityDialog.tsx',
       'app/src/components/RepairPanel.tsx',
       'app/src/data/seed.ts',
       'app/src/lib/mdProfile.ts',
+      'app/src/lib/crmContext.ts',
+      'app/src/lib/quickCapture.ts',
       'app/src/store.ts',
       'app/src/types.ts',
       'app/src/wireAction.ts',
       'packages/domain-contracts/src/actions.ts',
+      'packages/domain-contracts/src/crm.ts',
       'server/scripts/migrate-adurc-v1.1.ts',
       'server/scripts/postgres-customer-schema-state.ts',
       'server/scripts/render-pre-customer-schema.ts',
       'server/src/ai.ts',
+      'server/src/crmContext.ts',
       'server/src/mcp/syncBundle.ts',
       'server/src/mcpServer.ts',
       'server/src/mutate.ts',
+      'server/src/mutation/customers.ts',
       'server/src/opp.ts',
       'server/src/repair.ts',
       'server/src/salesClassification.ts',
