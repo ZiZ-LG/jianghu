@@ -2,6 +2,31 @@ import { describe, expect, it } from 'vitest';
 import { createTestContext } from './helpers/testApp.js';
 
 describe('opportunity clone P4 normalization', () => {
+  it('rejects an unclassified customer instead of inventing an Opportunity customerType', async () => {
+    const context = await createTestContext();
+    try {
+      const accountId = 'account-clone-unclassified';
+      await context.prisma.account.create({
+        data: { id: accountId, tenantId: context.tenant.id, name: '虚构未分类客户', customerType: null },
+      });
+
+      const response = await context.app.inject({
+        method: 'POST', url: '/api/opportunity/clone',
+        headers: { authorization: `Bearer ${context.token}` },
+        payload: { accountId, name: '不应创建的商机', personIds: [], withEdges: false },
+      });
+
+      expect(response.statusCode, response.body).toBe(409);
+      expect(response.json()).toEqual({
+        error: '请先为客户设置销售分类，再创建商机',
+        code: 'sales_customer_type_required',
+      });
+      await expect(context.prisma.opportunity.count({ where: { tenantId: context.tenant.id, accountId } })).resolves.toBe(0);
+    } finally {
+      await context.cleanup();
+    }
+  });
+
   it('copies exactly one stable legal non-A/D P4 keeper inside the scoped source tree', async () => {
     const context = await createTestContext();
     try {

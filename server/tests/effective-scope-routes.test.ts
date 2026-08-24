@@ -5,6 +5,7 @@ import { buildServerAiContext } from '../src/ai.js';
 import { handleMcpBody } from '../src/mcpServer.js';
 import { computePde } from '../src/pde/routes.js';
 import { createTestContext, type TestContext } from './helpers/testApp.js';
+import { internalProductPolicy } from './helpers/productPolicy.js';
 
 function auth(token: string) {
   return { authorization: `Bearer ${token}` };
@@ -43,7 +44,7 @@ async function callTool(ctx: CommandContext, id: number, name: string, args: Rec
     id,
     method: 'tools/call',
     params: { name, arguments: args },
-  }) as Promise<any>;
+  }, internalProductPolicy) as Promise<any>;
 }
 
 function toolResult(response: any): any {

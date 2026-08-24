@@ -15,7 +15,7 @@ const time = (value: string | null | undefined) => value ? new Date(value).toLoc
 
 export function toAccountRepairPatch(account: Account, value: {
   name: string;
-  customerType: 1 | 2 | 3 | 4;
+  customerType: 1 | 2 | 3 | 4 | '';
   primaryOwnerUserId: string;
   ownerChanged: boolean;
 }): AccountRepairPatch {
@@ -29,7 +29,7 @@ export function toAccountRepairPatch(account: Account, value: {
   };
   const name = value.name.trim();
   if (name !== account.name) patch.name = name;
-  if (value.customerType !== account.customerType) patch.customerType = value.customerType;
+  if (value.customerType !== '' && value.customerType !== account.customerType) patch.customerType = value.customerType;
   if (value.ownerChanged) patch.primaryOwnerUserId = value.primaryOwnerUserId || null;
   return patch;
 }
@@ -98,7 +98,7 @@ export function RepairPanel({ target, accounts, onClose, onChanged, onEditOpport
   const account = target.kind === 'account' ? target.account : undefined;
   const record = target.kind === 'visitNote' || target.kind === 'note' ? target.record : undefined;
   const [name, setName] = useState(account?.name ?? '');
-  const [customerType, setCustomerType] = useState<1 | 2 | 3 | 4>(account?.customerType ?? 2);
+  const [customerType, setCustomerType] = useState<1 | 2 | 3 | 4 | ''>(account?.customerType ?? '');
   const [primaryOwnerUserId, setPrimaryOwnerUserId] = useState(account?.primaryOwnerUserId ?? '');
   const [ownerChanged, setOwnerChanged] = useState(false);
   const [members, setMembers] = useState<Array<{ id: string; name: string }>>([]);
@@ -223,7 +223,7 @@ export function RepairPanel({ target, accounts, onClose, onChanged, onEditOpport
       {target.kind === 'account' && <>
         <label className="fld"><span>客户名称</span><input value={name} onChange={(event) => setName(event.target.value)} /></label>
         <div className="fld-row">
-          <label className="fld"><span>客户类型</span><select value={customerType} onChange={(event) => setCustomerType(Number(event.target.value) as 1 | 2 | 3 | 4)}>{([1, 2, 3, 4] as const).map((value) => <option key={value} value={value}>{CUSTOMER_TYPE_LABEL[value]}</option>)}</select></label>
+          <label className="fld"><span>客户类型</span><select value={customerType} onChange={(event) => setCustomerType(event.target.value === '' ? '' : Number(event.target.value) as 1 | 2 | 3 | 4)}>{target.account.customerType === null && <option value="">未设置销售分类</option>}{([1, 2, 3, 4] as const).map((value) => <option key={value} value={value}>{CUSTOMER_TYPE_LABEL[value]}</option>)}</select></label>
           <label className="fld"><span>负责人</span><select value={primaryOwnerUserId} onChange={(event) => { setPrimaryOwnerUserId(event.target.value); setOwnerChanged(true); }}>
             <option value="">未分配</option>
             {members.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}

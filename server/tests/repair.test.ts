@@ -100,6 +100,97 @@ async function seedRepairTrees(context: TestContext, suffix: string) {
 }
 
 describe('INT-301 minimum data repair', () => {
+  it('denies a scoped member account repair outside the current effective data scope', async () => {
+    const context = await createTestContext();
+    try {
+      const actor = await context.prisma.user.create({ data: {
+        tenantId: context.tenant.id,
+        email: `repair-scoped-actor-${randomUUID()}@example.test`,
+        passwordHash: 'unused',
+        name: 'Scoped repair actor',
+        role: 'member',
+      } });
+      const other = await context.prisma.user.create({ data: {
+        tenantId: context.tenant.id,
+        email: `repair-scoped-other-${randomUUID()}@example.test`,
+        passwordHash: 'unused',
+        name: 'Other account owner',
+        role: 'member',
+      } });
+      await context.prisma.tenant.update({
+        where: { id: context.tenant.id },
+        data: { dataScopePolicy: 'scoped' },
+      });
+      const visibleAccountId = `repair-visible-${randomUUID()}`;
+      const hiddenAccountId = `repair-hidden-${randomUUID()}`;
+      await context.prisma.account.createMany({ data: [
+        {
+          id: visibleAccountId,
+          tenantId: context.tenant.id,
+          name: 'Visible account',
+          customerType: 1,
+          primaryOwner: actor.name,
+          primaryOwnerUserId: actor.id,
+        },
+        {
+          id: hiddenAccountId,
+          tenantId: context.tenant.id,
+          name: 'Hidden account',
+          customerType: 2,
+          primaryOwner: other.name,
+          primaryOwnerUserId: other.id,
+        },
+      ] });
+      const token = context.app.jwt.sign({
+        userId: actor.id,
+        tenantId: context.tenant.id,
+        role: 'member',
+      });
+
+      const hidden = await context.app.inject({
+        method: 'PATCH',
+        url: `/api/repair/account/${hiddenAccountId}`,
+        headers: auth(token),
+        payload: {
+          base: {
+            name: 'Hidden account',
+            customerType: 2,
+            primaryOwner: other.name,
+            primaryOwnerUserId: other.id,
+          },
+          name: 'Scoped bypass',
+        },
+      });
+      expect(hidden.statusCode, hidden.body).toBe(404);
+      expect(hidden.json()).toEqual({ error: '资源不存在' });
+      await expect(context.prisma.account.findUniqueOrThrow({ where: { id: hiddenAccountId } }))
+        .resolves.toMatchObject({ name: 'Hidden account' });
+      await expect(context.prisma.auditEvent.count({
+        where: { tenantId: context.tenant.id, entityId: hiddenAccountId, action: 'repair' },
+      })).resolves.toBe(0);
+
+      const visible = await context.app.inject({
+        method: 'PATCH',
+        url: `/api/repair/account/${visibleAccountId}`,
+        headers: auth(token),
+        payload: {
+          base: {
+            name: 'Visible account',
+            customerType: 1,
+            primaryOwner: actor.name,
+            primaryOwnerUserId: actor.id,
+          },
+          name: 'Visible correction',
+        },
+      });
+      expect(visible.statusCode, visible.body).toBe(200);
+      await expect(context.prisma.account.findUniqueOrThrow({ where: { id: visibleAccountId } }))
+        .resolves.toMatchObject({ name: 'Visible correction' });
+    } finally {
+      await context.cleanup();
+    }
+  });
+
   it('transactionally rebinds VisitNote and Note redundant account/opportunity references and audits each repair', async () => {
     const context = await createTestContext();
     try {

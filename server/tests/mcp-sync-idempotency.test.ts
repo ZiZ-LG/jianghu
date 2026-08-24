@@ -3,10 +3,13 @@ import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
 import type { CommandContext } from '@jianghu/domain-contracts';
-import { handleMcpBody } from '../src/mcpServer.js';
+import { handleMcpBody as handleMcpBodyWithPolicy } from '../src/mcpServer.js';
 import { syncIntelBundle } from '../src/mcp/syncBundle.js';
 import { findSyncAnchorConflicts } from '../src/mcp/syncAnchorConflicts.js';
 import { createTestContext, type TestContext } from './helpers/testApp.js';
+import { internalProductPolicy } from './helpers/productPolicy.js';
+
+const handleMcpBody = (ctx: CommandContext, body: unknown) => handleMcpBodyWithPolicy(ctx, body, internalProductPolicy);
 
 describe('WorkBuddy atomic sync bundle', () => {
   let test: TestContext;
@@ -58,6 +61,35 @@ describe('WorkBuddy atomic sync bundle', () => {
     const response = await handleMcpBody(ctx, { jsonrpc: '2.0', id: 1, method: 'tools/list' });
     const tools = (response as { result: { tools: Array<{ name: string }> } }).result.tools;
     expect(tools.map((tool) => tool.name)).toContain('sync_intel_bundle');
+  });
+
+  it('creates an account without sales classification as null instead of falling back to type 1', async () => {
+    await syncIntelBundle(ctx, {
+      idempotencyKey: 'unclassified-account-only',
+      bundle: { account: { externalRef: 'unclassified-account-only', name: '未分类客户' } },
+    }, test.prisma);
+
+    await expect(test.prisma.account.findFirstOrThrow({ where: {
+      tenantId: test.tenant.id, externalRef: 'unclassified-account-only',
+    } })).resolves.toMatchObject({ customerType: null });
+  });
+
+  it('rejects opportunity creation for an unclassified customer and rolls the bundle back', async () => {
+    const args = {
+      idempotencyKey: 'unclassified-opportunity',
+      bundle: {
+        account: { externalRef: 'unclassified-opportunity-account', name: '未分类商机客户' },
+        opportunity: { externalRef: 'unclassified-opportunity', name: '不应创建的商机' },
+      },
+    };
+
+    await expect(syncIntelBundle(ctx, args, test.prisma)).rejects.toThrow('sales classification is required');
+    await expect(test.prisma.account.count({ where: {
+      tenantId: test.tenant.id, externalRef: 'unclassified-opportunity-account',
+    } })).resolves.toBe(0);
+    await expect(test.prisma.opportunity.count({ where: {
+      tenantId: test.tenant.id, externalRef: 'unclassified-opportunity',
+    } })).resolves.toBe(0);
   });
 
   it('atomically creates a bundle and replays one stable receipt', async () => {

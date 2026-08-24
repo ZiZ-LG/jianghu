@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { assembleProductAccess } from '@jianghu/domain-contracts';
 import { ApiError, api, isConfirmedAuthFailure, request } from './api';
 
 const response = (status: number, body: unknown) => ({
@@ -21,6 +22,33 @@ function deferred<T>() {
 }
 
 describe('typed API failures', () => {
+  it('rejects a successful auth envelope when product access is missing or malformed', async () => {
+    const base = {
+      token: 'token-1',
+      user: { id: 'user-1', phone: null, email: 'user@example.test', name: 'User', role: 'owner' },
+      tenant: { id: 'tenant-1', name: 'Tenant', plan: 'free', subscriptionStatus: 'active', seatLimit: 50 },
+    };
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(response(200, base))
+      .mockResolvedValueOnce(response(200, {
+        ...base,
+        product: { valid: true, edition: 'commercial', shell: 'unknown', policy: {}, navigation: [] },
+      }))
+      .mockResolvedValueOnce(response(200, {
+        ...base,
+        user: { ...base.user, role: 'root' },
+        product: assembleProductAccess({ edition: 'commercial' }),
+      })));
+
+    await expect(api.login({ email: 'user@example.test', password: 'password-123' }))
+      .rejects.toMatchObject({ code: 'invalid_response', retryable: false });
+    await expect(api.me())
+      .rejects.toMatchObject({ code: 'invalid_response', retryable: false });
+    await expect(api.register({
+      email: 'user@example.test', password: 'password-123', name: 'User', tenantName: 'Tenant',
+    })).rejects.toMatchObject({ code: 'invalid_response', retryable: false });
+  });
+
   it('preserves HTTP status/code and notifies the centralized 401 handler', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => response(401, { code: 'token_expired', error: 'expired' })));
     const seen: ApiError[] = [];
@@ -299,6 +327,242 @@ describe('typed API failures', () => {
       expect(((init as RequestInit).headers as Headers).get('Idempotency-Key')).toBe('stable-commitment-key');
       expect(JSON.parse(String((init as RequestInit).body))).toEqual(payload);
     }
+  });
+
+  it('rejects malformed or command-mismatched Commitment success receipts', async () => {
+    const payload = {
+      type: 'CONFIRM_COMMITMENT' as const,
+      customerId: 'customer-1',
+      commitmentId: 'commitment_00000000000000000000000000000001',
+      baseVersion: 2,
+      expectedScheduleVersion: 3,
+      confirmedAtUtc: '2026-08-23T19:00:00.000Z',
+    };
+    const validReceipt = {
+      commitmentId: payload.commitmentId,
+      customerId: payload.customerId,
+      matterId: 'matter-1',
+      executionStatus: 'planned',
+      confirmationStatus: 'confirmed',
+      version: 3,
+      scheduleVersion: 3,
+      nextCommitmentId: null,
+      linkedFromCommitmentId: null,
+      undoable: false,
+      repairCommands: ['RESCHEDULE_COMMITMENT', 'CANCEL_COMMITMENT'],
+      replayed: false,
+    };
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(response(200, { ...validReceipt, replayed: undefined }))
+      .mockResolvedValueOnce(response(200, {
+        ...validReceipt,
+        commitmentId: 'commitment_99999999999999999999999999999999',
+      }))
+      .mockResolvedValueOnce(response(200, { ...validReceipt, version: 2 }))
+      .mockResolvedValueOnce(response(200, { ...validReceipt, scheduleVersion: 4 })));
+
+    await expect(api.commitment(payload, 'commitment-missing-replayed')).rejects.toMatchObject({
+      code: 'invalid_response', retryable: false,
+    });
+    await expect(api.commitment(payload, 'commitment-wrong-target')).rejects.toMatchObject({
+      code: 'invalid_response', retryable: false,
+    });
+    await expect(api.commitment(payload, 'commitment-wrong-version')).rejects.toMatchObject({
+      code: 'invalid_response', retryable: false,
+    });
+    await expect(api.commitment(payload, 'commitment-wrong-schedule-version')).rejects.toMatchObject({
+      code: 'invalid_response', retryable: false,
+    });
+  });
+
+  it('sends the atomic Quick Capture command with one frozen key across network retry', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError('network lost'))
+      .mockResolvedValueOnce(response(200, {
+        customer: null,
+        commitment: {
+          commitmentId: 'commitment_00000000000000000000000000000001',
+          customerId: 'customer-1', matterId: null, executionStatus: 'planned',
+          confirmationStatus: 'not_required', version: 0, scheduleVersion: 0,
+          nextCommitmentId: null, linkedFromCommitmentId: null, undoable: false,
+          repairCommands: ['RESCHEDULE_COMMITMENT', 'CANCEL_COMMITMENT'],
+        },
+        replayed: true,
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+    const payload = {
+      customer: { mode: 'existing' as const, customerId: 'customer-1' },
+      commitment: {
+        type: 'CREATE_COMMITMENT' as const,
+        commitment: {
+          id: 'commitment_00000000000000000000000000000001',
+          customerId: 'customer-1', matterId: null, personId: null,
+          title: '下一步', kind: 'follow_up' as const, ownerUserId: 'user-1',
+          confirmationStatus: 'not_required' as const,
+          scheduledAtUtc: '2026-08-27T07:00:00.000Z', dueAtUtc: null,
+          timeZone: 'Asia/Shanghai', isAllDay: false as const, localDate: null,
+          confirmationDueAtUtc: null, source: 'manual_quick_capture' as const, sourceRef: null,
+        },
+      },
+    };
+
+    await api.quickCapture(payload, 'stable-quick-capture-key');
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const [url, init] of fetchMock.mock.calls) {
+      expect(url).toBe('http://localhost:3001/api/commands/quick-capture');
+      expect(((init as RequestInit).headers as Headers).get('Idempotency-Key')).toBe('stable-quick-capture-key');
+      expect(JSON.parse(String((init as RequestInit).body))).toEqual(payload);
+    }
+  });
+
+  it('rejects malformed or mismatched Quick Capture success receipts', async () => {
+    const payload = {
+      customer: { mode: 'existing' as const, customerId: 'customer-1' },
+      commitment: {
+        type: 'CREATE_COMMITMENT' as const,
+        commitment: {
+          id: 'commitment_00000000000000000000000000000001',
+          customerId: 'customer-1', matterId: null, personId: null,
+          title: '下一步', kind: 'follow_up' as const, ownerUserId: 'user-1',
+          confirmationStatus: 'not_required' as const,
+          scheduledAtUtc: '2026-08-27T07:00:00.000Z', dueAtUtc: null,
+          timeZone: 'Asia/Shanghai', isAllDay: false as const, localDate: null,
+          confirmationDueAtUtc: null, source: 'manual_quick_capture' as const, sourceRef: null,
+        },
+      },
+    };
+    const validReceipt = {
+      customer: null,
+      commitment: {
+        commitmentId: payload.commitment.commitment.id,
+        customerId: payload.customer.customerId,
+        matterId: null,
+        executionStatus: 'planned', confirmationStatus: 'not_required',
+        version: 0, scheduleVersion: 0, nextCommitmentId: null,
+        linkedFromCommitmentId: null, undoable: false,
+        repairCommands: ['RESCHEDULE_COMMITMENT', 'CANCEL_COMMITMENT'],
+      },
+      replayed: false,
+    };
+
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(response(200, {}))
+      .mockResolvedValueOnce(response(200, {
+        ...validReceipt,
+        commitment: { ...validReceipt.commitment, commitmentId: 'commitment_00000000000000000000000000009999' },
+      })));
+
+    await expect(api.quickCapture(payload, 'malformed-quick-capture-key')).rejects.toMatchObject({ code: 'invalid_response' });
+    await expect(api.quickCapture(payload, 'mismatched-quick-capture-key')).rejects.toMatchObject({ code: 'invalid_response' });
+  });
+
+  it('reads and runtime-validates the fixed Today intervention contract', async () => {
+    const validToday = {
+      generatedAtUtc: '2026-08-23T19:00:00.000Z',
+      sections: [
+        { key: 'pending_confirmation', label: '待确认', items: [] },
+        { key: 'follow_up', label: '待跟进', items: [] },
+        { key: 'completed', label: '已完成', items: [] },
+      ],
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(200, validToday))
+      .mockResolvedValueOnce(response(200, {
+        ...validToday,
+        sections: [{ key: 'follow_up', label: '待跟进', items: [] }],
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.today()).resolves.toEqual(validToday);
+    await expect(api.today()).rejects.toMatchObject({ code: 'invalid_response', retryable: false });
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'http://localhost:3001/api/today',
+      'http://localhost:3001/api/today',
+    ]);
+  });
+
+  it('reads and runtime-validates the strict generic CRM context snapshot', async () => {
+    const validContext = {
+      generatedAtUtc: '2026-08-23T23:50:00.000Z',
+      customers: [{
+        id: 'customer-1', name: '通用客户', categoryKey: null,
+        primaryOwnerUserId: 'user-1', archivedAt: null, version: 0,
+      }],
+      matters: [{
+        id: 'matter-1', customerId: 'customer-1', title: '联合研究', kind: 'general',
+        lifecycleStatus: 'active', outcomeKey: null, priority: null, targetDate: null,
+        primaryOwnerUserId: 'user-1', archivedAt: null, version: 0,
+      }],
+      people: [{
+        id: 'person-1', customerId: 'customer-1', name: '李总', title: null,
+        archivedAt: null, version: 0,
+      }],
+      matterParticipants: [{
+        id: 'participant-1', customerId: 'customer-1', matterId: 'matter-1', personId: 'person-1',
+      }],
+      relations: [{
+        id: 'relation-1', customerId: 'customer-1', matterId: 'matter-1',
+        sourcePersonId: 'person-1', targetPersonId: 'person-1', kind: 'introduced_by',
+        label: null, directed: false, version: 0,
+      }],
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(200, validContext))
+      .mockResolvedValueOnce(response(200, {
+        ...validContext,
+        customers: [{ ...validContext.customers[0], customerType: 1 }],
+      }))
+      .mockResolvedValueOnce(response(200, {
+        ...validContext,
+        relations: [{ ...validContext.relations[0], targetPersonId: 'missing-person' }],
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.crmContext()).resolves.toEqual(validContext);
+    await expect(api.crmContext()).rejects.toMatchObject({ code: 'invalid_response', retryable: false });
+    await expect(api.crmContext()).rejects.toMatchObject({ code: 'invalid_response', retryable: false });
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'http://localhost:3001/api/crm/context',
+      'http://localhost:3001/api/crm/context',
+      'http://localhost:3001/api/crm/context',
+    ]);
+  });
+
+  it('revalidates an exact Today source revision before drill-down', async () => {
+    const sourceRef = {
+      entityKind: 'commitment', entityId: 'commitment/1', version: 2, scheduleVersion: 3,
+    };
+    const validSource = {
+      sourceRef,
+      customerId: 'customer-1',
+      matterId: 'matter-1',
+      label: '确认周一会议',
+      detail: '计划中 · 待确认',
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(200, validSource))
+      .mockResolvedValueOnce(response(200, {
+        ...validSource,
+        sourceRef: { ...sourceRef, entityId: 'different-commitment' },
+      }))
+      .mockResolvedValueOnce(response(200, {
+        ...validSource,
+        sourceRef: { ...sourceRef, entityId: 'x'.repeat(20_000) },
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.todaySource(sourceRef)).resolves.toEqual(validSource);
+    await expect(api.todaySource(sourceRef)).rejects.toMatchObject({ code: 'invalid_response', retryable: false });
+    const longSourceRef = { ...sourceRef, entityId: 'x'.repeat(20_000) };
+    await expect(api.todaySource(longSourceRef)).resolves.toMatchObject({ sourceRef: longSourceRef });
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'http://localhost:3001/api/today/source',
+      'http://localhost:3001/api/today/source',
+      'http://localhost:3001/api/today/source',
+    ]);
+    expect(fetchMock.mock.calls.map(([, init]) => init?.method)).toEqual(['POST', 'POST', 'POST']);
+    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual(longSourceRef);
   });
 
   it('sends minimum repair commands to the dedicated audited endpoints', async () => {

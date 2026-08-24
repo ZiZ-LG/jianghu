@@ -56,27 +56,35 @@ export type CrmAuthorityEntry = z.infer<typeof CrmAuthorityEntrySchema>;
 export const CRM_FIELD_AUTHORITY: CrmAuthorityEntry[] = CrmAuthorityMapSchema.parse([
   {
     logicalField: 'customer.category',
-    currentAuthority: { kind: 'legacy_path', path: 'Account.customerType' },
+    currentAuthority: { kind: 'core_path', path: 'Customer.categoryKey' },
     targetAuthority: { kind: 'core_path', path: 'Customer.categoryKey' },
     consumers: {
       reads: [
+        'app/src/components/CrmContextPages.tsx', 'app/src/lib/crmContext.ts',
+        'server/src/crmContext.ts',
+      ],
+      writes: ['app/src/lib/quickCapture.ts', 'server/src/mutation/customers.ts'],
+      adapters: [
         'app/src/aiContext.ts', 'app/src/api.ts', 'app/src/components/CustomerHub.tsx',
         'app/src/components/MdDocPanel.tsx', 'app/src/components/MdDocView.tsx',
         'app/src/components/NewOpportunityDialog.tsx', 'app/src/components/RepairPanel.tsx',
         'app/src/lib/mdProfile.ts', 'app/src/store.ts',
         'server/src/ai.ts', 'server/src/mcp/syncBundle.ts', 'server/src/mcpServer.ts',
-        'server/src/opp.ts', 'server/src/repair.ts', 'server/src/state.ts',
+        'server/src/opp.ts', 'server/src/repair.ts', 'server/src/salesClassification.ts', 'server/src/state.ts',
+        'app/src/wireAction.ts', 'server/src/mutate.ts', 'server/src/voice.ts',
+        'app/src/types.ts', 'packages/domain-contracts/src/actions.ts',
+        'packages/domain-contracts/src/crm.ts',
       ],
-      writes: ['app/src/wireAction.ts', 'server/src/mutate.ts', 'server/src/voice.ts'],
-      adapters: ['app/src/types.ts', 'packages/domain-contracts/src/actions.ts'],
       migrations: [
         'app/src/data/seed.ts', 'server/scripts/migrate-adurc-v1.1.ts', 'server/src/seed-demo.ts',
+        'server/scripts/postgres-customer-schema-state.ts',
+        'server/scripts/render-pre-customer-schema.ts', 'server/scripts/upgrade-sqlite-schema.ts',
       ],
-      planned: ['CORE-501 customerType consumer cutover'],
+      planned: [],
     },
-    shadowComparison: 'Map legacy 1..4 through the sales adapter and compare with proposed categoryKey; mismatch fails closed.',
-    cutoverCondition: 'Customer.categoryKey migration dry-run is reviewed and every generic consumer reads the V2 DTO.',
-    stopCondition: 'No generic command or view reads or writes Account.customerType.',
+    shadowComparison: 'No generic shadow comparison or fallback exists; explicit sales adapters may continue to consume preserved 1..4 values.',
+    cutoverCondition: 'Customer.categoryKey is the sole generic authority and unclassified Customers remain explicitly null.',
+    stopCondition: 'Only the classified explicit sales adapters may read or write Account.customerType.',
     removalPhase: 'G7 after sales-adapter consumer count reaches zero',
     forbidden: [
       'Requiring 1..4 in a generic Customer command',
@@ -163,7 +171,7 @@ export const CRM_FIELD_AUTHORITY: CrmAuthorityEntry[] = CrmAuthorityMapSchema.pa
     },
     shadowComparison: 'legacy_tenant_shared must preserve owner/admin/member tenant-wide reads and viewer owner scope; scoped fixtures compare state, ID, AI, PDE, MCP, Inbox, curated, transcript, job, and repair results against one EffectiveResourceScope.',
     cutoverCondition: 'Every named online consumer resolves current tenant policy and current database role before business reads, cross-entry parity and both database migrations pass, and tenant activation remains an explicit separately approved operation.',
-    stopCondition: 'No read surface derives authorization from JWT role, display name, region, OpportunityMember, or an ad-hoc Account query; partial Customer containers expose only id/name/customerType.',
+    stopCondition: 'No read surface derives authorization from JWT role, display name, region, OpportunityMember, or an ad-hoc Account query; partial Customer containers expose only id/name/categoryKey/customerType/version.',
     removalPhase: 'Permanent G2 authority; future Team/Grant and sensitive-content ACL may only intersect this scope and never replace tenant isolation.',
     forbidden: [
       'Falling back to tenant-wide access for an unknown policy, invalid role, or missing actor',

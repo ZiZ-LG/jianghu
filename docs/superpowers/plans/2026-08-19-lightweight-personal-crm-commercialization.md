@@ -2,12 +2,12 @@
 
 > **状态：** Approved / Active
 > **日期：** 2026-08-19
-> **最近修订：** 2026-08-21（AI-native CRM 调研后的范围细化）
+> **最近修订：** 2026-08-23（CORE-115 阶段门通过，SAAS-102 恢复）
 > **Epic：** [EPIC-CRM-001 · GitHub #32](https://github.com/ZiZ-LG/jianghu/issues/32)
 > **设计权威：** `docs/designs/jianghu-lightweight-personal-crm-methodology-packs.md`
-> **架构门：** `docs/ADR-002-商业版单一演进与通用CRM能力分层.md`
+> **架构门：** `docs/ADR-002-商业版单一演进与通用CRM能力分层.md`；`docs/ADR-003-G3前置Customer分类权威与创建命令.md`
 > **状态清单：** `docs/商业版开发待办清单v1.md`
-> **执行状态：** `CORE-101/102` 已完成；`CORE-103` 为唯一 READY，当前无 IN_PROGRESS。后续仍按清单单任务执行，本次计划修订不启动代码。
+> **执行状态：** 以商业清单为准；CRM 当前唯一 `IN_PROGRESS` 为 `SAAS-102`。在项目所有者批准的双 worktree 例外下，“自我修养”可独立执行 `SAAS-601`；两线不修改同一契约、schema 或共享运行文件。
 
 ## 1. 目标结果
 
@@ -25,7 +25,7 @@
 
 | 发布切片 | 包含 Gate | 可观察结果 | 顺序工程量估算 |
 |---|---|---|---:|
-| R1 个人轻量核心 | G0–G3 | 无 WorkBuddy、无 G64111 完成快速记录、确认和关系上下文 | 约 59 工程日 |
+| R1 个人轻量核心 | G0–G3 | 无 WorkBuddy、无 G64111 完成快速记录、确认和关系上下文 | 约 62 工程日 |
 | R2 个人复杂销售 | G4 | 完成简报、妙记速审、情报/假设、受控 Agent、关系干预和 4–5 商机组合 | 约 52 工程日 |
 | R3 Team | G5 | 曹经理管理两名下属、预测缺口和带教闭环 | 约 23 工程日 |
 | R4 Enterprise | G6 | 第二套非 G64111 方法论可发布、评估、迁移和回滚 | 约 27 工程日 |
@@ -46,6 +46,14 @@
 | Not scheduled | 全量邮箱／日历／微信被动采集、Clay 式名单与外联、完整售后 CRM、企业自定义 Agent Builder、自动外发 | 以明确后置范围抵消新增工作；出现真实付费与权限证据后另做 ADR／路线图决策 |
 
 新增范围的产品标准不是“更多 AI”，而是四项可验证结果：每个干预都能解释并追源；每个 Agent 都有 Job Card 和运行审计；每次正式数据变化仍经用户命令或 Candidate 人审；每次权限撤销和 Job 停用都在下一次运行立即生效。
+
+### 2.2 2026-08-23 G3 前置纠偏
+
+`SAAS-102` preflight 证明共享 `CREATE_CUSTOMER` 契约尚无可执行的物理权威和审计命令。
+项目所有者已批准 ADR-003：插入 3d 的 `CORE-115`，只提前 `customer.category`
+必要子集，完成 `categoryKey/version`、可空销售兼容 `customerType`、双库迁移/恢复与
+唯一幂等审计创建命令。`SAAS-102` 在该任务精确 SHA 的远端 CI 全绿后恢复；R1 顺序
+工程量由约 59d 调整为约 62d，不改变 G3 目标或 G4 边界。
 
 ## 3. 已验证的当前基线
 
@@ -274,6 +282,13 @@ Agent 运行是 Formal／Sales 之上的受控编排层，不成为第二真相�
 - **实现：** 新注册默认 Free 轻量核心；首页只显示今日、客户、事项和快速记录；复杂销售、团队、G64111/PDE 按 capability 出现。
 - **验收：** UI 隐藏和服务端拒绝一致；旧内部 adapter 不承接新入口；无失效链接或空面板。
 - **回滚：** commercial capability flag 关闭；内部 shell 不变。
+
+#### CORE-115｜Customer 分类权威与创建命令前置
+
+- **主要文件：** 双 Prisma schema、PostgreSQL migration、SQLite upgrade/恢复测试、`packages/domain-contracts/src/crm.ts`、新 Customer command route/executor、authority map 与销售 adapter 消费者。
+- **实现：** Account 同行增加可空开放 `categoryKey` 与 `version`，`customerType` 放宽为可空且只留给显式销售 adapter；通用分类唯一读取 `categoryKey`，不 fallback、不双写、不猜测回填。只开放幂等、tenant-scoped、viewer 禁写、同事务 AuditEvent 的 `CREATE_CUSTOMER`，其他 Customer 命令继续失败关闭。
+- **验收：** SQLite/PostgreSQL fresh install、升级、备份恢复、中断重跑和 parity；未分类 Customer 的两个分类字段均保持真实空值；幂等/并发/重复 ID/跨租户 owner/失效 actor/capability/审计回滚矩阵；旧 1–4 销售数据与 internal shell smoke；通用消费者无 `customerType` fallback。
+- **回滚：** 部署前整体 revert；部署后 `CUSTOMER_COMMANDS_ENABLED=0` 关闭入口并前向修复，保留 expand 字段、审计与业务行。
 
 #### SAAS-102｜两分钟快速记录
 
@@ -548,11 +563,11 @@ R3/R4 关注：
 
 ## 12. 当前下一任务与启动边界
 
-`CORE-101/102` 已完成，唯一下一依赖任务是 `CORE-103`。启动仍以 `docs/商业版开发待办清单v1.md` 为准，并满足：
+当前唯一执行任务与状态只以 `docs/商业版开发待办清单v1.md` 为准。2026-08-23 经项目所有者批准，`CORE-115` 先于 `SAAS-102` 执行，并满足：
 
-1. 清单中 `CORE-103` 保持 READY 且无其他 IN_PROGRESS；
+1. 清单中只有 `CORE-115` 为 IN_PROGRESS，`SAAS-102` 保持 BLOCKED；
 2. 记录 Owner、分支/worktree、开始时间、依赖和回滚点；
-3. 只实施 Opportunity 的 Matter 字段、生命周期／结果映射和版本化 migration，不夹带本次新增的 CORE-206／SAAS-212；
-4. 按 schema 任务要求完成 SQLite/PostgreSQL、dry-run、备份恢复和回滚验证。
+3. 只实施 ADR-003 所列 Customer 分类权威、双库 migration/恢复与 CREATE_CUSTOMER 命令，不夹带其他 CORE-501 字段、SAAS-103+ 或 G4；
+4. 精确 SHA 的本地全量和远端 CI 全绿后，才能把 CORE-115 标为 DONE 并恢复 SAAS-102。
 
-本次 2026-08-21 路线图修订只登记后续范围，不授权开始、并行或提前实现 G4 Agent／关系雷达任务，也不授权 push、merge main 或部署。
+本次 2026-08-23 纠偏只授权 CORE-115 和其后恢复 SAAS-102；不授权并行、提前实现 G4、merge main 或部署。

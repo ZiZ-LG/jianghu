@@ -6,10 +6,17 @@ import {
   CommitmentCommandReceiptSchema,
   CommitmentCommandSchema,
   CommitmentV2Schema,
+  CrmContextSnapshotSchema,
   CrmCommandSchema,
+  CustomerCommandReceiptSchema,
+  CustomerCreateCommandSchema,
   CustomerV2Schema,
   MatterOwnerAssignmentReportSchema,
   MatterV2Schema,
+  QuickCaptureCommandReceiptSchema,
+  QuickCaptureCommandSchema,
+  RelationV2Schema,
+  commitmentReceiptMatchesCommand,
 } from '../src/index.js';
 
 const NEW_CUSTOMER_ID = 'customer_00000000000000000000000000000001';
@@ -60,6 +67,49 @@ const COMMITMENT_CREATE_INPUT = {
   confirmationDueAtUtc: '2026-08-24T02:00:00Z',
   source: 'manual',
   sourceRef: null,
+} as const;
+
+const GENERIC_CONTEXT_SNAPSHOT = {
+  generatedAtUtc: '2026-08-23T23:50:00Z',
+  customers: [{
+    id: 'customer-1', name: '通用客户', categoryKey: null,
+    primaryOwnerUserId: 'user-1', archivedAt: null, version: 2,
+  }, {
+    id: 'customer-2', name: '另一客户', categoryKey: 'partner',
+    primaryOwnerUserId: null, archivedAt: null, version: 0,
+  }],
+  matters: [{
+    id: 'matter-general', customerId: 'customer-1', title: '联合研究', kind: 'general',
+    lifecycleStatus: 'active', outcomeKey: null, priority: null, targetDate: null,
+    primaryOwnerUserId: 'user-1', archivedAt: null, version: 1,
+  }, {
+    id: 'matter-sales', customerId: 'customer-1', title: '设备采购', kind: 'sales_opportunity',
+    lifecycleStatus: 'active', outcomeKey: null, priority: 'important', targetDate: '2026-10-01',
+    primaryOwnerUserId: 'user-1', archivedAt: null, version: 3,
+  }, {
+    id: 'matter-other-customer', customerId: 'customer-2', title: '联合培训', kind: 'training_program',
+    lifecycleStatus: 'paused', outcomeKey: null, priority: null, targetDate: null,
+    primaryOwnerUserId: null, archivedAt: null, version: 0,
+  }],
+  people: [{
+    id: 'person-1', customerId: 'customer-1', name: '李总', title: '负责人', archivedAt: null, version: 1,
+  }, {
+    id: 'person-2', customerId: 'customer-1', name: '王经理', title: null, archivedAt: null, version: 0,
+  }, {
+    id: 'person-3', customerId: 'customer-2', name: '赵老师', title: '项目负责人', archivedAt: null, version: 0,
+  }],
+  matterParticipants: [{
+    id: 'participant-1', customerId: 'customer-1', matterId: 'matter-general', personId: 'person-1',
+  }],
+  relations: [{
+    id: 'relation-1', customerId: 'customer-1', matterId: null,
+    sourcePersonId: 'person-1', targetPersonId: 'person-2', kind: 'trusted_advisor',
+    label: '可信顾问', directed: true, version: 4,
+  }, {
+    id: 'relation-2', customerId: 'customer-1', matterId: 'matter-sales',
+    sourcePersonId: 'person-2', targetPersonId: 'person-1', kind: 'unknown_open_relation',
+    label: null, directed: false, version: 0,
+  }],
 } as const;
 
 describe('neutral CRM V2 contracts', () => {
@@ -213,7 +263,108 @@ describe('neutral CRM V2 contracts', () => {
   });
 });
 
+describe('generic CRM context snapshot', () => {
+  it('preserves open Relation kinds without exposing the sales layer adapter', () => {
+    expect(RelationV2Schema.safeParse(GENERIC_CONTEXT_SNAPSHOT.relations[1]).success).toBe(true);
+    expect(RelationV2Schema.safeParse({
+      ...GENERIC_CONTEXT_SNAPSHOT.relations[1],
+      layer: 'L4',
+    }).success).toBe(false);
+    expect(RelationV2Schema.safeParse({
+      ...GENERIC_CONTEXT_SNAPSHOT.relations[1],
+      role: 'D',
+      sentiment: 'star',
+    }).success).toBe(false);
+    expect(RelationV2Schema.safeParse({
+      ...GENERIC_CONTEXT_SNAPSHOT.relations[1],
+      kind: '   ',
+    }).success).toBe(false);
+  });
+
+  it('reads general, sales-opportunity, and unknown Matter kinds in one strict snapshot', () => {
+    expect(CrmContextSnapshotSchema.safeParse(GENERIC_CONTEXT_SNAPSHOT).success).toBe(true);
+    expect(CrmContextSnapshotSchema.safeParse({
+      ...GENERIC_CONTEXT_SNAPSHOT,
+      pipelineStage: '合同双签',
+    }).success).toBe(false);
+    expect(CrmContextSnapshotSchema.safeParse({
+      ...GENERIC_CONTEXT_SNAPSHOT,
+      matters: [{ ...GENERIC_CONTEXT_SNAPSHOT.matters[0], engageStage: '招采执行' }],
+    }).success).toBe(false);
+  });
+
+  it.each([
+    ['duplicate customer id', {
+      ...GENERIC_CONTEXT_SNAPSHOT,
+      customers: [...GENERIC_CONTEXT_SNAPSHOT.customers, GENERIC_CONTEXT_SNAPSHOT.customers[0]],
+    }],
+    ['missing Matter customer', {
+      ...GENERIC_CONTEXT_SNAPSHOT,
+      matters: [{ ...GENERIC_CONTEXT_SNAPSHOT.matters[0], customerId: 'missing-customer' }],
+    }],
+    ['missing Person customer', {
+      ...GENERIC_CONTEXT_SNAPSHOT,
+      people: [{ ...GENERIC_CONTEXT_SNAPSHOT.people[0], customerId: 'missing-customer' }],
+    }],
+    ['missing participant person', {
+      ...GENERIC_CONTEXT_SNAPSHOT,
+      matterParticipants: [{ ...GENERIC_CONTEXT_SNAPSHOT.matterParticipants[0], personId: 'missing-person' }],
+    }],
+    ['participant parent mismatch', {
+      ...GENERIC_CONTEXT_SNAPSHOT,
+      matterParticipants: [{ ...GENERIC_CONTEXT_SNAPSHOT.matterParticipants[0], matterId: 'matter-other-customer' }],
+    }],
+    ['missing relation endpoint', {
+      ...GENERIC_CONTEXT_SNAPSHOT,
+      relations: [{ ...GENERIC_CONTEXT_SNAPSHOT.relations[0], targetPersonId: 'missing-person' }],
+    }],
+    ['cross-customer relation endpoint', {
+      ...GENERIC_CONTEXT_SNAPSHOT,
+      relations: [{ ...GENERIC_CONTEXT_SNAPSHOT.relations[0], targetPersonId: 'person-3' }],
+    }],
+    ['relation Matter parent mismatch', {
+      ...GENERIC_CONTEXT_SNAPSHOT,
+      relations: [{ ...GENERIC_CONTEXT_SNAPSHOT.relations[0], matterId: 'matter-other-customer' }],
+    }],
+  ])('rejects a referentially open snapshot: %s', (_label, snapshot) => {
+    expect(CrmContextSnapshotSchema.safeParse(snapshot).success).toBe(false);
+  });
+});
+
 describe('generic CRM commands', () => {
+  it('publishes a create-only Customer command surface and a non-sensitive receipt', () => {
+    const command = {
+      type: 'CREATE_CUSTOMER',
+      customer: {
+        id: NEW_CUSTOMER_ID,
+        name: '远山制造',
+        categoryKey: 'strategic_partner',
+        primaryOwnerUserId: 'user-cao',
+      },
+    } as const;
+    expect(CustomerCreateCommandSchema.parse(command)).toEqual(command);
+    expect(CustomerCreateCommandSchema.safeParse({
+      type: 'UPDATE_CUSTOMER',
+      customerId: NEW_CUSTOMER_ID,
+      baseVersion: 0,
+      patch: { name: '不得从创建入口更新' },
+    }).success).toBe(false);
+    expect(CustomerCreateCommandSchema.safeParse({
+      ...command,
+      customer: { ...command.customer, customerType: 1 },
+    }).success).toBe(false);
+
+    const receipt = {
+      customerId: NEW_CUSTOMER_ID,
+      categoryKey: 'strategic_partner',
+      primaryOwnerUserId: 'user-cao',
+      version: 0,
+      undoable: false,
+    } as const;
+    expect(CustomerCommandReceiptSchema.safeParse(receipt).success).toBe(true);
+    expect(CustomerCommandReceiptSchema.safeParse({ ...receipt, name: '不得进入幂等摘要' }).success).toBe(false);
+  });
+
   it('routes only Commitment commands and keeps replay receipts free of business text', () => {
     expect(CommitmentCommandSchema.safeParse({
       type: 'CREATE_COMMITMENT', commitment: COMMITMENT_CREATE_INPUT,
@@ -236,6 +387,166 @@ describe('generic CRM commands', () => {
     };
     expect(CommitmentCommandReceiptSchema.safeParse(receipt).success).toBe(true);
     expect(CommitmentCommandReceiptSchema.safeParse({ ...receipt, title: '不得进入幂等摘要' }).success).toBe(false);
+    const command = CommitmentCommandSchema.parse({
+      type: 'CREATE_COMMITMENT', commitment: COMMITMENT_CREATE_INPUT,
+    });
+    expect(commitmentReceiptMatchesCommand(CommitmentCommandReceiptSchema.parse(receipt), command)).toBe(true);
+    expect(commitmentReceiptMatchesCommand(CommitmentCommandReceiptSchema.parse({
+      ...receipt, commitmentId: NEXT_COMMITMENT_ID,
+    }), command)).toBe(false);
+    expect(commitmentReceiptMatchesCommand(CommitmentCommandReceiptSchema.parse({
+      ...receipt, repairCommands: [],
+    }), command)).toBe(false);
+  });
+
+  it('composes inline Customer and Commitment creation without permitting partial or cross-customer payloads', () => {
+    const commitment = {
+      type: 'CREATE_COMMITMENT' as const,
+      commitment: {
+        ...COMMITMENT_CREATE_INPUT,
+        customerId: NEW_CUSTOMER_ID,
+        matterId: null,
+        personId: null,
+        kind: 'follow_up',
+        source: 'manual_quick_capture',
+        sourceRef: null,
+      },
+    };
+    const createInline = {
+      customer: {
+        mode: 'create' as const,
+        command: {
+          type: 'CREATE_CUSTOMER' as const,
+          customer: {
+            id: NEW_CUSTOMER_ID,
+            name: '远山制造',
+            categoryKey: null,
+            primaryOwnerUserId: 'user-cao',
+          },
+        },
+      },
+      commitment,
+    };
+    expect(QuickCaptureCommandSchema.parse(createInline)).toEqual(createInline);
+    expect(QuickCaptureCommandSchema.safeParse({
+      ...createInline,
+      commitment: {
+        ...commitment,
+        commitment: { ...commitment.commitment, customerId: 'legacy-account-1' },
+      },
+    }).success).toBe(false);
+    expect(QuickCaptureCommandSchema.safeParse({
+      ...createInline,
+      commitment: {
+        ...commitment,
+        commitment: { ...commitment.commitment, matterId: 'legacy-opportunity-1' },
+      },
+    }).success).toBe(false);
+    expect(QuickCaptureCommandSchema.safeParse({
+      ...createInline,
+      commitment: {
+        ...commitment,
+        commitment: { ...commitment.commitment, title: '下'.repeat(201) },
+      },
+    }).success).toBe(false);
+    expect(QuickCaptureCommandSchema.safeParse({
+      ...createInline,
+      commitment: {
+        ...commitment,
+        commitment: { ...commitment.commitment, title: '下'.repeat(200) },
+      },
+    }).success).toBe(true);
+
+    const existing = {
+      customer: { mode: 'existing' as const, customerId: 'legacy-account-1' },
+      commitment: {
+        ...commitment,
+        commitment: { ...commitment.commitment, customerId: 'legacy-account-1' },
+      },
+    };
+    expect(QuickCaptureCommandSchema.safeParse(existing).success).toBe(true);
+    expect(QuickCaptureCommandSchema.safeParse({
+      ...existing,
+      commitment: { type: 'COMPLETE_COMMITMENT', customerId: 'legacy-account-1' },
+    }).success).toBe(false);
+
+    const receipt = {
+      customer: {
+        customerId: NEW_CUSTOMER_ID,
+        categoryKey: null,
+        primaryOwnerUserId: 'user-cao',
+        version: 0,
+        undoable: false,
+      },
+      commitment: {
+        commitmentId: NEW_COMMITMENT_ID,
+        customerId: NEW_CUSTOMER_ID,
+        matterId: null,
+        executionStatus: 'planned',
+        confirmationStatus: 'not_required',
+        version: 0,
+        scheduleVersion: 0,
+        nextCommitmentId: null,
+        linkedFromCommitmentId: null,
+        undoable: false,
+        repairCommands: ['RESCHEDULE_COMMITMENT', 'CANCEL_COMMITMENT'],
+      },
+    };
+    expect(QuickCaptureCommandReceiptSchema.safeParse(receipt).success).toBe(true);
+    expect(QuickCaptureCommandReceiptSchema.safeParse({ ...receipt, title: '不得进入幂等摘要' }).success).toBe(false);
+  });
+
+  it('keeps Quick Capture provenance and schedule fields authoritative', () => {
+    const valid = {
+      customer: { mode: 'existing' as const, customerId: 'legacy-account-1' },
+      commitment: {
+        type: 'CREATE_COMMITMENT' as const,
+        commitment: {
+          ...COMMITMENT_CREATE_INPUT,
+          customerId: 'legacy-account-1',
+          matterId: null,
+          personId: null,
+          kind: 'follow_up',
+          scheduledAtUtc: '2026-08-25T02:00:00Z',
+          dueAtUtc: null,
+          isAllDay: false,
+          localDate: null,
+          source: 'manual_quick_capture',
+          sourceRef: null,
+        },
+      },
+    };
+    expect(QuickCaptureCommandSchema.safeParse(valid).success).toBe(true);
+    for (const patch of [
+      { kind: 'meeting' },
+      { source: 'imported' },
+      { sourceRef: 'forged-source' },
+      { scheduledAtUtc: null },
+      { dueAtUtc: '2026-08-25T03:00:00Z' },
+      { isAllDay: true, localDate: '2026-08-25', scheduledAtUtc: null },
+    ]) {
+      expect(QuickCaptureCommandSchema.safeParse({
+        ...valid,
+        commitment: {
+          ...valid.commitment,
+          commitment: { ...valid.commitment.commitment, ...patch },
+        },
+      }).success).toBe(false);
+    }
+  });
+
+  it('bounds new Customer names at the shared command boundary', () => {
+    const customer = {
+      id: NEW_CUSTOMER_ID,
+      name: '客'.repeat(120),
+      categoryKey: null,
+      primaryOwnerUserId: 'user-cao',
+    };
+    expect(CustomerCreateCommandSchema.safeParse({ type: 'CREATE_CUSTOMER', customer }).success).toBe(true);
+    expect(CustomerCreateCommandSchema.safeParse({
+      type: 'CREATE_CUSTOMER',
+      customer: { ...customer, name: '客'.repeat(121) },
+    }).success).toBe(false);
   });
 
   it('lives beside, rather than widening, the 51-command legacy Action contract', () => {

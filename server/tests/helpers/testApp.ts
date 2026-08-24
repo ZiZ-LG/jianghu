@@ -25,13 +25,15 @@ interface RegistrationBody {
   user: { id: string };
 }
 
-export async function createTestContext(): Promise<TestContext> {
+export async function createTestContext(options: { productAccess?: unknown } = {}): Promise<TestContext> {
   assertTestDatabaseUrl();
   await assertDevDbUnchanged(devDbBaseline);
   await clearTestDatabase(prisma);
   await assertDevDbUnchanged(devDbBaseline);
 
-  const app = await buildApp({ logger: false });
+  // Existing integration fixtures exercise the internal compatibility adapter.
+  // Commercial tests opt in explicitly so the production default can remain commercial Free.
+  const app = await buildApp({ logger: false, productAccess: options.productAccess ?? { edition: 'internal' } });
   try {
     const suffix = randomUUID();
     const response = await app.inject({

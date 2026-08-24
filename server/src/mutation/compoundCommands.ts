@@ -1,7 +1,20 @@
 import type { FastifyInstance } from 'fastify';
+import type { Prisma } from '@prisma/client';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { ActorRoleSchema, type CommandContext } from '@jianghu/domain-contracts';
+import {
+  ActorRoleSchema,
+  QuickCaptureCommandReceiptSchema,
+  QuickCaptureCommandSchema,
+  commitmentReceiptMatchesCommand,
+  capabilityPolicyAllows,
+  capabilityRequirementForActionType,
+  type CapabilityPolicy,
+  type CommandContext,
+  type ProductAccess,
+  type QuickCaptureCommand,
+  type QuickCaptureCommandReceipt,
+} from '@jianghu/domain-contracts';
 import { denyViewer } from '../scope.js';
 import { applyAction, type DbClient } from '../mutate.js';
 import { CloneOpportunitySchema, cloneOpportunityInTransaction } from '../opp.js';
@@ -12,6 +25,9 @@ import { businessYmd } from '../businessDate.js';
 import { ScopedNotFoundError } from './scopeGuards.js';
 import { runCommand } from './commandRunner.js';
 import { syncCommitmentToWeCom } from '../wecom.js';
+import { resolveEffectiveResourceScope } from '../resourceScope.js';
+import { executeCustomerCommand, parseCustomerCommandReceiptForCommand } from './customers.js';
+import { executeCommitmentCommand } from './commitments.js';
 
 class ActionAlreadyCompletedError extends Error {
   readonly statusCode = 409;
@@ -30,6 +46,27 @@ class ActionFeedbackPermissionError extends Error {
   readonly code = 'commitment_write_forbidden';
   constructor() { super('无权回填跟进承诺'); }
 }
+
+class CapabilityDeniedError extends Error {
+  readonly statusCode = 403;
+  readonly code = 'capability_denied';
+  constructor() { super('能力未启用'); }
+}
+
+class QuickCapturePermissionError extends Error {
+  readonly statusCode = 403;
+  readonly code = 'quick_capture_scope_forbidden';
+  constructor() { super('快速记录必须由当前用户负责客户和下一步'); }
+}
+
+const requireActionCapability = (policyInput: unknown, actionType: unknown): void => {
+  const requirement = capabilityRequirementForActionType(actionType);
+  if (!requirement || !capabilityPolicyAllows(policyInput, requirement)) throw new CapabilityDeniedError();
+};
+
+const requireCoreCapability = (policyInput: unknown): void => {
+  if (!capabilityPolicyAllows(policyInput, { entitlement: 'crm.core' })) throw new CapabilityDeniedError();
+};
 
 const SkeletonRoleSchema = z.object({
   title: z.string().min(1).max(80),
@@ -75,12 +112,15 @@ export async function executeOpportunitySkeleton(
   ctx: CommandContext,
   input: z.infer<typeof OpportunitySkeletonCommandSchema>,
   db: DbClient,
+  policyInput: unknown,
   options?: FaultOptions,
 ): Promise<{ opportunityId: string; memberCount: number; skeletonPersonIds: string[] }> {
+  requireActionCapability(policyInput, 'ADD_OPP');
   const cloned = await cloneOpportunityInTransaction(ctx, input, db);
   fault(options, 1);
   const skeletonPersonIds: string[] = [];
   for (const role of input.skeleton) {
+    requireActionCapability(policyInput, 'ADD_PERSON');
     const personId = 'p_' + randomUUID().replaceAll('-', '');
     await applyAction(ctx, {
       type: 'ADD_PERSON', accId: input.accountId,
@@ -88,7 +128,9 @@ export async function executeOpportunitySkeleton(
     }, db);
     skeletonPersonIds.push(personId);
     fault(options, 2);
+    requireActionCapability(policyInput, 'ADD_OPP_MEMBER');
     await applyAction(ctx, { type: 'ADD_OPP_MEMBER', accId: input.accountId, oppId: cloned.opportunityId, personId }, db);
+    requireActionCapability(policyInput, 'SET_ROLE');
     await applyAction(ctx, {
       type: 'SET_ROLE', accId: input.accountId, oppId: cloned.opportunityId, personId,
       patch: { role: role.role, sentiment: 'unknown', confidence: '不清' },
@@ -102,8 +144,10 @@ export async function executeActionFeedback(
   ctx: CommandContext,
   rawInput: ActionFeedbackInput,
   db: DbClient,
+  policyInput: unknown,
   options?: FaultOptions,
 ): Promise<{ evidenceId?: string }> {
+  requireActionCapability(policyInput, 'ADD_EVIDENCE');
   const input = ActionFeedbackCommandSchema.parse(rawInput);
   const actor = await db.user.findFirst({
     where: { id: ctx.actorId, tenantId: ctx.tenantId },
@@ -271,6 +315,64 @@ export async function executeInboxBatch(
   return { items };
 }
 
+export async function executeQuickCapture(
+  ctx: CommandContext,
+  rawInput: QuickCaptureCommand,
+  db: Prisma.TransactionClient,
+  policy: CapabilityPolicy,
+): Promise<QuickCaptureCommandReceipt> {
+  requireCoreCapability(policy);
+  const input = QuickCaptureCommandSchema.parse(rawInput);
+  const commitmentInput = input.commitment.commitment;
+  let customer: QuickCaptureCommandReceipt['customer'] = null;
+
+  if (commitmentInput.ownerUserId !== ctx.actorId) throw new QuickCapturePermissionError();
+
+  if (input.customer.mode === 'create') {
+    if (input.customer.command.customer.primaryOwnerUserId !== ctx.actorId) {
+      throw new QuickCapturePermissionError();
+    }
+    customer = await executeCustomerCommand(ctx, input.customer.command, db, policy);
+  } else {
+    const scope = await resolveEffectiveResourceScope(db, {
+      tenantId: ctx.tenantId,
+      userId: ctx.actorId,
+      role: ctx.actorRole,
+    });
+    if (!scope.canReadAccountContainer(input.customer.customerId)) throw new ScopedNotFoundError();
+    if (commitmentInput.matterId === null) {
+      if (!scope.canReadAccountData(input.customer.customerId)) throw new ScopedNotFoundError();
+    } else if (!scope.canReadMatter(commitmentInput.matterId)) {
+      throw new ScopedNotFoundError();
+    }
+    if (commitmentInput.personId !== null && !scope.canReadAccountData(input.customer.customerId)) {
+      throw new ScopedNotFoundError();
+    }
+  }
+
+  const commitmentReceipt = await executeCommitmentCommand(ctx, input.commitment, db);
+  return QuickCaptureCommandReceiptSchema.parse({ customer, commitment: commitmentReceipt });
+}
+
+function parseQuickCaptureReceiptForCommand(
+  raw: unknown,
+  input: QuickCaptureCommand,
+): QuickCaptureCommandReceipt {
+  const receipt = QuickCaptureCommandReceiptSchema.parse(raw);
+  const expectedCustomerId = input.customer.mode === 'existing'
+    ? input.customer.customerId
+    : input.customer.command.customer.id;
+  let customerMatches = receipt.customer === null;
+  if (input.customer.mode === 'create') {
+    customerMatches = receipt.customer !== null;
+    if (receipt.customer) parseCustomerCommandReceiptForCommand(receipt.customer, input.customer.command);
+  }
+  const commitmentMatches = receipt.commitment.customerId === expectedCustomerId
+    && commitmentReceiptMatchesCommand(receipt.commitment, input.commitment);
+  if (!customerMatches || !commitmentMatches) throw new Error('Quick Capture command receipt mismatch');
+  return receipt;
+}
+
 const idempotencyKey = (req: any, reply: any): string | undefined => {
   const value = req.headers['idempotency-key'];
   if (typeof value !== 'string' || value.trim().length < 8 || value.length > 200) {
@@ -289,15 +391,42 @@ const commandContext = (req: any): CommandContext => ({
   assertionMode: 'user_asserted',
 });
 
-const commandFailure = (reply: any, error: any, message: string) => {
+const commandFailure = (req: any, reply: any, error: any, message: string) => {
   if (error instanceof ScopedNotFoundError || error?.scopedNotFound) return reply.code(404).send({ error: '资源不存在' });
   if (error?.statusCode === 403) return reply.code(403).send({ code: error.code, error: error.message });
   if (error?.statusCode === 409 || error?.commandInProgress) return reply.code(409).send({ code: error.code, error: error.message });
   if (error?.statusCode === 503) return reply.code(503).send({ code: error.code, error: error.message });
+  req.log.error({ err: error, requestId: req.id }, `${message}: unexpected command failure`);
   return reply.code(500).send({ error: message });
 };
 
-export function compoundCommandRoutes(app: FastifyInstance): void {
+export function compoundCommandRoutes(app: FastifyInstance, product: ProductAccess): void {
+  app.post('/api/commands/quick-capture', { preHandler: [app.authenticate] }, async (req: any, reply) => {
+    if (denyViewer(req, reply)) return;
+    const key = idempotencyKey(req, reply); if (!key) return;
+    const body = QuickCaptureCommandSchema.safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ error: '快速记录参数无效' });
+    if (process.env.COMMITMENT_COMMANDS_ENABLED === '0') {
+      return reply.code(503).send({ code: 'commitment_commands_disabled', error: '跟进承诺命令暂未启用' });
+    }
+    if (body.data.customer.mode === 'create' && process.env.CUSTOMER_COMMANDS_ENABLED === '0') {
+      return reply.code(503).send({ code: 'customer_commands_disabled', error: '客户命令暂未启用' });
+    }
+    const ctx = commandContext(req);
+    try {
+      const result = await runCommand<QuickCaptureCommandReceipt>(
+        ctx,
+        { kind: 'quick-capture', idempotencyKey: key, payload: body.data },
+        (tx) => executeQuickCapture(ctx, body.data, tx, product.policy),
+      );
+      const receipt = parseQuickCaptureReceiptForCommand(result.result, body.data);
+      if (!result.replayed) {
+        void syncCommitmentToWeCom(ctx.tenantId, receipt.commitment.commitmentId).catch(() => {});
+      }
+      return { ...receipt, replayed: result.replayed };
+    } catch (error) { return commandFailure(req, reply, error, '快速记录失败'); }
+  });
+
   app.post('/api/commands/opportunity-skeleton', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (denyViewer(req, reply)) return;
     const key = idempotencyKey(req, reply); if (!key) return;
@@ -305,9 +434,9 @@ export function compoundCommandRoutes(app: FastifyInstance): void {
     if (!body.success) return reply.code(400).send({ error: '商机骨架参数无效' });
     try {
       const result = await runCommand(commandContext(req), { kind: 'opportunity-skeleton', idempotencyKey: key, payload: body.data },
-        (tx) => executeOpportunitySkeleton(commandContext(req), body.data, tx));
+        (tx) => executeOpportunitySkeleton(commandContext(req), body.data, tx, product.policy));
       return { ...result.result, replayed: result.replayed };
-    } catch (error) { return commandFailure(reply, error, '商机创建失败'); }
+    } catch (error) { return commandFailure(req, reply, error, '商机创建失败'); }
   });
 
   app.post('/api/commands/action-feedback', { preHandler: [app.authenticate] }, async (req: any, reply) => {
@@ -317,12 +446,12 @@ export function compoundCommandRoutes(app: FastifyInstance): void {
     if (!body.success) return reply.code(400).send({ error: '行动回填参数无效' });
     try {
       const result = await runCommand(commandContext(req), { kind: 'action-feedback', idempotencyKey: key, payload: body.data },
-        (tx) => executeActionFeedback(commandContext(req), body.data, tx));
+        (tx) => executeActionFeedback(commandContext(req), body.data, tx, product.policy));
       if (!result.replayed) {
         void syncCommitmentToWeCom(req.user.tenantId, body.data.actionId).catch(() => {});
       }
       return { ...result.result, replayed: result.replayed };
-    } catch (error) { return commandFailure(reply, error, '行动回填失败'); }
+    } catch (error) { return commandFailure(req, reply, error, '行动回填失败'); }
   });
 
   app.post('/api/commands/inbox-batch', { preHandler: [app.authenticate] }, async (req: any, reply) => {
@@ -334,6 +463,6 @@ export function compoundCommandRoutes(app: FastifyInstance): void {
       const result = await runCommand(commandContext(req), { kind: 'inbox-batch', idempotencyKey: key, payload: body.data },
         (tx) => executeInboxBatch(commandContext(req), body.data, tx));
       return { items: result.result.items, replayed: result.replayed };
-    } catch (error) { return commandFailure(reply, error, '批量审核失败'); }
+    } catch (error) { return commandFailure(req, reply, error, '批量审核失败'); }
   });
 }

@@ -34,9 +34,7 @@ describe('CRM field authority map', () => {
     const planned = CRM_FIELD_AUTHORITY.flatMap((entry) => entry.consumers.planned);
     expect(planned.join('\n')).not.toMatch(/\bCORE-(?:109|111|112|113)\b/);
     expect(getCrmFieldAuthority('matter.owner')?.consumers.planned).toEqual([]);
-    expect(getCrmFieldAuthority('customer.category')?.consumers.planned).toEqual([
-      'CORE-501 customerType consumer cutover',
-    ]);
+    expect(getCrmFieldAuthority('customer.category')?.consumers.planned).toEqual([]);
     expect(getCrmFieldAuthority('matter.lifecycle')?.consumers.planned).toEqual([
       'CORE-501 Opportunity.status consumer cutover',
     ]);
@@ -73,7 +71,7 @@ describe('CRM field authority map', () => {
 
   it('routes the critical legacy fields to their approved distinct targets', () => {
     expect(getCrmFieldAuthority('customer.category')).toMatchObject({
-      currentAuthority: { kind: 'legacy_path', path: 'Account.customerType' },
+      currentAuthority: { kind: 'core_path', path: 'Customer.categoryKey' },
       targetAuthority: { kind: 'core_path', path: 'Customer.categoryKey' },
     });
     expect(getCrmFieldAuthority('matter.current_stage')).toMatchObject({
@@ -100,6 +98,15 @@ describe('CRM field authority map', () => {
 
   it('registers the exact executable customer.category consumer inventory', () => {
     const category = getCrmFieldAuthority('customer.category');
+    expect(category?.consumers.reads).toEqual([
+      'app/src/components/CrmContextPages.tsx',
+      'app/src/lib/crmContext.ts',
+      'server/src/crmContext.ts',
+    ]);
+    expect(category?.consumers.writes).toEqual([
+      'app/src/lib/quickCapture.ts',
+      'server/src/mutation/customers.ts',
+    ]);
     expect([
       ...(category?.consumers.reads ?? []),
       ...(category?.consumers.writes ?? []),
@@ -109,26 +116,36 @@ describe('CRM field authority map', () => {
       'app/src/aiContext.ts',
       'app/src/api.ts',
       'app/src/components/CustomerHub.tsx',
+      'app/src/components/CrmContextPages.tsx',
       'app/src/components/MdDocPanel.tsx',
       'app/src/components/MdDocView.tsx',
       'app/src/components/NewOpportunityDialog.tsx',
       'app/src/components/RepairPanel.tsx',
       'app/src/data/seed.ts',
       'app/src/lib/mdProfile.ts',
+      'app/src/lib/crmContext.ts',
+      'app/src/lib/quickCapture.ts',
       'app/src/store.ts',
       'app/src/types.ts',
       'app/src/wireAction.ts',
       'packages/domain-contracts/src/actions.ts',
+      'packages/domain-contracts/src/crm.ts',
       'server/scripts/migrate-adurc-v1.1.ts',
+      'server/scripts/postgres-customer-schema-state.ts',
+      'server/scripts/render-pre-customer-schema.ts',
       'server/src/ai.ts',
+      'server/src/crmContext.ts',
       'server/src/mcp/syncBundle.ts',
       'server/src/mcpServer.ts',
       'server/src/mutate.ts',
+      'server/src/mutation/customers.ts',
       'server/src/opp.ts',
       'server/src/repair.ts',
+      'server/src/salesClassification.ts',
       'server/src/seed-demo.ts',
       'server/src/state.ts',
       'server/src/voice.ts',
+      'server/scripts/upgrade-sqlite-schema.ts',
     ].sort());
   });
 

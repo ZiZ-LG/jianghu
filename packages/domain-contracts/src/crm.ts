@@ -52,6 +52,8 @@ export const CustomerV2Schema = z.object({
 
 export type CustomerV2 = z.infer<typeof CustomerV2Schema>;
 
+export const CUSTOMER_NAME_MAX_LENGTH = 120;
+
 const matterObject = z.object({
   id,
   customerId: id,
@@ -81,6 +83,201 @@ export const MatterV2Schema = matterObject.superRefine((value, ctx) => {
 });
 
 export type MatterV2 = z.infer<typeof MatterV2Schema>;
+
+export const PersonSummaryV2Schema = z.object({
+  id,
+  customerId: id,
+  name: z.string().trim().min(1),
+  title: z.string().trim().min(1).nullable(),
+  archivedAt: instant.nullable(),
+  version,
+}).strict();
+
+export type PersonSummaryV2 = z.infer<typeof PersonSummaryV2Schema>;
+
+export const MatterParticipantV2Schema = z.object({
+  id,
+  customerId: id,
+  matterId: id,
+  personId: id,
+}).strict();
+
+export type MatterParticipantV2 = z.infer<typeof MatterParticipantV2Schema>;
+
+export const RelationV2Schema = z.object({
+  id,
+  customerId: id,
+  matterId: id.nullable(),
+  sourcePersonId: id,
+  targetPersonId: id,
+  kind: openKey,
+  label: z.string().trim().min(1).nullable(),
+  directed: z.boolean(),
+  version,
+}).strict();
+
+export type RelationV2 = z.infer<typeof RelationV2Schema>;
+
+function indexUniqueIds<T extends { id: string }>(
+  values: readonly T[],
+  path: string,
+  ctx: z.RefinementCtx,
+): Map<string, T> {
+  const byId = new Map<string, T>();
+  values.forEach((value, index) => {
+    if (byId.has(value.id)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [path, index, 'id'],
+        message: `duplicate ${path} id`,
+      });
+      return;
+    }
+    byId.set(value.id, value);
+  });
+  return byId;
+}
+
+export const CrmContextSnapshotSchema = z.object({
+  generatedAtUtc: instant,
+  customers: z.array(CustomerV2Schema),
+  matters: z.array(MatterV2Schema),
+  people: z.array(PersonSummaryV2Schema),
+  matterParticipants: z.array(MatterParticipantV2Schema),
+  relations: z.array(RelationV2Schema),
+}).strict().superRefine((value, ctx) => {
+  const customers = indexUniqueIds(value.customers, 'customers', ctx);
+  const matters = indexUniqueIds(value.matters, 'matters', ctx);
+  const people = indexUniqueIds(value.people, 'people', ctx);
+  indexUniqueIds(value.matterParticipants, 'matterParticipants', ctx);
+  indexUniqueIds(value.relations, 'relations', ctx);
+
+  value.matters.forEach((matter, index) => {
+    if (!customers.has(matter.customerId)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['matters', index, 'customerId'],
+        message: 'Matter customer must be present in the snapshot',
+      });
+    }
+  });
+
+  value.people.forEach((person, index) => {
+    if (!customers.has(person.customerId)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['people', index, 'customerId'],
+        message: 'Person customer must be present in the snapshot',
+      });
+    }
+  });
+
+  const participantKeys = new Set<string>();
+  value.matterParticipants.forEach((participant, index) => {
+    const key = `${participant.matterId}\u0000${participant.personId}`;
+    if (participantKeys.has(key)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['matterParticipants', index],
+        message: 'duplicate Matter participant',
+      });
+    }
+    participantKeys.add(key);
+
+    const matter = matters.get(participant.matterId);
+    const person = people.get(participant.personId);
+    if (!customers.has(participant.customerId)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['matterParticipants', index, 'customerId'],
+        message: 'Participant customer must be present in the snapshot',
+      });
+    }
+    if (!matter) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['matterParticipants', index, 'matterId'],
+        message: 'Participant Matter must be present in the snapshot',
+      });
+    } else if (matter.customerId !== participant.customerId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['matterParticipants', index, 'matterId'],
+        message: 'Participant Matter must belong to the same Customer',
+      });
+    }
+    if (!person) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['matterParticipants', index, 'personId'],
+        message: 'Participant Person must be present in the snapshot',
+      });
+    } else if (person.customerId !== participant.customerId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['matterParticipants', index, 'personId'],
+        message: 'Participant Person must belong to the same Customer',
+      });
+    }
+  });
+
+  value.relations.forEach((relation, index) => {
+    if (!customers.has(relation.customerId)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['relations', index, 'customerId'],
+        message: 'Relation customer must be present in the snapshot',
+      });
+    }
+    if (relation.matterId) {
+      const matter = matters.get(relation.matterId);
+      if (!matter) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['relations', index, 'matterId'],
+          message: 'Relation Matter must be present in the snapshot',
+        });
+      } else if (matter.customerId !== relation.customerId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['relations', index, 'matterId'],
+          message: 'Relation Matter must belong to the same Customer',
+        });
+      }
+    }
+
+    const source = people.get(relation.sourcePersonId);
+    const target = people.get(relation.targetPersonId);
+    if (!source) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['relations', index, 'sourcePersonId'],
+        message: 'Relation source Person must be present in the snapshot',
+      });
+    } else if (source.customerId !== relation.customerId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['relations', index, 'sourcePersonId'],
+        message: 'Relation source Person must belong to the same Customer',
+      });
+    }
+    if (!target) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['relations', index, 'targetPersonId'],
+        message: 'Relation target Person must be present in the snapshot',
+      });
+    } else if (target.customerId !== relation.customerId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['relations', index, 'targetPersonId'],
+        message: 'Relation target Person must belong to the same Customer',
+      });
+    }
+  });
+});
+
+export type CrmContextSnapshot = z.infer<typeof CrmContextSnapshotSchema>;
 
 const commitmentFields = {
   id,
@@ -221,6 +418,7 @@ export type CommitmentV2 = z.infer<typeof CommitmentV2Schema>;
 
 const customerCreate = CustomerV2Schema.omit({ archivedAt: true, version: true }).extend({
   id: OpaqueEntityIdSchema,
+  name: z.string().trim().min(1).max(CUSTOMER_NAME_MAX_LENGTH),
   categoryKey: openKey.nullable().default(null),
   primaryOwnerUserId: id.nullable().default(null),
 });
@@ -400,6 +598,84 @@ export const MatterParticipantCommandSchema = z.union([
 ]);
 export type MatterParticipantCommand = z.infer<typeof MatterParticipantCommandSchema>;
 
+export const CustomerCreateCommandSchema = command({
+  type: z.literal('CREATE_CUSTOMER'),
+  customer: customerCreate,
+});
+export type CustomerCreateCommand = z.infer<typeof CustomerCreateCommandSchema>;
+
+export const CreateCommitmentCommandSchema = command({
+  type: z.literal('CREATE_COMMITMENT'),
+  commitment: commitmentCreate,
+});
+
+export const QUICK_CAPTURE_TITLE_MAX_LENGTH = 200;
+
+const quickCaptureCommitmentCreate = z.object({
+  ...commitmentCreateFields,
+  title: z.string().trim().min(1).max(QUICK_CAPTURE_TITLE_MAX_LENGTH),
+  kind: z.literal('follow_up'),
+  scheduledAtUtc: instant,
+  dueAtUtc: z.null(),
+  isAllDay: z.literal(false),
+  localDate: z.null(),
+  source: z.literal('manual_quick_capture'),
+  sourceRef: z.null(),
+}).strict().superRefine((value, ctx) => {
+  validateSchedule(value, ctx);
+  validateConfirmationDeadline(value, value.confirmationStatus === 'pending' ? 'required' : 'forbidden', ctx);
+});
+
+const quickCaptureCommitmentCommandSchema = command({
+  type: z.literal('CREATE_COMMITMENT'),
+  commitment: quickCaptureCommitmentCreate,
+});
+
+const quickCaptureCustomerSchema = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('existing'), customerId: id }).strict(),
+  z.object({ mode: z.literal('create'), command: CustomerCreateCommandSchema }).strict(),
+]);
+
+/**
+ * One user-confirmed application command. Inline Customer creation and the
+ * customer-level Commitment must execute in one transaction; this schema is
+ * deliberately not part of CrmCommandSchema because it only composes the two
+ * existing formal domain commands.
+ */
+export const QuickCaptureCommandSchema = z.object({
+  customer: quickCaptureCustomerSchema,
+  commitment: quickCaptureCommitmentCommandSchema,
+}).strict().superRefine((value, ctx) => {
+  const customerId = value.customer.mode === 'existing'
+    ? value.customer.customerId
+    : value.customer.command.customer.id;
+  if (value.commitment.commitment.customerId !== customerId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['commitment', 'commitment', 'customerId'],
+      message: 'Quick Capture Customer and Commitment must match',
+    });
+  }
+  if (value.customer.mode === 'create') {
+    if (value.commitment.commitment.matterId !== null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['commitment', 'commitment', 'matterId'],
+        message: 'an inline new Customer cannot already have a Matter',
+      });
+    }
+    if (value.commitment.commitment.personId !== null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['commitment', 'commitment', 'personId'],
+        message: 'an inline new Customer cannot already have a Person',
+      });
+    }
+  }
+});
+
+export type QuickCaptureCommand = z.infer<typeof QuickCaptureCommandSchema>;
+
 export const CRM_COMMAND_TYPES = [
   'CREATE_CUSTOMER', 'UPDATE_CUSTOMER', 'ARCHIVE_CUSTOMER', 'RESTORE_CUSTOMER',
   'CREATE_MATTER', 'UPDATE_MATTER', 'TRANSFER_MATTER_OWNER', 'TRANSITION_MATTER_LIFECYCLE', 'REOPEN_MATTER',
@@ -413,7 +689,7 @@ export const CRM_COMMAND_TYPES = [
 export type CrmCommandType = (typeof CRM_COMMAND_TYPES)[number];
 
 const crmCommandSchemas = [
-  command({ type: z.literal('CREATE_CUSTOMER'), customer: customerCreate }),
+  CustomerCreateCommandSchema,
   command({ type: z.literal('UPDATE_CUSTOMER'), ...versionedEntityCommand, patch: customerPatch }),
   command({ type: z.literal('ARCHIVE_CUSTOMER'), ...versionedEntityCommand, reason: z.string().trim().min(1).optional() }),
   command({ type: z.literal('RESTORE_CUSTOMER'), ...versionedEntityCommand }),
@@ -438,7 +714,7 @@ const crmCommandSchemas = [
   command({ type: z.literal('RESTORE_MATTER'), ...versionedEntityCommand, matterId: id }),
   AddMatterParticipantCommandSchema,
   RemoveMatterParticipantCommandSchema,
-  command({ type: z.literal('CREATE_COMMITMENT'), commitment: commitmentCreate }),
+  CreateCommitmentCommandSchema,
   command({
     type: z.literal('RESCHEDULE_COMMITMENT'),
     ...scheduledCommitmentCommand,
@@ -464,6 +740,17 @@ const crmCommandSchemas = [
 export const CrmCommandSchema = z.union(crmCommandSchemas);
 export type CrmCommandInput = z.input<typeof CrmCommandSchema>;
 export type CrmCommand = z.infer<typeof CrmCommandSchema>;
+
+/** Non-sensitive replay summary for the create-only Customer command. */
+export const CustomerCommandReceiptSchema = z.object({
+  customerId: id,
+  categoryKey: openKey.nullable(),
+  primaryOwnerUserId: id.nullable(),
+  version,
+  undoable: z.literal(false),
+}).strict();
+
+export type CustomerCommandReceipt = z.infer<typeof CustomerCommandReceiptSchema>;
 
 export const COMMITMENT_COMMAND_TYPES = [
   'CREATE_COMMITMENT', 'RESCHEDULE_COMMITMENT', 'CONFIRM_COMMITMENT',
@@ -503,3 +790,75 @@ export const CommitmentCommandReceiptSchema = z.object({
 }).strict();
 
 export type CommitmentCommandReceipt = z.infer<typeof CommitmentCommandReceiptSchema>;
+
+function hasExactRepairCommands(
+  receipt: CommitmentCommandReceipt,
+  expected: CommitmentCommandReceipt['repairCommands'],
+): boolean {
+  return receipt.repairCommands.length === expected.length
+    && receipt.repairCommands.every((command, index) => command === expected[index]);
+}
+
+/** A structurally valid journal receipt must still belong to the exact command being replayed. */
+export function commitmentReceiptMatchesCommand(
+  receipt: CommitmentCommandReceipt,
+  command: CommitmentCommand,
+): boolean {
+  if (command.type === 'CREATE_COMMITMENT' || command.type === 'CREATE_NEXT_COMMITMENT') {
+    const linkedFromCommitmentId = command.type === 'CREATE_NEXT_COMMITMENT'
+      ? command.previousCommitmentId
+      : null;
+    return receipt.commitmentId === command.commitment.id
+      && receipt.customerId === command.commitment.customerId
+      && receipt.matterId === command.commitment.matterId
+      && receipt.executionStatus === 'planned'
+      && receipt.confirmationStatus === command.commitment.confirmationStatus
+      && receipt.version === 0
+      && receipt.scheduleVersion === 0
+      && receipt.nextCommitmentId === null
+      && receipt.linkedFromCommitmentId === linkedFromCommitmentId
+      && receipt.undoable === false
+      && hasExactRepairCommands(receipt, ['RESCHEDULE_COMMITMENT', 'CANCEL_COMMITMENT']);
+  }
+  if (receipt.commitmentId !== command.commitmentId
+    || receipt.customerId !== command.customerId
+    || receipt.version !== command.baseVersion + 1
+    || receipt.scheduleVersion !== command.expectedScheduleVersion
+      + (command.type === 'RESCHEDULE_COMMITMENT' ? 1 : 0)
+    || receipt.nextCommitmentId !== null
+    || receipt.linkedFromCommitmentId !== null
+    || receipt.undoable !== false) {
+    return false;
+  }
+  if (command.type === 'RESCHEDULE_COMMITMENT') {
+    return receipt.executionStatus === 'planned'
+      && receipt.confirmationStatus === (command.schedule.requiresConfirmation ? 'pending' : 'not_required')
+      && hasExactRepairCommands(receipt, ['RESCHEDULE_COMMITMENT', 'CANCEL_COMMITMENT']);
+  }
+  if (command.type === 'CONFIRM_COMMITMENT') {
+    return receipt.executionStatus === 'planned'
+      && receipt.confirmationStatus === 'confirmed'
+      && hasExactRepairCommands(receipt, ['RESCHEDULE_COMMITMENT', 'CANCEL_COMMITMENT']);
+  }
+  if (command.type === 'DECLINE_COMMITMENT') {
+    return receipt.executionStatus === 'planned'
+      && receipt.confirmationStatus === 'declined'
+      && hasExactRepairCommands(receipt, ['RESCHEDULE_COMMITMENT', 'CANCEL_COMMITMENT']);
+  }
+  if (command.type === 'COMPLETE_COMMITMENT') {
+    return receipt.executionStatus === 'completed'
+      && hasExactRepairCommands(receipt, ['CREATE_NEXT_COMMITMENT']);
+  }
+  if (command.type === 'CANCEL_COMMITMENT') {
+    return receipt.executionStatus === 'canceled' && hasExactRepairCommands(receipt, []);
+  }
+  return receipt.executionStatus === 'missed' && hasExactRepairCommands(receipt, []);
+}
+
+/** Non-sensitive replay summary for the atomic Quick Capture application command. */
+export const QuickCaptureCommandReceiptSchema = z.object({
+  customer: CustomerCommandReceiptSchema.nullable(),
+  commitment: CommitmentCommandReceiptSchema,
+}).strict();
+
+export type QuickCaptureCommandReceipt = z.infer<typeof QuickCaptureCommandReceiptSchema>;
