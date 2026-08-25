@@ -4,7 +4,9 @@
 > **Branch:** `codex/g4-candidate-review-intelligence`
 > **Worktree:** `/Volumes/PowerData/江湖APP/.worktrees/g4-candidate-review-intelligence`
 > **Base:** `60ee5384121864ac271e5df49be8120e5a913cab`
-> **Status:** IN_PROGRESS
+> **Business commit:** `ea9dd7c1bd75335f3fc586b2875f2fb3fe4e3634`
+> **Remote gate:** [GitHub Actions 32900762234](https://github.com/ZiZ-LG/jianghu/actions/runs/32900762234), attempt 2, 12/12 jobs successful
+> **Status:** DONE
 
 ## Goal
 
@@ -65,12 +67,12 @@ The acceptance response contains batch/acceptance versions, Interaction ID if cr
 - Add: `server/tests/review-batch-migration.test.ts`
 - Modify: relevant candidate/SourceArtifact/schema/SQLite/PostgreSQL operation tests
 
-- [ ] Prove creating, listing and reading a batch does not create Interaction or formal CRM rows and never exposes body/evidence text.
-- [ ] Prove tenant, Customer/Matter closure, EffectiveResourceScope, SourceArtifact sensitive ACL, Candidate creator/reviewer ACL and viewer denial for batch attach/read/review.
-- [ ] Prove arbitrary Candidate IDs, mixed sources/parents/creators, already-batched/terminal rows, stale candidate or ACL generation and malformed metadata fail closed.
-- [ ] Prove all-reject creates no Interaction; one or more accepts creates/links exactly one metadata-only Interaction and durable body-free trace.
-- [ ] Prove one conflicting selected item returns per-item conflicts with zero Person/Edge/Evidence/Commitment/Interaction/Candidate partial transition.
-- [ ] Prove same batch/version canonical replay returns the original receipt while changed input, stale versions and concurrent winners cannot duplicate formal rows.
+- [x] Prove creating, listing and reading a batch does not create Interaction or formal CRM rows and never exposes body/evidence text.
+- [x] Prove tenant, Customer/Matter closure, EffectiveResourceScope, SourceArtifact sensitive ACL, Candidate creator/reviewer ACL and viewer denial for batch attach/read/review.
+- [x] Prove arbitrary Candidate IDs, mixed sources/parents/creators, already-batched/terminal rows, stale candidate or ACL generation and malformed metadata fail closed.
+- [x] Prove all-reject creates no Interaction; one or more accepts creates/links exactly one metadata-only Interaction and durable body-free trace.
+- [x] Prove one conflicting selected item returns per-item conflicts with zero Person/Edge/Evidence/Commitment/Interaction/Candidate partial transition.
+- [x] Prove same batch/version canonical replay returns the original receipt while changed input, stale versions and concurrent winners cannot duplicate formal rows.
 
 ## Task 2: Add portable schema, versioned migration and recovery gates
 
@@ -85,11 +87,11 @@ The acceptance response contains batch/acceptance versions, Interaction ID if cr
 - Modify: predecessor schema inspectors, `server/scripts/upgrade-sqlite-schema.ts`, `server/scripts/deploy-postgres-migrations.sh`, `server/package.json`, `scripts/test-postgres-ops-integration.sh`
 - Modify: migration/schema tests from Task 1
 
-- [ ] Add only portable expand tables/columns/indexes; retain Candidate, SourceArtifact and every legacy/formal table unchanged.
-- [ ] Make predecessor inspectors accept only their exact registered CORE-205 successor shape, never arbitrary drift.
-- [ ] Implement `--dry-run | --apply | --verify` with tenant-first enumeration, exact marker receipt/checksum, no body reads/logging and marker-last semantics.
-- [ ] Verify every batch/source/candidate/Interaction parent closure, ACL generation, status/version and identity rule in both directions; reject partial schema, orphan, cross-tenant and malformed rows.
-- [ ] Cover SQLite write-before-backup upgrade and PostgreSQL migrate-deploy with interruption, rerun, semantic conflict, marker drift, authenticated restore and fresh-install evidence.
+- [x] Add only portable expand tables/columns/indexes; retain Candidate, SourceArtifact and every legacy/formal table unchanged.
+- [x] Make predecessor inspectors accept only their exact registered CORE-205 successor shape, never arbitrary drift.
+- [x] Implement `--dry-run | --apply | --verify` with tenant-first enumeration, exact marker receipt/checksum, no body reads/logging and marker-last semantics.
+- [x] Verify every batch/source/candidate/Interaction parent closure, ACL generation, status/version and identity rule in both directions; reject partial schema, orphan, cross-tenant and malformed rows.
+- [x] Cover SQLite write-before-backup upgrade and PostgreSQL migrate-deploy with interruption, rerun, semantic conflict, marker drift, authenticated restore and fresh-install evidence.
 
 ## Task 3: Implement the single batch service and candidate attachment authority
 
@@ -99,11 +101,11 @@ The acceptance response contains batch/acceptance versions, Interaction ID if cr
 - Modify: Candidate helpers only where required to centralize attach/review CAS
 - Add/modify: focused tests from Task 1
 
-- [ ] Create deterministic identities and strict metadata validators without hashing or persisting bodies.
-- [ ] Create/replay a batch and attach exact pending Candidate rows in one Serializable transaction, inheriting the SourceArtifact creator/visibility/ACL generation.
-- [ ] Re-resolve current actor role, scope, parent closure and sensitive ACL inside every write transaction; owner/admin status alone never bypasses known private content.
-- [ ] Return metadata-only batch/Candidate views with bounded pagination and same-shape hidden/missing behavior.
-- [ ] Keep unclassified SourceArtifact and mismatched Customer/Matter batches unavailable for formal review until explicitly mounted through the SAAS-201 authority.
+- [x] Create deterministic identities and strict metadata validators without hashing or persisting bodies.
+- [x] Create/replay a batch and attach exact pending Candidate rows in one Serializable transaction, inheriting the SourceArtifact creator/visibility/ACL generation.
+- [x] Re-resolve current actor role, scope, parent closure and sensitive ACL inside every write transaction; owner/admin status alone never bypasses known private content.
+- [x] Return metadata-only batch/Candidate views with bounded pagination and same-shape hidden/missing behavior.
+- [x] Keep unclassified SourceArtifact and mismatched Customer/Matter batches unavailable for formal review until explicitly mounted through the SAAS-201 authority.
 
 ## Task 4: Implement all-or-nothing acceptance and Interaction creation/linking
 
@@ -114,12 +116,12 @@ The acceptance response contains batch/acceptance versions, Interaction ID if cr
 - Modify: `server/src/app.ts`
 - Add/modify: focused acceptance/route tests
 
-- [ ] Canonicalize explicit decisions and preflight every selected item before any formal write; collect deterministic item results and abort the entire selection on any conflict.
-- [ ] Reuse current Person/Relation/field/Evidence authorities and the generic Commitment command executor so tenant, old-value, CAS, viewer, owner assignment and audit rules are not reimplemented inconsistently.
-- [ ] Create deterministic Person/Edge/Commitment/Interaction identities or otherwise persist exact acceptance receipts before terminalizing candidates so retry cannot duplicate results.
-- [ ] Create or validate one body-free Interaction only after all selected accepts can succeed; link Candidate/formal receipts/audit to batch and Interaction.
-- [ ] Apply all explicit rejections in the same transaction. If every decision is rejection, close without an Interaction; if candidates remain pending, preserve an open batch.
-- [ ] Persist the acceptance receipt and increment versions atomically; same `reviewBatchId + acceptanceVersion` replay is stable independent of transport retries.
+- [x] Canonicalize explicit decisions and preflight every selected item before any formal write; collect deterministic item results and abort the entire selection on any conflict.
+- [x] Reuse current Person/Relation/field/Evidence authorities and the generic Commitment command executor so tenant, old-value, CAS, viewer, owner assignment and audit rules are not reimplemented inconsistently.
+- [x] Create deterministic Person/Edge/Commitment/Interaction identities or otherwise persist exact acceptance receipts before terminalizing candidates so retry cannot duplicate results.
+- [x] Create or validate one body-free Interaction only after all selected accepts can succeed; link Candidate/formal receipts/audit to batch and Interaction.
+- [x] Apply all explicit rejections in the same transaction. If every decision is rejection, close without an Interaction; if candidates remain pending, preserve an open batch.
+- [x] Persist the acceptance receipt and increment versions atomically; same `reviewBatchId + acceptanceVersion` replay is stable independent of transport retries.
 
 ## Task 5: Verify recovery and close CORE-205
 
@@ -128,12 +130,12 @@ The acceptance response contains batch/acceptance versions, Interaction ID if cr
 - Modify: this plan
 - Modify: `docs/商业版开发待办清单v1.md`
 
-- [ ] Run focused batch/acceptance/candidate/SourceArtifact/migration tests, then Server generate/schema check/typecheck/full tests and PostgreSQL operations integration.
-- [ ] Run Domain contracts, G64111, PDE kernel and App typecheck/tests. Do not run a local App production build because it writes shared `app/dist/**`; exact-SHA CI retains that isolated gate.
-- [ ] Run schema/static route/producer inventory, `git diff --check`, protected-path check and high-confidence secret scan.
-- [ ] Assert no Action/domain-contract/App/shared/self-cultivation/production change, no second Candidate/body table and no pre-review formal-state write.
-- [ ] Commit business code independently, push and require every exact-head CI job green.
-- [ ] In a separate governance commit, document migration/apply/verify/rollback, mark CORE-205 DONE and only CORE-206 READY, then require exact-head CI green before CORE-206 starts.
+- [x] Run focused batch/acceptance/candidate/SourceArtifact/migration tests, then Server generate/schema check/typecheck/full tests and PostgreSQL operations integration.
+- [x] Run Domain contracts, G64111, PDE kernel and App typecheck/tests. Do not run a local App production build because it writes shared `app/dist/**`; exact-SHA CI retains that isolated gate.
+- [x] Run schema/static route/producer inventory, `git diff --check`, protected-path check and high-confidence secret scan.
+- [x] Assert no Action/domain-contract/App/shared/self-cultivation/production change, no second Candidate/body table and no pre-review formal-state write.
+- [x] Commit business code independently, push and require every exact-head CI job green.
+- [x] In a separate governance commit, document migration/apply/verify/rollback, mark CORE-205 DONE and only CORE-206 READY, then require exact-head CI green before CORE-206 starts.
 
 ## Local verification commands
 
