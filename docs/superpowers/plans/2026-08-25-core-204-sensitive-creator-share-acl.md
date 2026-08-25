@@ -4,7 +4,7 @@
 > **Branch:** `codex/g4-candidate-review-intelligence`
 > **Worktree:** `/Volumes/PowerData/江湖APP/.worktrees/g4-candidate-review-intelligence`
 > **Base:** `40b199006dedb455c02c17bf7f9c741f6d519612`
-> **Status:** IN_PROGRESS
+> **Status:** DONE
 
 ## Goal
 
@@ -52,11 +52,11 @@ Add the fail-closed sensitive-resource foundation required before SourceArtifact
 - Modify: `server/tests/repair.test.ts`
 - Modify: `server/tests/person-merge.test.ts`
 
-- [ ] Cover creator, ordinary member, manager-shaped member, viewer, tenant owner/admin quarantine, shared reader and explicit reviewer across private/shared/revoked states.
-- [ ] Prove tenant/scope denial, archived or mismatched parents, cross-tenant grants, unknown visibility/grant kind and `aclVersion < 1` fail closed without loading or returning sensitive bodies.
-- [ ] Prove role downgrade, Matter transfer and share/grant revocation take effect on the next request, while an in-flight review rechecks inside the transaction.
-- [ ] Prove Note/Transcript/Candidate producer defaults, rebind, extract, redact, delete, merge and batch review use the same ACL helper.
-- [ ] Add a production-source inventory proving team/shared aggregate repositories do not query SourceArtifact, Transcript, Note, Candidate or SensitiveResourceGrant bodies.
+- [x] Cover creator, ordinary member, manager-shaped member, viewer, tenant owner/admin quarantine, shared reader and explicit reviewer across private/shared/revoked states.
+- [x] Prove tenant/scope denial, archived or mismatched parents, cross-tenant grants, unknown visibility/grant kind and `aclVersion < 1` fail closed without loading or returning sensitive bodies.
+- [x] Prove role downgrade, Matter transfer and share/grant revocation take effect on the next request, while an in-flight review rechecks inside the transaction.
+- [x] Prove Note/Transcript/Candidate producer defaults, rebind, extract, redact, delete, merge and batch review use the same ACL helper.
+- [x] Add a production-source inventory proving team/shared aggregate repositories do not query SourceArtifact, Transcript, Note, Candidate or SensitiveResourceGrant bodies.
 
 ## Task 2: Add portable schema and versioned migration
 
@@ -79,12 +79,12 @@ Add the fail-closed sensitive-resource foundation required before SourceArtifact
 - Modify: `server/tests/postgres-ops-scripts.test.ts`
 - Modify: `server/tests/sqlite-matter-upgrade.test.ts`
 
-- [ ] Add only expand fields/tables/indexes and preserve old columns/tables; PostgreSQL uses one transactional, lock-bounded, fail-closed DDL migration.
-- [ ] Implement `--dry-run | --apply | --verify` with marker `CORE-204-sensitive-acl-v1`; report only IDs/counts/reason codes/non-sensitive checksums.
-- [ ] Map a same-tenant stable legacy `createdBy` to `createdByUserId + private`; quarantine blank/unknown/cross-tenant creators as `owner_admin_only`. Validate Note/Transcript/Candidate parent closure before marker commit.
-- [ ] Make apply serializable, idempotent and marker-last; verify marker receipt/checksum plus bidirectional row semantics. Missing marker is recoverable; semantic drift fails closed.
-- [ ] Make Candidate foundation inspectors accept exactly the pre-ACL and post-ACL known shapes while still rejecting arbitrary extra/missing columns or indexes.
-- [ ] Run report/apply/verify within the SQLite pre-write-backup upgrade and after PostgreSQL `migrate deploy`; failure-inject interruption, rerun, partial schema, marker drift, semantic conflict and authenticated backup/restore.
+- [x] Add only expand fields/tables/indexes and preserve old columns/tables; PostgreSQL uses one transactional, lock-bounded, fail-closed DDL migration.
+- [x] Implement `--dry-run | --apply | --verify` with marker `CORE-204-sensitive-acl-v1`; report only IDs/counts/reason codes/non-sensitive checksums.
+- [x] Map a same-tenant stable legacy `createdBy` to `createdByUserId + private`; quarantine blank/unknown/cross-tenant creators as `owner_admin_only`. Validate Note/Transcript/Candidate parent closure before marker commit.
+- [x] Make apply serializable, idempotent and marker-last; verify marker receipt/checksum plus bidirectional row semantics. Missing marker is recoverable; semantic drift fails closed.
+- [x] Make Candidate foundation inspectors accept exactly the pre-ACL and post-ACL known shapes while still rejecting arbitrary extra/missing columns or indexes.
+- [x] Run report/apply/verify within the SQLite pre-write-backup upgrade and after PostgreSQL `migrate deploy`; failure-inject interruption, rerun, partial schema, marker drift, semantic conflict and authenticated backup/restore.
 
 ## Task 3: Centralize access decisions and audited CAS mutations
 
@@ -95,11 +95,11 @@ Add the fail-closed sensitive-resource foundation required before SourceArtifact
 - Modify: `server/src/app.ts`
 - Modify: `server/tests/sensitive-resource-acl.test.ts`
 
-- [ ] Define one strict descriptor and access decision for read/manage/review across all four sensitive kinds.
-- [ ] Reload current tenant policy, actor role, parent scope and active reviewer grant on every decision; never trust JWT role or cached ACL.
-- [ ] Implement content-free, Serializable `set visibility`, `grant reviewer` and `revoke reviewer` services with expected `aclVersion`, tenant-local users, creator/quarantine authority and same-transaction AuditEvent.
-- [ ] Keep `owner_admin_only` unavailable to normal share commands and reject `matter_shared` without a valid current Matter parent.
-- [ ] Expose reusable Prisma where predicates/batched checks so list routes filter before selecting sensitive body fields where practical.
+- [x] Define one strict descriptor and access decision for read/manage/review across all four sensitive kinds.
+- [x] Reload current tenant policy, actor role, parent scope and active reviewer grant on every decision; never trust JWT role or cached ACL.
+- [x] Implement content-free, Serializable `set visibility`, `grant reviewer` and `revoke reviewer` services with expected `aclVersion`, tenant-local users, creator/quarantine authority and same-transaction AuditEvent.
+- [x] Keep `owner_admin_only` unavailable to normal share commands and reject `matter_shared` without a valid current Matter parent.
+- [x] Expose reusable Prisma where predicates/batched checks so list routes filter before selecting sensitive body fields where practical.
 
 ## Task 4: Cut every existing sensitive path to the helper
 
@@ -120,12 +120,12 @@ Add the fail-closed sensitive-resource foundation required before SourceArtifact
 - Modify: `server/src/jobs.ts`
 - Modify: corresponding tests from Task 1
 
-- [ ] Write explicit creator/private/ACL-version metadata on every Note, Transcript and Candidate producer; system rows without a reliable user are quarantined.
-- [ ] Enforce manage ACL for Transcript decrypt/extract/rebind/redact/delete and Note update/delete/repair/rebind/person-merge. A shared reader cannot mutate.
-- [ ] Filter state Notes, Transcript lists, legacy candidate lists and Candidate-only Inbox by the same helper without fallback or response-layer-only filtering.
-- [ ] Recheck Candidate review ACL inside accept/reject/dismiss/evidence/proposal/person/relation and mixed-batch transactions; preserve all-or-nothing semantics and formal-write scope checks.
-- [ ] Remove private Note reads from shared CuratedSummary generation and keep team/aggregate inventories on an explicit formal-data whitelist.
-- [ ] Preserve CORE-203 Candidate authority, DTO order, AI human-review boundary, viewer rejection, audit privacy and legacy compatibility projections.
+- [x] Write explicit creator/private/ACL-version metadata on every Note, Transcript and Candidate producer; system rows without a reliable user are quarantined.
+- [x] Enforce manage ACL for Transcript decrypt/extract/rebind/redact/delete and Note update/delete/repair/rebind/person-merge. A shared reader cannot mutate.
+- [x] Filter state Notes, Transcript lists, legacy candidate lists and Candidate-only Inbox by the same helper without fallback or response-layer-only filtering.
+- [x] Recheck Candidate review ACL inside accept/reject/dismiss/evidence/proposal/person/relation and mixed-batch transactions; preserve all-or-nothing semantics and formal-write scope checks.
+- [x] Remove private Note reads from shared CuratedSummary generation and keep team/aggregate inventories on an explicit formal-data whitelist.
+- [x] Preserve CORE-203 Candidate authority, DTO order, AI human-review boundary, viewer rejection, audit privacy and legacy compatibility projections.
 
 ## Task 5: Verify recovery and close CORE-204
 
@@ -134,12 +134,21 @@ Add the fail-closed sensitive-resource foundation required before SourceArtifact
 - Modify: this plan
 - Modify: `docs/商业版开发待办清单v1.md`
 
-- [ ] Run focused ACL/migration/recording/state/Candidate/batch/repair/merge tests, then full Server generate/schema check/typecheck/test and PostgreSQL operations integration.
-- [ ] Run Domain contracts, G64111, PDE kernel and App typecheck/tests. Do not run a local App production build because it writes shared `app/dist/**`; exact-SHA CI retains that isolated gate.
-- [ ] Run schema diff, migration SQL/static state checks, old-path inventory, `git diff --check`, protected-path check and high-confidence secret scan.
-- [ ] Assert no Action/domain-contract/App/shared/self-cultivation/production file changed and SourceArtifact has no public product API or backfill.
-- [ ] Commit business code independently, push and require every exact-head CI job green.
-- [ ] In a separate governance commit, document migration/apply/verify/rollback, mark CORE-204 DONE and only SAAS-201 READY, then require exact-head CI green before SAAS-201 starts.
+- [x] Run focused ACL/migration/recording/state/Candidate/batch/repair/merge tests, then full Server generate/schema check/typecheck/test and PostgreSQL operations integration.
+- [x] Run Domain contracts, G64111, PDE kernel and App typecheck/tests. Do not run a local App production build because it writes shared `app/dist/**`; exact-SHA CI retains that isolated gate.
+- [x] Run schema diff, migration SQL/static state checks, old-path inventory, `git diff --check`, protected-path check and high-confidence secret scan.
+- [x] Assert no Action/domain-contract/App/shared/self-cultivation/production file changed and SourceArtifact has no public product API or backfill.
+- [x] Commit business code independently, push and require every exact-head CI job green.
+- [x] In a separate governance commit, document migration/apply/verify/rollback, mark CORE-204 DONE and only SAAS-201 READY, then require exact-head CI green before SAAS-201 starts.
+
+## Completion evidence
+
+- Business commit: `4bf28579a0ad265faf05e5a2bdb1bbd32eb27b29`.
+- SQLite cumulative-upgrade timeout stabilization: `e67c3373f1a1b2e5dd28dd83235ff806902a3dec`.
+- Exact-head remote gate: [GitHub Actions 32856055702](https://github.com/ZiZ-LG/jianghu/actions/runs/32856055702), 12/12 jobs successful.
+- Local gate: Server 74 files / 601 tests; Domain 8/87; G64111 2/32; PDE 3/25; App 42/326; all required typechecks, generated PostgreSQL schema check, SQLite upgrade and PostgreSQL operations integration successful.
+- Recovery evidence and production procedure: `docs/CORE-204-敏感资源ACL迁移与回滚说明.md`.
+- No Action/domain-contract/App/shared/self-cultivation/production file changed; no SourceArtifact product API or backfill was opened.
 
 ## Local verification commands
 
