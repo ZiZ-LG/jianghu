@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "task": "SAAS-606",
+  "editorialDate": "2026-08-24",
+  "generatedAt": "2026-08-24T08:30:00.000Z",
+  "reviewState": "pending_owner_review",
+  "publicationState": "not_published",
+  "controls": {
+    "autoPublishingEnabled": false,
+    "stopSwitchEngaged": true
+  },
+  "candidates": [
+    {
+      "candidateId": "ED-FIXTURE-OPENAI",
+      "sourceId": "openai-news-rss",
+      "sourceName": "OpenAI News",
+      "originalTitle": "Introducing a verified fixture capability",
+      "canonicalUrl": "https://openai.com/index/verified-fixture-capability",
+      "publishedAt": "2026-08-24T07:00:00.000Z",
+      "fetchedAt": "2026-08-24T08:30:00.000Z",
+      "sourceSummary": "OpenAI published a fixture-only product capability for workflow acceptance testing.",
+      "evidenceExcerpt": "Fixture metadata only; not a production editorial claim.",
+      "eventKey": "event-fixture-openai",
+      "contentFingerprint": "fingerprint-fixture-openai",
+      "riskLevel": "medium",
+      "riskReasons": [
+        "medium risk requires manual review",
+        "automatic publishing is disabled",
+        "publishing stop switch is engaged"
+      ],
+      "editorialDraft": {
+        "mode": "deterministic_fallback",
+        "fallbackReason": "ai_not_configured",
+        "titleZh": "fixture 候选｜官方能力更新",
+        "summaryZh": "这是用于 SAAS-606 Draft PR 验收的确定性候选摘要，不代表真实新闻或公开内容。",
+        "whyItMattersZh": "用于核验候选审核界面，而不是形成业务结论。",
+        "salesImplicationZh": "项目所有者应核对来源与适用边界后再决定是否保留。",
+        "roleOrgImplicationZh": "该 fixture 不形成岗位或组织判断。",
+        "nextActionZh": "检查原文链接、风险提示和删除候选的操作体验。"
+      },
+      "reviewState": "pending_owner_review",
+      "publicationState": "not_published"
+    },
+    {
+      "candidateId": "ED-FIXTURE-PRICING",
+      "sourceId": "openai-news-rss",
+      "sourceName": "OpenAI News",
+      "originalTitle": "Fixture pricing terms require owner review",
+      "canonicalUrl": "https://openai.com/index/fixture-pricing-review",
+      "publishedAt": "2026-08-24T07:10:00.000Z",
+      "fetchedAt": "2026-08-24T08:30:00.000Z",
+      "sourceSummary": "A fixture item contains pricing language and must remain high risk.",
+      "evidenceExcerpt": "Fixture pricing metadata only.",
+      "eventKey": "event-fixture-pricing",
+      "contentFingerprint": "fingerprint-fixture-pricing",
+      "riskLevel": "high",
+      "riskReasons": [
+        "high risk requires manual review",
+        "automatic publishing is disabled",
+        "publishing stop switch is engaged"
+      ],
+      "editorialDraft": {
+        "mode": "deterministic_fallback",
+        "fallbackReason": "ai_not_configured",
+        "titleZh": "fixture 高风险候选｜价格信息",
+        "summaryZh": "这是用于验证高风险提示的 fixture，必须由项目所有者人工审核。",
+        "whyItMattersZh": "价格与商业条款不能由 AI 或工作流自动批准。",
+        "salesImplicationZh": "任何客户沟通前都必须重新核对官方条款。",
+        "roleOrgImplicationZh": "高风险候选需要明确责任人与审核记录。",
+        "nextActionZh": "在 Draft PR 中检查高风险标识，必要时删除该对象。"
+      },
+      "reviewState": "pending_owner_review",
+      "publicationState": "not_published"
+    }
+  ]
+}

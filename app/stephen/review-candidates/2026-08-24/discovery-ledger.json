@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "task": "SAAS-606",
+  "editorialDate": "2026-08-24",
+  "seenCandidateIds": [
+    "ED-FIXTURE-DUPLICATE",
+    "ED-FIXTURE-OPENAI",
+    "ED-FIXTURE-PRICING",
+    "ED-FIXTURE-REJECTED"
+  ],
+  "runs": [
+    {
+      "fetchedAt": "2026-08-24T08:30:00.000Z",
+      "summary": {
+        "sourcesConfigured": 2,
+        "sourcesScanned": 2,
+        "sourcesFailed": 0,
+        "newDiscoveries": 3,
+        "duplicates": 1,
+        "rejected": 1,
+        "manualReview": 2,
+        "proposed": 2
+      }
+    }
+  ]
+}
