@@ -790,3 +790,85 @@ describe('PostgreSQL schema delivery', () => {
     expect(sqliteUpgrade).toContain("['run', 'migrate:source-artifact-verify']");
   });
 });
+
+describe('CORE-205 ReviewBatch and Interaction expansion', () => {
+  it('keeps Candidate single-authority and wires guarded SQLite/PostgreSQL migration gates', async () => {
+    const sqliteSchema = await read('prisma/schema.prisma');
+    const postgresSchema = await read('prisma/postgres/schema.prisma');
+    const preReviewSchema = await read('prisma/postgres/legacy/20260825_pre_core205.prisma');
+    const migration = await read(
+      'prisma/postgres/migrations/20260825020000_expand_review_batch_interaction/migration.sql',
+    );
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const sqliteUpgrade = await read('scripts/upgrade-sqlite-schema.ts');
+    const schemaState = await read('scripts/postgres-review-batch-schema-state.ts');
+    const migrationCli = await read('scripts/migrate-review-batches.ts');
+    const packageJson = JSON.parse(await read('package.json')) as { scripts?: Record<string, string> };
+
+    for (const schema of [sqliteSchema, postgresSchema]) {
+      expect(schema.match(/^model Candidate \{/gm)).toHaveLength(1);
+      expect(schema).not.toContain('model ReviewCandidate {');
+      expect(schema).toContain('model ReviewBatch {');
+      expect(schema).toContain('model Interaction {');
+      expect(schema).toContain('@@index([tenantId, sourceArtifactId, status])');
+      expect(schema).toContain('@@index([tenantId, interactionId])');
+      expect(schema).toContain('@@index([tenantId, sourceArtifactId])');
+      expect(schema).not.toMatch(/model (?:ReviewBatch|Interaction) \{[^}]*(?:contentEnc|body|evidence|payload)/);
+      expect(schema).not.toMatch(/^enum\s+/m);
+      expect(schema).not.toMatch(/^\s*\w+\s+Json[?\[\]]*/m);
+    }
+    expect(preReviewSchema).toContain('model SourceArtifact {');
+    expect(preReviewSchema).not.toContain('model ReviewBatch {');
+    expect(preReviewSchema).not.toContain('model Interaction {');
+
+    expect(migration.trimStart().startsWith('BEGIN;')).toBe(true);
+    expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(migration).toContain("SET LOCAL lock_timeout = '30s'");
+    expect(migration).toContain("SET LOCAL statement_timeout = '15min'");
+    expect(migration).toContain('LOCK TABLE "Candidate", "SourceArtifact" IN SHARE ROW EXCLUSIVE MODE');
+    expect(migration.indexOf('LOCK TABLE "Candidate", "SourceArtifact" IN SHARE ROW EXCLUSIVE MODE'))
+      .toBeLessThan(migration.indexOf('pre-expansion Candidate attachment drift detected'));
+    expect(migration.indexOf('pre-expansion Candidate attachment drift detected'))
+      .toBeLessThan(migration.indexOf('CREATE TABLE "ReviewBatch"'));
+    expect(migration).toContain('CREATE TABLE "Interaction"');
+    expect(migration).toContain('ReviewBatch table expansion parity failed');
+    expect(migration).not.toMatch(/(?:UPDATE|DELETE\s+FROM)\s+"(?:Candidate|SourceArtifact|Person|Edge|PlanAction)"/i);
+
+    expect(packageJson.scripts?.['migrate:review-batch-report'])
+      .toBe('tsx scripts/migrate-review-batches.ts --dry-run');
+    expect(packageJson.scripts?.['migrate:review-batch-apply'])
+      .toBe('tsx scripts/migrate-review-batches.ts --apply');
+    expect(packageJson.scripts?.['migrate:review-batch-verify'])
+      .toBe('tsx scripts/migrate-review-batches.ts --verify');
+    expect(migrationCli).toContain('reportReviewBatchMigration');
+    expect(migrationCli).toContain('applyReviewBatchMigration');
+    expect(migrationCli).toContain('verifyReviewBatchMigration');
+
+    expect(deployScript).toContain('PRE_REVIEW_BATCH_SCHEMA=prisma/postgres/legacy/20260825_pre_core205.prisma');
+    expect(deployScript).toContain('REVIEW_BATCH_MIGRATION=20260825020000_expand_review_batch_interaction');
+    expect(deployScript).toContain('recover_incomplete_review_batch_migration');
+    expect(deployScript).toContain('adopt_existing_review_batch_schema_if_safe');
+    expect(deployScript).toContain('review_batch_schema_matches_known_state');
+    expect(deployScript).toMatch(
+      /source_artifact_schema_matches_known_state\(\) \{[\s\S]*schema_matches "\$PRE_REVIEW_BATCH_SCHEMA"[\s\S]*schema_matches "\$SCHEMA"/,
+    );
+    expect(deployScript.lastIndexOf('npm run migrate:review-batch-report'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:review-batch-apply'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:review-batch-verify'))
+      .toBeGreaterThan(deployScript.lastIndexOf('npm run migrate:review-batch-apply'));
+    expect(schemaState).toContain("process.stdout.write('uninitialized')");
+    expect(schemaState).toContain("process.stdout.write('legacy')");
+    expect(schemaState).toContain("'expanded'");
+    expect(schemaState).toContain("'partial'");
+    expect(schemaState).toContain('expectedColumns');
+    expect(schemaState).toContain('expectedIndexes');
+    expect(sqliteUpgrade).toContain('inspectReviewBatchSchemaState');
+    expect(sqliteUpgrade).toContain('partial ReviewBatch/Interaction expansion detected');
+    expect(sqliteUpgrade).toContain("['run', 'migrate:review-batch-apply']");
+    expect(sqliteUpgrade).toContain("['run', 'migrate:review-batch-verify']");
+    expect(sqliteUpgrade.indexOf("['run', 'migrate:review-batch-report']"))
+      .toBeLessThan(sqliteUpgrade.indexOf("const dbPushArgs = ['prisma', 'db', 'push'"));
+  });
+});

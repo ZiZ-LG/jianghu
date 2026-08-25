@@ -176,6 +176,20 @@ export async function setSensitiveResourceVisibility(
     if (input.visibility === 'matter_shared' && !descriptor.matterId) {
       throw new SensitiveAclError('matter_parent_required');
     }
+    if (descriptor.kind === 'candidate') {
+      const attached = await tx.candidate.findFirst({
+        where: { id: descriptor.id, tenantId: descriptor.tenantId },
+        select: { reviewBatchId: true },
+      });
+      if (attached?.reviewBatchId) throw new SensitiveAclError('candidate_review_batch_locked');
+    }
+    if (descriptor.kind === 'source_artifact') {
+      const anchored = await tx.reviewBatch.findFirst({
+        where: { tenantId: descriptor.tenantId, sourceArtifactId: descriptor.id },
+        select: { id: true },
+      });
+      if (anchored) throw new SensitiveAclError('source_artifact_review_batch_locked');
+    }
     const aclVersion = descriptor.aclVersion + 1;
     await updateAclVersion(tx, descriptor, input.expectedAclVersion, {
       visibility: input.visibility,

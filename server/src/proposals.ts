@@ -113,6 +113,30 @@ function proposalValueMatches(current: unknown, expected: string): boolean {
   return encoded === expected || (current == null ? '' : String(current)) === expected;
 }
 
+/** Read-only half of proposal acceptance, used by all-or-nothing ReviewBatch preflight. */
+export async function assertProposalAcceptancePreflight(
+  ctx: CommandContext,
+  id: string,
+  overrideValue: string | undefined,
+  tx: Prisma.TransactionClient,
+  capabilityPolicy: CapabilityPolicy = INTERNAL_CAPABILITY_POLICY,
+) {
+  await requireCandidateReviewAccess(tx, ctx.tenantId, 'ChangeProposal', id, {
+    actorId: ctx.actorId,
+    actorRole: ctx.actorRole,
+    capabilityPolicy,
+  });
+  const proposal = await tx.changeProposal.findFirst({ where: {
+    id, tenantId: ctx.tenantId, status: 'pending',
+  } });
+  if (!proposal) throw new ScopedNotFoundError();
+  const current = await proposalCurrentValue(tx, ctx.tenantId, proposal);
+  if (!proposalValueMatches(current, proposal.oldValue)) {
+    throw new Error('正式字段已被人工更新，请刷新后重新审阅提案');
+  }
+  return { proposal, value: overrideValue ?? proposal.newValue };
+}
+
 function applyProposalAction(
   ctx: CommandContext,
   action: Action,

@@ -50,6 +50,7 @@ import { todayRoutes } from './today.js';
 import { crmContextRoutes } from './crmContext.js';
 import { deploymentProductAccess } from './productPolicy.js';
 import { sourceArtifactRoutes } from './sourceArtifacts/routes.js';
+import { reviewBatchRoutes } from './reviewBatches/routes.js';
 
 async function registerSecurityPlugins(app: FastifyInstance): Promise<void> {
   const isProd = process.env.NODE_ENV === 'production';
@@ -199,6 +200,7 @@ function registerRoutes(app: FastifyInstance, readinessProbe: ReadinessProbe, pr
   todayRoutes(app);
   crmContextRoutes(app);
   sourceArtifactRoutes(app, product.policy);
+  reviewBatchRoutes(app, product.policy);
 
   // ── 数据：拉取整树 / 应用变更 ──
   // 服务端组装时传入当前身份，统一执行归属与敏感字段 ACL。

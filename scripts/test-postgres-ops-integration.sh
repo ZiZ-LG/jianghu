@@ -1251,6 +1251,189 @@ source_artifact_restore_parity=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec 
 echo "SOURCE_ARTIFACT_RESTORE_ROLLBACK_OK=1"
 echo "SAAS_201_SOURCE_ARTIFACT_CUTOVER_OK=1"
 
+# CORE-205 adds only body-free ReviewBatch/Interaction metadata. Exercise an
+# already-committed DDL adoption, semantic and marker drift, pre-DDL Candidate
+# attachment refusal, partial-schema refusal, and authenticated pre-cutover restore.
+review_batch_db=jianghu_review_batch_migration
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$review_batch_db"
+POSTGRES_DB="$review_batch_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npx prisma db push --schema prisma/postgres/legacy/20260825_pre_core205.prisma --skip-generate >/dev/null
+   for path in prisma/postgres/migrations/20*; do
+     [ -d "$path" ] || continue
+     migration=$(basename "$path")
+     [ "$migration" = 20260825020000_expand_review_batch_interaction ] && break
+     npx prisma migrate resolve --applied "$migration" --schema prisma/postgres/schema.prisma >/dev/null
+   done' >/dev/null
+
+review_batch_backup_root="$BACKUP_DIR/core205-pre"
+mkdir -p "$review_batch_backup_root"
+derive_backup_keys "$BACKUP_MASTER_SECRET"
+review_batch_backup_work=$(mktemp -d "$review_batch_backup_root/.review-batch-work.XXXXXX")
+review_batch_backup="$review_batch_backup_root/jianghu-core205-$(openssl rand -hex 8).backup"
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db \
+  pg_dump -U "$POSTGRES_USER" -d "$review_batch_db" -Fc \
+  | backup_encrypt_payload "$review_batch_backup_work/payload.enc"
+{
+  backup_cipher_metadata
+  printf 'source_database=%s\n' "$review_batch_db"
+  printf 'created_at=%s\n' "$(date -u +%Y%m%dT%H%M%SZ)"
+} > "$review_batch_backup_work/metadata"
+write_artifact_integrity "$review_batch_backup_work"
+verify_artifact_auth "$review_batch_backup_work"
+mv "$review_batch_backup_work" "$review_batch_backup"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db \
+  psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$review_batch_db" \
+  < server/prisma/postgres/migrations/20260825020000_expand_review_batch_interaction/migration.sql >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$review_batch_db" -c \
+  "INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+   VALUES ('int-review-batch-after-commit', repeat('0', 64),
+     '20260825020000_expand_review_batch_interaction', CURRENT_TIMESTAMP, 0);" >/dev/null
+POSTGRES_DB="$review_batch_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+review_batch_after_commit_adoption=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$review_batch_db" -tAc \
+  "SELECT ((SELECT count(*) FROM \"_prisma_migrations\"
+              WHERE migration_name = '20260825020000_expand_review_batch_interaction'
+                AND finished_at IS NOT NULL AND rolled_back_at IS NULL) = 1
+       AND (SELECT count(*) FROM \"_prisma_migrations\"
+              WHERE migration_name = '20260825020000_expand_review_batch_interaction'
+                AND finished_at IS NULL AND rolled_back_at IS NULL) = 0
+       AND (SELECT count(*) FROM \"DataMigrationState\"
+              WHERE key = 'CORE-205-review-batch-interaction-v1') = 1
+       AND to_regclass('public.\"ReviewBatch\"') IS NOT NULL
+       AND to_regclass('public.\"Interaction\"') IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name IN ('ReviewBatch','Interaction')
+                AND column_name IN ('content','contentEnc','body','evidence','payload')))::int" | tr -d '[:space:]')
+[[ "$review_batch_after_commit_adoption" == 1 ]]
+echo "INTERRUPTED_REVIEW_BATCH_AFTER_COMMIT_ADOPTION_OK=1"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$review_batch_db" -c \
+  "INSERT INTO \"Tenant\" (id,name) VALUES ('review-batch-tenant','Review Batch Tenant');
+   INSERT INTO \"User\" (id,\"tenantId\",email,\"passwordHash\",name,role)
+     VALUES ('review-batch-user','review-batch-tenant','review-batch@example.test','unused','Owner','owner');
+   INSERT INTO \"Account\" (id,\"tenantId\",name,\"customerType\")
+     VALUES ('review-batch-account','review-batch-tenant','Review Batch Account',1);
+   INSERT INTO \"Opportunity\"
+     (id,\"tenantId\",\"accountId\",name,\"customerType\",\"pipelineStage\",\"engageStage\")
+     VALUES ('review-batch-matter','review-batch-tenant','review-batch-account',
+       'Review Batch Matter',1,'qualify','discover');
+   INSERT INTO \"SourceArtifact\"
+     (id,\"tenantId\",\"accountId\",\"matterId\",\"backingKind\",\"backingId\",\"artifactKind\",
+      source,\"externalRef\",\"idempotencyDomain\",\"fingerprintKind\",\"sourceFingerprint\",
+      \"retentionState\",\"createdByUserId\",visibility,\"aclVersion\",\"updatedAt\")
+     VALUES ('review-batch-source','review-batch-tenant','review-batch-account','review-batch-matter',
+       'external_reference','review-batch-source','external_reference','test','review-batch-source-ref',
+       'creator-private-v1:\"review-batch-user\"','reference_sha256_v1',repeat('a',64),'reference_only',
+       'review-batch-user','private',1,CURRENT_TIMESTAMP);
+   INSERT INTO \"ReviewBatch\"
+     (id,\"tenantId\",\"sourceArtifactId\",\"accountId\",\"matterId\",\"createdByUserId\",
+      visibility,\"aclVersion\",\"updatedAt\")
+     VALUES ('review-batch-orphan','review-batch-tenant','review-batch-source','review-batch-account',
+       'review-batch-matter','review-batch-user','private',1,CURRENT_TIMESTAMP);" >/dev/null
+if POSTGRES_DB="$review_batch_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "orphan ReviewBatch unexpectedly deployed" >&2; exit 1
+fi
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$review_batch_db" -c \
+  "DELETE FROM \"ReviewBatch\" WHERE id = 'review-batch-orphan';" >/dev/null
+POSTGRES_DB="$review_batch_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+echo "REVIEW_BATCH_SEMANTIC_CONFLICT_FAIL_CLOSED_OK=1"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$review_batch_db" -c \
+  "UPDATE \"DataMigrationState\"
+      SET details = jsonb_set(details::jsonb, '{integrityChecksum}', to_jsonb(repeat('0', 64)))::text
+    WHERE key = 'CORE-205-review-batch-interaction-v1';" >/dev/null
+if POSTGRES_DB="$review_batch_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "ReviewBatch marker checksum drift unexpectedly deployed" >&2; exit 1
+fi
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$review_batch_db" -c \
+  "DELETE FROM \"DataMigrationState\" WHERE key = 'CORE-205-review-batch-interaction-v1';" >/dev/null
+POSTGRES_DB="$review_batch_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+echo "REVIEW_BATCH_MARKER_CHECKSUM_FAIL_CLOSED_OK=1"
+
+review_batch_attachment_db=jianghu_review_batch_attachment_drift
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$review_batch_attachment_db"
+POSTGRES_DB="$review_batch_attachment_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npx prisma db push --schema prisma/postgres/legacy/20260825_pre_core205.prisma --skip-generate >/dev/null
+   for path in prisma/postgres/migrations/20*; do
+     [ -d "$path" ] || continue
+     migration=$(basename "$path")
+     [ "$migration" = 20260825020000_expand_review_batch_interaction ] && break
+     npx prisma migrate resolve --applied "$migration" --schema prisma/postgres/schema.prisma >/dev/null
+   done' >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$review_batch_attachment_db" -c \
+  "INSERT INTO \"Tenant\" (id,name) VALUES ('attachment-tenant','Attachment Tenant');
+   INSERT INTO \"User\" (id,\"tenantId\",email,\"passwordHash\",name,role)
+     VALUES ('attachment-user','attachment-tenant','attachment@example.test','unused','Owner','owner');
+   INSERT INTO \"Account\" (id,\"tenantId\",name) VALUES ('attachment-account','attachment-tenant','Attachment Account');
+   INSERT INTO \"SourceArtifact\"
+     (id,\"tenantId\",\"accountId\",\"backingKind\",\"backingId\",\"artifactKind\",source,
+      \"externalRef\",\"idempotencyDomain\",\"fingerprintKind\",\"sourceFingerprint\",\"retentionState\",
+      \"createdByUserId\",visibility,\"aclVersion\",\"updatedAt\")
+     VALUES ('attachment-source','attachment-tenant','attachment-account','external_reference','attachment-source',
+       'external_reference','test','attachment-source-ref','creator-private-v1:\"attachment-user\"',
+       'reference_sha256_v1',repeat('b',64),'reference_only','attachment-user','private',1,CURRENT_TIMESTAMP);
+   INSERT INTO \"Candidate\"
+     (id,\"tenantId\",kind,status,\"accountId\",\"targetKind\",source,\"sourceRef\",evidence,confidence,
+      \"sourceArtifactId\",\"createdByUserId\",visibility,\"aclVersion\",\"dedupeKey\",version,\"updatedAt\")
+     VALUES ('attachment-candidate','attachment-tenant','person_create','pending','attachment-account','person',
+       'test','test:attachment','private evidence',0.8,'attachment-source','attachment-user','private',1,
+       'attachment-candidate',0,CURRENT_TIMESTAMP);" >/dev/null
+if POSTGRES_DB="$review_batch_attachment_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "pre-DDL Candidate attachment drift unexpectedly migrated" >&2; exit 1
+fi
+review_batch_attachment_state=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$review_batch_attachment_db" -tAc \
+  "SELECT ((to_regclass('public.\"ReviewBatch\"') IS NULL)
+       AND NOT EXISTS (SELECT 1 FROM \"_prisma_migrations\"
+         WHERE migration_name = '20260825020000_expand_review_batch_interaction'
+           AND finished_at IS NOT NULL AND rolled_back_at IS NULL))::int" | tr -d '[:space:]')
+[[ "$review_batch_attachment_state" == 1 ]]
+echo "REVIEW_BATCH_ATTACHMENT_DRIFT_FAIL_CLOSED_OK=1"
+
+review_batch_partial_db=jianghu_review_batch_partial
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$review_batch_partial_db"
+POSTGRES_DB="$review_batch_partial_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npx prisma db push --schema prisma/postgres/legacy/20260825_pre_core205.prisma --skip-generate >/dev/null
+   for path in prisma/postgres/migrations/20*; do
+     [ -d "$path" ] || continue
+     migration=$(basename "$path")
+     [ "$migration" = 20260825020000_expand_review_batch_interaction ] && break
+     npx prisma migrate resolve --applied "$migration" --schema prisma/postgres/schema.prisma >/dev/null
+   done' >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$review_batch_partial_db" -c \
+  "CREATE TABLE \"ReviewBatch\" (id TEXT PRIMARY KEY);
+   INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+   VALUES ('int-review-batch-partial', repeat('0', 64),
+     '20260825020000_expand_review_batch_interaction', CURRENT_TIMESTAMP, 0);" >/dev/null
+if POSTGRES_DB="$review_batch_partial_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "partial ReviewBatch schema unexpectedly migrated" >&2; exit 1
+fi
+review_batch_partial_state=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$review_batch_partial_db" -tAc \
+  "SELECT ((to_regclass('public.\"ReviewBatch\"') IS NOT NULL)
+       AND (to_regclass('public.\"Interaction\"') IS NULL)
+       AND NOT EXISTS (SELECT 1 FROM \"_prisma_migrations\"
+         WHERE migration_name = '20260825020000_expand_review_batch_interaction'
+           AND finished_at IS NOT NULL AND rolled_back_at IS NULL))::int" | tr -d '[:space:]')
+[[ "$review_batch_partial_state" == 1 ]]
+echo "PARTIAL_REVIEW_BATCH_SCHEMA_FAIL_CLOSED_OK=1"
+
+review_batch_restore_db=jianghu_restore_review_batch_core205
+bash scripts/restore-postgres.sh "$review_batch_backup" --database "$review_batch_restore_db" >/dev/null
+review_batch_restore_parity=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$review_batch_restore_db" -tAc \
+  "SELECT ((to_regclass('public.\"ReviewBatch\"') IS NULL)
+       AND (to_regclass('public.\"Interaction\"') IS NULL)
+       AND NOT EXISTS (SELECT 1 FROM \"DataMigrationState\"
+              WHERE key = 'CORE-205-review-batch-interaction-v1'))::int" | tr -d '[:space:]')
+[[ "$review_batch_restore_parity" == 1 ]]
+echo "REVIEW_BATCH_RESTORE_ROLLBACK_OK=1"
+echo "CORE_205_REVIEW_BATCH_MIGRATION_OK=1"
+
 # A duplicate tenant-local owner name must roll the bridge transaction back.
 # After data repair, the same database must resume and complete safely.
 ambiguous_db=jianghu_owner_ambiguous

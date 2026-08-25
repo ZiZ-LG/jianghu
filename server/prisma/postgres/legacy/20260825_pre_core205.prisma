@@ -5,7 +5,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -25,8 +25,6 @@ model Tenant {
   wecomConfig        WeComConfig?
   candidates         Candidate[]
   sourceArtifacts    SourceArtifact[]
-  reviewBatches      ReviewBatch[]
-  interactions       Interaction[]
   sensitiveGrants    SensitiveResourceGrant[]
 }
 
@@ -689,62 +687,6 @@ model SourceArtifact {
   @@index([tenantId, visibility, aclVersion])
   @@index([tenantId, artifactKind, createdAt])
   @@index([tenantId, retentionState, updatedAt])
-}
-
-// G4 会后速审父锚。只保存来源、归属、ACL、版本和不含正文的采纳收据；
-// ReviewCandidate 继续使用唯一 Candidate 物理表，不建立平行候选表。
-model ReviewBatch {
-  id                    String   @id
-  tenantId              String
-  tenant                Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  sourceArtifactId      String
-  accountId             String
-  matterId              String?
-  status                String   @default("pending") // pending | accepted | rejected
-  activityKind          String   @default("")
-  occurredAt            DateTime?
-  interactionId         String?
-  createdByUserId       String?
-  visibility            String   @default("owner_admin_only")
-  aclVersion            Int      @default(1)
-  acceptanceVersion     Int      @default(0)
-  version               Int      @default(0)
-  lastAcceptanceVersion Int?
-  lastAcceptanceHash    String   @default("")
-  lastAcceptanceResult  String   @default("{}")
-  reviewedByUserId      String?
-  reviewedAt            DateTime?
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
-
-  @@index([tenantId, sourceArtifactId, status])
-  @@index([tenantId, accountId, status, createdAt])
-  @@index([tenantId, matterId, status, createdAt])
-  @@index([tenantId, createdByUserId, visibility])
-  @@index([tenantId, interactionId])
-}
-
-// 经用户确认的活动元数据；原始正文继续只属于 SourceArtifact 的 Note/Transcript backing。
-model Interaction {
-  id                String   @id
-  tenantId          String
-  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  accountId         String
-  matterId          String?
-  sourceArtifactId  String
-  activityKind      String
-  occurredAt        DateTime
-  title             String   @default("")
-  createdByUserId   String?
-  confirmedByUserId String
-  version           Int      @default(0)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  @@index([tenantId, sourceArtifactId])
-  @@index([tenantId, accountId, occurredAt])
-  @@index([tenantId, matterId, occurredAt])
-  @@index([tenantId, createdByUserId])
 }
 
 // 显式敏感资源授权。正文、证据和密文绝不复制到授权记录；resourceAclVersion 绑定当前 ACL 世代。

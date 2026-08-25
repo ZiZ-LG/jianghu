@@ -506,6 +506,35 @@ describe('atomic idempotent compound commands', () => {
     await expect(readCommandReplay(ctx, { ...key, payload: { text: 'different' } }, test.prisma)).rejects.toBeInstanceOf(IdempotencyConflictError);
   });
 
+  it('reauthorizes every completed replay path before returning a stored receipt', async () => {
+    const key = { kind: 'review-batch-accept:test', idempotencyKey: 'replay-authorization-key', payload: { version: 1 } };
+    await runCommand(ctx, key, async () => ({ ok: true, receipt: { batchId: 'batch-1' } }), test.prisma);
+
+    let authorizationChecks = 0;
+    let businessExecutions = 0;
+    const denied = new Error('replay_access_revoked');
+    const authorizeReplay = async () => {
+      authorizationChecks += 1;
+      throw denied;
+    };
+
+    await expect(readCommandReplay(ctx, { ...key, authorizeReplay }, test.prisma)).rejects.toBe(denied);
+    await expect(reserveCommand(ctx, { ...key, authorizeReplay }, test.prisma)).rejects.toBe(denied);
+    await expect(runCommand(ctx, { ...key, authorizeReplay }, async () => {
+      businessExecutions += 1;
+      return { ok: false };
+    }, test.prisma)).rejects.toBe(denied);
+
+    expect(authorizationChecks).toBe(3);
+    expect(businessExecutions).toBe(0);
+    await expect(test.prisma.commandRun.findFirstOrThrow({ where: {
+      tenantId: ctx.tenantId,
+      actorId: ctx.actorId,
+      kind: key.kind,
+      idempotencyKey: hashIdempotencyKey(key.idempotencyKey),
+    } })).resolves.toMatchObject({ status: 'completed' });
+  });
+
   it('reserves an external command before preparation and blocks overlapping BYO calls', async () => {
     const key = { kind: 'voice-ingest', idempotencyKey: 'voice-reservation-key', payload: { text: 'same' } };
     const reservation = await reserveCommand<{ ok: true; receipt: { visitNote: boolean } }>(ctx, key, test.prisma);

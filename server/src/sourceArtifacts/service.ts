@@ -116,6 +116,14 @@ function sameParents(left: NormalizedMount, right: NormalizedMount): boolean {
     && left.personId === right.personId;
 }
 
+async function requireUnanchoredSourceArtifact(db: DbClient, tenantId: string, id: string): Promise<void> {
+  const anchored = await db.reviewBatch.findFirst({
+    where: { tenantId, sourceArtifactId: id },
+    select: { id: true },
+  });
+  if (anchored) throw new SourceArtifactError('source_artifact_review_batch_locked', 409);
+}
+
 async function normalizeMount(db: DbClient, tenantId: string, input: MountInput): Promise<NormalizedMount> {
   let accountId = input.accountId ?? null;
   const matterId = input.matterId ?? null;
@@ -634,6 +642,7 @@ export async function mountSourceArtifact(
   }, policy, prospective, 'manage');
   if (!access.allowed) throw new SourceArtifactError('source_artifact_not_found', 404, true);
   if (sameParents(current, mount)) return verifiedReceipt(db, current);
+  await requireUnanchoredSourceArtifact(db, ctx.tenantId, current.id);
   await updateBackingMount(db, current, mount);
   const changed = await db.sourceArtifact.updateMany({
     where: { id: current.id, tenantId: ctx.tenantId, aclVersion: current.aclVersion },
@@ -676,6 +685,7 @@ export async function setSourceArtifactVisibility(
     throw new SourceArtifactError('shared_artifact_matter_required', 409);
   }
   if (current.visibility === input.visibility) return verifiedReceipt(db, current);
+  await requireUnanchoredSourceArtifact(db, ctx.tenantId, current.id);
   await updateBackingVisibility(db, current, input.visibility);
   const changed = await db.sourceArtifact.updateMany({
     where: { id: current.id, tenantId: ctx.tenantId, aclVersion: current.aclVersion },

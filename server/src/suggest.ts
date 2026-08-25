@@ -106,6 +106,7 @@ interface MaterializePersonOptions {
   expectedAccountId?: string;
   override?: { name?: string; title?: string };
   allowAcceptedReuse?: boolean;
+  formalPersonId?: string;
 }
 
 /**
@@ -170,7 +171,7 @@ export async function materializePerson(
   const { x, y } = nextFreeSlot(others);
   const today = businessYmd();
   const logs = [{ date: today, content: `📥 ${ORIGIN_LABEL[candidate.origin] || '外部导入'}（${candidate.evidence || '无备注'}）${candidate.sourceUrl ? ' · ' + candidate.sourceUrl : ''}`, visibility: 'team' }];
-  const personId = 'p_' + randomUUID().replaceAll('-', '');
+  const personId = options.formalPersonId ?? ('p_' + randomUUID().replaceAll('-', ''));
   await tx.person.create({ data: { id: personId, tenantId, accountId: candidate.accountId, name: candidate.name, title: candidate.title, orgLevel: candidate.orgLevel, isCompetitor: false, x, y, form: '{}', logs: JSON.stringify(logs) } });
   // 人审采纳后建立通用参与关系；只有 memberScoped 商机才另写 legacy 可见性成员。
   if (candidate.opportunityId) {
@@ -227,7 +228,7 @@ export async function acceptRelationSuggestionInTransaction(
   tenantId: string,
   id: string,
   review: CandidateReviewAccessContext,
-  override: { layer?: 'L1' | 'L2' | 'L3' | 'L4'; label?: string } = {},
+  override: { layer?: 'L1' | 'L2' | 'L3' | 'L4'; label?: string; formalEdgeId?: string } = {},
 ): Promise<{ edge: any; createdPersons: any[] }> {
   await requireCandidateReviewAccess(tx, tenantId, 'RelSuggestion', id, review);
   const suggestion = await tx.relSuggestion.findFirst({ where: { id, tenantId } });
@@ -257,7 +258,7 @@ export async function acceptRelationSuggestionInTransaction(
   await requireEdgeEndpoints(tx, tenantId, opportunity.accountId, source, target);
   const layer = override.layer ?? suggestion.layer;
   const label = override.label ?? suggestion.label;
-  const edgeId = 'e_' + randomUUID().replaceAll('-', '');
+  const edgeId = override.formalEdgeId ?? ('e_' + randomUUID().replaceAll('-', ''));
   const color = LAYER_COLOR[layer] || '#16a34a';
   await tx.edge.create({ data: {
     id: edgeId, tenantId, accountId: opportunity.accountId, opportunityId: suggestion.opportunityId,

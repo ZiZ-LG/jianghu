@@ -3,6 +3,7 @@ import { copyFile, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { PrismaClient } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
+import { candidateDedupeKeyForCreator } from '../src/candidates/dedupe.js';
 
 const serverRoot = resolve('.');
 const prismaBin = resolve('node_modules/.bin/prisma');
@@ -351,12 +352,17 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       await expect(client.candidate.count()).resolves.toBe(0);
       await expect(client.sourceArtifact.count()).resolves.toBe(0);
       await expect(client.sensitiveResourceGrant.count()).resolves.toBe(0);
+      await expect(client.reviewBatch.count()).resolves.toBe(0);
+      await expect(client.interaction.count()).resolves.toBe(0);
       await expect(client.dataMigrationState.findUnique({
         where: { key: 'CORE-113-pde-decision-context-shadow-v1' },
       })).resolves.toMatchObject({ key: 'CORE-113-pde-decision-context-shadow-v1' });
       await expect(client.dataMigrationState.findUnique({
         where: { key: 'CORE-204-sensitive-acl-v1' },
       })).resolves.toMatchObject({ key: 'CORE-204-sensitive-acl-v1' });
+      await expect(client.dataMigrationState.findUnique({
+        where: { key: 'CORE-205-review-batch-interaction-v1' },
+      })).resolves.toMatchObject({ key: 'CORE-205-review-batch-interaction-v1' });
       await expect(readdir(join(directory, 'backups'))).rejects.toThrow();
     } finally {
       await client?.$disconnect();
@@ -540,6 +546,11 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       await expect(upgradedClient.dataMigrationState.findUnique({
         where: { key: 'SAAS-201-source-artifact-projection-v1' },
       })).resolves.toMatchObject({ key: 'SAAS-201-source-artifact-projection-v1' });
+      await expect(upgradedClient.dataMigrationState.findUnique({
+        where: { key: 'CORE-205-review-batch-interaction-v1' },
+      })).resolves.toMatchObject({ key: 'CORE-205-review-batch-interaction-v1' });
+      await expect(upgradedClient.reviewBatch.count()).resolves.toBe(0);
+      await expect(upgradedClient.interaction.count()).resolves.toBe(0);
       await expect(upgradedClient.personSuggestion.findUniqueOrThrow({
         where: { id: 'sqlite-upgrade-person-suggestion' },
         select: { status: true, evidence: true },
@@ -1003,6 +1014,102 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       expect(failed.status).not.toBe(0);
       expect(`${failed.stdout}\n${failed.stderr}`).toContain(
         'partial SourceArtifact projection expansion detected; restore the latest backup before retrying',
+      );
+    } finally {
+      await client?.$disconnect();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
+
+  it('rejects pre-DDL Candidate attachment drift before recreating ReviewBatch tables', async () => {
+    const directory = await mkdtemp(resolve('prisma/.review-batch-attachment-drift-test-'));
+    const relativeDirectory = basename(directory);
+    const databaseUrl = `file:./${relativeDirectory}/drift.db`;
+    let client: PrismaClient | null = null;
+    try {
+      run(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], databaseUrl);
+      client = new PrismaClient({ datasourceUrl: databaseUrl });
+      await client.tenant.create({ data: { id: 'review-batch-drift-tenant', name: 'Drift tenant' } });
+      await client.user.create({ data: {
+        id: 'review-batch-drift-user', tenantId: 'review-batch-drift-tenant',
+        email: 'review-batch-drift@example.test', passwordHash: 'unused', name: 'Drift owner', role: 'owner',
+      } });
+      await client.account.create({ data: {
+        id: 'review-batch-drift-account', tenantId: 'review-batch-drift-tenant', name: 'Drift account',
+      } });
+      await client.sourceArtifact.create({ data: {
+        id: 'review-batch-drift-source', tenantId: 'review-batch-drift-tenant',
+        accountId: 'review-batch-drift-account', backingKind: 'external_reference',
+        backingId: 'review-batch-drift-source', artifactKind: 'external_reference', source: 'test',
+        externalRef: 'review-batch-drift-source',
+        idempotencyDomain: `creator-private-v1:${JSON.stringify('review-batch-drift-user')}`,
+        fingerprintKind: 'reference_sha256_v1', sourceFingerprint: 'a'.repeat(64),
+        retentionState: 'reference_only', createdByUserId: 'review-batch-drift-user',
+        visibility: 'private', aclVersion: 1,
+      } });
+      await client.candidate.create({ data: {
+        id: 'review-batch-drift-candidate', tenantId: 'review-batch-drift-tenant',
+        kind: 'person_create', accountId: 'review-batch-drift-account', targetKind: 'person',
+        source: 'test', sourceRef: 'review-batch-drift:candidate', evidence: 'private evidence',
+        confidence: 0.8, sourceArtifactId: 'review-batch-drift-source',
+        createdByUserId: 'review-batch-drift-user', visibility: 'private', aclVersion: 1,
+        dedupeKey: candidateDedupeKeyForCreator(
+          'review-batch-drift-candidate', 'review-batch-drift-user',
+        ),
+        version: 0,
+      } });
+      await client.dataMigrationState.delete({
+        where: { key: 'CORE-205-review-batch-interaction-v1' },
+      });
+      await client.$executeRawUnsafe('DROP TABLE "Interaction"');
+      await client.$executeRawUnsafe('DROP TABLE "ReviewBatch"');
+      await client.$disconnect();
+      client = null;
+
+      const failed = spawnSync(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], {
+        cwd: serverRoot,
+        encoding: 'utf8',
+        env: { ...process.env, DATABASE_URL: databaseUrl, JIANGHU_SKIP_PRISMA_GENERATE: '1' },
+      });
+      expect(failed.status).not.toBe(0);
+      expect(`${failed.stdout}\n${failed.stderr}`).toContain(
+        'review-batch-drift-tenant:candidate:review-batch-drift-candidate:batch_missing',
+      );
+      const tables = new PrismaClient({ datasourceUrl: databaseUrl });
+      try {
+        const names = await tables.$queryRawUnsafe<Array<{ name: string }>>(
+          `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('ReviewBatch', 'Interaction')`,
+        );
+        expect(names).toEqual([]);
+      } finally {
+        await tables.$disconnect();
+      }
+    } finally {
+      await client?.$disconnect();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
+
+  it('fails closed when only part of the ReviewBatch/Interaction expansion exists', async () => {
+    const directory = await mkdtemp(resolve('prisma/.review-batch-partial-test-'));
+    const relativeDirectory = basename(directory);
+    const databaseUrl = `file:./${relativeDirectory}/partial.db`;
+    let client: PrismaClient | null = null;
+    try {
+      run(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], databaseUrl);
+      client = new PrismaClient({ datasourceUrl: databaseUrl });
+      await client.$executeRawUnsafe('DROP TABLE "Interaction"');
+      await client.$disconnect();
+      client = null;
+
+      const failed = spawnSync(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], {
+        cwd: serverRoot,
+        encoding: 'utf8',
+        env: { ...process.env, DATABASE_URL: databaseUrl, JIANGHU_SKIP_PRISMA_GENERATE: '1' },
+      });
+      expect(failed.status).not.toBe(0);
+      expect(`${failed.stdout}\n${failed.stderr}`).toContain(
+        'partial ReviewBatch/Interaction expansion detected; restore the latest backup before retrying',
       );
     } finally {
       await client?.$disconnect();

@@ -781,3 +781,36 @@ describe('SAAS-201 SourceArtifact projection migration operations', () => {
     expect(drill).toContain("column_name IN ('content','contentEnc','body','payload')");
   });
 });
+
+describe('CORE-205 ReviewBatch migration operations', () => {
+  it('failure-injects committed DDL adoption, attachment/semantic/marker drift, partial schema, and restore', async () => {
+    const deploy = await read('server/scripts/deploy-postgres-migrations.sh');
+    const drill = await read('scripts/test-postgres-ops-integration.sh');
+
+    expect(deploy).toContain('REVIEW_BATCH_MIGRATION=20260825020000_expand_review_batch_interaction');
+    expect(deploy).toContain('recover_incomplete_review_batch_migration');
+    expect(deploy).toContain('adopt_existing_review_batch_schema_if_safe');
+    expect(deploy).toContain('review_batch_schema_matches_known_state');
+    expect(deploy).toContain('source_artifact_schema_matches_known_state');
+    expect(deploy.lastIndexOf('npm run migrate:review-batch-report'))
+      .toBeGreaterThan(deploy.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deploy.lastIndexOf('npm run migrate:review-batch-apply'))
+      .toBeGreaterThan(deploy.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deploy.lastIndexOf('npm run migrate:review-batch-verify'))
+      .toBeGreaterThan(deploy.lastIndexOf('npm run migrate:review-batch-apply'));
+
+    for (const marker of [
+      'INTERRUPTED_REVIEW_BATCH_AFTER_COMMIT_ADOPTION_OK=1',
+      'REVIEW_BATCH_SEMANTIC_CONFLICT_FAIL_CLOSED_OK=1',
+      'REVIEW_BATCH_MARKER_CHECKSUM_FAIL_CLOSED_OK=1',
+      'REVIEW_BATCH_ATTACHMENT_DRIFT_FAIL_CLOSED_OK=1',
+      'PARTIAL_REVIEW_BATCH_SCHEMA_FAIL_CLOSED_OK=1',
+      'REVIEW_BATCH_RESTORE_ROLLBACK_OK=1',
+      'CORE_205_REVIEW_BATCH_MIGRATION_OK=1',
+    ]) expect(drill).toContain(marker);
+    expect(drill).toContain('20260825020000_expand_review_batch_interaction');
+    expect(drill).toContain('prisma/postgres/legacy/20260825_pre_core205.prisma');
+    expect(drill).toContain("key = 'CORE-205-review-batch-interaction-v1'");
+    expect(drill).toContain("column_name IN ('content','contentEnc','body','evidence','payload')");
+  });
+});

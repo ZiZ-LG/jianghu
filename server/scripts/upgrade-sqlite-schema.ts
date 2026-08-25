@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import type { CandidateSchemaState } from '../src/candidates/migration.js';
 import type { SensitiveAclSchemaState } from '../src/sensitiveAcl/migration.js';
 import type { SourceArtifactSchemaState } from '../src/sourceArtifacts/migration.js';
+import type { ReviewBatchSchemaState } from '../src/reviewBatches/migration.js';
 
 type MatterSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
 type ParticipantSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
@@ -268,6 +269,7 @@ let customerState: CustomerSchemaState;
 let candidateState: CandidateSchemaState;
 let sensitiveAclState: SensitiveAclSchemaState;
 let sourceArtifactState: SourceArtifactSchemaState;
+let reviewBatchState: ReviewBatchSchemaState;
 let backupPath: string | null = null;
 let schemaChanges = false;
 let matterBackfillRequired = false;
@@ -284,6 +286,8 @@ let sensitiveAclExpansionRequired = false;
 let sensitiveAclBackfillRequired = false;
 let sourceArtifactExpansionRequired = false;
 let sourceArtifactBackfillRequired = false;
+let reviewBatchExpansionRequired = false;
+let reviewBatchBackfillRequired = false;
 
 try {
   state = await inspectSchemaState(prisma);
@@ -299,6 +303,8 @@ try {
   sensitiveAclState = await inspectSensitiveAclSchemaState(prisma);
   const { inspectSourceArtifactSchemaState } = await import('../src/sourceArtifacts/migration.js');
   sourceArtifactState = await inspectSourceArtifactSchemaState(prisma);
+  const { inspectReviewBatchSchemaState } = await import('../src/reviewBatches/migration.js');
+  reviewBatchState = await inspectReviewBatchSchemaState(prisma);
   if (state === 'partial') {
     throw new Error('partial Matter column expansion detected; restore the latest backup before retrying');
   }
@@ -329,6 +335,9 @@ try {
   if (sensitiveAclState === 'partial') {
     throw new Error('partial sensitive resource ACL expansion detected; restore the latest backup before retrying');
   }
+  if (reviewBatchState === 'partial') {
+    throw new Error('partial ReviewBatch/Interaction expansion detected; restore the latest backup before retrying');
+  }
   customerExpansionRequired = customerState === 'uninitialized' || customerState === 'legacy';
   candidateExpansionRequired = candidateState === 'uninitialized' || candidateState === 'legacy';
   candidateBackfillRequired = candidateState !== 'expanded';
@@ -336,6 +345,8 @@ try {
   sensitiveAclBackfillRequired = sensitiveAclState !== 'expanded';
   sourceArtifactExpansionRequired = sourceArtifactState === 'uninitialized' || sourceArtifactState === 'legacy';
   sourceArtifactBackfillRequired = sourceArtifactState !== 'expanded';
+  reviewBatchExpansionRequired = reviewBatchState === 'uninitialized' || reviewBatchState === 'legacy';
+  reviewBatchBackfillRequired = reviewBatchState !== 'expanded';
   if (candidateState === 'legacy') {
     run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:candidate-report'], url);
   } else if (candidateState === 'expanded') {
@@ -363,6 +374,19 @@ try {
     sourceArtifactBackfillRequired = !marker;
     run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
       'run', marker ? 'migrate:source-artifact-verify' : 'migrate:source-artifact-report',
+    ], url);
+  }
+  if (reviewBatchState === 'legacy') {
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
+      'run', 'migrate:review-batch-report',
+    ], url);
+  } else if (reviewBatchState === 'expanded') {
+    const marker = await prisma.dataMigrationState.findUnique({
+      where: { key: 'CORE-205-review-batch-interaction-v1' }, select: { key: true },
+    });
+    reviewBatchBackfillRequired = !marker;
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
+      'run', marker ? 'migrate:review-batch-verify' : 'migrate:review-batch-report',
     ], url);
   }
   if (state === 'legacy') {
@@ -455,7 +479,7 @@ try {
     }
   }
   schemaChanges = state === 'uninitialized' ? true : schemaHasChanges(url);
-  if (state !== 'uninitialized' && (schemaChanges || matterBackfillRequired || participantBackfillRequired || commitmentBackfillRequired || methodologyExpansionRequired || methodologyDataExpansionRequired || pdeDecisionContextExpansionRequired || pdeDecisionContextBackfillRequired || customerExpansionRequired || candidateExpansionRequired || candidateBackfillRequired || sensitiveAclExpansionRequired || sensitiveAclBackfillRequired || sourceArtifactExpansionRequired || sourceArtifactBackfillRequired)) {
+  if (state !== 'uninitialized' && (schemaChanges || matterBackfillRequired || participantBackfillRequired || commitmentBackfillRequired || methodologyExpansionRequired || methodologyDataExpansionRequired || pdeDecisionContextExpansionRequired || pdeDecisionContextBackfillRequired || customerExpansionRequired || candidateExpansionRequired || candidateBackfillRequired || sensitiveAclExpansionRequired || sensitiveAclBackfillRequired || sourceArtifactExpansionRequired || sourceArtifactBackfillRequired || reviewBatchExpansionRequired || reviewBatchBackfillRequired)) {
     backupPath = await createConsistentBackup(prisma, databasePath);
   }
 } finally {
@@ -482,6 +506,10 @@ try {
   const { inspectSourceArtifactSchemaState } = await import('../src/sourceArtifacts/migration.js');
   if (await inspectSourceArtifactSchemaState(postPushPrisma) !== 'expanded') {
     throw new Error('SourceArtifact projection expansion verification failed');
+  }
+  const { inspectReviewBatchSchemaState } = await import('../src/reviewBatches/migration.js');
+  if (await inspectReviewBatchSchemaState(postPushPrisma) !== 'expanded') {
+    throw new Error('ReviewBatch/Interaction expansion verification failed');
   }
 } finally {
   await postPushPrisma.$disconnect();
@@ -521,6 +549,10 @@ if (sourceArtifactBackfillRequired) {
   run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:source-artifact-apply'], url);
 }
 run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:source-artifact-verify'], url);
+if (reviewBatchBackfillRequired) {
+  run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:review-batch-apply'], url);
+}
+run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:review-batch-verify'], url);
 
 console.log(JSON.stringify({
   ok: true,
@@ -549,5 +581,8 @@ console.log(JSON.stringify({
   sourceArtifactStateBefore: sourceArtifactState,
   sourceArtifactExpansionRequired,
   sourceArtifactBackfillRequired,
+  reviewBatchStateBefore: reviewBatchState,
+  reviewBatchExpansionRequired,
+  reviewBatchBackfillRequired,
   backupPath,
 }, null, 2));
