@@ -7,6 +7,9 @@ import { describe, expect, it } from 'vitest';
 const serverRoot = resolve('.');
 const prismaBin = resolve('node_modules/.bin/prisma');
 const tsxBin = resolve('node_modules/.bin/tsx');
+// Each case launches the full cumulative SQLite upgrade in subprocesses. CORE-204
+// adds another report/apply/verify stage, so CI runners need deterministic headroom.
+const SQLITE_UPGRADE_TEST_TIMEOUT_MS = 60_000;
 const methodologyFoundationTables = [
   'MethodologyPack',
   'MethodologyPackVersion',
@@ -359,7 +362,7 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       await client?.$disconnect();
       await rm(directory, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
 
   it('backs up, upgrades, backfills, verifies, and leaves a restorable legacy snapshot', async () => {
     // Prisma resolves relative SQLite URLs from the schema directory. Keeping
@@ -590,7 +593,7 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       await restoredClient?.$disconnect();
       await rm(directory, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
 
   it('resumes safely when schema expansion committed before the Matter backfill', async () => {
     const directory = await mkdtemp(resolve('prisma/.matter-resume-test-'));
@@ -639,7 +642,7 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       await client?.$disconnect();
       await rm(directory, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
 
   it('fails closed when only part of the Customer expansion exists', async () => {
     const directory = await mkdtemp(resolve('prisma/.customer-partial-test-'));
@@ -666,7 +669,7 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       await client?.$disconnect();
       await rm(directory, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
 
   it('does not re-derive generic participation from new legacy visibility rows after cutover', async () => {
     const directory = await mkdtemp(resolve('prisma/.participant-cutover-test-'));
@@ -704,7 +707,7 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       await client?.$disconnect();
       await rm(directory, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
 
   it('fails before DDL for an invalid legacy PlanAction date and succeeds after repair', async () => {
     const directory = await mkdtemp(resolve('prisma/.commitment-invalid-test-'));
@@ -747,7 +750,7 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       await client?.$disconnect();
       await rm(directory, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
 
   it('fails before methodology DDL for an unmanaged active pointer and succeeds after repair', async () => {
     const directory = await mkdtemp(resolve('prisma/.methodology-pointer-test-'));
@@ -796,7 +799,7 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       await client?.$disconnect();
       await rm(directory, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
 
   it('fails closed when only part of the methodology schema exists', async () => {
     const directory = await mkdtemp(resolve('prisma/.methodology-partial-test-'));
@@ -828,7 +831,7 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       await client?.$disconnect();
       await rm(directory, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
 
   it('fails closed when only part of the methodology data schema exists', async () => {
     const directory = await mkdtemp(resolve('prisma/.methodology-data-partial-test-'));
@@ -855,7 +858,7 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       await client?.$disconnect();
       await rm(directory, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
 
   it('fails closed when only part of the PDE decision context schema exists', async () => {
     const directory = await mkdtemp(resolve('prisma/.pde-context-partial-test-'));
@@ -882,7 +885,7 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       await client?.$disconnect();
       await rm(directory, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
 
   it('fails closed when only part of the Candidate foundation exists', async () => {
     const directory = await mkdtemp(resolve('prisma/.candidate-partial-test-'));
@@ -909,7 +912,7 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       await client?.$disconnect();
       await rm(directory, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
 
   it('fails closed when only part of the sensitive resource ACL expansion exists', async () => {
     const directory = await mkdtemp(resolve('prisma/.sensitive-acl-partial-test-'));
@@ -936,5 +939,5 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       await client?.$disconnect();
       await rm(directory, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
 });
