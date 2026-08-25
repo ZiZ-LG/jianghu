@@ -5,6 +5,10 @@ import { describe, expect, it } from 'vitest';
 import { applyAction } from '../src/mutate.js';
 import { assembleState, type StateSecurityWarning } from '../src/state.js';
 import { createTestContext, type TestContext } from './helpers/testApp.js';
+import {
+  createRelationCandidate,
+  relationCandidateDedupeKey,
+} from '../src/candidates/personRelation.js';
 
 const SCOPED_NOT_FOUND = { error: '资源不存在' };
 
@@ -1096,6 +1100,18 @@ describe('INT-102 tenant parentage and reference guards', () => {
           },
         ],
       });
+      const source = { kind: 'person' as const, id: right.sourcePersonId };
+      const target = { kind: 'person' as const, id: right.targetPersonId };
+      await createRelationCandidate(context.prisma, {
+        id: 'rs-inbox-valid-second', tenantId: context.tenant.id, matterId: right.opportunityId,
+        source, target, layer: 'L3', label: 'valid second', sourceType: 'graph',
+        sourceRef: 'test:tenant-parentage:valid-relation', evidence: 'valid relation evidence',
+        confidence: 0.5, createdByUserId: context.owner.id,
+        dedupeKey: relationCandidateDedupeKey(right.opportunityId, source, target),
+      });
+      await context.prisma.dataMigrationState.create({ data: {
+        key: 'CORE-203-candidate-backfill-v1', details: '{"test":true}',
+      } });
 
       const response = await context.app.inject({
         method: 'GET',

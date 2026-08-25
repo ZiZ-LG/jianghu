@@ -398,7 +398,20 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
         { opportunityId: 'sqlite-upgrade-paused', stageKey: 'initiation', decisionProfileRef: null, source: 'legacy_shadow' },
         { opportunityId: 'sqlite-upgrade-won', stageKey: 'initiation', decisionProfileRef: null, source: 'legacy_shadow' },
       ]);
-      await expect(upgradedClient.candidate.count()).resolves.toBe(0);
+      await expect(upgradedClient.candidate.count()).resolves.toBe(1);
+      await expect(upgradedClient.candidate.findFirstOrThrow({
+        where: {
+          tenantId: 'sqlite-upgrade-tenant',
+          legacySourceKind: 'PersonSuggestion',
+          legacySourceId: 'sqlite-upgrade-person-suggestion',
+        },
+      })).resolves.toMatchObject({
+        kind: 'person_create', status: 'pending', accountId: 'sqlite-upgrade-account',
+        matterId: 'sqlite-upgrade-active', evidence: 'legacy evidence stays in source',
+      });
+      await expect(upgradedClient.dataMigrationState.findUnique({
+        where: { key: 'CORE-203-candidate-backfill-v1' },
+      })).resolves.toMatchObject({ key: 'CORE-203-candidate-backfill-v1' });
       await expect(upgradedClient.personSuggestion.findUniqueOrThrow({
         where: { id: 'sqlite-upgrade-person-suggestion' },
         select: { status: true, evidence: true },

@@ -9,6 +9,12 @@ import { activePersonWhere } from './activePerson.js';
 import { resolveScopedRelSuggestions } from './suggestionScope.js';
 import { resolveEffectiveResourceScope } from './resourceScope.js';
 import { redirectCandidatePersonReferences } from './candidates/personRelation.js';
+import {
+  prepareFieldCandidatesForPersonMerge,
+  redirectEvidenceCandidatesForPersonMerge,
+  redirectFieldCandidateForPersonMerge,
+  redirectReminderCandidateForPersonMerge,
+} from './candidates/reviewItems.js';
 
 const roleDecisionSchema = z.enum(['keep_target', 'keep_source']);
 export const PersonMergeDecisionSchema = z.object({
@@ -423,15 +429,19 @@ export async function executePersonMerge(
     .map((row) => `${row.opportunityId ?? ''}\u0000${row.kind}`));
   for (const reminder of reminders.filter((row) => row.entityId === source.id)) {
     const key = `${reminder.opportunityId ?? ''}\u0000${reminder.kind}`;
-    if (targetReminderKeys.has(key)) {
-      await tx.reminder.delete({ where: { id: reminder.id } });
+    const duplicate = targetReminderKeys.has(key);
+    await redirectReminderCandidateForPersonMerge(tx, {
+      tenantId: ctx.tenantId,
+      id: reminder.id,
+      targetId: target.id,
+      dedupeKey: `${reminder.opportunityId ?? ''}:${reminder.kind}:${target.id}`,
+      duplicate,
+    });
+    if (duplicate) {
       deletedReminders += 1;
       continue;
     }
-    await tx.reminder.update({ where: { id: reminder.id }, data: {
-      entityId: target.id,
-      dedupeKey: `${reminder.opportunityId ?? ''}:${reminder.kind}:${target.id}`,
-    } });
+    targetReminderKeys.add(key);
     redirectedReminders += 1;
   }
   let redirectedChangeProposals = 0;
@@ -460,29 +470,42 @@ export async function executePersonMerge(
     return left.id.localeCompare(right.id);
   });
   if (orderedProposals.length) {
-    await tx.changeProposal.updateMany({ where: { id: { in: orderedProposals.map((proposal) => proposal.id) } }, data: { dedupeKey: null } });
+    await prepareFieldCandidatesForPersonMerge(tx, {
+      tenantId: ctx.tenantId,
+      ids: orderedProposals.map((proposal) => proposal.id),
+    });
   }
   for (const proposal of orderedProposals) {
     const sourceBacked = proposal.entityId === source.id;
     if (sourceBacked) redirectedChangeProposals += 1;
-    if (proposal.status !== 'pending') {
-      await tx.changeProposal.update({ where: { id: proposal.id }, data: { entityId: target.id, dedupeKey: null } });
-      continue;
-    }
-    if (!proposalWins(proposal)) {
-      await tx.changeProposal.update({ where: { id: proposal.id }, data: { entityId: target.id, status: 'rejected', dedupeKey: null } });
+    const reject = proposal.status === 'pending' && !proposalWins(proposal);
+    if (reject) {
       rejectedStaleRoleProposals += 1;
-      continue;
     }
-    const key = proposalKey(proposal);
-    const dedupeKey = claimedProposalKeys.has(key) ? null : key;
-    claimedProposalKeys.add(key);
-    await tx.changeProposal.update({ where: { id: proposal.id }, data: { entityId: target.id, dedupeKey } });
+    let dedupeKey: string | null = null;
+    if (proposal.status === 'pending' && !reject) {
+      const key = proposalKey(proposal);
+      dedupeKey = claimedProposalKeys.has(key) ? null : key;
+      claimedProposalKeys.add(key);
+    }
+    await redirectFieldCandidateForPersonMerge(tx, {
+      tenantId: ctx.tenantId,
+      id: proposal.id,
+      targetId: target.id,
+      reject,
+      dedupeKey,
+    });
   }
   const candidateRedirects = await redirectCandidatePersonReferences(tx, {
     tenantId: ctx.tenantId,
     accountId: account.id,
     from: { kind: 'person', id: source.id },
+    toPersonId: target.id,
+  });
+  const redirectedEvidenceEvents = await redirectEvidenceCandidatesForPersonMerge(tx, {
+    tenantId: ctx.tenantId,
+    accountId: account.id,
+    fromPersonId: source.id,
     toPersonId: target.id,
   });
   const redirected: RedirectCounts = {
@@ -491,7 +514,7 @@ export async function executePersonMerge(
     matterParticipants: redirectedParticipants,
     edges: edgeRedirect.count + edgeTargetRedirect.count,
     burningIssues: await updateMany(tx.burningIssue, { tenantId: ctx.tenantId, personId: source.id }, { personId: target.id }),
-    evidenceEvents: await updateMany(tx.evidenceEvent, { tenantId: ctx.tenantId, personId: source.id }, { personId: target.id }),
+    evidenceEvents: redirectedEvidenceEvents,
     notes: await updateMany(tx.note, { tenantId: ctx.tenantId, personId: source.id }, { personId: target.id }),
     planActions: await updateMany(tx.planAction, { tenantId: ctx.tenantId, personId: source.id }, {
       personId: target.id,

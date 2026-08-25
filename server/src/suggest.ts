@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { Prisma, type RelSuggestion } from '@prisma/client';
+import type { Prisma, RelSuggestion } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
@@ -31,6 +31,11 @@ import {
   rejectRelationCandidate,
   relationCandidateDedupeKey,
 } from './candidates/personRelation.js';
+import {
+  dismissReminderCandidate,
+  reviewEvidenceCandidate,
+} from './candidates/reviewItems.js';
+import { CANDIDATE_BACKFILL_MARKER } from './candidates/migration.js';
 
 const pairKey = (a: string, b: string) => [a, b].sort().join('|');
 const LAYER_COLOR: Record<string, string> = { L1: '#2563eb', L2: '#9333ea', L3: '#16a34a', L4: '#ef4444' };
@@ -66,28 +71,18 @@ async function approveEvidenceWithSnapshot(
 ): Promise<void> {
   for (let attempt = 1; attempt <= EVIDENCE_REVIEW_TX_ATTEMPTS; attempt += 1) {
     try {
-      await prisma.$transaction(async (tx) => {
-        const evidence = await tx.evidenceEvent.findFirst({
-          where: { id: evidenceId, tenantId, status: 'pending_review' },
-        });
-        if (!evidence) throw new EvidenceReviewNotFoundError();
-        const approved = await tx.evidenceEvent.updateMany({
-          where: { id: evidence.id, tenantId, status: 'pending_review' },
-          data: {
-            status: 'approved',
-            ...(override.direction !== undefined ? { direction: override.direction } : {}),
-            ...(override.tier ? { tier: override.tier } : {}),
-            reviewedBy,
-            reviewedAt,
-          },
-        });
-        if (!approved.count) throw new EvidenceReviewNotFoundError();
+      const reviewed = await reviewEvidenceCandidate(prisma, {
+        tenantId,
+        id: evidenceId,
+        decision: 'accept',
+        reviewedBy,
+        reviewedAt,
+        direction: override.direction,
+        tier: override.tier,
+      }, async (tx, evidence) => {
         await createPdeSnapshot(tx, tenantId, evidence.opportunityId, 'evidence_review', reviewedBy);
-      }, {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-        maxWait: 5_000,
-        timeout: 15_000,
       });
+      if (!reviewed) throw new EvidenceReviewNotFoundError();
       return;
     } catch (error) {
       if (error instanceof EvidenceReviewNotFoundError) throw error;
@@ -519,9 +514,8 @@ export function suggestRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
-  // ── Hub 级审核收件箱：聚合当前租户所有 pending 候选（关系 + 人物），带 account/opp 上下文 ──
-  // 「机器写初稿·人审」主线 v1：零 schema，复用 RelSuggestion/PersonSuggestion 表 + withNames。
-  // 多租户红线：全程 tenantId 过滤（参考 state.ts 的 assembleState）。采纳/驳回沿用现有 /api/suggest[/persons]/:id/accept|reject。
+  // ── Hub 级审核收件箱：Candidate 是五类待审项的唯一读取权威，旧表不读、不 fallback。──
+  // 全程 tenantId + EffectiveResourceScope 过滤；正式父树或 Candidate payload 漂移时整箱 fail closed。
   app.get('/api/inbox', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (denyViewer(req, reply)) return; // viewer 只读，不可拍板/操作
     const tenantId = req.user.tenantId;
@@ -531,59 +525,271 @@ export function suggestRoutes(app: FastifyInstance) {
       role: req.user.role,
     });
     if (scope.actorRole === 'viewer') return reply.code(403).send({ error: '只读成员不可操作' });
-    const fullAccountIds = [...scope.fullAccountIds];
     const matterIds = [...scope.matterIds];
-    const visibleParentWhere = {
-      OR: [
-        { accountId: { in: fullAccountIds } },
-        { opportunityId: { in: matterIds } },
-      ],
-    };
-    const [relRows, psRows, cpRows, remRows, evRows, sigRows, opps, accounts] = await Promise.all([
-      prisma.relSuggestion.findMany({ where: { tenantId, status: 'pending', opportunityId: { in: matterIds } }, orderBy: { confidence: 'desc' } }),
-      prisma.personSuggestion.findMany({ where: { tenantId, status: 'pending', accountId: { in: fullAccountIds } }, orderBy: { confidence: 'desc' } }),
-      prisma.changeProposal.findMany({ where: { tenantId, status: 'pending', ...visibleParentWhere }, orderBy: { createdAt: 'desc' } }), // v2.0 字段更新提案
-      prisma.reminder.findMany({ where: { tenantId, status: 'pending', ...visibleParentWhere }, orderBy: { createdAt: 'desc' } }), // 巡检提醒（提醒型，自带 account/opp 名免 join）
-      prisma.evidenceEvent.findMany({ where: { tenantId, status: 'pending_review', opportunityId: { in: matterIds } }, orderBy: { createdAt: 'desc' } }), // M3 第5类：机器抽取证据待人审
-      prisma.signalCatalog.findMany({ where: { tenantId }, select: { signalKey: true, label: true, tier: true } }),
-      prisma.opportunity.findMany({ where: { tenantId, archivedAt: null, id: { in: matterIds } }, select: { id: true, name: true, accountId: true } }),
-      prisma.account.findMany({ where: { tenantId, archivedAt: null, id: { in: [...scope.accountIds] } }, select: { id: true, name: true } }),
-    ]);
-    const referencedPersonIds = new Set([
-      ...cpRows.filter((proposal) => proposal.entityKind === 'oppRole').map((proposal) => proposal.entityId),
-      ...evRows.map((evidence) => evidence.personId),
-    ]);
-    const persons = await prisma.person.findMany({
-      where: { tenantId, ...activePersonWhere, id: { in: [...referencedPersonIds] } },
-      select: { id: true, name: true },
+    const marker = await prisma.dataMigrationState.findUnique({
+      where: { key: CANDIDATE_BACKFILL_MARKER }, select: { key: true },
     });
+    if (!marker) {
+      return reply.code(503).send({
+        error: 'Candidate 回填未完成，收件箱已停止服务',
+        code: 'candidate_backfill_required',
+      });
+    }
+    const candidateRows = await prisma.candidate.findMany({
+      where: {
+        tenantId,
+        status: 'pending',
+        legacySourceKind: {
+          in: ['PersonSuggestion', 'RelSuggestion', 'ChangeProposal', 'Reminder', 'EvidenceEvent'],
+        },
+        legacySourceId: { not: null },
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+    });
+    const parsedRows: Array<{ row: typeof candidateRows[number]; payload: Record<string, unknown> }> = [];
+    try {
+      for (const row of candidateRows) {
+        const payload: unknown = JSON.parse(row.payload || '{}');
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('invalid payload');
+        parsedRows.push({ row, payload: payload as Record<string, unknown> });
+      }
+    } catch {
+      return reply.code(503).send({
+        error: 'Candidate 数据不完整，收件箱已停止服务',
+        code: 'candidate_payload_invalid',
+      });
+    }
+    const visibleRows = parsedRows.filter(({ row }) => {
+      if (row.legacySourceKind === 'PersonSuggestion') return scope.fullAccountIds.has(row.accountId);
+      if (row.legacySourceKind === 'RelSuggestion' || row.legacySourceKind === 'EvidenceEvent') {
+        return !!row.matterId && scope.matterIds.has(row.matterId);
+      }
+      return scope.fullAccountIds.has(row.accountId)
+        || (!!row.matterId && scope.matterIds.has(row.matterId));
+    });
+    const referencedPersonIds = new Set<string>();
+    const referencedBurningIssueIds = new Set<string>();
+    const referencedUcvIds = new Set<string>();
+    const referencedCommitmentIds = new Set<string>();
+    for (const { row, payload } of visibleRows) {
+      if (row.legacySourceKind === 'RelSuggestion') {
+        if (payload.sourceKind === 'person' && typeof payload.sourcePersonId === 'string') {
+          referencedPersonIds.add(payload.sourcePersonId);
+        }
+        if (payload.targetKind === 'person' && typeof payload.targetPersonId === 'string') {
+          referencedPersonIds.add(payload.targetPersonId);
+        }
+      }
+      if (row.legacySourceKind === 'ChangeProposal' && row.targetKind === 'oppRole' && row.targetId) {
+        referencedPersonIds.add(row.targetId);
+      }
+      if (row.legacySourceKind === 'ChangeProposal'
+        && (row.targetKind === 'person' || row.targetKind === 'personLog') && row.targetId) {
+        referencedPersonIds.add(row.targetId);
+      }
+      if (row.legacySourceKind === 'ChangeProposal' && row.targetKind === 'bi' && row.targetId) {
+        referencedBurningIssueIds.add(row.targetId);
+      }
+      if (row.legacySourceKind === 'ChangeProposal' && row.targetKind === 'ucv' && row.targetId) {
+        referencedUcvIds.add(row.targetId);
+      }
+      if (row.legacySourceKind === 'Reminder' && row.targetKind === 'person' && row.targetId) {
+        referencedPersonIds.add(row.targetId);
+      }
+      if (row.legacySourceKind === 'Reminder' && row.targetKind === 'commitment' && row.targetId) {
+        referencedCommitmentIds.add(row.targetId);
+      }
+      if (row.legacySourceKind === 'EvidenceEvent' && row.targetKind === 'person' && row.targetId) {
+        referencedPersonIds.add(row.targetId);
+      }
+    }
+    const [sigRows, opps, accounts, formalPersons, burningIssues, ucvs, commitments] = await Promise.all([
+      prisma.signalCatalog.findMany({ where: { tenantId }, select: { signalKey: true, label: true, tier: true } }),
+      prisma.opportunity.findMany({
+        where: { tenantId, archivedAt: null, id: { in: matterIds } },
+        select: { id: true, name: true, accountId: true },
+      }),
+      prisma.account.findMany({
+        where: { tenantId, archivedAt: null, id: { in: [...scope.accountIds] } },
+        select: { id: true, name: true },
+      }),
+      prisma.person.findMany({
+        where: { tenantId, ...activePersonWhere, id: { in: [...referencedPersonIds] } },
+        select: { id: true, name: true, accountId: true },
+      }),
+      prisma.burningIssue.findMany({
+        where: { tenantId, id: { in: [...referencedBurningIssueIds] } },
+        select: { id: true, opportunityId: true },
+      }),
+      prisma.uCV.findMany({
+        where: { tenantId, id: { in: [...referencedUcvIds] } },
+        select: { id: true, opportunityId: true },
+      }),
+      prisma.planAction.findMany({
+        where: { tenantId, archivedAt: null, id: { in: [...referencedCommitmentIds] } },
+        select: { id: true, accountId: true, opportunityId: true },
+      }),
+    ]);
     const accName = new Map(accounts.map((a) => [a.id, a.name]));
     const oppById = new Map(opps.map((o) => [o.id, o]));
-    const personName = new Map(persons.map((p) => [p.id, p.name]));
-    const named = await withNames(tenantId, relRows); // 复用：补端点人名（含候选人「（候选）」）
-    const rels = named.map((r) => {
-      const o = oppById.get(r.opportunityId);
-      return { ...r, oppName: o?.name ?? '?', accountId: o?.accountId ?? '', accountName: o ? (accName.get(o.accountId) ?? '?') : '?' };
+    const formalPersonById = new Map(formalPersons.map((person) => [person.id, person]));
+    const personName = new Map(formalPersons.map((person) => [person.id, person.name]));
+    const burningIssueById = new Map(burningIssues.map((issue) => [issue.id, issue]));
+    const ucvById = new Map(ucvs.map((ucv) => [ucv.id, ucv]));
+    const commitmentById = new Map(commitments.map((commitment) => [commitment.id, commitment]));
+    const candidatePersonById = new Map(parsedRows
+      .filter(({ row, payload }) => row.legacySourceKind === 'PersonSuggestion'
+        && typeof payload.name === 'string' && !!row.legacySourceId)
+      .map(({ row, payload }) => [row.legacySourceId!, { row, payload }]));
+    const endpointName = (kind: unknown, id: unknown): string => {
+      if (typeof id !== 'string') return '?';
+      return kind === 'suggestion'
+        ? candidatePersonById.has(id)
+          ? `${candidatePersonById.get(id)!.payload.name as string}（候选）`
+          : '?'
+        : personName.get(id) ?? '?';
+    };
+    const formalPersonValid = (id: unknown, accountId: string): id is string =>
+      typeof id === 'string' && formalPersonById.get(id)?.accountId === accountId;
+    const endpointValid = (
+      kind: unknown, id: unknown, accountId: string, matterId: string,
+    ): boolean => {
+      if (kind === 'person') return formalPersonValid(id, accountId);
+      if (kind !== 'suggestion' || typeof id !== 'string') return false;
+      const endpoint = candidatePersonById.get(id);
+      return !!endpoint
+        && endpoint.row.kind === 'person_create'
+        && endpoint.row.accountId === accountId
+        && (!endpoint.row.matterId || endpoint.row.matterId === matterId)
+        && endpoint.row.targetKind === 'person'
+        && endpoint.row.targetId === null
+        && typeof endpoint.payload.name === 'string'
+        && endpoint.payload.name.length > 0
+        && typeof endpoint.payload.title === 'string'
+        && typeof endpoint.payload.orgLevel === 'number';
+    };
+    const parentValid = visibleRows.every(({ row, payload }) => {
+      if (!accName.has(row.accountId)) return false;
+      if (row.matterId && oppById.get(row.matterId)?.accountId !== row.accountId) return false;
+      if (row.legacySourceKind === 'PersonSuggestion') {
+        return row.kind === 'person_create' && row.targetKind === 'person' && row.targetId === null
+          && typeof payload.name === 'string' && payload.name.length > 0
+          && typeof payload.title === 'string' && typeof payload.orgLevel === 'number';
+      }
+      if (row.legacySourceKind === 'RelSuggestion') {
+        return row.kind === 'relation_create' && !!row.matterId && row.targetKind === 'relation'
+          && endpointValid(payload.sourceKind, payload.sourcePersonId, row.accountId, row.matterId)
+          && endpointValid(payload.targetKind, payload.targetPersonId, row.accountId, row.matterId)
+          && typeof payload.layer === 'string' && typeof payload.label === 'string';
+      }
+      if (row.legacySourceKind === 'ChangeProposal') {
+        if (row.kind !== 'field_change' || !row.targetId || !row.fieldKey) return false;
+        if (row.targetKind === 'person' || row.targetKind === 'personLog' || row.targetKind === 'oppRole') {
+          return formalPersonValid(row.targetId, row.accountId)
+            && (row.targetKind !== 'oppRole' || !!row.matterId);
+        }
+        if (row.targetKind === 'opportunity') return !!row.matterId && row.targetId === row.matterId;
+        if (row.targetKind === 'bi') {
+          return !!row.matterId && burningIssueById.get(row.targetId)?.opportunityId === row.matterId;
+        }
+        if (row.targetKind === 'ucv') {
+          return !!row.matterId && ucvById.get(row.targetId)?.opportunityId === row.matterId;
+        }
+        return false;
+      }
+      if (row.legacySourceKind === 'Reminder') {
+        if (row.kind !== 'reminder' || !row.targetId
+          || typeof payload.reminderKind !== 'string'
+          || typeof payload.title !== 'string'
+          || typeof payload.detail !== 'string'
+          || typeof payload.severity !== 'string') return false;
+        if (row.targetKind === 'person') return formalPersonValid(row.targetId, row.accountId);
+        if (row.targetKind === 'matter') return !!row.matterId && row.targetId === row.matterId;
+        if (row.targetKind === 'commitment') {
+          const commitment = commitmentById.get(row.targetId);
+          return !!commitment && commitment.accountId === row.accountId
+            && commitment.opportunityId === row.matterId;
+        }
+        return false;
+      }
+      if (row.legacySourceKind === 'EvidenceEvent') {
+        return row.kind === 'evidence_create' && !!row.matterId
+          && row.targetKind === 'person' && formalPersonValid(row.targetId, row.accountId)
+          && typeof payload.signalKey === 'string' && typeof payload.direction === 'number'
+          && typeof payload.tier === 'string' && typeof payload.occurredAt === 'string';
+      }
+      return false;
     });
-    const personsOut = psRows.map((r) => ({ id: r.id, accountId: r.accountId, accountName: accName.get(r.accountId) ?? '?', name: r.name, title: r.title, orgLevel: r.orgLevel, origin: r.origin, evidence: r.evidence, sourceUrl: r.sourceUrl ?? undefined, confidence: r.confidence }));
-    const proposals = cpRows.map((cp) => ({
-      id: cp.id, accountId: cp.accountId, accountName: accName.get(cp.accountId) ?? '?',
-      opportunityId: cp.opportunityId ?? undefined, oppName: cp.opportunityId ? (oppById.get(cp.opportunityId)?.name ?? '?') : '',
-      entityKind: cp.entityKind, entityId: cp.entityId,
-      entityName: cp.entityKind === 'oppRole' ? (personName.get(cp.entityId) ?? cp.entityId) : cp.entityId,
-      field: cp.field, oldValue: cp.oldValue, newValue: cp.newValue, origin: cp.origin, evidence: cp.evidence, confidence: cp.confidence,
-    }));
-    const reminders = remRows.map((r) => ({ id: r.id, accountId: r.accountId, accountName: r.accountName, opportunityId: r.opportunityId ?? undefined, oppName: r.oppName, kind: r.kind, title: r.title, detail: r.detail, severity: r.severity, entityId: r.entityId ?? undefined }));
-    // M3 第5类 · 证据待审：机器抽取的行为信号（人批准才进 E2 燃料池；label 取自信号库）
-    const sigByKey = new Map(sigRows.map((s) => [s.signalKey, s]));
-    const evidences = evRows.map((e) => {
-      const o = oppById.get(e.opportunityId);
+    if (!parentValid) {
+      return reply.code(503).send({
+        error: 'Candidate 父级闭包校验失败，收件箱已停止服务',
+        code: 'candidate_parent_invalid',
+      });
+    }
+    const bySource = (sourceKind: string) => visibleRows.filter(({ row }) => row.legacySourceKind === sourceKind);
+    const rels = bySource('RelSuggestion').map(({ row, payload }) => {
+      const opportunityId = row.matterId!;
+      const sourcePersonId = typeof payload.sourcePersonId === 'string' ? payload.sourcePersonId : '';
+      const targetPersonId = typeof payload.targetPersonId === 'string' ? payload.targetPersonId : '';
+      const sourceKind = typeof payload.sourceKind === 'string' ? payload.sourceKind : '';
+      const targetKind = typeof payload.targetKind === 'string' ? payload.targetKind : '';
       return {
-        id: e.id, accountId: e.accountId, accountName: accName.get(e.accountId) ?? '?',
-        opportunityId: e.opportunityId, oppName: o?.name ?? '?',
-        personId: e.personId, personName: personName.get(e.personId) ?? '?',
-        signalKey: e.signalKey, signalLabel: sigByKey.get(e.signalKey)?.label ?? e.signalKey,
-        direction: e.direction, tier: e.tier, rawContent: e.rawContent, occurredAt: e.occurredAt, origin: e.origin,
+        id: row.legacySourceId!, opportunityId,
+        source: sourcePersonId, target: targetPersonId, sourceKind, targetKind,
+        layer: typeof payload.layer === 'string' ? payload.layer : '',
+        label: typeof payload.label === 'string' ? payload.label : '',
+        confidence: row.confidence, origin: row.source, evidence: row.evidence,
+        sourceName: endpointName(sourceKind, sourcePersonId),
+        targetName: endpointName(targetKind, targetPersonId),
+        oppName: oppById.get(opportunityId)?.name ?? '?',
+        accountId: row.accountId, accountName: accName.get(row.accountId) ?? '?',
+      };
+    }).sort((left, right) => right.confidence - left.confidence || left.id.localeCompare(right.id));
+    const personsOut = bySource('PersonSuggestion').map(({ row, payload }) => ({
+      id: row.legacySourceId!, accountId: row.accountId, accountName: accName.get(row.accountId) ?? '?',
+      name: typeof payload.name === 'string' ? payload.name : '',
+      title: typeof payload.title === 'string' ? payload.title : '',
+      orgLevel: typeof payload.orgLevel === 'number' ? payload.orgLevel : 3,
+      origin: row.source, evidence: row.evidence,
+      ...(typeof payload.sourceUrl === 'string' ? { sourceUrl: payload.sourceUrl } : {}),
+      confidence: row.confidence,
+    })).sort((left, right) => right.confidence - left.confidence || left.id.localeCompare(right.id));
+    const proposals = bySource('ChangeProposal').map(({ row }) => ({
+      id: row.legacySourceId!, accountId: row.accountId, accountName: accName.get(row.accountId) ?? '?',
+      opportunityId: row.matterId ?? undefined,
+      oppName: row.matterId ? (oppById.get(row.matterId)?.name ?? '?') : '',
+      entityKind: row.targetKind, entityId: row.targetId ?? '',
+      entityName: row.targetKind === 'oppRole' && row.targetId
+        ? (personName.get(row.targetId) ?? row.targetId) : row.targetId ?? '',
+      field: row.fieldKey ?? '', oldValue: row.oldValue ?? '', newValue: row.newValue ?? '',
+      origin: row.source, evidence: row.evidence, confidence: row.confidence,
+    }));
+    const reminders = bySource('Reminder').map(({ row, payload }) => ({
+      id: row.legacySourceId!, accountId: row.accountId,
+      accountName: typeof payload.accountName === 'string' ? payload.accountName : accName.get(row.accountId) ?? '?',
+      opportunityId: row.matterId ?? undefined,
+      oppName: row.matterId ? (oppById.get(row.matterId)?.name ?? '?') : '',
+      kind: typeof payload.reminderKind === 'string' ? payload.reminderKind : '',
+      title: typeof payload.title === 'string' ? payload.title : '',
+      detail: typeof payload.detail === 'string' ? payload.detail : '',
+      severity: typeof payload.severity === 'string' ? payload.severity : 'info',
+      entityId: row.targetId ?? undefined,
+    }));
+    const sigByKey = new Map(sigRows.map((s) => [s.signalKey, s]));
+    const evidences = bySource('EvidenceEvent').map(({ row, payload }) => {
+      const opportunityId = row.matterId!;
+      const personId = row.targetId ?? '';
+      const signalKey = typeof payload.signalKey === 'string' ? payload.signalKey : '';
+      return {
+        id: row.legacySourceId!, accountId: row.accountId, accountName: accName.get(row.accountId) ?? '?',
+        opportunityId, oppName: oppById.get(opportunityId)?.name ?? '?',
+        personId, personName: personName.get(personId) ?? '?',
+        signalKey, signalLabel: sigByKey.get(signalKey)?.label ?? signalKey,
+        direction: typeof payload.direction === 'number' ? payload.direction : 0,
+        tier: typeof payload.tier === 'string' ? payload.tier : 'mid',
+        rawContent: row.evidence,
+        occurredAt: typeof payload.occurredAt === 'string' ? payload.occurredAt : '',
+        origin: row.source,
       };
     });
     return {
@@ -623,22 +829,24 @@ export function suggestRoutes(app: FastifyInstance) {
       }
     }
 
-    const resolved = await prisma.evidenceEvent.updateMany({
-      where: { id: req.params.id, tenantId, status: 'pending_review' },
-      data: {
-        status: 'rejected',
-        reviewedBy, reviewedAt: today,
-      },
+    const resolved = await reviewEvidenceCandidate(prisma, {
+      tenantId,
+      id: req.params.id,
+      decision: 'reject',
+      reviewedBy,
+      reviewedAt: today,
     });
-    if (!resolved.count) return reply.code(404).send({ error: '证据不存在或已处理' });
+    if (!resolved) return reply.code(404).send({ error: '证据不存在或已处理' });
     return { ok: true, status: 'rejected' };
   });
 
   // 忽略一条巡检提醒（提醒型提案：只读，人「忽略」→ dismissed；绝不改业务库）。tenantId 隔离 + status=pending 防重复处理。
   app.post('/api/reminders/:id/dismiss', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (denyViewer(req, reply)) return; // viewer 只读，不可拍板/操作
-    const r = await prisma.reminder.updateMany({ where: { id: req.params.id, tenantId: req.user.tenantId, status: 'pending' }, data: { status: 'dismissed' } });
-    if (!r.count) return reply.code(404).send({ error: '提醒不存在或已处理' });
+    const dismissed = await dismissReminderCandidate(prisma, {
+      id: req.params.id, tenantId: req.user.tenantId,
+    });
+    if (!dismissed) return reply.code(404).send({ error: '提醒不存在或已处理' });
     return { ok: true };
   });
 }

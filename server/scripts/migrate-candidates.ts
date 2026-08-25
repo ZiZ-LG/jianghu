@@ -1,27 +1,47 @@
 import { prisma } from '../src/prisma.js';
-import { inspectCandidateMigration } from '../src/candidates/migration.js';
+import {
+  applyCandidateMigration,
+  inspectCandidateMigration,
+  verifyCandidateMigration,
+} from '../src/candidates/migration.js';
 
-type Mode = 'dry-run' | 'verify';
+type Mode = 'dry-run' | 'apply' | 'verify';
 
 function selectedMode(args: readonly string[]): Mode {
-  if (args.length !== 1 || (args[0] !== '--dry-run' && args[0] !== '--verify')) {
-    throw new Error('usage: migrate-candidates.ts --dry-run|--verify');
+  if (args.length !== 1 || !['--dry-run', '--apply', '--verify'].includes(args[0]!)) {
+    throw new Error('usage: migrate-candidates.ts --dry-run|--apply|--verify');
   }
-  return args[0] === '--dry-run' ? 'dry-run' : 'verify';
+  return args[0]!.slice(2) as Mode;
 }
 
 async function run(mode: Mode): Promise<void> {
-  const report = await inspectCandidateMigration(prisma);
-  const ok = report.invalidRows.length === 0
-    && report.sourceRows === report.projectedRows;
+  if (mode === 'dry-run') {
+    const report = await inspectCandidateMigration(prisma);
+    const ok = report.invalidRows.length === 0 && report.sourceRows === report.projectedRows;
+    console.log(JSON.stringify({
+      ok,
+      mode,
+      authority: 'legacy_candidate_tables',
+      markerPresent: false,
+      writes: 0,
+      ...report,
+    }, null, 2));
+    if (!ok) process.exitCode = 1;
+    return;
+  }
+  const result = mode === 'apply'
+    ? await applyCandidateMigration(prisma)
+    : { ...await verifyCandidateMigration(prisma), writes: 0 };
   console.log(JSON.stringify({
-    ok,
+    ok: result.ok,
     mode,
-    authority: 'legacy_candidate_tables',
-    writes: 0,
-    ...report,
+    authority: 'Candidate',
+    markerPresent: result.markerPresent,
+    writes: result.writes,
+    conflicts: result.conflicts,
+    ...result.report,
   }, null, 2));
-  if (mode === 'verify' && !ok) process.exitCode = 1;
+  if (!result.ok) process.exitCode = 1;
 }
 
 try {

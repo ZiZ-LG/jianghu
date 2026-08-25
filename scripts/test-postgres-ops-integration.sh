@@ -188,7 +188,7 @@ legacy_commitment_mapping_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec
      AND version = 0" | tr -d '[:space:]')
 [[ "$legacy_commitment_mapping_count" == 1 ]]
 docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
-  'npm run migrate:candidate-report >/dev/null && npm run migrate:candidate-verify >/dev/null'
+  'npm run migrate:candidate-report >/dev/null && npm run migrate:candidate-apply >/dev/null && npm run migrate:candidate-verify >/dev/null'
 legacy_candidate_source_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
   'SELECT
      (SELECT count(*) FROM "PersonSuggestion")
@@ -202,10 +202,14 @@ candidate_migration_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db
   "SELECT count(*) FROM \"_prisma_migrations\"
    WHERE migration_name = '20260824000000_expand_candidate_foundation'
      AND finished_at IS NOT NULL AND rolled_back_at IS NULL" | tr -d '[:space:]')
+candidate_backfill_marker_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+  "SELECT count(*) FROM \"DataMigrationState\" WHERE key = 'CORE-203-candidate-backfill-v1'" | tr -d '[:space:]')
 [[ "$legacy_candidate_source_count" == 5 ]]
-[[ "$legacy_candidate_target_count" == 0 ]]
+[[ "$legacy_candidate_target_count" == 5 ]]
 [[ "$candidate_migration_count" == 1 ]]
+[[ "$candidate_backfill_marker_count" == 1 ]]
 echo "LEGACY_CANDIDATE_REPORT_OK=1"
+echo "CANDIDATE_BACKFILL_APPLY_OK=1"
 echo "CANDIDATE_SOURCE_ROWS_UNCHANGED_OK=1"
 echo "LEGACY_ACCOUNT_OWNER_BACKFILL_OK=1"
 echo "LEGACY_SCHEMA_MIGRATION_PREFLIGHT_OK=1"
@@ -612,9 +616,9 @@ customer_after_commit_adoption=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec 
 [[ "$customer_after_commit_adoption" == 1 ]]
 echo "INTERRUPTED_CUSTOMER_AFTER_COMMIT_ADOPTION_OK=1"
 
-# CORE-201 Candidate is a schema-only expansion. Exercise rollback-before-
-# commit, commit-before-journal adoption, partial-schema refusal, and an
-# authenticated pre-expansion restore without ever writing projected rows.
+# CORE-201 expands the Candidate schema and CORE-203 performs a separate,
+# idempotent data cutover. Exercise schema recovery, marker recovery,
+# semantic-conflict refusal, partial-schema refusal, and authenticated restore.
 candidate_migration_db=jianghu_candidate_migration
 docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$candidate_migration_db"
 POSTGRES_DB="$candidate_migration_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
@@ -666,8 +670,10 @@ POSTGRES_DB="$candidate_migration_db" docker compose -p "$COMPOSE_PROJECT_NAME" 
   --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
 candidate_before_commit_parity=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$candidate_migration_db" -tAc \
   "SELECT ((to_regclass('public.\"Candidate\"') IS NOT NULL)
-       AND (SELECT count(*) FROM \"Candidate\") = 0
+       AND (SELECT count(*) FROM \"Candidate\") = 1
        AND (SELECT count(*) FROM \"PersonSuggestion\" WHERE id = 'candidate-migration-suggestion') = 1
+       AND (SELECT count(*) FROM \"DataMigrationState\"
+              WHERE key = 'CORE-203-candidate-backfill-v1') = 1
        AND (SELECT count(*) FROM \"_prisma_migrations\"
               WHERE migration_name = '20260824000000_expand_candidate_foundation'
                 AND rolled_back_at IS NOT NULL) = 1)::int" | tr -d '[:space:]')
@@ -677,6 +683,7 @@ echo "INTERRUPTED_CANDIDATE_BEFORE_COMMIT_RETRY_OK=1"
 docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$candidate_migration_db" -c \
   "DELETE FROM \"_prisma_migrations\"
     WHERE migration_name = '20260824000000_expand_candidate_foundation' AND finished_at IS NOT NULL;
+   DELETE FROM \"DataMigrationState\" WHERE key = 'CORE-203-candidate-backfill-v1';
    INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
    VALUES ('int-candidate-after-commit', repeat('0', 64),
      '20260824000000_expand_candidate_foundation', CURRENT_TIMESTAMP, 0);" >/dev/null
@@ -689,9 +696,41 @@ candidate_after_commit_adoption=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec
        AND (SELECT count(*) FROM \"_prisma_migrations\"
               WHERE migration_name = '20260824000000_expand_candidate_foundation'
                 AND finished_at IS NULL AND rolled_back_at IS NULL) = 0
-       AND (SELECT count(*) FROM \"Candidate\") = 0)::int" | tr -d '[:space:]')
+       AND (SELECT count(*) FROM \"Candidate\") = 1
+       AND (SELECT count(*) FROM \"DataMigrationState\"
+              WHERE key = 'CORE-203-candidate-backfill-v1') = 1)::int" | tr -d '[:space:]')
 [[ "$candidate_after_commit_adoption" == 1 ]]
 echo "INTERRUPTED_CANDIDATE_AFTER_COMMIT_ADOPTION_OK=1"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$candidate_migration_db" -c \
+  "UPDATE \"Candidate\" SET kind = 'tampered' WHERE \"legacySourceId\" = 'candidate-migration-suggestion';" >/dev/null
+if POSTGRES_DB="$candidate_migration_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "Candidate semantic conflict unexpectedly deployed" >&2; exit 1
+fi
+candidate_conflict_source_unchanged=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$candidate_migration_db" -tAc \
+  "SELECT count(*) FROM \"PersonSuggestion\"
+   WHERE id = 'candidate-migration-suggestion' AND status = 'pending'" | tr -d '[:space:]')
+[[ "$candidate_conflict_source_unchanged" == 1 ]]
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$candidate_migration_db" -c \
+  "UPDATE \"Candidate\" SET kind = 'person_create' WHERE \"legacySourceId\" = 'candidate-migration-suggestion';" >/dev/null
+POSTGRES_DB="$candidate_migration_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+echo "CANDIDATE_SEMANTIC_CONFLICT_FAIL_CLOSED_OK=1"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$candidate_migration_db" -c \
+  "UPDATE \"DataMigrationState\"
+      SET details = jsonb_set(details::jsonb, '{markerChecksum}', to_jsonb(repeat('0', 64)))::text
+    WHERE key = 'CORE-203-candidate-backfill-v1';" >/dev/null
+if POSTGRES_DB="$candidate_migration_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "Candidate marker checksum drift unexpectedly deployed" >&2; exit 1
+fi
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$candidate_migration_db" -c \
+  "DELETE FROM \"DataMigrationState\" WHERE key = 'CORE-203-candidate-backfill-v1';" >/dev/null
+POSTGRES_DB="$candidate_migration_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+echo "CANDIDATE_MARKER_CHECKSUM_FAIL_CLOSED_OK=1"
 
 candidate_partial_db=jianghu_candidate_partial
 docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$candidate_partial_db"
@@ -730,7 +769,7 @@ candidate_restore_parity=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db 
        AND (SELECT count(*) FROM \"PersonSuggestion\" WHERE id = 'candidate-migration-suggestion') = 1)::int" | tr -d '[:space:]')
 [[ "$candidate_restore_parity" == 1 ]]
 echo "CANDIDATE_RESTORE_ROLLBACK_OK=1"
-echo "CORE_201_CANDIDATE_MIGRATION_OK=1"
+echo "CORE_203_CANDIDATE_CUTOVER_OK=1"
 
 # A duplicate tenant-local owner name must roll the bridge transaction back.
 # After data repair, the same database must resume and complete safely.

@@ -26,6 +26,10 @@ import {
   personCandidateDedupeKey,
   updatePendingPersonCandidate,
 } from './candidates/personRelation.js';
+import {
+  resolveReminderCandidate,
+  upsertReminderCandidate,
+} from './candidates/reviewItems.js';
 
 // 江湖自算 · 轻量后台任务队列（DB-backed）。
 // 设计取舍（对齐架构纲领「加轻量 job 队列」）：单实例 setInterval 消费，原子 claim；
@@ -608,31 +612,23 @@ export async function runPatrol(): Promise<{ scanned: number; created: number; r
     const keys = draftKeysByTenant.get(draft.tenantId) ?? new Set<string>();
     keys.add(draft.dedupeKey);
     draftKeysByTenant.set(draft.tenantId, keys);
-    const existing = await prisma.reminder.findUnique({ where: { tenantId_dedupeKey: {
+    const receipt = await upsertReminderCandidate(prisma, {
+      id: 'rem_' + randomUUID().replaceAll('-', ''),
       tenantId: draft.tenantId,
+      accountId: draft.accountId,
+      accountName: draft.accountName,
+      matterId: draft.opportunityId,
+      matterName: draft.oppName,
+      kind: draft.kind,
+      title: draft.title,
+      detail: draft.detail,
+      severity: draft.severity,
+      targetId: draft.entityId,
       dedupeKey: draft.dedupeKey,
-    } } });
-    if (!existing) {
-      await prisma.reminder.create({ data: {
-        id: 'rem_' + randomUUID().replaceAll('-', ''),
-        ...draft,
-      } });
+    });
+    if (receipt.created) {
       created += 1;
       bucket(draft.tenantId).created += 1;
-    } else if (existing.status === 'pending') {
-      await prisma.reminder.updateMany({
-        where: { id: existing.id, tenantId: draft.tenantId, status: 'pending' },
-        data: {
-          accountId: draft.accountId,
-          accountName: draft.accountName,
-          opportunityId: draft.opportunityId,
-          oppName: draft.oppName,
-          title: draft.title,
-          detail: draft.detail,
-          severity: draft.severity,
-          entityId: draft.entityId,
-        },
-      });
     }
   }
 
@@ -640,17 +636,24 @@ export async function runPatrol(): Promise<{ scanned: number; created: number; r
     'stalled', 'no_decider', 'sentiment_recheck', 'action_overdue', 'form_empty',
     'confirmation_due', 'commitment_due', 'matter_without_next_commitment',
   ];
-  const pending = await prisma.reminder.findMany({ where: { status: 'pending', kind: { in: managedKinds } } });
+  const pending = await prisma.candidate.findMany({ where: {
+    kind: 'reminder', status: 'pending', legacySourceKind: 'Reminder', legacySourceId: { not: null },
+  }, select: { tenantId: true, legacySourceId: true, payload: true } });
   let resolved = 0;
-  for (const reminder of pending) {
-    if (draftKeysByTenant.get(reminder.tenantId)?.has(reminder.dedupeKey)) continue;
-    const changed = await prisma.reminder.updateMany({
-      where: { id: reminder.id, tenantId: reminder.tenantId, status: 'pending' },
-      data: { status: 'done' },
+  for (const candidate of pending) {
+    let payload: { legacyDedupeKey?: unknown; reminderKind?: unknown } = {};
+    try { payload = JSON.parse(candidate.payload) as typeof payload; } catch { /* fail closed below */ }
+    if (typeof payload.legacyDedupeKey !== 'string'
+      || typeof payload.reminderKind !== 'string'
+      || !managedKinds.includes(payload.reminderKind)) continue;
+    if (draftKeysByTenant.get(candidate.tenantId)?.has(payload.legacyDedupeKey)) continue;
+    const changed = await resolveReminderCandidate(prisma, {
+      tenantId: candidate.tenantId,
+      id: candidate.legacySourceId!,
     });
-    if (changed.count !== 1) continue;
+    if (!changed) continue;
     resolved += 1;
-    bucket(reminder.tenantId).resolved += 1;
+    bucket(candidate.tenantId).resolved += 1;
   }
 
   recordPatrol(byTenant, now.toISOString());

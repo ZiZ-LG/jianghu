@@ -290,20 +290,85 @@ describe('CORE-201 legacy candidate migration inspection', () => {
     ]) expect(serializedReport).not.toContain(secret);
   });
 
-  it('exposes only dry-run and verify CLI modes and never writes Candidate rows', async () => {
+  it('applies all five sources once, writes the marker last, and replays without duplicate rows', async () => {
+    await Promise.all([
+      prisma.personSuggestion.delete({ where: { id: 'ps-a-invalid-account' } }),
+      prisma.relSuggestion.delete({ where: { id: 'rs-a-invalid-endpoint' } }),
+      prisma.changeProposal.delete({ where: { id: 'cp-a-invalid-account' } }),
+      prisma.reminder.delete({ where: { id: 'rem-a-invalid-entity' } }),
+      prisma.evidenceEvent.delete({ where: { id: 'ev-a-invalid-person' } }),
+    ]);
     const before = await snapshotBusinessState();
     const dryRun = run(tsxBin, ['scripts/migrate-candidates.ts', '--dry-run']);
     expect(dryRun.status, `${dryRun.stdout}\n${dryRun.stderr}`).toBe(0);
     expect(dryRun.stdout).toContain('"mode": "dry-run"');
     expect(dryRun.stdout).not.toContain('SECRET_');
 
+    const verifyBeforeApply = run(tsxBin, ['scripts/migrate-candidates.ts', '--verify']);
+    expect(verifyBeforeApply.status).toBe(1);
+    expect(verifyBeforeApply.stdout).toContain('"markerPresent": false');
+
+    const applied = run(tsxBin, ['scripts/migrate-candidates.ts', '--apply']);
+    expect(applied.status, `${applied.stdout}\n${applied.stderr}`).toBe(0);
+    expect(applied.stdout).toContain('"mode": "apply"');
+    expect(applied.stdout).toContain('"writes": 15');
+    expect(applied.stdout).not.toContain('SECRET_');
+
+    const afterApply = await snapshotBusinessState();
+    expect({ ...afterApply, candidates: before.candidates }).toEqual(before);
+    expect(afterApply.candidates).toHaveLength(15);
+    await expect(prisma.dataMigrationState.findUnique({ where: { key: 'CORE-203-candidate-backfill-v1' } }))
+      .resolves.toMatchObject({ key: 'CORE-203-candidate-backfill-v1' });
+
+    const replay = run(tsxBin, ['scripts/migrate-candidates.ts', '--apply']);
+    expect(replay.status, `${replay.stdout}\n${replay.stderr}`).toBe(0);
+    expect(replay.stdout).toContain('"writes": 0');
+    expect(await snapshotBusinessState()).toEqual(afterApply);
+
     const verify = run(tsxBin, ['scripts/migrate-candidates.ts', '--verify']);
-    expect(verify.status).toBe(1);
-    expect(verify.stdout).toContain('"ok": false');
+    expect(verify.status, `${verify.stdout}\n${verify.stderr}`).toBe(0);
+    expect(verify.stdout).toContain('"markerPresent": true');
+    expect(verify.stdout).toContain('"authority": "Candidate"');
+  }, 30_000);
+
+  it('fails closed on linked Candidate semantic drift without overwriting either side', async () => {
+    const candidate = await prisma.candidate.findFirstOrThrow({ where: {
+      tenantId: tenantA,
+      legacySourceKind: 'ChangeProposal',
+      legacySourceId: 'cp-a-pending',
+    } });
+    await prisma.candidate.update({ where: { id: candidate.id }, data: { newValue: 'tampered' } });
+    const before = await snapshotBusinessState();
 
     const apply = run(tsxBin, ['scripts/migrate-candidates.ts', '--apply']);
     expect(apply.status).not.toBe(0);
-    expect(`${apply.stdout}\n${apply.stderr}`).toContain('--dry-run|--verify');
+    expect(`${apply.stdout}\n${apply.stderr}`).toContain('candidate_semantic_conflict');
     expect(await snapshotBusinessState()).toEqual(before);
+
+    const verify = run(tsxBin, ['scripts/migrate-candidates.ts', '--verify']);
+    expect(verify.status).not.toBe(0);
+    expect(verify.stdout).toContain('candidate_semantic_conflict');
+  }, 30_000);
+
+  it('fails closed when the backfill marker receipt checksum is corrupted', async () => {
+    const marker = await prisma.dataMigrationState.findUniqueOrThrow({
+      where: { key: 'CORE-203-candidate-backfill-v1' },
+    });
+    const details = JSON.parse(marker.details) as Record<string, unknown>;
+    await prisma.dataMigrationState.update({
+      where: { key: marker.key },
+      data: { details: canonicalCandidateJson({ ...details, markerChecksum: '0'.repeat(64) }) },
+    });
+
+    const verify = run(tsxBin, ['scripts/migrate-candidates.ts', '--verify']);
+    expect(verify.status).not.toBe(0);
+    expect(verify.stdout).toContain('candidate_marker_checksum_mismatch');
+    const apply = run(tsxBin, ['scripts/migrate-candidates.ts', '--apply']);
+    expect(apply.status).not.toBe(0);
+    expect(`${apply.stdout}\n${apply.stderr}`).toContain('candidate_marker_checksum_mismatch');
+
+    await prisma.dataMigrationState.update({
+      where: { key: marker.key }, data: { details: marker.details },
+    });
   }, 30_000);
 });

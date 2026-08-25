@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, type Candidate, type PrismaClient } from '@prisma/client';
 
 export type LegacyCandidateSourceKind =
   | 'PersonSuggestion'
@@ -10,6 +10,8 @@ export type LegacyCandidateSourceKind =
 
 export type CanonicalCandidateStatus = 'pending' | 'accepted' | 'rejected';
 export type CandidateSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
+export const CANDIDATE_BACKFILL_MARKER = 'CORE-203-candidate-backfill-v1';
+const CANDIDATE_BACKFILL_VERSION = 1;
 
 export interface CandidateMigrationIssue {
   tenantId: string;
@@ -38,6 +40,17 @@ export interface CandidateMigrationReport {
   bySource: CandidateMigrationSourceReport[];
   byStatus: CandidateMigrationStatusReport[];
   projectionChecksum: string;
+}
+
+export interface CandidateMigrationVerification {
+  ok: boolean;
+  markerPresent: boolean;
+  conflicts: string[];
+  report: CandidateMigrationReport;
+}
+
+export interface CandidateMigrationApplyResult extends CandidateMigrationVerification {
+  writes: number;
 }
 
 export interface CandidateProjection {
@@ -84,11 +97,15 @@ type CandidateReadClient = Pick<
   | 'account'
   | 'opportunity'
   | 'person'
+  | 'planAction'
+  | 'uCV'
   | 'personSuggestion'
   | 'relSuggestion'
   | 'changeProposal'
   | 'reminder'
   | 'evidenceEvent'
+  | 'candidate'
+  | 'dataMigrationState'
   | 'burningIssue'
   | '$queryRawUnsafe'
 >;
@@ -130,6 +147,50 @@ function sha256(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');
 }
 
+function candidateBackfillMarkerChecksum(): string {
+  return sha256(canonicalCandidateJson({
+    marker: CANDIDATE_BACKFILL_MARKER,
+    sourceKinds: SOURCE_KINDS,
+    version: CANDIDATE_BACKFILL_VERSION,
+  }));
+}
+
+function candidateBackfillMarkerDetails(report: CandidateMigrationReport): string {
+  return canonicalCandidateJson({
+    markerChecksum: candidateBackfillMarkerChecksum(),
+    projectionChecksum: report.projectionChecksum,
+    sourceRows: report.sourceRows,
+    version: CANDIDATE_BACKFILL_VERSION,
+  });
+}
+
+function candidateBackfillMarkerConflict(details: string): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(details);
+  } catch {
+    return 'candidate_marker_invalid:json';
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return 'candidate_marker_invalid:shape';
+  }
+  const receipt = parsed as Record<string, unknown>;
+  if (receipt.version !== CANDIDATE_BACKFILL_VERSION) {
+    return 'candidate_marker_invalid:version';
+  }
+  if (!Number.isInteger(receipt.sourceRows) || (receipt.sourceRows as number) < 0) {
+    return 'candidate_marker_invalid:sourceRows';
+  }
+  if (typeof receipt.projectionChecksum !== 'string'
+    || !/^[a-f0-9]{64}$/.test(receipt.projectionChecksum)) {
+    return 'candidate_marker_invalid:projectionChecksum';
+  }
+  if (receipt.markerChecksum !== candidateBackfillMarkerChecksum()) {
+    return 'candidate_marker_checksum_mismatch';
+  }
+  return null;
+}
+
 export function candidateIdentityForLegacy(
   tenantId: string,
   sourceKind: LegacyCandidateSourceKind,
@@ -158,7 +219,12 @@ function sourceStatus(
     if (status === 'dismissed') return 'rejected';
     return null;
   }
-  if (sourceKind === 'EvidenceEvent') return status === 'pending_review' ? 'pending' : null;
+  if (sourceKind === 'EvidenceEvent') {
+    if (status === 'pending_review') return 'pending';
+    if (status === 'approved') return 'accepted';
+    if (status === 'rejected') return 'rejected';
+    return null;
+  }
   return STATUS_ORDER.includes(status as CanonicalCandidateStatus)
     ? status as CanonicalCandidateStatus
     : null;
@@ -227,7 +293,21 @@ export async function projectCandidateMigrationForTenant(
   db: CandidateReadClient,
   tenantId: string,
 ): Promise<TenantCandidateMigrationProjection> {
-  const [users, accounts, matters, persons, personSuggestions, relSuggestions, changeProposals, reminders, evidences, burningIssues] = await Promise.all([
+  let linkedEvidenceSourceIds = new Set<string>();
+  try {
+    const linked = await db.candidate.findMany({
+      where: { tenantId, legacySourceKind: 'EvidenceEvent' },
+      select: { legacySourceId: true },
+    });
+    linkedEvidenceSourceIds = new Set(linked.flatMap((row) => row.legacySourceId ? [row.legacySourceId] : []));
+  } catch (error) {
+    // Pre-expansion dry-runs intentionally operate before Candidate exists.
+    if (!isMissingTable(error)) throw error;
+  }
+  const [
+    users, accounts, matters, persons, planActions, ucvs, personSuggestions,
+    relSuggestions, changeProposals, reminders, evidenceRows, burningIssues,
+  ] = await Promise.all([
     db.user.findMany({ where: { tenantId }, orderBy: { id: 'asc' }, select: { id: true } }),
     db.account.findMany({ where: { tenantId }, orderBy: { id: 'asc' }, select: { id: true } }),
     db.opportunity.findMany({
@@ -235,6 +315,14 @@ export async function projectCandidateMigrationForTenant(
     }),
     db.person.findMany({
       where: { tenantId }, orderBy: { id: 'asc' }, select: { id: true, accountId: true },
+    }),
+    db.planAction.findMany({
+      where: { tenantId }, orderBy: { id: 'asc' },
+      select: { id: true, accountId: true, opportunityId: true },
+    }),
+    db.uCV.findMany({
+      where: { tenantId }, orderBy: { id: 'asc' },
+      select: { id: true, opportunityId: true },
     }),
     db.personSuggestion.findMany({
       where: { tenantId }, orderBy: { id: 'asc' },
@@ -269,7 +357,7 @@ export async function projectCandidateMigrationForTenant(
       },
     }),
     db.evidenceEvent.findMany({
-      where: { tenantId, status: 'pending_review' }, orderBy: { id: 'asc' },
+      where: { tenantId }, orderBy: { id: 'asc' },
       select: {
         id: true, accountId: true, opportunityId: true, personId: true, signalKey: true,
         direction: true, tier: true, rawContent: true, occurredAt: true, status: true,
@@ -280,6 +368,8 @@ export async function projectCandidateMigrationForTenant(
       where: { tenantId }, orderBy: { id: 'asc' }, select: { id: true, opportunityId: true, personId: true },
     }),
   ]);
+  const evidences = evidenceRows.filter((row) =>
+    row.status === 'pending_review' || linkedEvidenceSourceIds.has(row.id));
 
   const changeDedupeById = new Map<string, string | null>();
   try {
@@ -300,6 +390,8 @@ export async function projectCandidateMigrationForTenant(
   const accountIds = new Set(accounts.map((row) => row.id));
   const matterById = new Map(matters.map((row) => [row.id, row]));
   const personById = new Map(persons.map((row) => [row.id, row]));
+  const planActionById = new Map(planActions.map((row) => [row.id, row]));
+  const ucvById = new Map(ucvs.map((row) => [row.id, row]));
   const suggestionById = new Map(personSuggestions.map((row) => [row.id, row]));
   const burningIssueById = new Map(burningIssues.map((row) => [row.id, row]));
   const projections: CandidateProjection[] = [];
@@ -400,7 +492,7 @@ export async function projectCandidateMigrationForTenant(
     if (!status) reason = 'unsupported_status';
     else if (!validAccount(row.accountId)) reason = 'account_not_found';
     else if (!validMatter(row.opportunityId, row.accountId)) reason = 'matter_not_found_or_mismatch';
-    else if (row.entityKind === 'person') {
+    else if (row.entityKind === 'person' || row.entityKind === 'personLog') {
       if (!validPerson(row.entityId, row.accountId)) reason = 'change_target_not_found';
     } else if (row.entityKind === 'oppRole') {
       if (!row.opportunityId || !validPerson(row.entityId, row.accountId)) reason = 'change_target_not_found';
@@ -410,6 +502,11 @@ export async function projectCandidateMigrationForTenant(
         || (row.opportunityId && row.opportunityId !== row.entityId)) reason = 'change_target_not_found';
     } else if (row.entityKind === 'bi') {
       const target = burningIssueById.get(row.entityId);
+      const targetMatter = target ? matterById.get(target.opportunityId) : null;
+      if (!target || !targetMatter || targetMatter.accountId !== row.accountId
+        || (row.opportunityId && target.opportunityId !== row.opportunityId)) reason = 'change_target_not_found';
+    } else if (row.entityKind === 'ucv') {
+      const target = ucvById.get(row.entityId);
       const targetMatter = target ? matterById.get(target.opportunityId) : null;
       if (!target || !targetMatter || targetMatter.accountId !== row.accountId
         || (row.opportunityId && target.opportunityId !== row.opportunityId)) reason = 'change_target_not_found';
@@ -432,16 +529,44 @@ export async function projectCandidateMigrationForTenant(
   for (const row of reminders) {
     const status = sourceStatus('Reminder', row.status);
     let reason: string | null = null;
+    let targetKind = '';
+    let targetId = '';
     if (!status) reason = 'unsupported_status';
     else if (!validAccount(row.accountId)) reason = 'account_not_found';
     else if (!validMatter(row.opportunityId, row.accountId)) reason = 'matter_not_found_or_mismatch';
-    else if (row.entityId && !validPerson(row.entityId, row.accountId)) reason = 'reminder_entity_not_found';
+    else if (row.kind === 'sentiment_recheck' || row.kind === 'form_empty') {
+      if (!row.entityId || !validPerson(row.entityId, row.accountId)) reason = 'reminder_entity_not_found';
+      else {
+        targetKind = 'person';
+        targetId = row.entityId;
+      }
+    } else if (row.kind === 'action_overdue' || row.kind === 'confirmation_due' || row.kind === 'commitment_due') {
+      const commitment = row.entityId ? planActionById.get(row.entityId) : null;
+      if (!commitment || commitment.accountId !== row.accountId
+        || (row.opportunityId && commitment.opportunityId !== row.opportunityId)) {
+        reason = 'reminder_entity_not_found';
+      } else {
+        targetKind = 'commitment';
+        targetId = commitment.id;
+      }
+    } else if (row.kind === 'matter_without_next_commitment') {
+      if (!row.entityId || !row.opportunityId || row.entityId !== row.opportunityId) {
+        reason = 'reminder_entity_not_found';
+      } else {
+        targetKind = 'matter';
+        targetId = row.opportunityId;
+      }
+    } else if (row.kind === 'stalled' || row.kind === 'no_decider') {
+      if (!row.opportunityId || row.entityId) reason = 'reminder_entity_not_found';
+      else {
+        targetKind = 'matter';
+        targetId = row.opportunityId;
+      }
+    } else reason = 'unsupported_reminder_kind';
     if (reason || !status) {
       invalidRows.push(issue(tenantId, 'Reminder', row.id, reason ?? 'unsupported_status'));
       continue;
     }
-    const targetKind = row.entityId ? 'person' : row.opportunityId ? 'matter' : 'account';
-    const targetId = row.entityId ?? row.opportunityId ?? row.accountId;
     projections.push(projectionBase({
       tenantId, sourceKind: 'Reminder', sourceId: row.id, status,
       accountId: row.accountId, matterId: row.opportunityId, kind: 'reminder',
@@ -553,7 +678,11 @@ function emptyReport(): CandidateMigrationReport {
 }
 
 function isMissingTable(error: unknown): boolean {
-  return !!error && typeof error === 'object' && 'code' in error && error.code === 'P2021';
+  if (!error || typeof error !== 'object' || !('code' in error)) return false;
+  if (error.code === 'P2021') return true;
+  if (error.code !== 'P2010') return false;
+  const detail = JSON.stringify('meta' in error ? error.meta : '');
+  return /no such table:\s*Candidate|relation .*Candidate.*does not exist|42P01/i.test(detail);
 }
 
 function isMissingColumn(error: unknown): boolean {
@@ -571,14 +700,32 @@ export async function inspectCandidateMigration(
     throw error;
   }
 
-  const integrityRows = await db.$queryRawUnsafe<CandidateIntegrityCountRow[]>(`
-    SELECT
-      (SELECT COUNT(*) FROM "PersonSuggestion") AS "personSuggestions",
-      (SELECT COUNT(*) FROM "RelSuggestion") AS "relSuggestions",
-      (SELECT COUNT(*) FROM "ChangeProposal") AS "changeProposals",
-      (SELECT COUNT(*) FROM "Reminder") AS "reminders",
-      (SELECT COUNT(*) FROM "EvidenceEvent" WHERE "status" = 'pending_review') AS "evidences"
-  `);
+  let integrityRows: CandidateIntegrityCountRow[];
+  try {
+    integrityRows = await db.$queryRawUnsafe<CandidateIntegrityCountRow[]>(`
+      SELECT
+        (SELECT COUNT(*) FROM "PersonSuggestion") AS "personSuggestions",
+        (SELECT COUNT(*) FROM "RelSuggestion") AS "relSuggestions",
+        (SELECT COUNT(*) FROM "ChangeProposal") AS "changeProposals",
+        (SELECT COUNT(*) FROM "Reminder") AS "reminders",
+        (SELECT COUNT(*) FROM "EvidenceEvent"
+          WHERE "status" = 'pending_review'
+             OR "id" IN (
+               SELECT "legacySourceId" FROM "Candidate"
+               WHERE "legacySourceKind" = 'EvidenceEvent' AND "legacySourceId" IS NOT NULL
+             )) AS "evidences"
+    `);
+  } catch (error) {
+    if (!isMissingTable(error)) throw error;
+    integrityRows = await db.$queryRawUnsafe<CandidateIntegrityCountRow[]>(`
+      SELECT
+        (SELECT COUNT(*) FROM "PersonSuggestion") AS "personSuggestions",
+        (SELECT COUNT(*) FROM "RelSuggestion") AS "relSuggestions",
+        (SELECT COUNT(*) FROM "ChangeProposal") AS "changeProposals",
+        (SELECT COUNT(*) FROM "Reminder") AS "reminders",
+        (SELECT COUNT(*) FROM "EvidenceEvent" WHERE "status" = 'pending_review') AS "evidences"
+    `);
+  }
   const integrity = integrityRows[0];
   if (!integrity) throw new Error('Candidate migration integrity count returned no row');
   const expectedBySource = new Map<LegacyCandidateSourceKind, number>([
@@ -657,6 +804,191 @@ export async function inspectCandidateMigration(
     })),
     projectionChecksum: sha256(canonicalCandidateJson(checksumRows)),
   };
+}
+
+function projectionKey(tenantId: string, sourceKind: string, sourceId: string): string {
+  return `${tenantId}\u0000${sourceKind}\u0000${sourceId}`;
+}
+
+async function loadCandidateProjections(db: CandidateReadClient): Promise<CandidateProjection[]> {
+  const tenants = await db.tenant.findMany({ orderBy: { id: 'asc' }, select: { id: true } });
+  const projections: CandidateProjection[] = [];
+  for (const tenant of tenants) {
+    const projected = await projectCandidateMigrationForTenant(db, tenant.id);
+    projections.push(...projected.projections);
+  }
+  return projections.sort((left, right) =>
+    left.tenantId.localeCompare(right.tenantId)
+    || SOURCE_KINDS.indexOf(left.legacySourceKind) - SOURCE_KINDS.indexOf(right.legacySourceKind)
+    || left.legacySourceId.localeCompare(right.legacySourceId));
+}
+
+function candidateSemanticConflict(candidate: Candidate, projection: CandidateProjection): string | null {
+  const comparable: Array<keyof CandidateProjection> = [
+    'id', 'tenantId', 'kind', 'status', 'accountId', 'matterId', 'targetKind', 'targetId',
+    'fieldKey', 'oldValue', 'newValue', 'payload', 'source', 'evidence',
+    'legacySourceKind', 'legacySourceId',
+  ];
+  for (const field of comparable) {
+    if (candidate[field as keyof Candidate] !== projection[field]) {
+      return `candidate_semantic_conflict:${projection.legacySourceKind}:${projection.legacySourceId}:${field}`;
+    }
+  }
+  // EvidenceEvent has no compatibility confidence column. Backfilled legacy rows
+  // use the deterministic 0.5 projection; online Candidate producers may retain
+  // their source confidence without weakening source/provenance/status parity.
+  if ((projection.legacySourceKind !== 'EvidenceEvent' || candidate.sourceRef === projection.sourceRef)
+    && candidate.confidence !== projection.confidence) {
+    return `candidate_semantic_conflict:${projection.legacySourceKind}:${projection.legacySourceId}:confidence`;
+  }
+  if (candidate.createdAt.getTime() !== projection.createdAt.getTime()) {
+    return `candidate_semantic_conflict:${projection.legacySourceKind}:${projection.legacySourceId}:createdAt`;
+  }
+  return null;
+}
+
+async function verifyCandidateMigrationWithReport(
+  db: CandidateReadClient,
+  report: CandidateMigrationReport,
+): Promise<CandidateMigrationVerification> {
+  const marker = await db.dataMigrationState.findUnique({
+    where: { key: CANDIDATE_BACKFILL_MARKER },
+    select: { key: true, details: true },
+  });
+  const conflicts = report.invalidRows.map((row) =>
+    `candidate_source_invalid:${row.sourceKind}:${row.sourceId}:${row.reason}`);
+  if (marker) {
+    const markerConflict = candidateBackfillMarkerConflict(marker.details);
+    if (markerConflict) conflicts.push(markerConflict);
+  }
+  const projections = await loadCandidateProjections(db);
+  const projectedBySource = new Map(projections.map((row) => [
+    projectionKey(row.tenantId, row.legacySourceKind, row.legacySourceId), row,
+  ]));
+  const candidates = await db.candidate.findMany({
+    where: {
+      legacySourceKind: { in: [...SOURCE_KINDS] },
+      legacySourceId: { not: null },
+    },
+    orderBy: [{ tenantId: 'asc' }, { legacySourceKind: 'asc' }, { legacySourceId: 'asc' }],
+  });
+  const candidateBySource = new Map(candidates.map((row) => [
+    projectionKey(row.tenantId, row.legacySourceKind!, row.legacySourceId!), row,
+  ]));
+  for (const projection of projections) {
+    const candidate = candidateBySource.get(
+      projectionKey(projection.tenantId, projection.legacySourceKind, projection.legacySourceId),
+    );
+    if (!candidate) {
+      conflicts.push(`candidate_missing:${projection.legacySourceKind}:${projection.legacySourceId}`);
+      continue;
+    }
+    const conflict = candidateSemanticConflict(candidate, projection);
+    if (conflict) conflicts.push(conflict);
+  }
+  for (const candidate of candidates) {
+    const key = projectionKey(candidate.tenantId, candidate.legacySourceKind!, candidate.legacySourceId!);
+    if (!projectedBySource.has(key)) {
+      conflicts.push(`candidate_source_missing:${candidate.legacySourceKind}:${candidate.legacySourceId}`);
+    }
+  }
+  return {
+    ok: !!marker
+      && conflicts.length === 0
+      && report.invalidRows.length === 0
+      && report.sourceRows === report.projectedRows
+      && projections.length === candidates.length,
+    markerPresent: !!marker,
+    conflicts,
+    report,
+  };
+}
+
+export async function verifyCandidateMigration(
+  db: CandidateReadClient,
+): Promise<CandidateMigrationVerification> {
+  const report = await inspectCandidateMigration(db);
+  return verifyCandidateMigrationWithReport(db, report);
+}
+
+function migrationFailure(conflicts: readonly string[]): Error {
+  return new Error(conflicts.length ? conflicts.join('\n') : 'candidate_migration_verification_failed');
+}
+
+export async function applyCandidateMigration(
+  db: PrismaClient,
+): Promise<CandidateMigrationApplyResult> {
+  return db.$transaction(async (tx) => {
+    const report = await inspectCandidateMigration(tx);
+    if (report.invalidRows.length || report.sourceRows !== report.projectedRows) {
+      throw migrationFailure(report.invalidRows.map((row) =>
+        `candidate_source_invalid:${row.sourceKind}:${row.sourceId}:${row.reason}`));
+    }
+    const marker = await tx.dataMigrationState.findUnique({
+      where: { key: CANDIDATE_BACKFILL_MARKER },
+      select: { key: true },
+    });
+    if (marker) {
+      const verification = await verifyCandidateMigrationWithReport(tx, report);
+      if (!verification.ok) throw migrationFailure(verification.conflicts);
+      return { ...verification, writes: 0 };
+    }
+
+    const projections = await loadCandidateProjections(tx);
+    let writes = 0;
+    for (const projection of projections) {
+      const linked = await tx.candidate.findUnique({
+        where: {
+          tenantId_legacySourceKind_legacySourceId: {
+            tenantId: projection.tenantId,
+            legacySourceKind: projection.legacySourceKind,
+            legacySourceId: projection.legacySourceId,
+          },
+        },
+      });
+      if (linked) {
+        const normalized = linked.createdAt.getTime() === projection.createdAt.getTime()
+          ? linked
+          : await tx.candidate.update({
+            where: { id: linked.id },
+            data: { createdAt: projection.createdAt },
+          });
+        const conflict = candidateSemanticConflict(normalized, projection);
+        if (conflict) throw migrationFailure([conflict]);
+        if (normalized !== linked) writes += 1;
+        continue;
+      }
+
+      const identityCollision = await tx.candidate.findFirst({
+        where: {
+          tenantId: projection.tenantId,
+          OR: [
+            { id: projection.id },
+            { dedupeKey: projection.dedupeKey },
+          ],
+        },
+      });
+      if (identityCollision) {
+        throw migrationFailure([
+          `candidate_semantic_conflict:${projection.legacySourceKind}:${projection.legacySourceId}:identity`,
+        ]);
+      }
+      await tx.candidate.create({ data: projection });
+      writes += 1;
+    }
+
+    await tx.dataMigrationState.create({ data: {
+      key: CANDIDATE_BACKFILL_MARKER,
+      details: candidateBackfillMarkerDetails(report),
+    } });
+    const verification = await verifyCandidateMigrationWithReport(tx, report);
+    if (!verification.ok) throw migrationFailure(verification.conflicts);
+    return { ...verification, writes };
+  }, {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    maxWait: 10_000,
+    timeout: 120_000,
+  });
 }
 
 const CANDIDATE_COLUMNS = new Map<string, { type: string; required: boolean }>([

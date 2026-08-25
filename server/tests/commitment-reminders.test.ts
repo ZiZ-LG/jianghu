@@ -135,6 +135,22 @@ describe('CORE-108 Commitment patrol lifecycle', () => {
       await expect(context.prisma.reminder.findFirstOrThrow({ where: {
         tenantId: context.tenant.id, entityId: gapMatterId, kind: 'matter_without_next_commitment',
       } })).resolves.toMatchObject({ status: 'pending' });
+      await expect(context.prisma.candidate.count({ where: {
+        tenantId: context.tenant.id, legacySourceKind: 'Reminder', status: 'pending',
+        sourceRef: { in: [
+          `patrol:${context.tenant.id}:${commitmentId}:confirmation_due:0`,
+          `patrol:${context.tenant.id}:${commitmentId}:commitment_due:0`,
+        ] },
+      } })).resolves.toBe(2);
+      await expect(context.prisma.candidate.count({ where: {
+        tenantId: context.tenant.id, legacySourceKind: 'Reminder', status: 'pending',
+        sourceRef: `patrol:${context.tenant.id}:${gapMatterId}:matter_without_next_commitment:2026-08-17`,
+      } })).resolves.toBe(1);
+      await expect(context.prisma.candidate.findMany({ where: {
+        tenantId: context.tenant.id, legacySourceKind: 'Reminder', targetId: commitmentId,
+      } })).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: 'reminder', status: 'pending', targetKind: 'commitment', confidence: 1 }),
+      ]));
 
       await context.prisma.planAction.update({ where: { id: commitmentId }, data: {
         confirmationStatus: 'confirmed', confirmedAtUtc: NOW, confirmedByUserId: context.owner.id, version: { increment: 1 },
@@ -144,6 +160,10 @@ describe('CORE-108 Commitment patrol lifecycle', () => {
         tenantId: context.tenant.id,
         dedupeKey: `${context.tenant.id}:${commitmentId}:confirmation_due:0`,
       } } })).resolves.toMatchObject({ status: 'done' });
+      await expect(context.prisma.candidate.findFirstOrThrow({ where: {
+        tenantId: context.tenant.id, legacySourceKind: 'Reminder',
+        sourceRef: `patrol:${context.tenant.id}:${commitmentId}:confirmation_due:0`,
+      } })).resolves.toMatchObject({ status: 'accepted', version: 1 });
 
       await context.prisma.planAction.update({ where: { id: commitmentId }, data: {
         confirmationStatus: 'pending', confirmedAtUtc: null, confirmedByUserId: null,

@@ -29,6 +29,10 @@ import { resolveEffectiveResourceScope } from '../resourceScope.js';
 import { executeCustomerCommand, parseCustomerCommandReceiptForCommand } from './customers.js';
 import { executeCommitmentCommand } from './commitments.js';
 import { rejectPersonCandidate, rejectRelationCandidate } from '../candidates/personRelation.js';
+import {
+  dismissReminderCandidate,
+  reviewEvidenceCandidate,
+} from '../candidates/reviewItems.js';
 
 class ActionAlreadyCompletedError extends Error {
   readonly statusCode = 409;
@@ -295,18 +299,21 @@ export async function executeInboxBatch(
       }
     } else if (item.kind === 'evidence') {
       const today = businessYmd();
-      const evidence = await db.evidenceEvent.findFirst({ where: { id: item.id, tenantId: ctx.tenantId, status: 'pending_review' } });
-      if (!evidence) throw new Error('证据不存在或已处理');
-      const changed = await db.evidenceEvent.updateMany({ where: { id: item.id, tenantId: ctx.tenantId, status: 'pending_review' }, data: {
-        status: item.decision === 'accept' ? 'approved' : 'rejected', reviewedBy: ctx.actorId, reviewedAt: today,
-        ...(item.decision === 'accept' && item.direction !== undefined ? { direction: item.direction } : {}),
-      } });
-      if (!changed.count) throw new Error('证据不存在或已处理');
-      if (item.decision === 'accept') await createPdeSnapshot(db, ctx.tenantId, evidence.opportunityId, 'evidence_review', ctx.actorId);
+      const reviewed = await reviewEvidenceCandidate(db, {
+        tenantId: ctx.tenantId,
+        id: item.id,
+        decision: item.decision === 'accept' ? 'accept' : 'reject',
+        reviewedBy: ctx.actorId,
+        reviewedAt: today,
+        direction: item.decision === 'accept' ? item.direction : undefined,
+      }, async (tx, evidence) => {
+        await createPdeSnapshot(tx, ctx.tenantId, evidence.opportunityId, 'evidence_review', ctx.actorId);
+      });
+      if (!reviewed) throw new Error('证据不存在或已处理');
     } else {
       if (item.decision !== 'reject') throw new Error('提醒只能忽略');
-      const changed = await db.reminder.updateMany({ where: { id: item.id, tenantId: ctx.tenantId, status: 'pending' }, data: { status: 'dismissed' } });
-      if (!changed.count) throw new Error('提醒不存在或已处理');
+      const dismissed = await dismissReminderCandidate(db, { id: item.id, tenantId: ctx.tenantId });
+      if (!dismissed) throw new Error('提醒不存在或已处理');
       status = 'dismissed';
     }
     items.push({ kind: item.kind, id: item.id, status });

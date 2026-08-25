@@ -646,7 +646,7 @@ recover_incomplete_candidate_migration() {
       ;;
     expanded)
       echo "[migration] 检测到已提交但未完成登记的 Candidate 事务，只读校验后接管。"
-      npm run migrate:candidate-verify
+      npm run migrate:candidate-report
       if ! candidate_schema_matches_known_state; then
         echo "[migration] Candidate schema 已扩展但与当前模型不一致，拒绝接管：" >&2
         cat /tmp/postgres-schema-drift.log >&2
@@ -671,7 +671,7 @@ adopt_existing_candidate_schema_if_safe() {
     uninitialized|legacy) return 0 ;;
     expanded)
       echo "[migration] 检测到未登记但完整的 Candidate schema，只读校验后接管。"
-      npm run migrate:candidate-verify
+      npm run migrate:candidate-report
       if ! candidate_schema_matches_known_state; then
         echo "[migration] 未登记 Candidate schema 与当前模型不一致，拒绝接管：" >&2
         cat /tmp/postgres-schema-drift.log >&2
@@ -848,7 +848,6 @@ if ! migration_is_applied "$CANDIDATE_MIGRATION"; then
   candidate_migration_pending=1
   echo "[migration] 在 Candidate 基座扩展前执行五来源逐租户只读预演与完整性校验…"
   npm run migrate:candidate-report
-  npm run migrate:candidate-verify
 fi
 
 echo "[migration] 在唯一索引迁移前执行同步锚与企微绑定冲突扫描…"
@@ -888,10 +887,10 @@ if [ "$pde_context_migration_pending" -eq 1 ]; then
   npm run migrate:pde-context-verify
 fi
 
-if [ "$candidate_migration_pending" -eq 1 ]; then
-  echo "[migration] 校验 Candidate schema 与五来源逐租户投影仍保持只读一致…"
-  npm run migrate:candidate-verify
-fi
+echo "[migration] 以单事务幂等回填五来源 Candidate，并在最后写入 CORE-203 marker…"
+npm run migrate:candidate-apply
+echo "[migration] 双向校验 Candidate 权威与五张只读兼容投影…"
+npm run migrate:candidate-verify
 
 if ! schema_matches "$SCHEMA"; then
   echo "[migration] 迁移后 schema 与当前模型仍不一致，拒绝启动：" >&2

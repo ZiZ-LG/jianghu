@@ -9,32 +9,43 @@ import { prisma } from './prisma.js';
 import { denyViewer } from './scope.js';
 import { applyAction, runPostCommitEffect, runSerializableTransaction, type DbClient, type PostCommitEffect } from './mutate.js';
 import { activePersonWhere } from './activePerson.js';
+import {
+  claimFieldCandidate,
+  createFieldCandidate,
+  finalizeFieldCandidate,
+  rejectFieldCandidate,
+} from './candidates/reviewItems.js';
 
 /** 建字段更新提案（去重：同 实体+字段 已有 pending 则覆盖最新值，避免堆叠重复打扰）。供 voice/MCP 等机器写源调用。 */
 export async function createFieldProposal(tenantId: string, p: {
   accountId: string; opportunityId?: string; entityKind: string; entityId: string;
-  field: string; oldValue: string; newValue: string; origin?: string; evidence?: string; confidence?: number; proposedBy?: string;
+  field: string; oldValue: string; newValue: string; origin?: string; sourceRef?: string;
+  evidence?: string; confidence?: number; proposedBy?: string;
 }, db: DbClient = prisma): Promise<void> {
   if (p.oldValue === p.newValue) return; // 无变化不提
   const dedupeKey = JSON.stringify([tenantId, p.accountId, p.entityKind, p.entityId, p.field]);
-  const existing = await db.changeProposal.findUnique({ where: { dedupeKey } })
-    ?? await db.changeProposal.findFirst({
-      where: { tenantId, accountId: p.accountId, entityKind: p.entityKind, entityId: p.entityId, field: p.field, status: 'pending', dedupeKey: null },
-    });
-  if (existing) {
-    await db.changeProposal.update({ where: { id: existing.id }, data: { opportunityId: p.opportunityId ?? null, oldValue: p.oldValue, newValue: p.newValue, evidence: p.evidence ?? '', confidence: p.confidence ?? 0.5, origin: p.origin ?? 'voice', proposedBy: p.proposedBy ?? '', dedupeKey } });
-    return;
-  }
   const cpId = 'cp_' + randomUUID().replaceAll('-', '');
-  try {
-    await db.changeProposal.create({ data: { id: cpId, tenantId, accountId: p.accountId, opportunityId: p.opportunityId ?? null, entityKind: p.entityKind, entityId: p.entityId, field: p.field, oldValue: p.oldValue, newValue: p.newValue, origin: p.origin ?? 'voice', evidence: p.evidence ?? '', confidence: p.confidence ?? 0.5, proposedBy: p.proposedBy ?? '', dedupeKey } });
-  } catch (error) {
-    if (!(error && typeof error === 'object' && 'code' in error && error.code === 'P2002')) throw error;
-    await db.changeProposal.updateMany({ where: { dedupeKey, status: 'pending' }, data: { opportunityId: p.opportunityId ?? null, oldValue: p.oldValue, newValue: p.newValue, evidence: p.evidence ?? '', confidence: p.confidence ?? 0.5, origin: p.origin ?? 'voice', proposedBy: p.proposedBy ?? '' } });
-    return;
-  }
+  const origin = p.origin ?? 'voice';
+  const receipt = await createFieldCandidate(db, {
+    id: cpId,
+    tenantId,
+    accountId: p.accountId,
+    matterId: p.opportunityId ?? null,
+    targetKind: p.entityKind,
+    targetId: p.entityId,
+    fieldKey: p.field,
+    oldValue: p.oldValue,
+    newValue: p.newValue,
+    source: origin,
+    sourceRef: p.sourceRef?.trim() || `${origin}:field:${dedupeKey}`,
+    evidence: p.evidence?.trim() || '机器字段候选未附原文，必须由人工核实',
+    confidence: p.confidence ?? 0.5,
+    createdByUserId: p.proposedBy || null,
+  });
   // 场景 B：新提案推企微模板卡（一键采纳）。fire-and-forget + 动态 import 破 proposals↔wecom 循环依赖。
-  if (db === prisma) void import('./wecom.js').then((w) => w.pushProposalCard(tenantId, cpId)).catch(() => {});
+  if (db === prisma && receipt.created) {
+    void import('./wecom.js').then((w) => w.pushProposalCard(tenantId, receipt.row.id)).catch(() => {});
+  }
 }
 
 // P13 提案值域校验：非法值直接抛错（改后采纳的兜底），SET_ROLE.patch 精确对齐已有字段类型
@@ -158,22 +169,17 @@ export async function acceptProposalInTransaction(
     const cp = await tx.changeProposal.findFirst({ where: { id, tenantId } });
     if (!cp) return { result: 'missing' as const, effect: undefined };
     if (cp.status !== 'pending') return { result: 'already' as const, effect: undefined };
-    const claim = await tx.changeProposal.updateMany({
-      where: { id: cp.id, tenantId, status: 'pending' },
-      data: { status: 'applying' },
-    });
-    if (claim.count !== 1) return { result: 'already' as const, effect: undefined };
+    const claim = await claimFieldCandidate(tx, { tenantId, id: cp.id });
+    if (!claim) return { result: 'already' as const, effect: undefined };
     const value = overrideValue ?? cp.newValue;
-    const currentValue = await proposalCurrentValue(tx, tenantId, cp);
+    const currentValue = await proposalCurrentValue(tx, tenantId, claim.row);
     if (!proposalValueMatches(currentValue, cp.oldValue)) {
       throw new Error('正式字段已被人工更新，请刷新后重新审阅提案');
     }
     const effect = await applyProposal(ctx, cp, value, tx);
-    const finalized = await tx.changeProposal.updateMany({
-      where: { id: cp.id, tenantId, status: 'applying' },
-      data: { status: 'accepted', newValue: value, dedupeKey: null },
+    await finalizeFieldCandidate(tx, {
+      tenantId, id: cp.id, expectedVersion: claim.candidateVersion, newValue: value,
     });
-    if (finalized.count !== 1) throw new Error('proposal acceptance lost claim');
     return { result: 'ok' as const, effect };
 }
 
@@ -185,13 +191,11 @@ export async function acceptProposal(ctx: CommandContext, id: string, overrideVa
 
 /** 驳回一条提案（幂等：非 pending 视为已处理）。 */
 export async function rejectProposal(tenantId: string, id: string): Promise<'ok' | 'already'> {
-  const r = await prisma.changeProposal.updateMany({ where: { id, tenantId, status: 'pending' }, data: { status: 'rejected', dedupeKey: null } });
-  return r.count ? 'ok' : 'already';
+  return await rejectFieldCandidate(prisma, { tenantId, id }) ? 'ok' : 'already';
 }
 
 export async function rejectProposalInTransaction(tenantId: string, id: string, tx: Prisma.TransactionClient): Promise<'ok' | 'already'> {
-  const r = await tx.changeProposal.updateMany({ where: { id, tenantId, status: 'pending' }, data: { status: 'rejected', dedupeKey: null } });
-  return r.count ? 'ok' : 'already';
+  return await rejectFieldCandidate(tx, { tenantId, id }) ? 'ok' : 'already';
 }
 
 /** WeCom 专用审批边界：身份复核与 proposal CAS/正式写入在同一 Serializable transaction 内。 */
@@ -211,19 +215,20 @@ export async function reviewProposalFromWecom(
     if (!cp) return { result: 'missing' as const, effect: undefined };
     if (cp.status !== 'pending') return { result: 'already' as const, effect: undefined };
     if (decision === 'reject') {
-      const rejected = await tx.changeProposal.updateMany({ where: { id: cp.id, tenantId, status: 'pending' }, data: { status: 'rejected', dedupeKey: null } });
-      return { result: rejected.count === 1 ? 'ok' as const : 'already' as const, effect: undefined };
+      const rejected = await rejectFieldCandidate(tx, { tenantId, id: cp.id });
+      return { result: rejected ? 'ok' as const : 'already' as const, effect: undefined };
     }
-    const claim = await tx.changeProposal.updateMany({ where: { id: cp.id, tenantId, status: 'pending' }, data: { status: 'applying' } });
-    if (claim.count !== 1) return { result: 'already' as const, effect: undefined };
-    const currentValue = await proposalCurrentValue(tx, tenantId, cp);
+    const claim = await claimFieldCandidate(tx, { tenantId, id: cp.id });
+    if (!claim) return { result: 'already' as const, effect: undefined };
+    const currentValue = await proposalCurrentValue(tx, tenantId, claim.row);
     if (!proposalValueMatches(currentValue, cp.oldValue)) throw new Error('正式字段已被人工更新');
     const effect = await applyProposal({
       tenantId, actorId: actor.id, actorRole: actorRole.data, channel: 'web',
       requestId: `wecom:${randomUUID()}`, assertionMode: 'user_asserted',
     }, cp, cp.newValue, tx);
-    const finalized = await tx.changeProposal.updateMany({ where: { id: cp.id, tenantId, status: 'applying' }, data: { status: 'accepted', dedupeKey: null } });
-    if (finalized.count !== 1) throw new Error('proposal acceptance lost claim');
+    await finalizeFieldCandidate(tx, {
+      tenantId, id: cp.id, expectedVersion: claim.candidateVersion, newValue: cp.newValue,
+    });
     return { result: 'ok' as const, effect };
   });
   if (outcome.result === 'ok') await runPostCommitEffect(outcome.effect);

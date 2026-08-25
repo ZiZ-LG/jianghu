@@ -11,6 +11,10 @@ import { businessYmd } from './businessDate.js';
 import { mapLegacyOpportunityStatus } from './matter/lifecycle.js';
 import { mapLegacyPlanActionToCommitmentFields } from './commitment/legacy.js';
 import { createPdeDecisionContext } from './pde/context.js';
+import {
+  assertEvidenceDeletionAllowed,
+  createEvidenceCandidate,
+} from './candidates/reviewItems.js';
 
 export type { DbClient } from './mutation/scopeGuards.js';
 
@@ -739,15 +743,38 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
 
     case 'ADD_EVIDENCE': {
       const x = action.evidence;
+      if ((x.status ?? 'approved') === 'pending_review') {
+        const rawContent = x.rawContent?.trim() || '机器候选未附原文，必须由人工核实';
+        await createEvidenceCandidate(db, {
+          id: x.id,
+          tenantId,
+          accountId: action.accId,
+          matterId: action.oppId,
+          personId: x.personId,
+          signalKey: x.signalKey,
+          direction: x.direction ?? 0,
+          tier: x.tier ?? 'mid',
+          rawContent,
+          occurredAt: x.occurredAt ?? '',
+          source: x.origin ?? 'ai',
+          sourceRef: ctx.sourceRef?.trim()
+            || `${x.origin ?? ctx.channel}:${ctx.requestId ?? x.id}:evidence:${x.id}`,
+          confidence: 0.5,
+          createdByUserId: ctx.actorId,
+        });
+        return;
+      }
       await db.evidenceEvent.create({ data: {
         id: x.id, tenantId, accountId: action.accId, opportunityId: action.oppId, personId: x.personId,
         signalKey: x.signalKey, direction: x.direction ?? 0, tier: x.tier ?? 'mid',
         rawContent: x.rawContent ?? '', occurredAt: x.occurredAt ?? '',
         status: x.status ?? 'approved', origin: x.origin ?? 'manual', // M3：人工直落 approved；机器路径显式 pending_review
+        createdBy: ctx.actorId,
       } });
       return;
     }
     case 'DELETE_EVIDENCE':
+      await assertEvidenceDeletionAllowed(db, { tenantId, id: action.evidenceId });
       await db.evidenceEvent.deleteMany({ where: { id: action.evidenceId, tenantId, accountId: action.accId, opportunityId: action.oppId } });
       return;
 

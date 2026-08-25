@@ -335,7 +335,20 @@ describe('INT-302 safe duplicate Person merge', () => {
         expect.objectContaining({ entityId: tree.targetPersonId }), expect.objectContaining({ entityId: tree.targetPersonId }),
       ]);
       await expect(context.prisma.reminder.findMany({ where: { tenantId: context.tenant.id } })).resolves.toEqual([
+        expect.objectContaining({
+          id: 'reminder-source-success', entityId: tree.targetPersonId, status: 'dismissed',
+          dedupeKey: expect.stringContaining('merge-duplicate:'),
+        }),
         expect.objectContaining({ id: 'reminder-target-success', entityId: tree.targetPersonId, dedupeKey: `${tree.opportunityId}:sentiment_recheck:${tree.targetPersonId}` }),
+      ]);
+      await expect(context.prisma.candidate.findMany({
+        where: {
+          tenantId: context.tenant.id,
+          legacySourceKind: 'Reminder',
+          legacySourceId: 'reminder-source-success',
+        },
+      })).resolves.toEqual([
+        expect.objectContaining({ legacySourceId: 'reminder-source-success', targetId: tree.targetPersonId, status: 'rejected' }),
       ]);
 
       const audits = await context.prisma.auditEvent.findMany({ where: { tenantId: context.tenant.id, action: 'person_merge' } });

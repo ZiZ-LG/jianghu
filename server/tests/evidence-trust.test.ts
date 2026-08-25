@@ -51,6 +51,25 @@ describe('evidence trust boundary', () => {
         .resolves.toMatchObject({ status: 'pending_review', origin: 'recording' });
       await expect(context.prisma.evidenceEvent.findUniqueOrThrow({ where: { id: 'ev-human-direct' } }))
         .resolves.toMatchObject({ status: 'approved', origin: 'manual' });
+      const candidates = await context.prisma.candidate.findMany({
+        where: { tenantId: context.tenant.id, legacySourceKind: 'EvidenceEvent' },
+        orderBy: { legacySourceId: 'asc' },
+      });
+      expect(candidates).toHaveLength(2);
+      expect(candidates.map((candidate) => candidate.legacySourceId)).toEqual([
+        'ev-human-forged', 'ev-machine-forged',
+      ]);
+      for (const candidate of candidates) expect(candidate).toMatchObject({
+        kind: 'evidence_create', status: 'pending', accountId, matterId: opportunityId,
+        targetKind: 'person', targetId: personId, createdByUserId: context.owner.id,
+        visibility: 'private', version: 0,
+      });
+      await expect(applyAction(humanCtx, {
+        type: 'DELETE_EVIDENCE', accId: accountId, oppId: opportunityId,
+        evidenceId: 'ev-machine-forged',
+      })).rejects.toMatchObject({ candidateConflict: true });
+      await expect(context.prisma.evidenceEvent.findUnique({ where: { id: 'ev-machine-forged' } }))
+        .resolves.not.toBeNull();
     } finally {
       await context.cleanup();
     }

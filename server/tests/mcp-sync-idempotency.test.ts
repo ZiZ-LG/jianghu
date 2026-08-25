@@ -512,6 +512,16 @@ describe('WorkBuddy atomic sync bundle', () => {
     expect(await test.prisma.evidenceEvent.findFirstOrThrow({ where: { tenantId: test.tenant.id } }))
       .toMatchObject({ status: 'pending_review', origin: 'mcp', createdBy: test.owner.id });
     expect(await test.prisma.evidenceEvent.count({ where: { tenantId: test.tenant.id } })).toBe(1);
+    await expect(test.prisma.candidate.findFirstOrThrow({ where: {
+      tenantId: test.tenant.id, legacySourceKind: 'EvidenceEvent',
+    } })).resolves.toMatchObject({
+      kind: 'evidence_create', status: 'pending', accountId: 'acc-evidence-sync',
+      matterId: 'opp-evidence-sync', targetKind: 'person', targetId: 'person-evidence-sync',
+      source: 'mcp', createdByUserId: test.owner.id, visibility: 'private', version: 0,
+    });
+    expect(await test.prisma.candidate.count({ where: {
+      tenantId: test.tenant.id, legacySourceKind: 'EvidenceEvent',
+    } })).toBe(1);
   });
 
   it('fails the whole bundle when the tenant pending-candidate capacity is exhausted', async () => {

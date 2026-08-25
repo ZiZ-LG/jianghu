@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { readdir, readFile } from 'node:fs/promises';
+import { join, relative, resolve } from 'node:path';
 import type { CommandContext } from '@jianghu/domain-contracts';
 import { createTestContext, type TestContext } from './helpers/testApp.js';
 import { ingestVoiceText } from '../src/voice.js';
@@ -302,5 +304,52 @@ describe('CORE-202 Candidate producer cutover', () => {
     await expect(test.prisma.relSuggestion.count({ where: { tenantId: test.tenant.id } })).resolves.toBe(1);
     await expect(test.prisma.person.count({ where: { tenantId: test.tenant.id } })).resolves.toBe(2);
     await expect(test.prisma.edge.count({ where: { tenantId: test.tenant.id } })).resolves.toBe(0);
+  });
+});
+
+describe('CORE-203 legacy review-table freeze', () => {
+  async function typescriptFiles(directory: string): Promise<string[]> {
+    const entries = await readdir(directory, { withFileTypes: true });
+    const nested = await Promise.all(entries.map(async (entry) => {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) return typescriptFiles(path);
+      return entry.isFile() && entry.name.endsWith('.ts') ? [path] : [];
+    }));
+    return nested.flat();
+  }
+
+  it('permits legacy review-table writes only inside Candidate helpers plus formal Evidence actions', async () => {
+    const sourceRoot = resolve('src');
+    const files = await typescriptFiles(sourceRoot);
+    const mutation = /\b(personSuggestion|relSuggestion|changeProposal|reminder|evidenceEvent)\.(create|update|updateMany|delete|deleteMany|upsert)\b/g;
+    const allowedHelpers = new Set([
+      'candidates/personRelation.ts',
+      'candidates/reviewItems.ts',
+    ]);
+    const bypasses: string[] = [];
+    for (const path of files) {
+      const name = relative(sourceRoot, path);
+      const contents = await readFile(path, 'utf8');
+      for (const match of contents.matchAll(mutation)) {
+        if (allowedHelpers.has(name)) continue;
+        const operation = `${match[1]}.${match[2]}`;
+        if (name === 'mutate.ts'
+          && (operation === 'evidenceEvent.create' || operation === 'evidenceEvent.deleteMany')) continue;
+        bypasses.push(`${name}:${operation}`);
+      }
+    }
+    expect(bypasses).toEqual([]);
+
+    const suggest = await readFile(join(sourceRoot, 'suggest.ts'), 'utf8');
+    const inboxStart = suggest.indexOf("app.get('/api/inbox'");
+    const inboxEnd = suggest.indexOf("app.post('/api/evidence", inboxStart);
+    expect(inboxStart).toBeGreaterThanOrEqual(0);
+    expect(inboxEnd).toBeGreaterThan(inboxStart);
+    const inboxSource = suggest.slice(inboxStart, inboxEnd);
+    for (const legacyModel of [
+      'personSuggestion', 'relSuggestion', 'changeProposal', 'reminder', 'evidenceEvent',
+    ]) expect(inboxSource).not.toContain(`prisma.${legacyModel}`);
+    expect(inboxSource).toContain('prisma.candidate.findMany');
+    expect(inboxSource).toContain('CANDIDATE_BACKFILL_MARKER');
   });
 });

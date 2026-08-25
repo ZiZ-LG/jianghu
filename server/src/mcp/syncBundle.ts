@@ -18,6 +18,7 @@ import {
   personCandidateDedupeKey,
   relationCandidateDedupeKey,
 } from '../candidates/personRelation.js';
+import { createEvidenceCandidate } from '../candidates/reviewItems.js';
 
 const OPAQUE_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:#/-]*$/;
 const OpaqueRefSchema = z.string().trim().min(1).max(80).regex(OPAQUE_REF_PATTERN, 'ref must be an opaque identifier without names or free text');
@@ -466,12 +467,22 @@ async function executeBundle(
   for (const evidence of input.bundle.evidences) {
     const person = await db.person.findFirst({ where: { id: evidence.personId, tenantId: ctx.tenantId, accountId: account.id, ...activePersonWhere } });
     if (!person) throw new Error(`evidence ${evidence.ref} person is outside the account`);
-    await db.evidenceEvent.create({ data: {
-      id: 'ev_' + randomUUID().replaceAll('-', ''), tenantId: ctx.tenantId, accountId: account.id,
-      opportunityId: opportunity!.id, personId: person.id, signalKey: evidence.signalKey,
-      direction: evidence.direction, tier: evidence.tier, rawContent: evidence.rawContent,
-      occurredAt: evidence.occurredAt, status: 'pending_review', origin: 'mcp', createdBy: ctx.actorId,
-    } });
+    await createEvidenceCandidate(db, {
+      id: 'ev_' + randomUUID().replaceAll('-', ''),
+      tenantId: ctx.tenantId,
+      accountId: account.id,
+      matterId: opportunity!.id,
+      personId: person.id,
+      signalKey: evidence.signalKey,
+      direction: evidence.direction,
+      tier: evidence.tier,
+      rawContent: evidence.rawContent || 'MCP 同步未提供证据原文，必须由人工核实',
+      occurredAt: evidence.occurredAt,
+      source: 'mcp',
+      sourceRef: `mcp-sync:${syncRunId}:evidence:${evidence.ref}`,
+      confidence: 0.5,
+      createdByUserId: ctx.actorId,
+    });
     receipt.proposed.push(`evidence:${evidence.ref}`);
   }
   fault(options, 4);

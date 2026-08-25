@@ -275,6 +275,7 @@ let pdeDecisionContextExpansionRequired = false;
 let pdeDecisionContextBackfillRequired = false;
 let customerExpansionRequired = false;
 let candidateExpansionRequired = false;
+let candidateBackfillRequired = false;
 
 try {
   state = await inspectSchemaState(prisma);
@@ -312,11 +313,17 @@ try {
   }
   customerExpansionRequired = customerState === 'uninitialized' || customerState === 'legacy';
   candidateExpansionRequired = candidateState === 'uninitialized' || candidateState === 'legacy';
+  candidateBackfillRequired = candidateState !== 'expanded';
   if (candidateState === 'legacy') {
     run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:candidate-report'], url);
-    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:candidate-verify'], url);
   } else if (candidateState === 'expanded') {
-    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:candidate-verify'], url);
+    const marker = await prisma.dataMigrationState.findUnique({
+      where: { key: 'CORE-203-candidate-backfill-v1' }, select: { key: true },
+    });
+    candidateBackfillRequired = !marker;
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
+      'run', marker ? 'migrate:candidate-verify' : 'migrate:candidate-report',
+    ], url);
   }
   if (state === 'legacy') {
     run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-matter-fields.ts', '--dry-run'], url);
@@ -408,7 +415,7 @@ try {
     }
   }
   schemaChanges = state === 'uninitialized' ? true : schemaHasChanges(url);
-  if (state !== 'uninitialized' && (schemaChanges || matterBackfillRequired || participantBackfillRequired || commitmentBackfillRequired || methodologyExpansionRequired || methodologyDataExpansionRequired || pdeDecisionContextExpansionRequired || pdeDecisionContextBackfillRequired || customerExpansionRequired || candidateExpansionRequired)) {
+  if (state !== 'uninitialized' && (schemaChanges || matterBackfillRequired || participantBackfillRequired || commitmentBackfillRequired || methodologyExpansionRequired || methodologyDataExpansionRequired || pdeDecisionContextExpansionRequired || pdeDecisionContextBackfillRequired || customerExpansionRequired || candidateExpansionRequired || candidateBackfillRequired)) {
     backupPath = await createConsistentBackup(prisma, databasePath);
   }
 } finally {
@@ -454,6 +461,9 @@ if (pdeDecisionContextBackfillRequired) {
   run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-pde-decision-context.ts', '--apply'], url);
 }
 run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-pde-decision-context.ts', '--verify'], url);
+if (candidateBackfillRequired) {
+  run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:candidate-apply'], url);
+}
 run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:candidate-verify'], url);
 
 console.log(JSON.stringify({
@@ -476,5 +486,6 @@ console.log(JSON.stringify({
   pdeDecisionContextBackfillRequired,
   customerExpansionRequired,
   candidateExpansionRequired,
+  candidateBackfillRequired,
   backupPath,
 }, null, 2));

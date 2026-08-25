@@ -428,6 +428,7 @@ async function createCandidateForPerson(
     dedupeKey: scope.dedupeKey,
     legacySourceKind: PERSON_SOURCE_KIND,
     legacySourceId: row.id,
+    createdAt: row.createdAt,
   } });
 }
 
@@ -471,6 +472,7 @@ async function ensurePersonCandidate(
     dedupeKey: options.dedupeKey ?? identity.dedupeKey,
     legacySourceKind: PERSON_SOURCE_KIND,
     legacySourceId: row.id,
+    createdAt: row.createdAt,
   } });
 }
 
@@ -512,6 +514,7 @@ async function createCandidateForRelation(
     dedupeKey: scope.dedupeKey,
     legacySourceKind: REL_SOURCE_KIND,
     legacySourceId: row.id,
+    createdAt: row.createdAt,
   } });
 }
 

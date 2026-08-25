@@ -32,6 +32,7 @@
     "migrate:pde-context-apply": "tsx scripts/migrate-pde-decision-context.ts --apply",
     "migrate:pde-context-verify": "tsx scripts/migrate-pde-decision-context.ts --verify",
     "migrate:candidate-report": "tsx scripts/migrate-candidates.ts --dry-run",
+    "migrate:candidate-apply": "tsx scripts/migrate-candidates.ts --apply",
     "migrate:candidate-verify": "tsx scripts/migrate-candidates.ts --verify",
     "migrate:matter-owner-report": "tsx scripts/report-matter-owner-suggestions.ts",
     "migrate:wecom-bind-report": "tsx scripts/report-wecom-bind-conflicts.ts",

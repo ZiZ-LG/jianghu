@@ -532,7 +532,7 @@ describe('PostgreSQL schema delivery', () => {
     expect(integrationDrill).not.toContain('for path in prisma/postgres/migrations/*; do');
   });
 
-  it('delivers CORE-201 Candidate as one portable, atomic, read-only foundation expansion', async () => {
+  it('keeps the CORE-201 schema expansion portable and adds the CORE-203 versioned data cutover', async () => {
     const sqliteSchema = await read('prisma/schema.prisma');
     const postgresSchema = await read('prisma/postgres/schema.prisma');
     const preCandidateSchema = await read('prisma/postgres/legacy/20260824_pre_core201.prisma').catch(() => '');
@@ -596,13 +596,16 @@ describe('PostgreSQL schema delivery', () => {
     expect(packageJson.scripts?.['migrate:candidate-verify']).toBe(
       'tsx scripts/migrate-candidates.ts --verify',
     );
-    expect(packageJson.scripts?.['migrate:candidate-apply']).toBeUndefined();
+    expect(packageJson.scripts?.['migrate:candidate-apply']).toBe(
+      'tsx scripts/migrate-candidates.ts --apply',
+    );
     expect(deployScript).toContain('CANDIDATE_MIGRATION=20260824000000_expand_candidate_foundation');
     expect(deployScript).toContain('PRE_CANDIDATE_SCHEMA=prisma/postgres/legacy/20260824_pre_core201.prisma');
     expect(deployScript).toContain('recover_incomplete_candidate_migration');
     expect(deployScript).toContain('adopt_existing_candidate_schema_if_safe');
     expect(deployScript).toContain('postgres-candidate-schema-state.ts');
     expect(deployScript).toContain('npm run migrate:candidate-report');
+    expect(deployScript).toContain('npm run migrate:candidate-apply');
     expect(deployScript).toContain('npm run migrate:candidate-verify');
     expect(deployScript).toContain('uninitialized|legacy) return 0 ;;');
     expect(schemaState).toContain("process.stdout.write('uninitialized')");
@@ -613,5 +616,7 @@ describe('PostgreSQL schema delivery', () => {
     expect(schemaState).toContain('FROM pg_constraint AS candidate_constraint');
     expect(sqliteUpgrade).toContain('inspectCandidateSchemaState');
     expect(sqliteUpgrade).toContain('partial Candidate foundation detected');
+    expect(sqliteUpgrade).toContain('candidateBackfillRequired');
+    expect(sqliteUpgrade).toContain("['run', 'migrate:candidate-apply']");
   });
 });

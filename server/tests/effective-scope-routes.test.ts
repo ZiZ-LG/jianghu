@@ -6,6 +6,7 @@ import { handleMcpBody } from '../src/mcpServer.js';
 import { computePde } from '../src/pde/routes.js';
 import { createTestContext, type TestContext } from './helpers/testApp.js';
 import { internalProductPolicy } from './helpers/productPolicy.js';
+import { applyCandidateMigration } from '../src/candidates/migration.js';
 
 function auth(token: string) {
   return { authorization: `Bearer ${token}` };
@@ -196,16 +197,16 @@ describe('CORE-109 effective scope parity across read surfaces', () => {
         { id: 'scope-routes-rel-hidden', tenantId, opportunityId: hiddenMatterId, sourcePersonId: hiddenPersonId, targetPersonId: hiddenPersonId, layer: 'L3', label: 'PENDING_HIDDEN_REL_SECRET' },
       ] });
       await context.prisma.changeProposal.createMany({ data: [
-        { id: 'scope-routes-proposal-full', tenantId, accountId: fullAccountId, entityKind: 'account', entityId: fullAccountId, field: 'name', newValue: 'PROPOSAL_FULL_VISIBLE' },
+        { id: 'scope-routes-proposal-full', tenantId, accountId: fullAccountId, entityKind: 'person', entityId: fullPersonId, field: 'name', newValue: 'PROPOSAL_FULL_VISIBLE' },
         { id: 'scope-routes-proposal-direct', tenantId, accountId: partialAccountId, opportunityId: directMatterId, entityKind: 'opportunity', entityId: directMatterId, field: 'name', newValue: 'PROPOSAL_DIRECT_VISIBLE' },
         { id: 'scope-routes-proposal-hidden', tenantId, accountId: partialAccountId, opportunityId: hiddenMatterId, entityKind: 'opportunity', entityId: hiddenMatterId, field: 'name', newValue: 'PROPOSAL_HIDDEN_SECRET' },
-        { id: 'scope-routes-proposal-partial', tenantId, accountId: partialAccountId, entityKind: 'account', entityId: partialAccountId, field: 'name', newValue: 'PROPOSAL_PARTIAL_ACCOUNT_SECRET' },
+        { id: 'scope-routes-proposal-partial', tenantId, accountId: partialAccountId, entityKind: 'person', entityId: directPersonId, field: 'name', newValue: 'PROPOSAL_PARTIAL_ACCOUNT_SECRET' },
       ] });
       await context.prisma.reminder.createMany({ data: [
-        { id: 'scope-routes-reminder-full', tenantId, accountId: fullAccountId, accountName: 'FULL_ACCOUNT_VISIBLE', kind: 'stalled', title: 'REMINDER_FULL_VISIBLE', dedupeKey: 'scope-routes-reminder-full' },
+        { id: 'scope-routes-reminder-full', tenantId, accountId: fullAccountId, accountName: 'FULL_ACCOUNT_VISIBLE', opportunityId: fullMatterId, oppName: 'FULL_MATTER_VISIBLE', kind: 'stalled', title: 'REMINDER_FULL_VISIBLE', dedupeKey: 'scope-routes-reminder-full' },
         { id: 'scope-routes-reminder-direct', tenantId, accountId: partialAccountId, accountName: 'PARTIAL_ACCOUNT_HEADER', opportunityId: directMatterId, oppName: 'DIRECT_MATTER_VISIBLE', kind: 'stalled', title: 'REMINDER_DIRECT_VISIBLE', dedupeKey: 'scope-routes-reminder-direct' },
         { id: 'scope-routes-reminder-hidden', tenantId, accountId: partialAccountId, accountName: 'PARTIAL_ACCOUNT_HEADER', opportunityId: hiddenMatterId, oppName: 'HIDDEN_MATTER_SECRET', kind: 'stalled', title: 'REMINDER_HIDDEN_SECRET', dedupeKey: 'scope-routes-reminder-hidden' },
-        { id: 'scope-routes-reminder-partial', tenantId, accountId: partialAccountId, accountName: 'PARTIAL_ACCOUNT_HEADER', kind: 'stalled', title: 'REMINDER_PARTIAL_ACCOUNT_SECRET', dedupeKey: 'scope-routes-reminder-partial' },
+        { id: 'scope-routes-reminder-partial', tenantId, accountId: partialAccountId, accountName: 'PARTIAL_ACCOUNT_HEADER', opportunityId: hiddenMatterId, oppName: 'HIDDEN_MATTER_SECRET', kind: 'stalled', title: 'REMINDER_PARTIAL_ACCOUNT_SECRET', dedupeKey: 'scope-routes-reminder-partial' },
       ] });
       await context.prisma.evidenceEvent.createMany({ data: [
         { id: 'scope-routes-evidence-direct', tenantId, accountId: partialAccountId, opportunityId: directMatterId, personId: directPersonId, signalKey: 'scope-direct', rawContent: 'EVIDENCE_DIRECT_VISIBLE', status: 'pending_review' },
@@ -280,6 +281,7 @@ describe('CORE-109 effective scope parity across read surfaces', () => {
         url: `/api/curated?entityKind=account&entityId=${partialAccountId}`,
       }, 404);
 
+      await applyCandidateMigration(context.prisma);
       const inbox = await expectStatus(context, actor.token, { url: '/api/inbox' }, 200);
       const inboxJson = inbox.body;
       for (const visible of ['PENDING_FULL_PERSON_VISIBLE', 'PENDING_DIRECT_REL_VISIBLE', 'PROPOSAL_FULL_VISIBLE', 'PROPOSAL_DIRECT_VISIBLE', 'REMINDER_FULL_VISIBLE', 'REMINDER_DIRECT_VISIBLE', 'EVIDENCE_DIRECT_VISIBLE']) {
