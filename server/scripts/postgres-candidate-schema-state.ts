@@ -5,7 +5,7 @@ type ColumnRow = { column_name: string; data_type: string; is_nullable: 'YES' | 
 type IndexRow = { indexname: string };
 type ConstraintRow = { contype: string; definition: string };
 
-const expectedColumns = new Map<string, { type: string; nullable: 'YES' | 'NO' }>([
+const expectedBaseColumns = new Map<string, { type: string; nullable: 'YES' | 'NO' }>([
   ['id', { type: 'text', nullable: 'NO' }],
   ['tenantId', { type: 'text', nullable: 'NO' }],
   ['kind', { type: 'text', nullable: 'NO' }],
@@ -34,7 +34,10 @@ const expectedColumns = new Map<string, { type: string; nullable: 'YES' | 'NO' }
   ['updatedAt', { type: 'timestamp without time zone', nullable: 'NO' }],
 ]);
 
-const expectedIndexes = new Set([
+const expectedAclColumns = new Map(expectedBaseColumns);
+expectedAclColumns.set('aclVersion', { type: 'integer', nullable: 'NO' });
+
+const expectedBaseIndexes = new Set([
   'Candidate_pkey',
   'Candidate_tenantId_status_createdAt_idx',
   'Candidate_tenantId_accountId_status_createdAt_idx',
@@ -45,6 +48,9 @@ const expectedIndexes = new Set([
   'Candidate_tenantId_dedupeKey_key',
   'Candidate_tenantId_legacySourceKind_legacySourceId_key',
 ]);
+
+const expectedAclIndexes = new Set(expectedBaseIndexes);
+expectedAclIndexes.add('Candidate_tenantId_visibility_aclVersion_idx');
 
 try {
   const tables = await prisma.$queryRawUnsafe<TableRow[]>(`
@@ -83,13 +89,23 @@ try {
         ORDER BY candidate_constraint.conname
       `),
     ]);
-    const columnsMatch = columns.length === expectedColumns.size
+    const expectedColumns = columns.length === expectedBaseColumns.size
+      ? expectedBaseColumns
+      : columns.length === expectedAclColumns.size
+        ? expectedAclColumns
+        : null;
+    const columnsMatch = expectedColumns !== null
       && columns.every((column) => {
         const expected = expectedColumns.get(column.column_name);
         return expected?.type === column.data_type && expected.nullable === column.is_nullable;
       });
     const indexNames = new Set(indexes.map((row) => row.indexname));
-    const indexesMatch = indexNames.size === expectedIndexes.size
+    const expectedIndexes = indexNames.size === expectedBaseIndexes.size
+      ? expectedBaseIndexes
+      : indexNames.size === expectedAclIndexes.size
+        ? expectedAclIndexes
+        : null;
+    const indexesMatch = expectedIndexes !== null
       && [...expectedIndexes].every((name) => indexNames.has(name));
     const primaryKeyMatches = constraints.some((row) => row.contype === 'p' && row.definition === 'PRIMARY KEY (id)');
     const tenantForeignKeyMatches = constraints.some((row) =>

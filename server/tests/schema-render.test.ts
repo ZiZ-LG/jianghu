@@ -619,4 +619,91 @@ describe('PostgreSQL schema delivery', () => {
     expect(sqliteUpgrade).toContain('candidateBackfillRequired');
     expect(sqliteUpgrade).toContain("['run', 'migrate:candidate-apply']");
   });
+
+  it('delivers CORE-204 sensitive creator/share ACL as an expand-only dual-database cutover', async () => {
+    const sqliteSchema = await read('prisma/schema.prisma');
+    const postgresSchema = await read('prisma/postgres/schema.prisma');
+    const preAclSchema = await read('prisma/postgres/legacy/20260825_pre_core204.prisma');
+    const migration = await read(
+      'prisma/postgres/migrations/20260825000000_expand_sensitive_resource_acl/migration.sql',
+    );
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const sqliteUpgrade = await read('scripts/upgrade-sqlite-schema.ts');
+    const aclState = await read('scripts/postgres-sensitive-acl-schema-state.ts');
+    const candidateState = await read('scripts/postgres-candidate-schema-state.ts');
+    const migrationCli = await read('scripts/migrate-sensitive-acl.ts');
+    const packageJson = JSON.parse(await read('package.json')) as { scripts?: Record<string, string> };
+
+    for (const schema of [sqliteSchema, postgresSchema]) {
+      expect(schema).toMatch(/model SourceArtifact \{[\s\S]*?createdByUserId\s+String\?/);
+      expect(schema).toMatch(/model SourceArtifact \{[\s\S]*?visibility\s+String\s+@default\("owner_admin_only"\)/);
+      expect(schema).toMatch(/model SourceArtifact \{[\s\S]*?aclVersion\s+Int\s+@default\(1\)/);
+      expect(schema).toMatch(/model SensitiveResourceGrant \{[\s\S]*?resourceAclVersion\s+Int/);
+      expect(schema).toMatch(/model Note \{[\s\S]*?createdByUserId\s+String\?[\s\S]*?visibility\s+String[\s\S]*?aclVersion\s+Int/);
+      expect(schema).toMatch(/model Transcript \{[\s\S]*?createdByUserId\s+String\?[\s\S]*?visibility\s+String[\s\S]*?aclVersion\s+Int/);
+      expect(schema).toMatch(/model Transcript \{[\s\S]*?idempotencyDomain\s+String\s+@default\("system-quarantine-v1"\)/);
+      expect(schema).toContain('@@unique([tenantId, idempotencyDomain, source, externalRef])');
+      expect(schema).toMatch(/model Candidate \{[\s\S]*?aclVersion\s+Int\s+@default\(1\)/);
+      expect(schema).not.toMatch(/^enum\s+/m);
+      expect(schema).not.toMatch(/^\s*\w+\s+Json[?\[\]]*/m);
+    }
+    expect(preAclSchema).toContain('model Candidate');
+    expect(preAclSchema).not.toContain('model SourceArtifact');
+    expect(preAclSchema).not.toContain('model SensitiveResourceGrant');
+    expect(preAclSchema).not.toMatch(/model Candidate \{[^}]*aclVersion/);
+    expect(preAclSchema).not.toContain('idempotencyDomain');
+    expect(preAclSchema).toContain('@@unique([tenantId, source, externalRef])');
+
+    expect(migration.trimStart().startsWith('BEGIN;')).toBe(true);
+    expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(migration).toContain("SET LOCAL lock_timeout = '30s'");
+    expect(migration).toContain("SET LOCAL statement_timeout = '15min'");
+    expect(migration).toContain('LOCK TABLE "Candidate", "Note", "Transcript"');
+    expect(migration.indexOf('sensitive ACL columns partially exist'))
+      .toBeLessThan(migration.indexOf('ALTER TABLE "Candidate"'));
+    expect(migration).toContain('CREATE TABLE "SourceArtifact"');
+    expect(migration).toContain('CREATE TABLE "SensitiveResourceGrant"');
+    expect(migration).toContain('ADD COLUMN "idempotencyDomain" TEXT NOT NULL DEFAULT \'system-quarantine-v1\'');
+    expect(migration).toContain('DROP INDEX "Transcript_tenantId_source_externalRef_key"');
+    expect(migration).toContain('CREATE UNIQUE INDEX "Transcript_tenantId_idempotencyDomain_source_externalRef_key"');
+    expect(migration).toContain('FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id")');
+    expect(migration).toContain('sensitive ACL expansion parity failed');
+    expect(migration).not.toMatch(/(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+"(?:Note|Transcript|Candidate)"/i);
+
+    expect(packageJson.scripts?.['migrate:sensitive-acl-report'])
+      .toBe('tsx scripts/migrate-sensitive-acl.ts --dry-run');
+    expect(packageJson.scripts?.['migrate:sensitive-acl-apply'])
+      .toBe('tsx scripts/migrate-sensitive-acl.ts --apply');
+    expect(packageJson.scripts?.['migrate:sensitive-acl-verify'])
+      .toBe('tsx scripts/migrate-sensitive-acl.ts --verify');
+    expect(migrationCli).toContain('reportSensitiveAclMigration');
+    expect(migrationCli).toContain('applySensitiveAclMigration');
+    expect(migrationCli).toContain('verifySensitiveAclMigration');
+    expect(migrationCli).not.toContain('contentEnc');
+    expect(migrationCli).not.toContain('payload');
+
+    expect(deployScript).toContain('PRE_SENSITIVE_SCHEMA=prisma/postgres/legacy/20260825_pre_core204.prisma');
+    expect(deployScript).toContain('SENSITIVE_ACL_MIGRATION=20260825000000_expand_sensitive_resource_acl');
+    expect(deployScript).toContain('recover_incomplete_sensitive_acl_migration');
+    expect(deployScript).toContain('adopt_existing_sensitive_acl_schema_if_safe');
+    expect(deployScript).toContain('postgres-sensitive-acl-schema-state.ts');
+    expect(deployScript.lastIndexOf('npm run migrate:sensitive-acl-report'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:sensitive-acl-apply'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:sensitive-acl-verify'))
+      .toBeGreaterThan(deployScript.lastIndexOf('npm run migrate:sensitive-acl-apply'));
+    for (const state of ['uninitialized', 'legacy', 'partial']) {
+      expect(aclState).toContain(`process.stdout.write('${state}')`);
+    }
+    expect(aclState).toContain("'expanded'");
+    expect(aclState).toContain('Transcript.idempotencyDomain');
+    expect(aclState).toContain('Transcript_tenantId_idempotencyDomain_source_externalRef_key');
+    expect(candidateState).toContain('expectedBaseColumns');
+    expect(candidateState).toContain('expectedAclColumns');
+    expect(sqliteUpgrade).toContain('inspectSensitiveAclSchemaState');
+    expect(sqliteUpgrade).toContain('partial sensitive resource ACL expansion detected');
+    expect(sqliteUpgrade).toContain("['run', 'migrate:sensitive-acl-apply']");
+    expect(sqliteUpgrade).toContain("['run', 'migrate:sensitive-acl-verify']");
+  });
 });

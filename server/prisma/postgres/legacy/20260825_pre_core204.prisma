@@ -5,7 +5,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -24,8 +24,6 @@ model Tenant {
   qccConfig          QccConfig?
   wecomConfig        WeComConfig?
   candidates         Candidate[]
-  sourceArtifacts    SourceArtifact[]
-  sensitiveGrants    SensitiveResourceGrant[]
 }
 
 // 工作区自配的企查查 OpenAPI 凭证（BYO-key）。secretKey 加密存储。
@@ -632,8 +630,7 @@ model Candidate {
   sourceArtifactId String?
   reviewBatchId    String?
   createdByUserId  String?
-  visibility       String   @default("owner_admin_only")
-  aclVersion       Int      @default(1)
+  visibility       String   @default("private")
   dedupeKey        String
   legacySourceKind String?
   legacySourceId   String?
@@ -649,51 +646,6 @@ model Candidate {
   @@index([tenantId, sourceArtifactId])
   @@index([tenantId, reviewBatchId])
   @@index([tenantId, createdByUserId, visibility])
-  @@index([tenantId, visibility, aclVersion])
-}
-
-// G4 敏感来源基座。CORE-204 只建立 ACL-ready 物理模型；产品导入、投影与挂载 API 由 SAAS-201 开放。
-model SourceArtifact {
-  id              String   @id
-  tenantId        String
-  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  accountId       String?
-  matterId        String?
-  personId        String?
-  backingKind     String
-  backingId       String
-  createdByUserId String?
-  visibility      String   @default("owner_admin_only")
-  aclVersion      Int      @default(1)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  @@unique([tenantId, backingKind, backingId])
-  @@index([tenantId, accountId])
-  @@index([tenantId, matterId])
-  @@index([tenantId, personId])
-  @@index([tenantId, createdByUserId, visibility])
-  @@index([tenantId, visibility, aclVersion])
-}
-
-// 显式敏感资源授权。正文、证据和密文绝不复制到授权记录；resourceAclVersion 绑定当前 ACL 世代。
-model SensitiveResourceGrant {
-  id                 String    @id
-  tenantId           String
-  tenant             Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  resourceKind       String
-  resourceId         String
-  granteeUserId      String
-  grantedByUserId    String
-  grantKind          String
-  resourceAclVersion Int
-  grantedAt          DateTime  @default(now())
-  revokedAt          DateTime?
-  revokedByUserId    String?
-
-  @@unique([tenantId, resourceKind, resourceId, granteeUserId, grantKind])
-  @@index([tenantId, resourceKind, resourceId, resourceAclVersion])
-  @@index([tenantId, granteeUserId, grantKind, revokedAt])
 }
 
 // WorkBuddy 原子同步执行记录：保存非敏感引用回执，支持同 key 安全重放。
@@ -906,9 +858,6 @@ model Note {
   source        String   @default("manual") // 来源溯源：manual/voice/ai/import
   tags          String   @default("[]") // JSON 字符串数组(跨库可移植，不用原生 array)
   createdBy     String   @default("")
-  createdByUserId String?
-  visibility    String   @default("owner_admin_only")
-  aclVersion    Int      @default(1)
   createdAt     DateTime @default(now())
 
   @@index([accountId])
@@ -917,8 +866,6 @@ model Note {
   @@index([tenantId, accountId])
   @@index([tenantId, opportunityId])
   @@index([tenantId, personId])
-  @@index([tenantId, createdByUserId, visibility])
-  @@index([tenantId, visibility, aclVersion])
 }
 
 // 商机策划 · 行动计划（🎯）。与 Account 不建 relation，state.ts 按 accountId 挂载（同 VisitNote）。
@@ -1178,7 +1125,6 @@ model Transcript {
   personId      String?
   source        String    @default("mock") // 录音源：getnote(得到大脑) | feishu | dingtalk | manual | mock
   externalRef   String? // 外部录音/笔记 id（幂等去重，避免重复拉取；空=本地/mock 不去重）
-  idempotencyDomain String @default("system-quarantine-v1") // creator-private 或 system quarantine；分享时保持不变
   title         String    @default("") // 录音/会议标题（非隐私，可明文，列表展示用）
   contentEnc    String    @default("") // 转写全文密文（AES-256-GCM base64）—— PIPL 加密，绝不明文落库
   durationSec   Int       @default(0) // 录音时长（秒，溯源）
@@ -1186,16 +1132,11 @@ model Transcript {
   status        String    @default("active") // active(待抽取) | extracted(已抽取) | redacted(原文已降解/删除)
   extractedAt   DateTime? // 抽取时间（用完即可降解原文）
   createdBy     String    @default("") // 拉取/导入者 userId（溯源：谁）
-  createdByUserId String?
-  visibility    String    @default("owner_admin_only")
-  aclVersion    Int       @default(1)
   createdAt     DateTime  @default(now())
 
-  @@unique([tenantId, idempotencyDomain, source, externalRef]) // 同 ACL creator 域幂等；externalRef=NULL 时不约束多行
+  @@unique([tenantId, source, externalRef]) // 同租户同源同外部id 幂等（externalRef 为 NULL 时 distinct，不约束多行）
   @@index([tenantId, status])
   @@index([accountId])
-  @@index([tenantId, createdByUserId, visibility])
-  @@index([tenantId, visibility, aclVersion])
 }
 
 // ── 录音源凭据（P2-b · BYO + OAuth）─────────────────────────────────────

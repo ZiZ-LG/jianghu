@@ -68,7 +68,7 @@ async function stateIds(context: TestContext, token: string) {
 }
 
 async function expectStatus(context: TestContext, token: string, input: {
-  method?: 'GET' | 'POST';
+  method?: 'GET' | 'POST' | 'PUT';
   url: string;
   payload?: unknown;
 }, status: number): Promise<any> {
@@ -213,10 +213,10 @@ describe('CORE-109 effective scope parity across read surfaces', () => {
         { id: 'scope-routes-evidence-hidden', tenantId, accountId: partialAccountId, opportunityId: hiddenMatterId, personId: hiddenPersonId, signalKey: 'scope-hidden', rawContent: 'EVIDENCE_HIDDEN_SECRET', status: 'pending_review' },
       ] });
       await context.prisma.transcript.createMany({ data: [
-        { id: 'scope-routes-transcript-full', tenantId, accountId: fullAccountId, title: 'TRANSCRIPT_FULL_VISIBLE', contentEnc: 'cipher' },
-        { id: 'scope-routes-transcript-direct', tenantId, accountId: partialAccountId, opportunityId: directMatterId, title: 'TRANSCRIPT_DIRECT_VISIBLE', contentEnc: 'cipher' },
-        { id: 'scope-routes-transcript-hidden', tenantId, accountId: partialAccountId, opportunityId: hiddenMatterId, title: 'TRANSCRIPT_HIDDEN_SECRET', contentEnc: 'cipher' },
-        { id: 'scope-routes-transcript-partial', tenantId, accountId: partialAccountId, title: 'TRANSCRIPT_PARTIAL_ACCOUNT_SECRET', contentEnc: 'cipher' },
+        { id: 'scope-routes-transcript-full', tenantId, accountId: fullAccountId, title: 'TRANSCRIPT_FULL_VISIBLE', contentEnc: 'cipher', createdByUserId: actor.user.id, visibility: 'private' },
+        { id: 'scope-routes-transcript-direct', tenantId, accountId: partialAccountId, opportunityId: directMatterId, title: 'TRANSCRIPT_DIRECT_VISIBLE', contentEnc: 'cipher', createdByUserId: actor.user.id, visibility: 'private' },
+        { id: 'scope-routes-transcript-hidden', tenantId, accountId: partialAccountId, opportunityId: hiddenMatterId, title: 'TRANSCRIPT_HIDDEN_SECRET', contentEnc: 'cipher', createdByUserId: actor.user.id, visibility: 'private' },
+        { id: 'scope-routes-transcript-partial', tenantId, accountId: partialAccountId, title: 'TRANSCRIPT_PARTIAL_ACCOUNT_SECRET', contentEnc: 'cipher', createdByUserId: actor.user.id, visibility: 'private' },
       ] });
       await context.prisma.enrichJob.createMany({ data: [
         { id: 'scope-routes-job-full', tenantId, accountId: fullAccountId, type: 'enrich_account', status: 'done', result: 'JOB_FULL_VISIBLE' },
@@ -224,6 +224,22 @@ describe('CORE-109 effective scope parity across read surfaces', () => {
         { id: 'scope-routes-job-hidden', tenantId, accountId: partialAccountId, opportunityId: hiddenMatterId, type: 'suggest_relations', status: 'done', result: 'JOB_HIDDEN_SECRET' },
         { id: 'scope-routes-job-partial', tenantId, accountId: partialAccountId, type: 'enrich_account', status: 'done', result: 'JOB_PARTIAL_ACCOUNT_SECRET' },
       ] });
+      await applyCandidateMigration(context.prisma);
+      await context.prisma.candidate.updateMany({
+        where: {
+          tenantId,
+          legacySourceId: { in: [
+            'scope-routes-person-suggestion-full',
+            'scope-routes-rel-direct',
+            'scope-routes-proposal-full',
+            'scope-routes-proposal-direct',
+            'scope-routes-reminder-full',
+            'scope-routes-reminder-direct',
+            'scope-routes-evidence-direct',
+          ] },
+        },
+        data: { createdByUserId: actor.user.id, visibility: 'private' },
+      });
 
       expect(await stateIds(context, actor.token)).toEqual({
         accountIds: [fullAccountId, partialAccountId],
@@ -238,9 +254,56 @@ describe('CORE-109 effective scope parity across read surfaces', () => {
       expect(toolResult(await callTool(ctx, 3, 'get_account_detail', { accountId: partialAccountId }))).toMatchObject({ isError: true });
       expect(toolResult(await callTool(ctx, 4, 'get_win_tendency', { opportunityId: directMatterId }))?.isError).not.toBe(true);
       expect(toolResult(await callTool(ctx, 5, 'get_win_tendency', { opportunityId: hiddenMatterId }))).toMatchObject({ isError: true });
-      const pending = toolJson<{ pendingPersons: Array<{ id: string }>; pendingRelationships: Array<{ id: string }> }>(await callTool(ctx, 6, 'list_pending'));
+      const pendingResponse = await callTool(ctx, 6, 'list_pending');
+      expect(toolResult(pendingResponse), JSON.stringify(toolResult(pendingResponse))).not.toMatchObject({ isError: true });
+      const pending = toolJson<{ pendingPersons: Array<{ id: string }>; pendingRelationships: Array<{ id: string }> }>(pendingResponse);
       expect(pending.pendingPersons.map((row) => row.id)).toEqual(['scope-routes-person-suggestion-full']);
       expect(pending.pendingRelationships.map((row) => row.id)).toEqual(['scope-routes-rel-direct']);
+
+      const candidateCountBeforeDeniedProducers = await context.prisma.candidate.count({ where: { tenantId } });
+      const hiddenPersonProposal = toolResult(await callTool(ctx, 61, 'propose_person', {
+        accountId: partialAccountId,
+        opportunityId: hiddenMatterId,
+        name: 'HIDDEN_PROPOSAL_NAME',
+        evidence: 'must not inspect hidden graph',
+      }));
+      const missingPersonProposal = toolResult(await callTool(ctx, 62, 'propose_person', {
+        accountId: 'missing-account',
+        opportunityId: 'missing-matter',
+        name: 'MISSING_PROPOSAL_NAME',
+        evidence: 'missing graph',
+      }));
+      expect(hiddenPersonProposal).toMatchObject({ isError: true });
+      expect(hiddenPersonProposal).toEqual(missingPersonProposal);
+      const hiddenRelationProposal = toolResult(await callTool(ctx, 63, 'propose_relationship', {
+        opportunityId: hiddenMatterId,
+        source: { kind: 'person', id: hiddenPersonId },
+        target: { kind: 'person', id: directPersonId },
+        evidence: 'must not inspect hidden endpoints',
+      }));
+      const missingRelationProposal = toolResult(await callTool(ctx, 64, 'propose_relationship', {
+        opportunityId: 'missing-matter',
+        source: { kind: 'person', id: 'missing-source' },
+        target: { kind: 'person', id: 'missing-target' },
+        evidence: 'missing endpoints',
+      }));
+      expect(hiddenRelationProposal).toMatchObject({ isError: true });
+      expect(hiddenRelationProposal).toEqual(missingRelationProposal);
+
+      const jobsBeforeDeniedProducers = await context.prisma.enrichJob.count({ where: { tenantId } });
+      await expectStatus(context, actor.token, {
+        method: 'POST', url: '/api/suggest/generate', payload: { opportunityId: hiddenMatterId },
+      }, 404);
+      await expectStatus(context, actor.token, {
+        method: 'POST', url: '/api/suggest/enqueue', payload: { opportunityId: hiddenMatterId },
+      }, 404);
+      await expectStatus(context, actor.token, {
+        method: 'POST', url: '/api/enrich/enqueue', payload: { accountId: partialAccountId, mode: 'auto' },
+      }, 404);
+      expect(await context.prisma.candidate.count({ where: { tenantId } }))
+        .toBe(candidateCountBeforeDeniedProducers);
+      expect(await context.prisma.enrichJob.count({ where: { tenantId } }))
+        .toBe(jobsBeforeDeniedProducers);
 
       const directManifest = await expectStatus(context, actor.token, {
         method: 'POST', url: '/api/ai/context-manifest', payload: { opportunityId: directMatterId, options: {} },
@@ -280,8 +343,39 @@ describe('CORE-109 effective scope parity across read surfaces', () => {
       await expectStatus(context, actor.token, {
         url: `/api/curated?entityKind=account&entityId=${partialAccountId}`,
       }, 404);
+      for (const request of [
+        {
+          method: 'PUT' as const,
+          url: '/api/curated',
+          payload: {
+            entityKind: 'opportunity', entityId: hiddenMatterId,
+            content: 'MUST_NOT_REPLACE_HIDDEN_CURATED',
+          },
+        },
+        {
+          method: 'POST' as const,
+          url: '/api/curated/regenerate',
+          payload: { entityKind: 'opportunity', entityId: hiddenMatterId },
+        },
+      ]) {
+        const hidden = await expectStatus(context, actor.token, request, 404);
+        const missing = await expectStatus(context, actor.token, {
+          ...request,
+          payload: { ...request.payload, entityId: 'missing-curated-entity' },
+        }, 404);
+        expect({ statusCode: hidden.statusCode, body: hidden.body }).toEqual({
+          statusCode: missing.statusCode,
+          body: missing.body,
+        });
+      }
+      await expect(context.prisma.curatedSummary.findUniqueOrThrow({
+        where: {
+          tenantId_entityKind_entityId: {
+            tenantId, entityKind: 'opportunity', entityId: hiddenMatterId,
+          },
+        },
+      })).resolves.toMatchObject({ content: 'CURATED_HIDDEN_MATTER_SECRET' });
 
-      await applyCandidateMigration(context.prisma);
       const inbox = await expectStatus(context, actor.token, { url: '/api/inbox' }, 200);
       const inboxJson = inbox.body;
       for (const visible of ['PENDING_FULL_PERSON_VISIBLE', 'PENDING_DIRECT_REL_VISIBLE', 'PROPOSAL_FULL_VISIBLE', 'PROPOSAL_DIRECT_VISIBLE', 'REMINDER_FULL_VISIBLE', 'REMINDER_DIRECT_VISIBLE', 'EVIDENCE_DIRECT_VISIBLE']) {

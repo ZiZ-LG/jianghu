@@ -19,6 +19,19 @@ import {
   canonicalCandidateJson,
 } from './migration.js';
 import { CandidateWriteConflictError } from './personRelation.js';
+import {
+  candidateDedupeKeyForCreator,
+  evidenceCandidateDedupeKey,
+  fieldCandidateDedupeKey,
+  reminderCandidateDedupeKey,
+} from './dedupe.js';
+export { fieldCandidateDedupeKey } from './dedupe.js';
+import {
+  candidateDescriptor,
+  requireCandidateProducerAccess,
+  requireCandidateReviewAccess,
+  type CandidateReviewAccessContext,
+} from '../sensitiveAccess.js';
 
 type CandidateTx = Prisma.TransactionClient;
 const FIELD_SOURCE_KIND = 'ChangeProposal' as const;
@@ -64,6 +77,12 @@ function terminalDedupeKey(candidateId: string): string {
   return `terminal-v1:${candidateId}`;
 }
 
+function isScopedNotFound(error: unknown): boolean {
+  return error instanceof ScopedNotFoundError
+    || Boolean(error && typeof error === 'object' && 'scopedNotFound' in error
+      && (error as { scopedNotFound?: boolean }).scopedNotFound);
+}
+
 async function creatorScope(
   tx: CandidateTx,
   tenantId: string,
@@ -99,6 +118,27 @@ async function findLinkedCandidate(
   } });
 }
 
+const candidateAccessSelect = {
+  id: true,
+  tenantId: true,
+  kind: true,
+  status: true,
+  accountId: true,
+  matterId: true,
+  targetKind: true,
+  targetId: true,
+  fieldKey: true,
+  createdByUserId: true,
+  visibility: true,
+  aclVersion: true,
+  dedupeKey: true,
+  legacySourceKind: true,
+  legacySourceId: true,
+  version: true,
+  sourceRef: true,
+} as const;
+type CandidateAccessMetadata = Prisma.CandidateGetPayload<{ select: typeof candidateAccessSelect }>;
+
 function assertLinkedCandidate(candidate: Candidate, expected: {
   tenantId: string;
   kind: 'field_change' | 'reminder' | 'evidence_create';
@@ -115,18 +155,6 @@ function assertLinkedCandidate(candidate: Candidate, expected: {
     || candidate.legacySourceId !== expected.sourceId) {
     throw new CandidateWriteConflictError();
   }
-}
-
-export function fieldCandidateDedupeKey(input: {
-  tenantId: string;
-  accountId: string;
-  targetKind: string;
-  targetId: string;
-  fieldKey: string;
-}): string {
-  return JSON.stringify([
-    input.tenantId, input.accountId, input.targetKind, input.targetId, input.fieldKey,
-  ]);
 }
 
 function fieldPayload(row: ChangeProposal): string {
@@ -179,10 +207,11 @@ async function createCandidateForField(
 ): Promise<Candidate> {
   await validateFieldParent(tx, row);
   const identity = candidateIdentityForLegacy(row.tenantId, FIELD_SOURCE_KIND, row.id);
+  const legacyScope = metadata ? null : await creatorScope(tx, row.tenantId, row.proposedBy || null);
   const scope = metadata ?? {
     sourceRef: identity.sourceRef,
-    dedupeKey: identity.dedupeKey,
-    ...await creatorScope(tx, row.tenantId, row.proposedBy || null),
+    dedupeKey: candidateDedupeKeyForCreator(identity.dedupeKey, legacyScope!.createdByUserId),
+    ...legacyScope!,
   };
   return tx.candidate.create({ data: {
     id: identity.id,
@@ -203,6 +232,7 @@ async function createCandidateForField(
     confidence: row.confidence,
     createdByUserId: scope.createdByUserId,
     visibility: scope.visibility,
+    aclVersion: 1,
     dedupeKey: scope.dedupeKey,
     legacySourceKind: FIELD_SOURCE_KIND,
     legacySourceId: row.id,
@@ -282,23 +312,55 @@ export async function createFieldCandidate(
       entityId: input.targetId,
     };
     await validateFieldParent(tx, parent);
-    const existing = await tx.changeProposal.findUnique({ where: { dedupeKey: semanticKey } })
-      ?? await tx.changeProposal.findFirst({ where: {
+    const scope = await creatorScope(tx, input.tenantId, input.createdByUserId);
+    const dedupeKey = candidateDedupeKeyForCreator(semanticKey, scope.createdByUserId);
+    await requireCandidateProducerAccess(tx, candidateDescriptor({
+      id: input.id,
+      tenantId: input.tenantId,
+      accountId: input.accountId,
+      matterId,
+      createdByUserId: scope.createdByUserId,
+      visibility: scope.visibility,
+      aclVersion: 1,
+    }), input.createdByUserId);
+    const linked = await tx.candidate.findUnique({
+      where: {
+        tenantId_legacySourceKind_legacySourceId: {
+          tenantId: input.tenantId,
+          legacySourceKind: FIELD_SOURCE_KIND,
+          legacySourceId: input.id,
+        },
+      },
+      select: candidateAccessSelect,
+    });
+    const existingMetadata = linked ?? await tx.candidate.findUnique({
+      where: { tenantId_dedupeKey: { tenantId: input.tenantId, dedupeKey } },
+      select: candidateAccessSelect,
+    });
+    if (existingMetadata) {
+      try {
+        await requireCandidateProducerAccess(tx, candidateDescriptor(existingMetadata), input.createdByUserId);
+      } catch {
+        throw new CandidateWriteConflictError();
+      }
+      if (existingMetadata.legacySourceKind !== FIELD_SOURCE_KIND || !existingMetadata.legacySourceId) {
+        throw new CandidateWriteConflictError();
+      }
+      const existing = await tx.changeProposal.findFirst({ where: {
+        id: existingMetadata.legacySourceId,
         tenantId: input.tenantId,
         accountId: input.accountId,
+        opportunityId: matterId,
         entityKind: input.targetKind,
         entityId: input.targetId,
         field: input.fieldKey,
         status: 'pending',
-        dedupeKey: null,
       } });
-    const scope = await creatorScope(tx, input.tenantId, input.createdByUserId);
-    if (existing) {
-      if (existing.tenantId !== input.tenantId || existing.status !== 'pending') {
+      if (!existing) throw new CandidateWriteConflictError();
+      const candidate = await ensureFieldCandidate(tx, existing);
+      if (candidate.status !== 'pending' || candidate.id !== existingMetadata.id) {
         throw new CandidateWriteConflictError();
       }
-      const candidate = await ensureFieldCandidate(tx, existing);
-      if (candidate.status !== 'pending') throw new CandidateWriteConflictError();
       const changed = await tx.changeProposal.updateMany({
         where: { id: existing.id, tenantId: input.tenantId, status: 'pending' },
         data: {
@@ -309,15 +371,20 @@ export async function createFieldCandidate(
           evidence: input.evidence,
           confidence: input.confidence,
           proposedBy: input.createdByUserId ?? '',
-          dedupeKey: semanticKey,
+          dedupeKey,
         },
       });
       if (changed.count !== 1) throw new CandidateWriteConflictError();
       const row = await tx.changeProposal.findUniqueOrThrow({ where: { id: existing.id } });
       const updated = await tx.candidate.updateMany({
-        where: { id: candidate.id, tenantId: input.tenantId, status: 'pending', version: candidate.version },
+        where: {
+          id: candidate.id,
+          tenantId: input.tenantId,
+          status: 'pending',
+          version: candidate.version,
+          aclVersion: candidate.aclVersion,
+        },
         data: {
-          matterId,
           oldValue: input.oldValue,
           newValue: input.newValue,
           payload: fieldPayload(row),
@@ -325,9 +392,7 @@ export async function createFieldCandidate(
           sourceRef: input.sourceRef,
           evidence: input.evidence,
           confidence: input.confidence,
-          createdByUserId: scope.createdByUserId,
-          visibility: scope.visibility,
-          dedupeKey: semanticKey,
+          dedupeKey,
           version: { increment: 1 },
         },
       });
@@ -348,11 +413,11 @@ export async function createFieldCandidate(
       evidence: input.evidence,
       confidence: input.confidence,
       status: 'pending',
-      dedupeKey: semanticKey,
+      dedupeKey,
       proposedBy: input.createdByUserId ?? '',
     } });
     const candidate = await createCandidateForField(tx, row, {
-      sourceRef: input.sourceRef, dedupeKey: semanticKey, ...scope,
+      sourceRef: input.sourceRef, dedupeKey, ...scope,
     });
     return { row, candidateId: candidate.id, candidateVersion: candidate.version, created: true };
   });
@@ -360,9 +425,15 @@ export async function createFieldCandidate(
 
 export async function rejectFieldCandidate(
   db: DbClient,
-  input: { tenantId: string; id: string },
+  input: { tenantId: string; id: string; review: CandidateReviewAccessContext },
 ): Promise<boolean> {
   return inTransaction(db, async (tx) => {
+    try {
+      await requireCandidateReviewAccess(tx, input.tenantId, FIELD_SOURCE_KIND, input.id, input.review);
+    } catch (error) {
+      if (isScopedNotFound(error)) return false;
+      throw error;
+    }
     const row = await tx.changeProposal.findFirst({ where: { id: input.id, tenantId: input.tenantId } });
     if (!row || row.status !== 'pending') return false;
     const candidate = await ensureFieldCandidate(tx, row);
@@ -374,7 +445,10 @@ export async function rejectFieldCandidate(
     if (changed.count !== 1) throw new CandidateWriteConflictError();
     const rejectedRow = await tx.changeProposal.findUniqueOrThrow({ where: { id: row.id } });
     const rejected = await tx.candidate.updateMany({
-      where: { id: candidate.id, tenantId: input.tenantId, status: 'pending', version: candidate.version },
+      where: {
+        id: candidate.id, tenantId: input.tenantId, status: 'pending',
+        version: candidate.version, aclVersion: candidate.aclVersion,
+      },
       data: {
         status: 'rejected',
         dedupeKey: terminalDedupeKey(candidate.id),
@@ -389,15 +463,19 @@ export async function rejectFieldCandidate(
 
 export async function claimFieldCandidate(
   db: DbClient,
-  input: { tenantId: string; id: string },
+  input: { tenantId: string; id: string; review: CandidateReviewAccessContext },
 ): Promise<{ row: ChangeProposal; candidateVersion: number } | null> {
   return inTransaction(db, async (tx) => {
+    await requireCandidateReviewAccess(tx, input.tenantId, FIELD_SOURCE_KIND, input.id, input.review);
     const row = await tx.changeProposal.findFirst({ where: { id: input.id, tenantId: input.tenantId } });
     if (!row || row.status !== 'pending') return null;
     const candidate = await ensureFieldCandidate(tx, row);
     if (candidate.status !== 'pending') throw new CandidateWriteConflictError();
     const claimedCandidate = await tx.candidate.updateMany({
-      where: { id: candidate.id, tenantId: input.tenantId, status: 'pending', version: candidate.version },
+      where: {
+        id: candidate.id, tenantId: input.tenantId, status: 'pending',
+        version: candidate.version, aclVersion: candidate.aclVersion,
+      },
       data: { version: { increment: 1 } },
     });
     if (claimedCandidate.count !== 1) throw new CandidateWriteConflictError();
@@ -438,7 +516,7 @@ export async function finalizeFieldCandidate(
     const finalizedCandidate = await tx.candidate.updateMany({
       where: {
         id: candidate.id, tenantId: input.tenantId,
-        status: 'pending', version: input.expectedVersion,
+        status: 'pending', version: input.expectedVersion, aclVersion: candidate.aclVersion,
       },
       data: {
         status: 'accepted',
@@ -495,10 +573,6 @@ async function reminderTarget(tx: CandidateTx, row: Pick<
   throw new ScopedNotFoundError();
 }
 
-function reminderCandidateDedupeKey(dedupeKey: string): string {
-  return `reminder-pending-v1:${dedupeKey}`;
-}
-
 async function createCandidateForReminder(tx: CandidateTx, row: Reminder): Promise<Candidate> {
   const target = await reminderTarget(tx, row);
   const identity = candidateIdentityForLegacy(row.tenantId, REMINDER_SOURCE_KIND, row.id);
@@ -518,6 +592,7 @@ async function createCandidateForReminder(tx: CandidateTx, row: Reminder): Promi
     confidence: 1,
     createdByUserId: null,
     visibility: 'owner_admin_only',
+    aclVersion: 1,
     dedupeKey: row.status === 'pending' ? reminderCandidateDedupeKey(row.dedupeKey) : terminalDedupeKey(identity.id),
     legacySourceKind: REMINDER_SOURCE_KIND,
     legacySourceId: row.id,
@@ -534,12 +609,17 @@ async function ensureReminderCandidate(tx: CandidateTx, row: Reminder): Promise<
     matterId: row.opportunityId, sourceKind: REMINDER_SOURCE_KIND, sourceId: row.id,
   });
   const expectedStatus = row.status === 'pending' ? 'pending' : row.status === 'done' ? 'accepted' : 'rejected';
+  const legacyIdentity = candidateIdentityForLegacy(row.tenantId, REMINDER_SOURCE_KIND, row.id);
+  const legacyEmptyEvidence = !row.detail
+    && candidate.sourceRef === legacyIdentity.sourceRef
+    && candidate.evidence === '';
   if (candidate.status !== expectedStatus
     || candidate.targetKind !== target.kind
     || candidate.targetId !== target.id
     || candidate.payload !== reminderPayload(row)
     || candidate.source !== 'rules'
-    || candidate.evidence !== (row.detail || '确定性巡检提醒，必须由人工处理')
+    || (candidate.evidence !== (row.detail || '确定性巡检提醒，必须由人工处理')
+      && !legacyEmptyEvidence)
     || candidate.confidence !== 1) {
     throw new CandidateWriteConflictError();
   }
@@ -583,10 +663,40 @@ export async function upsertReminderCandidate(
       entityId: input.targetId,
     };
     await reminderTarget(tx, draft);
-    const existing = await tx.reminder.findUnique({ where: {
+    await requireCandidateProducerAccess(tx, candidateDescriptor({
+      id: input.id ?? `reminder:${input.dedupeKey}`,
+      tenantId: input.tenantId,
+      accountId: input.accountId,
+      matterId: input.matterId,
+      createdByUserId: null,
+      visibility: 'owner_admin_only',
+      aclVersion: 1,
+    }), null);
+    const existingRef = await tx.reminder.findUnique({ where: {
       tenantId_dedupeKey: { tenantId: input.tenantId, dedupeKey: input.dedupeKey },
-    } });
-    if (existing) {
+    }, select: { id: true } });
+    if (existingRef) {
+      const existingMetadata = await tx.candidate.findUnique({
+        where: {
+          tenantId_legacySourceKind_legacySourceId: {
+            tenantId: input.tenantId,
+            legacySourceKind: REMINDER_SOURCE_KIND,
+            legacySourceId: existingRef.id,
+          },
+        },
+        select: candidateAccessSelect,
+      });
+      if (!existingMetadata) throw new CandidateWriteConflictError();
+      try {
+        await requireCandidateProducerAccess(tx, candidateDescriptor(existingMetadata), null);
+      } catch {
+        throw new CandidateWriteConflictError();
+      }
+      const existing = await tx.reminder.findFirst({ where: {
+        id: existingRef.id,
+        tenantId: input.tenantId,
+      } });
+      if (!existing) throw new CandidateWriteConflictError();
       if (existing.accountId !== input.accountId
         || existing.opportunityId !== input.matterId
         || existing.kind !== input.kind
@@ -594,6 +704,7 @@ export async function upsertReminderCandidate(
         throw new CandidateWriteConflictError();
       }
       const candidate = await ensureReminderCandidate(tx, existing);
+      if (candidate.id !== existingMetadata.id) throw new CandidateWriteConflictError();
       if (existing.status !== 'pending') {
         return { row: existing, candidateId: candidate.id, candidateVersion: candidate.version, created: false };
       }
@@ -616,7 +727,13 @@ export async function upsertReminderCandidate(
       const row = await tx.reminder.findUniqueOrThrow({ where: { id: existing.id } });
       const target = await reminderTarget(tx, row);
       const updated = await tx.candidate.updateMany({
-        where: { id: candidate.id, tenantId: input.tenantId, status: 'pending', version: candidate.version },
+        where: {
+          id: candidate.id,
+          tenantId: input.tenantId,
+          status: 'pending',
+          version: candidate.version,
+          aclVersion: candidate.aclVersion,
+        },
         data: {
           accountId: row.accountId,
           matterId: row.opportunityId,
@@ -652,13 +769,41 @@ export async function upsertReminderCandidate(
 
 async function terminateReminderCandidate(
   db: DbClient,
-  input: { tenantId: string; id: string },
+  input: { tenantId: string; id: string; review?: CandidateReviewAccessContext },
   decision: 'dismissed' | 'done',
 ): Promise<boolean> {
   return inTransaction(db, async (tx) => {
+    let systemMetadata: CandidateAccessMetadata | null = null;
+    if (decision === 'dismissed') {
+      if (!input.review) throw new ScopedNotFoundError();
+      try {
+        await requireCandidateReviewAccess(tx, input.tenantId, REMINDER_SOURCE_KIND, input.id, input.review);
+      } catch (error) {
+        if (isScopedNotFound(error)) return false;
+        throw error;
+      }
+    } else {
+      systemMetadata = await tx.candidate.findUnique({
+        where: {
+          tenantId_legacySourceKind_legacySourceId: {
+            tenantId: input.tenantId,
+            legacySourceKind: REMINDER_SOURCE_KIND,
+            legacySourceId: input.id,
+          },
+        },
+        select: candidateAccessSelect,
+      });
+      if (!systemMetadata) return false;
+      try {
+        await requireCandidateProducerAccess(tx, candidateDescriptor(systemMetadata), null);
+      } catch {
+        return false;
+      }
+    }
     const row = await tx.reminder.findFirst({ where: { id: input.id, tenantId: input.tenantId } });
     if (!row || row.status !== 'pending') return false;
     const candidate = await ensureReminderCandidate(tx, row);
+    if (systemMetadata && candidate.id !== systemMetadata.id) throw new CandidateWriteConflictError();
     if (candidate.status !== 'pending') throw new CandidateWriteConflictError();
     const changed = await tx.reminder.updateMany({
       where: { id: row.id, tenantId: input.tenantId, status: 'pending' },
@@ -667,7 +812,10 @@ async function terminateReminderCandidate(
     if (changed.count !== 1) throw new CandidateWriteConflictError();
     const terminalRow = await tx.reminder.findUniqueOrThrow({ where: { id: row.id } });
     const terminal = await tx.candidate.updateMany({
-      where: { id: candidate.id, tenantId: input.tenantId, status: 'pending', version: candidate.version },
+      where: {
+        id: candidate.id, tenantId: input.tenantId, status: 'pending',
+        version: candidate.version, aclVersion: candidate.aclVersion,
+      },
       data: {
         status: decision === 'done' ? 'accepted' : 'rejected',
         dedupeKey: terminalDedupeKey(candidate.id),
@@ -682,7 +830,7 @@ async function terminateReminderCandidate(
 
 export async function dismissReminderCandidate(
   db: DbClient,
-  input: { tenantId: string; id: string },
+  input: { tenantId: string; id: string; review: CandidateReviewAccessContext },
 ): Promise<boolean> {
   return terminateReminderCandidate(db, input, 'dismissed');
 }
@@ -712,10 +860,6 @@ async function validateEvidenceParent(tx: CandidateTx, row: Pick<
   await requirePerson(tx, row.tenantId, row.accountId, row.personId);
 }
 
-function evidenceCandidateDedupeKey(source: string, sourceRef: string): string {
-  return `evidence-source-v1:${source.trim().toLowerCase()}:${sourceRef.trim()}`;
-}
-
 async function createCandidateForEvidence(
   tx: CandidateTx,
   row: EvidenceEvent,
@@ -723,11 +867,12 @@ async function createCandidateForEvidence(
 ): Promise<Candidate> {
   await validateEvidenceParent(tx, row);
   const identity = candidateIdentityForLegacy(row.tenantId, EVIDENCE_SOURCE_KIND, row.id);
+  const legacyScope = metadata ? null : await creatorScope(tx, row.tenantId, row.createdBy || null);
   const scope = metadata ?? {
     sourceRef: identity.sourceRef,
-    dedupeKey: identity.dedupeKey,
+    dedupeKey: candidateDedupeKeyForCreator(identity.dedupeKey, legacyScope!.createdByUserId),
     confidence: 0.5,
-    ...await creatorScope(tx, row.tenantId, row.createdBy || null),
+    ...legacyScope!,
   };
   return tx.candidate.create({ data: {
     id: identity.id,
@@ -745,6 +890,7 @@ async function createCandidateForEvidence(
     confidence: scope.confidence,
     createdByUserId: scope.createdByUserId,
     visibility: scope.visibility,
+    aclVersion: 1,
     dedupeKey: scope.dedupeKey,
     legacySourceKind: EVIDENCE_SOURCE_KIND,
     legacySourceId: row.id,
@@ -812,13 +958,42 @@ export async function createEvidenceCandidate(
       tenantId: input.tenantId, accountId: input.accountId,
       opportunityId: input.matterId, personId: input.personId,
     });
-    const linked = await findLinkedCandidate(tx, input.tenantId, EVIDENCE_SOURCE_KIND, input.id);
-    const dedupeKey = evidenceCandidateDedupeKey(input.source, input.sourceRef);
+    const scope = await creatorScope(tx, input.tenantId, input.createdByUserId);
+    await requireCandidateProducerAccess(tx, candidateDescriptor({
+      id: input.id,
+      tenantId: input.tenantId,
+      accountId: input.accountId,
+      matterId: input.matterId,
+      createdByUserId: scope.createdByUserId,
+      visibility: scope.visibility,
+      aclVersion: 1,
+    }), input.createdByUserId);
+    const linked = await tx.candidate.findUnique({
+      where: {
+        tenantId_legacySourceKind_legacySourceId: {
+          tenantId: input.tenantId,
+          legacySourceKind: EVIDENCE_SOURCE_KIND,
+          legacySourceId: input.id,
+        },
+      },
+      select: candidateAccessSelect,
+    });
+    const dedupeKey = candidateDedupeKeyForCreator(
+      evidenceCandidateDedupeKey(input.source, input.sourceRef),
+      scope.createdByUserId,
+    );
     const existingCandidate = linked ?? await tx.candidate.findUnique({ where: {
       tenantId_dedupeKey: { tenantId: input.tenantId, dedupeKey },
-    } });
+    }, select: candidateAccessSelect });
     if (existingCandidate) {
       if (existingCandidate.kind !== 'evidence_create' || !existingCandidate.legacySourceId) {
+        throw new CandidateWriteConflictError();
+      }
+      try {
+        await requireCandidateProducerAccess(
+          tx, candidateDescriptor(existingCandidate), input.createdByUserId,
+        );
+      } catch {
         throw new CandidateWriteConflictError();
       }
       const row = await tx.evidenceEvent.findFirst({ where: {
@@ -827,9 +1002,38 @@ export async function createEvidenceCandidate(
       if (!row || row.accountId !== input.accountId || row.opportunityId !== input.matterId
         || row.personId !== input.personId || row.signalKey !== input.signalKey
         || row.rawContent !== input.rawContent || row.occurredAt !== input.occurredAt
-        || row.origin !== input.source || existingCandidate.sourceRef !== input.sourceRef) {
+        || row.origin !== input.source) {
         throw new CandidateWriteConflictError();
       }
+      const legacySourceRef = candidateIdentityForLegacy(
+        input.tenantId, EVIDENCE_SOURCE_KIND, existingCandidate.legacySourceId,
+      ).sourceRef;
+      if (existingCandidate.sourceRef === legacySourceRef) {
+        // CORE-203 did not retain the producer's original external sourceRef. The
+        // first exact same-creator replay is therefore the only safe point to adopt
+        // the recoverable semantic identity. Current parentage and producer scope
+        // have already been revalidated above; sharing never permits re-homing.
+        const adopted = await tx.candidate.updateMany({
+          where: {
+            id: existingCandidate.id,
+            tenantId: input.tenantId,
+            version: existingCandidate.version,
+            sourceRef: legacySourceRef,
+            dedupeKey: existingCandidate.dedupeKey,
+          },
+          data: {
+            sourceRef: input.sourceRef,
+            ...(existingCandidate.status === 'pending' ? { dedupeKey } : {}),
+            version: { increment: 1 },
+          },
+        });
+        if (adopted.count !== 1) throw new CandidateWriteConflictError();
+        return {
+          row, candidateId: existingCandidate.id,
+          candidateVersion: existingCandidate.version + 1, created: false,
+        };
+      }
+      if (existingCandidate.sourceRef !== input.sourceRef) throw new CandidateWriteConflictError();
       return {
         row, candidateId: existingCandidate.id,
         candidateVersion: existingCandidate.version, created: false,
@@ -850,7 +1054,6 @@ export async function createEvidenceCandidate(
       origin: input.source,
       createdBy: input.createdByUserId ?? '',
     } });
-    const scope = await creatorScope(tx, input.tenantId, input.createdByUserId);
     const candidate = await createCandidateForEvidence(tx, row, {
       sourceRef: input.sourceRef, dedupeKey, confidence: input.confidence, ...scope,
     });
@@ -866,6 +1069,7 @@ export interface ReviewEvidenceCandidateInput {
   reviewedAt: string;
   direction?: -1 | 0 | 1;
   tier?: 'weak' | 'mid' | 'strong';
+  review: CandidateReviewAccessContext;
 }
 
 export async function reviewEvidenceCandidate(
@@ -874,6 +1078,12 @@ export async function reviewEvidenceCandidate(
   afterApprove?: (tx: CandidateTx, row: EvidenceEvent) => Promise<void>,
 ): Promise<boolean> {
   return inTransaction(db, async (tx) => {
+    try {
+      await requireCandidateReviewAccess(tx, input.tenantId, EVIDENCE_SOURCE_KIND, input.id, input.review);
+    } catch (error) {
+      if (isScopedNotFound(error)) return false;
+      throw error;
+    }
     const row = await tx.evidenceEvent.findFirst({ where: { id: input.id, tenantId: input.tenantId } });
     if (!row || row.status !== 'pending_review') return false;
     const candidate = await ensureEvidenceCandidate(tx, row);
@@ -892,7 +1102,10 @@ export async function reviewEvidenceCandidate(
     if (changed.count !== 1) throw new CandidateWriteConflictError();
     const reviewed = await tx.evidenceEvent.findUniqueOrThrow({ where: { id: row.id } });
     const finalized = await tx.candidate.updateMany({
-      where: { id: candidate.id, tenantId: input.tenantId, status: 'pending', version: candidate.version },
+      where: {
+        id: candidate.id, tenantId: input.tenantId, status: 'pending',
+        version: candidate.version, aclVersion: candidate.aclVersion,
+      },
       data: {
         status: input.decision === 'accept' ? 'accepted' : 'rejected',
         dedupeKey: terminalDedupeKey(candidate.id),
@@ -910,11 +1123,21 @@ export async function assertEvidenceDeletionAllowed(
   db: DbClient,
   input: { tenantId: string; id: string },
 ): Promise<void> {
-  const row = await db.evidenceEvent.findFirst({ where: { id: input.id, tenantId: input.tenantId } });
+  const row = await db.evidenceEvent.findFirst({
+    where: { id: input.id, tenantId: input.tenantId },
+    select: { id: true, status: true },
+  });
   if (!row) return;
-  const linked = await findLinkedCandidate(
-    db as CandidateTx, input.tenantId, EVIDENCE_SOURCE_KIND, row.id,
-  );
+  const linked = await db.candidate.findUnique({
+    where: {
+      tenantId_legacySourceKind_legacySourceId: {
+        tenantId: input.tenantId,
+        legacySourceKind: EVIDENCE_SOURCE_KIND,
+        legacySourceId: row.id,
+      },
+    },
+    select: { id: true },
+  });
   if (row.status === 'pending_review' || linked) {
     throw new CandidateWriteConflictError('候选证据不可删除；请通过审核保留审计轨迹');
   }
@@ -922,21 +1145,24 @@ export async function assertEvidenceDeletionAllowed(
 
 export async function prepareFieldCandidatesForPersonMerge(
   db: DbClient,
-  input: { tenantId: string; ids: string[] },
+  input: { tenantId: string; ids: string[]; review: CandidateReviewAccessContext },
 ): Promise<void> {
   if (!input.ids.length) return;
   await inTransaction(db, async (tx) => {
-    const rows = await tx.changeProposal.findMany({ where: {
+    const refs = await tx.changeProposal.findMany({ where: {
       tenantId: input.tenantId, id: { in: input.ids },
-    } });
-    if (rows.length !== new Set(input.ids).size) throw new CandidateWriteConflictError();
-    for (const row of rows) {
+    }, select: { id: true } });
+    if (refs.length !== new Set(input.ids).size) throw new CandidateWriteConflictError();
+    for (const ref of refs) {
+      await requireCandidateReviewAccess(tx, input.tenantId, FIELD_SOURCE_KIND, ref.id, input.review);
+      const row = await tx.changeProposal.findFirst({ where: { id: ref.id, tenantId: input.tenantId } });
+      if (!row) throw new CandidateWriteConflictError();
       if (row.status === 'applying') throw new CandidateWriteConflictError();
       const candidate = await ensureFieldCandidate(tx, row);
       const cleared = await tx.candidate.updateMany({
         where: {
           id: candidate.id, tenantId: input.tenantId,
-          status: candidate.status, version: candidate.version,
+          status: candidate.status, version: candidate.version, aclVersion: candidate.aclVersion,
         },
         data: {
           ...(candidate.status === 'pending' ? { dedupeKey: `merge-pending-v1:${candidate.id}` } : {}),
@@ -961,9 +1187,11 @@ export async function redirectFieldCandidateForPersonMerge(
     targetId: string;
     reject: boolean;
     dedupeKey: string | null;
+    review: CandidateReviewAccessContext;
   },
 ): Promise<void> {
   await inTransaction(db, async (tx) => {
+    await requireCandidateReviewAccess(tx, input.tenantId, FIELD_SOURCE_KIND, input.id, input.review);
     const row = await tx.changeProposal.findFirst({ where: { id: input.id, tenantId: input.tenantId } });
     if (!row || row.status === 'applying') throw new CandidateWriteConflictError();
     const candidate = await ensureFieldCandidate(tx, row);
@@ -983,7 +1211,7 @@ export async function redirectFieldCandidateForPersonMerge(
     const redirected = await tx.candidate.updateMany({
       where: {
         id: candidate.id, tenantId: input.tenantId,
-        status: candidate.status, version: candidate.version,
+        status: candidate.status, version: candidate.version, aclVersion: candidate.aclVersion,
       },
       data: {
         status: candidateStatus,
@@ -1005,9 +1233,11 @@ export async function redirectReminderCandidateForPersonMerge(
     targetId: string;
     dedupeKey: string;
     duplicate: boolean;
+    review: CandidateReviewAccessContext;
   },
 ): Promise<void> {
   await inTransaction(db, async (tx) => {
+    await requireCandidateReviewAccess(tx, input.tenantId, REMINDER_SOURCE_KIND, input.id, input.review);
     const row = await tx.reminder.findFirst({ where: { id: input.id, tenantId: input.tenantId } });
     if (!row) throw new CandidateWriteConflictError();
     const candidate = await ensureReminderCandidate(tx, row);
@@ -1032,7 +1262,7 @@ export async function redirectReminderCandidateForPersonMerge(
     const redirected = await tx.candidate.updateMany({
       where: {
         id: candidate.id, tenantId: input.tenantId,
-        status: candidate.status, version: candidate.version,
+        status: candidate.status, version: candidate.version, aclVersion: candidate.aclVersion,
       },
       data: {
         status: candidateStatus,
@@ -1051,19 +1281,34 @@ export async function redirectReminderCandidateForPersonMerge(
 
 export async function redirectEvidenceCandidatesForPersonMerge(
   db: DbClient,
-  input: { tenantId: string; accountId: string; fromPersonId: string; toPersonId: string },
+  input: {
+    tenantId: string;
+    accountId: string;
+    fromPersonId: string;
+    toPersonId: string;
+    review: CandidateReviewAccessContext;
+  },
 ): Promise<number> {
   return inTransaction(db, async (tx) => {
     await requirePerson(tx, input.tenantId, input.accountId, input.toPersonId);
-    const rows = await tx.evidenceEvent.findMany({ where: {
+    const refs = await tx.evidenceEvent.findMany({ where: {
       tenantId: input.tenantId, accountId: input.accountId, personId: input.fromPersonId,
-    } });
-    for (const row of rows) {
-      const candidate = await findLinkedCandidate(tx, input.tenantId, EVIDENCE_SOURCE_KIND, row.id);
-      if (!candidate) {
+    }, select: { id: true } });
+    for (const ref of refs) {
+      const candidateMetadata = await tx.candidate.findUnique({
+        where: {
+          tenantId_legacySourceKind_legacySourceId: {
+            tenantId: input.tenantId,
+            legacySourceKind: EVIDENCE_SOURCE_KIND,
+            legacySourceId: ref.id,
+          },
+        },
+        select: candidateAccessSelect,
+      });
+      if (!candidateMetadata) {
         const changed = await tx.evidenceEvent.updateMany({
           where: {
-            id: row.id, tenantId: input.tenantId,
+            id: ref.id, tenantId: input.tenantId,
             accountId: input.accountId, personId: input.fromPersonId,
           },
           data: { personId: input.toPersonId },
@@ -1071,6 +1316,11 @@ export async function redirectEvidenceCandidatesForPersonMerge(
         if (changed.count !== 1) throw new CandidateWriteConflictError();
         continue;
       }
+      await requireCandidateReviewAccess(tx, input.tenantId, EVIDENCE_SOURCE_KIND, ref.id, input.review);
+      const row = await tx.evidenceEvent.findFirst({ where: { id: ref.id, tenantId: input.tenantId } });
+      if (!row) throw new CandidateWriteConflictError();
+      const candidate = await findLinkedCandidate(tx, input.tenantId, EVIDENCE_SOURCE_KIND, row.id);
+      if (!candidate || candidate.id !== candidateMetadata.id) throw new CandidateWriteConflictError();
       await ensureEvidenceCandidate(tx, row);
       const changed = await tx.evidenceEvent.updateMany({
         where: {
@@ -1084,7 +1334,7 @@ export async function redirectEvidenceCandidatesForPersonMerge(
       const redirected = await tx.candidate.updateMany({
         where: {
           id: candidate.id, tenantId: input.tenantId,
-          status: candidate.status, version: candidate.version,
+          status: candidate.status, version: candidate.version, aclVersion: candidate.aclVersion,
         },
         data: {
           targetId: input.toPersonId,
@@ -1094,6 +1344,6 @@ export async function redirectEvidenceCandidatesForPersonMerge(
       });
       if (redirected.count !== 1) throw new CandidateWriteConflictError();
     }
-    return rows.length;
+    return refs.length;
   });
 }

@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
-import type { Prisma, RelSuggestion } from '@prisma/client';
+import { Prisma, type RelSuggestion } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { ActorRoleSchema, type CapabilityPolicy } from '@jianghu/domain-contracts';
 import { prisma } from './prisma.js';
 import { denyViewer, viewerCanReadAccount, viewerCanReadOpp } from './scope.js';
 import { loadAiConfig, callLLM } from './ai.js';
@@ -20,6 +21,7 @@ import { activePersonWhere } from './activePerson.js';
 import type { DbClient } from './mutation/scopeGuards.js';
 import { businessYmd } from './businessDate.js';
 import { resolveEffectiveResourceScope } from './resourceScope.js';
+import type { ReadPrincipal } from './visibility.js';
 import {
   claimPersonCandidate,
   claimRelationCandidate,
@@ -36,6 +38,13 @@ import {
   reviewEvidenceCandidate,
 } from './candidates/reviewItems.js';
 import { CANDIDATE_BACKFILL_MARKER } from './candidates/migration.js';
+import {
+  authorizeSensitiveResource,
+  candidateDescriptor,
+  createSensitiveAccessEvaluator,
+  requireCandidateReviewAccess,
+  type CandidateReviewAccessContext,
+} from './sensitiveAccess.js';
 
 const pairKey = (a: string, b: string) => [a, b].sort().join('|');
 const LAYER_COLOR: Record<string, string> = { L1: '#2563eb', L2: '#9333ea', L3: '#16a34a', L4: '#ef4444' };
@@ -68,6 +77,7 @@ async function approveEvidenceWithSnapshot(
   reviewedBy: string,
   reviewedAt: string,
   override: { direction?: -1 | 0 | 1; tier?: 'weak' | 'mid' | 'strong' },
+  review: CandidateReviewAccessContext,
 ): Promise<void> {
   for (let attempt = 1; attempt <= EVIDENCE_REVIEW_TX_ATTEMPTS; attempt += 1) {
     try {
@@ -79,6 +89,7 @@ async function approveEvidenceWithSnapshot(
         reviewedAt,
         direction: override.direction,
         tier: override.tier,
+        review,
       }, async (tx, evidence) => {
         await createPdeSnapshot(tx, tenantId, evidence.opportunityId, 'evidence_review', reviewedBy);
       });
@@ -105,8 +116,10 @@ export async function materializePerson(
   tx: any,
   tenantId: string,
   suggId: string,
+  review: CandidateReviewAccessContext,
   options: MaterializePersonOptions = {},
 ): Promise<{ personId: string; accountId: string; createdPerson?: any }> {
+  await requireCandidateReviewAccess(tx, tenantId, 'PersonSuggestion', suggId, review);
   const ps = await tx.personSuggestion.findFirst({ where: { id: suggId, tenantId } });
   if (!ps) throw new ScopedNotFoundError();
   await requireAccount(tx, tenantId, ps.accountId);
@@ -114,6 +127,7 @@ export async function materializePerson(
   if (ps.opportunityId) await requireOpportunity(tx, tenantId, ps.accountId, ps.opportunityId);
   if (ps.status === 'rejected') throw new Error(`候选干系人「${ps.name}」已被否决，无法作为关系端点`);
   if (ps.status === 'accepted') {
+    await requireCandidateReviewAccess(tx, tenantId, 'PersonSuggestion', suggId, review);
     if (!ps.resolvedPersonId) throw new SuggestionConflictError();
     await requirePerson(tx, tenantId, ps.accountId, ps.resolvedPersonId);
     if (options.allowAcceptedReuse === false) throw new SuggestionConflictError();
@@ -148,6 +162,7 @@ export async function materializePerson(
     tenantId,
     id: ps.id,
     override: options.override,
+    review,
   });
   const candidate = claimed.row;
 
@@ -201,6 +216,7 @@ export async function materializePerson(
     accountId: candidate.accountId,
     from: { kind: 'suggestion', id: suggId },
     toPersonId: personId,
+    review,
   });
   const createdPerson = { id: personId, name: candidate.name, title: candidate.title, orgLevel: candidate.orgLevel, isCompetitor: false, x, y, form: { family: '', occupation: '', recreation: '', moneyMotivation: '', family7: {} }, logs };
   return { personId, accountId: candidate.accountId, createdPerson };
@@ -210,8 +226,10 @@ export async function acceptRelationSuggestionInTransaction(
   tx: Prisma.TransactionClient,
   tenantId: string,
   id: string,
+  review: CandidateReviewAccessContext,
   override: { layer?: 'L1' | 'L2' | 'L3' | 'L4'; label?: string } = {},
 ): Promise<{ edge: any; createdPersons: any[] }> {
+  await requireCandidateReviewAccess(tx, tenantId, 'RelSuggestion', id, review);
   const suggestion = await tx.relSuggestion.findFirst({ where: { id, tenantId } });
   if (!suggestion) throw new ScopedNotFoundError();
   if (suggestion.status !== 'pending') throw new SuggestionConflictError();
@@ -219,12 +237,14 @@ export async function acceptRelationSuggestionInTransaction(
   if (!opportunity) throw new ScopedNotFoundError();
   await requireAccount(tx, tenantId, opportunity.accountId);
   await requireOpportunity(tx, tenantId, opportunity.accountId, suggestion.opportunityId);
-  const claimed = await claimRelationCandidate(tx, { id, tenantId });
+  const claimed = await claimRelationCandidate(tx, { id, tenantId, review });
 
   const createdPersons: any[] = [];
   const resolveEnd = async (kind: string, endpointId: string) => {
     if (kind === 'suggestion') {
-      const resolved = await materializePerson(tx, tenantId, endpointId, { expectedAccountId: opportunity.accountId });
+      const resolved = await materializePerson(
+        tx, tenantId, endpointId, review, { expectedAccountId: opportunity.accountId },
+      );
       if (resolved.createdPerson) createdPersons.push(resolved.createdPerson);
       return resolved.personId;
     }
@@ -354,7 +374,17 @@ export async function generateRelSuggestions(
   opportunityId: string,
   commitWrite?: <T>(write: (db: DbClient) => Promise<T>) => Promise<T>,
   createdByUserId: string | null = null,
+  principal?: ReadPrincipal,
 ): Promise<{ added: number; total: number } | null> {
+  // User-triggered generation must fail before graph/AI reads when the current actor
+  // no longer has access. Background jobs are system-owned (createdByUserId=null)
+  // and still revalidate their candidate writes in createRelationCandidate.
+  if (createdByUserId !== null) {
+    const actor = principal ?? { tenantId, userId: createdByUserId, role: 'viewer' };
+    if (actor.tenantId !== tenantId || actor.userId !== createdByUserId) return null;
+    const scope = await resolveEffectiveResourceScope(prisma, actor);
+    if (!scope.valid || scope.actorRole === 'viewer' || !scope.canReadMatter(opportunityId)) return null;
+  }
   const g = await loadGraph(tenantId, opportunityId);
   if (!g) return null;
   const nameOf = (id: string) => g.persons.find((x) => x.id === id)?.name || id;
@@ -362,9 +392,9 @@ export async function generateRelSuggestions(
 
   let added = 0;
   if (g.persons.filter((p) => !p.isCompetitor).length >= 2) {
-    // 去重：排除已连接 + 该商机下所有历史候选（含已采纳/已忽略，避免重复打扰）
-    const existing = await prisma.relSuggestion.findMany({ where: { opportunityId, tenantId } });
-    const seen = new Set<string>([...connected, ...existing.map((s) => pairKey(s.sourcePersonId, s.targetPersonId))]);
+    // Formal edges are public to the current Matter. Candidate semantic replay and producer
+    // ACL are enforced inside createRelationCandidate without pre-reading legacy bodies.
+    const seen = new Set<string>(connected);
     let cands: Cand[] = graphCandidates(g.persons, g.edges, nameOf);
     const cfg = await loadAiConfig(tenantId);
     if (cfg) cands = cands.concat(cfg.provider === 'mock' || !cfg.baseUrl || !cfg.model ? mockLlmCandidates(g.persons, connected) : await llmCandidates(cfg, g.persons, g.edges, nameOf));
@@ -376,36 +406,90 @@ export async function generateRelSuggestions(
           const source = { kind: 'person' as const, id: c.source };
           const target = { kind: 'person' as const, id: c.target };
           const dedupeKey = relationCandidateDedupeKey(opportunityId, source, target);
-          const receipt = await createRelationCandidate(db, {
-            id: 'rs_' + randomUUID().replaceAll('-', ''),
-            tenantId,
-            matterId: opportunityId,
-            source,
-            target,
-            layer: c.layer,
-            label: c.label,
-            sourceType: c.origin,
-            sourceRef: `suggest:${c.origin}:${dedupeKey}`,
-            evidence: c.evidence || '关系推断未返回具体依据，必须由人工核实',
-            confidence: c.confidence,
-            createdByUserId,
-            dedupeKey,
-          });
-          if (receipt.created) created += 1;
+          try {
+            const receipt = await createRelationCandidate(db, {
+              id: 'rs_' + randomUUID().replaceAll('-', ''),
+              tenantId,
+              matterId: opportunityId,
+              source,
+              target,
+              layer: c.layer,
+              label: c.label,
+              sourceType: c.origin,
+              sourceRef: `suggest:${c.origin}:${dedupeKey}`,
+              evidence: c.evidence || '关系推断未返回具体依据，必须由人工核实',
+              confidence: c.confidence,
+              createdByUserId,
+              dedupeKey,
+            });
+            if (receipt.created) created += 1;
+          } catch (error) {
+            if (createdByUserId === null
+              && (error instanceof ScopedNotFoundError || (error as { scopedNotFound?: boolean })?.scopedNotFound)) {
+              continue;
+            }
+            throw error;
+          }
         }
         return created;
       };
       added = commitWrite ? await commitWrite(write) : await write(prisma);
     }
   }
-  const total = await prisma.relSuggestion.count({ where: { opportunityId, tenantId, status: 'pending' } });
+  const total = await prisma.candidate.count({ where: {
+    tenantId,
+    matterId: opportunityId,
+    kind: 'relation_create',
+    status: 'pending',
+    createdByUserId,
+    ...(createdByUserId === null ? { visibility: 'owner_admin_only' } : {}),
+  } });
   return { added, total };
 }
 
-export function suggestRoutes(app: FastifyInstance) {
+export function suggestRoutes(app: FastifyInstance, capabilityPolicy: CapabilityPolicy) {
+  const readableLegacyIds = async (
+    req: any,
+    legacySourceKind: 'PersonSuggestion' | 'RelSuggestion',
+    parent: { accountId?: string; matterId?: string },
+    db: DbClient = prisma,
+  ): Promise<string[]> => {
+    const metadata = await db.candidate.findMany({
+      where: {
+        tenantId: req.user.tenantId,
+        status: 'pending',
+        legacySourceKind,
+        legacySourceId: { not: null },
+        ...(parent.accountId ? { accountId: parent.accountId } : {}),
+        ...(parent.matterId ? { matterId: parent.matterId } : {}),
+      },
+      select: {
+        id: true, tenantId: true, accountId: true, matterId: true,
+        createdByUserId: true, visibility: true, aclVersion: true, legacySourceId: true,
+      },
+    });
+    const ids: string[] = [];
+    for (const row of metadata) {
+      const access = await authorizeSensitiveResource(db, {
+        tenantId: req.user.tenantId,
+        userId: req.user.userId,
+        role: ActorRoleSchema.parse(req.user.role),
+      }, capabilityPolicy, candidateDescriptor(row), 'read');
+      if (access.allowed && row.legacySourceId) ids.push(row.legacySourceId);
+    }
+    return ids;
+  };
+
   // 先按每行 Opportunity Account 校验两端点，再输出姓名/ID；历史脏行只隐藏，不修复或删除。
-  const withNames = async (tenantId: string, rows: RelSuggestion[]) => {
-    const scoped = await resolveScopedRelSuggestions(prisma, tenantId, rows);
+  const withNames = async (db: DbClient, tenantId: string, rows: RelSuggestion[], req: any) => {
+    const scoped = await resolveScopedRelSuggestions(db, tenantId, rows, {
+      principal: {
+        tenantId,
+        userId: req.user.userId,
+        role: ActorRoleSchema.parse(req.user.role),
+      },
+      capabilityPolicy,
+    });
     return scoped.map(({ row, sourceName, targetName }) => ({
       id: row.id,
       opportunityId: row.opportunityId,
@@ -429,8 +513,18 @@ export function suggestRoutes(app: FastifyInstance) {
     if (!(await viewerCanReadOpp(req, reply, oppId))) return; // viewer 归属校验（契约 v1.0 §四）
     const g = await loadGraph(req.user.tenantId, oppId);
     if (!g) return reply.code(404).send({ error: '商机不存在' });
-    const rows = await prisma.relSuggestion.findMany({ where: { opportunityId: oppId, tenantId: req.user.tenantId, status: 'pending' }, orderBy: { confidence: 'desc' } });
-    return { suggestions: await withNames(req.user.tenantId, rows) };
+    const suggestions = await prisma.$transaction(async (tx) => {
+      const readableIds = await readableLegacyIds(req, 'RelSuggestion', { matterId: oppId }, tx);
+      const rows = readableIds.length === 0 ? [] : await tx.relSuggestion.findMany({
+        where: {
+          id: { in: readableIds }, opportunityId: oppId,
+          tenantId: req.user.tenantId, status: 'pending',
+        },
+        orderBy: { confidence: 'desc' },
+      });
+      return withNames(tx, req.user.tenantId, rows, req);
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5_000, timeout: 30_000 });
+    return { suggestions };
   });
 
   app.post('/api/suggest/generate', { preHandler: [app.authenticate] }, async (req, reply) => {
@@ -438,10 +532,32 @@ export function suggestRoutes(app: FastifyInstance) {
     const p = z.object({ opportunityId: z.string() }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '缺少 opportunityId' });
     const tenantId = req.user.tenantId;
-    const r = await generateRelSuggestions(tenantId, p.data.opportunityId, undefined, req.user.userId ?? null);
+    const r = await generateRelSuggestions(
+      tenantId,
+      p.data.opportunityId,
+      undefined,
+      req.user.userId ?? null,
+      {
+        tenantId,
+        userId: req.user.userId,
+        role: ActorRoleSchema.parse(req.user.role),
+      },
+    );
     if (!r) return reply.code(404).send({ error: '商机不存在' });
-    const all = await prisma.relSuggestion.findMany({ where: { opportunityId: p.data.opportunityId, tenantId, status: 'pending' }, orderBy: { confidence: 'desc' } });
-    return { added: r.added, suggestions: await withNames(tenantId, all) };
+    const suggestions = await prisma.$transaction(async (tx) => {
+      const readableIds = await readableLegacyIds(
+        req, 'RelSuggestion', { matterId: p.data.opportunityId }, tx,
+      );
+      const rows = readableIds.length === 0 ? [] : await tx.relSuggestion.findMany({
+        where: {
+          id: { in: readableIds }, opportunityId: p.data.opportunityId,
+          tenantId, status: 'pending',
+        },
+        orderBy: { confidence: 'desc' },
+      });
+      return withNames(tx, tenantId, rows, req);
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5_000, timeout: 30_000 });
+    return { added: r.added, suggestions };
   });
 
   // 采纳候选关系：级联事务——若端点是候选人物先落正式 Person，再建 Edge。
@@ -454,7 +570,14 @@ export function suggestRoutes(app: FastifyInstance) {
     if (!ov.success) return reply.code(400).send({ error: '改后采纳参数无效' });
 
     try {
-      const result = await prisma.$transaction((tx) => acceptRelationSuggestionInTransaction(tx, tenantId, req.params.id, ov.data));
+      const review = {
+        actorId: req.user.userId,
+        actorRole: ActorRoleSchema.parse(req.user.role),
+        capabilityPolicy,
+      };
+      const result = await prisma.$transaction((tx) => (
+        acceptRelationSuggestionInTransaction(tx, tenantId, req.params.id, review, ov.data)
+      ), { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5_000, timeout: 30_000 });
       return result;
     } catch (e: any) {
       if (e instanceof ScopedNotFoundError || e?.scopedNotFound) return reply.code(404).send({ error: '资源不存在' });
@@ -465,7 +588,17 @@ export function suggestRoutes(app: FastifyInstance) {
 
   app.post('/api/suggest/:id/reject', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (denyViewer(req, reply)) return; // viewer 只读，不可拍板/操作
-    const rejected = await rejectRelationCandidate(prisma, { id: req.params.id, tenantId: req.user.tenantId });
+    const rejected = await prisma.$transaction(async (tx) => {
+      return rejectRelationCandidate(tx, {
+        id: req.params.id,
+        tenantId: req.user.tenantId,
+        review: {
+        actorId: req.user.userId,
+        actorRole: ActorRoleSchema.parse(req.user.role),
+        capabilityPolicy,
+        },
+      });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5_000, timeout: 30_000 });
     if (!rejected) return reply.code(404).send({ error: '资源不存在' });
     return { ok: true };
   });
@@ -477,7 +610,16 @@ export function suggestRoutes(app: FastifyInstance) {
     if (!(await viewerCanReadAccount(req, reply, accountId))) return; // viewer 归属校验
     const acc = await prisma.account.findFirst({ where: { id: accountId, tenantId: req.user.tenantId } });
     if (!acc) return reply.code(404).send({ error: '客户不存在' });
-    const rows = await prisma.personSuggestion.findMany({ where: { accountId, tenantId: req.user.tenantId, status: 'pending' }, orderBy: { confidence: 'desc' } });
+    const rows = await prisma.$transaction(async (tx) => {
+      const readableIds = await readableLegacyIds(req, 'PersonSuggestion', { accountId }, tx);
+      return readableIds.length === 0 ? [] : tx.personSuggestion.findMany({
+        where: {
+          id: { in: readableIds }, accountId,
+          tenantId: req.user.tenantId, status: 'pending',
+        },
+        orderBy: { confidence: 'desc' },
+      });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5_000, timeout: 30_000 });
     // 标注是否已有同名正式干系人（供前端给"合并/新建"选择）
     const persons = await prisma.person.findMany({ where: { tenantId: req.user.tenantId, accountId, ...activePersonWhere }, select: { id: true, name: true } });
     const nameToId = new Map(persons.map((p) => [p.name, p.id]));
@@ -494,11 +636,15 @@ export function suggestRoutes(app: FastifyInstance) {
     try {
       const result = await prisma.$transaction(async (tx) => {
         const r = await materializePerson(tx, tenantId, req.params.id, {
+          actorId: req.user.userId,
+          actorRole: ActorRoleSchema.parse(req.user.role),
+          capabilityPolicy,
+        }, {
           override: ov.data,
           allowAcceptedReuse: false,
         });
         return { person: r.createdPerson, accId: r.accountId, accountId: r.accountId, account: { id: r.accountId } };
-      });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5_000, timeout: 30_000 });
       return result;
     } catch (e: any) {
       if (e instanceof ScopedNotFoundError || e?.scopedNotFound) return reply.code(404).send({ error: '资源不存在' });
@@ -509,7 +655,17 @@ export function suggestRoutes(app: FastifyInstance) {
 
   app.post('/api/suggest/persons/:id/reject', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (denyViewer(req, reply)) return; // viewer 只读，不可拍板/操作
-    const rejected = await rejectPersonCandidate(prisma, { id: req.params.id, tenantId: req.user.tenantId });
+    const rejected = await prisma.$transaction(async (tx) => {
+      return rejectPersonCandidate(tx, {
+        id: req.params.id,
+        tenantId: req.user.tenantId,
+        review: {
+        actorId: req.user.userId,
+        actorRole: ActorRoleSchema.parse(req.user.role),
+        capabilityPolicy,
+        },
+      });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5_000, timeout: 30_000 });
     if (!rejected) return reply.code(404).send({ error: '资源不存在' });
     return { ok: true };
   });
@@ -535,17 +691,44 @@ export function suggestRoutes(app: FastifyInstance) {
         code: 'candidate_backfill_required',
       });
     }
-    const candidateRows = await prisma.candidate.findMany({
-      where: {
+    const candidateRows = await prisma.$transaction(async (tx) => {
+      const evaluator = await createSensitiveAccessEvaluator(tx, {
         tenantId,
-        status: 'pending',
-        legacySourceKind: {
-          in: ['PersonSuggestion', 'RelSuggestion', 'ChangeProposal', 'Reminder', 'EvidenceEvent'],
+        userId: req.user.userId,
+        role: ActorRoleSchema.parse(req.user.role),
+      }, capabilityPolicy);
+      const aclWhere = await evaluator.metadataWhere('candidate', 'review');
+      const candidateMetadata = await tx.candidate.findMany({
+        where: {
+          tenantId,
+          status: 'pending',
+          legacySourceKind: {
+            in: ['PersonSuggestion', 'RelSuggestion', 'ChangeProposal', 'Reminder', 'EvidenceEvent'],
+          },
+          legacySourceId: { not: null },
+          ...aclWhere,
         },
-        legacySourceId: { not: null },
-      },
-      orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
-    });
+        orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+        select: {
+          id: true, tenantId: true, accountId: true, matterId: true,
+          createdByUserId: true, visibility: true, aclVersion: true,
+        },
+      });
+      const decisions = await evaluator.authorizeMany(
+        candidateMetadata.map(candidateDescriptor), 'review',
+      );
+      const readableCandidateRefs: Array<{ id: string; aclVersion: number }> = [];
+      for (const [index, row] of candidateMetadata.entries()) {
+        if (decisions[index]?.allowed) {
+          readableCandidateRefs.push({ id: row.id, aclVersion: row.aclVersion });
+        }
+      }
+      // Payload and evidence are selected in the same snapshot and ACL generation as the review decision.
+      return readableCandidateRefs.length === 0 ? [] : tx.candidate.findMany({
+        where: { tenantId, OR: readableCandidateRefs, status: 'pending' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+      });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5_000, timeout: 30_000 });
     const parsedRows: Array<{ row: typeof candidateRows[number]; payload: Record<string, unknown> }> = [];
     try {
       for (const row of candidateRows) {
@@ -818,6 +1001,10 @@ export function suggestRoutes(app: FastifyInstance) {
         await approveEvidenceWithSnapshot(tenantId, req.params.id, reviewedBy, today, {
           direction: p.data.direction,
           tier: p.data.tier,
+        }, {
+          actorId: req.user.userId,
+          actorRole: ActorRoleSchema.parse(req.user.role),
+          capabilityPolicy,
         });
         return { ok: true, status: 'approved' };
       } catch (error) {
@@ -835,6 +1022,11 @@ export function suggestRoutes(app: FastifyInstance) {
       decision: 'reject',
       reviewedBy,
       reviewedAt: today,
+      review: {
+        actorId: req.user.userId,
+        actorRole: ActorRoleSchema.parse(req.user.role),
+        capabilityPolicy,
+      },
     });
     if (!resolved) return reply.code(404).send({ error: '证据不存在或已处理' });
     return { ok: true, status: 'rejected' };
@@ -845,6 +1037,11 @@ export function suggestRoutes(app: FastifyInstance) {
     if (denyViewer(req, reply)) return; // viewer 只读，不可拍板/操作
     const dismissed = await dismissReminderCandidate(prisma, {
       id: req.params.id, tenantId: req.user.tenantId,
+      review: {
+        actorId: req.user.userId,
+        actorRole: ActorRoleSchema.parse(req.user.role),
+        capabilityPolicy,
+      },
     });
     if (!dismissed) return reply.code(404).send({ error: '提醒不存在或已处理' });
     return { ok: true };

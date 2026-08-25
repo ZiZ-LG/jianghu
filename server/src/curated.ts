@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
 import { loadAiConfig, callLLM } from './ai.js';
-import { visiblePersonLogs } from './visibility.js';
+import { visiblePersonLogs, type ReadPrincipal } from './visibility.js';
 import { activePersonWhere } from './activePerson.js';
 import { resolveEffectiveResourceScope } from './resourceScope.js';
 
@@ -28,12 +28,9 @@ async function collectRaw(tenantId: string, kind: EntityKind, entityId: string):
   const parts: string[] = [];
 
   const where = kind === 'account' ? { tenantId, accountId: entityId } : { tenantId, opportunityId: entityId };
-  const notes = await prisma.note.findMany({ where, orderBy: { createdAt: 'desc' }, take: 50 });
   const visits = await prisma.visitNote.findMany({ where, orderBy: { createdAt: 'desc' }, take: 30 });
-  notes.forEach((n) => bump(n.createdAt));
   visits.forEach((vn) => bump(vn.createdAt));
   if (visits.length) parts.push('【拜访纪要】\n' + visits.map((vn) => `- ${vn.date || '?'} ${vn.topic || '拜访'}：${vn.summary}`).join('\n'));
-  if (notes.length) parts.push('【笔记】\n' + notes.map((n) => `- ${n.content}`).join('\n'));
 
   let name = '';
   if (kind === 'account') {
@@ -92,10 +89,18 @@ export async function getCuratedSummary(tenantId: string, kind: EntityKind, enti
   return { content, status: 'generated', editedByHuman: false };
 }
 
-// 校验实体属本租户（隔离）
-async function entityOwned(tenantId: string, kind: EntityKind, entityId: string): Promise<boolean> {
-  if (kind === 'account') return !!(await prisma.account.findFirst({ where: { id: entityId, tenantId }, select: { id: true } }));
-  return !!(await prisma.opportunity.findFirst({ where: { id: entityId, tenantId }, select: { id: true } }));
+async function currentCuratedAccess(
+  principal: ReadPrincipal,
+  kind: EntityKind,
+  entityId: string,
+) {
+  const scope = await resolveEffectiveResourceScope(prisma, principal);
+  return {
+    scope,
+    canRead: kind === 'account'
+      ? scope.canReadAccountData(entityId)
+      : scope.canReadMatter(entityId),
+  };
 }
 
 export function curatedRoutes(app: FastifyInstance): void {
@@ -104,17 +109,14 @@ export function curatedRoutes(app: FastifyInstance): void {
     const kind = req.query?.entityKind;
     const eid = typeof req.query?.entityId === 'string' ? req.query.entityId : '';
     if ((kind !== 'account' && kind !== 'opportunity') || !eid) return reply.code(400).send({ error: '参数错误' });
-    const scope = await resolveEffectiveResourceScope(prisma, {
+    const access = await currentCuratedAccess({
       tenantId: req.user.tenantId,
       userId: req.user.userId,
       role: req.user.role,
-    });
-    const canRead = kind === 'account'
-      ? scope.canReadAccountData(eid)
-      : scope.canReadMatter(eid);
-    if (!canRead) return reply.code(404).send({ error: '实体不存在' });
+    }, kind, eid);
+    if (!access.canRead) return reply.code(404).send({ error: '实体不存在' });
     // viewer 归属校验（契约 v1.0 §四）+ 只读缓存：不触发懒生成（不花租户 AI 额度、不写缓存行）
-    if (scope.actorRole === 'viewer') {
+    if (access.scope.actorRole === 'viewer') {
       // 历史共享摘要可能由旧版本把 team/self 动态纳入；无法证明字段级来源时 fail closed。
       return { content: '', status: 'restricted', editedByHuman: false };
     }
@@ -123,10 +125,13 @@ export function curatedRoutes(app: FastifyInstance): void {
 
   // 人编辑综述 → 锁定(human-wins)，AI 不再覆盖
   app.put('/api/curated', { preHandler: [app.authenticate] }, async (req: any, reply) => {
-    if (req.user.role === 'viewer') return reply.code(403).send({ error: '只读成员不可编辑' });
     const p = z.object({ entityKind: z.enum(['account', 'opportunity']), entityId: z.string().min(1), content: z.string() }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '参数错误' });
-    if (!(await entityOwned(req.user.tenantId, p.data.entityKind, p.data.entityId))) return reply.code(404).send({ error: '实体不存在' });
+    const access = await currentCuratedAccess({
+      tenantId: req.user.tenantId, userId: req.user.userId, role: req.user.role,
+    }, p.data.entityKind, p.data.entityId);
+    if (!access.canRead) return reply.code(404).send({ error: '实体不存在' });
+    if (access.scope.actorRole === 'viewer') return reply.code(403).send({ error: '只读成员不可编辑' });
     await prisma.curatedSummary.upsert({
       where: { tenantId_entityKind_entityId: { tenantId: req.user.tenantId, entityKind: p.data.entityKind, entityId: p.data.entityId } },
       update: { content: p.data.content, editedByHuman: true, editedBy: req.user.userId || '' },
@@ -137,10 +142,13 @@ export function curatedRoutes(app: FastifyInstance): void {
 
   // 强制重新梳理（清 human 锁定、忽略缓存，重新调 LLM）
   app.post('/api/curated/regenerate', { preHandler: [app.authenticate] }, async (req: any, reply) => {
-    if (req.user.role === 'viewer') return reply.code(403).send({ error: '只读成员不可操作' });
     const p = z.object({ entityKind: z.enum(['account', 'opportunity']), entityId: z.string().min(1) }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '参数错误' });
-    if (!(await entityOwned(req.user.tenantId, p.data.entityKind, p.data.entityId))) return reply.code(404).send({ error: '实体不存在' });
+    const access = await currentCuratedAccess({
+      tenantId: req.user.tenantId, userId: req.user.userId, role: req.user.role,
+    }, p.data.entityKind, p.data.entityId);
+    if (!access.canRead) return reply.code(404).send({ error: '实体不存在' });
+    if (access.scope.actorRole === 'viewer') return reply.code(403).send({ error: '只读成员不可操作' });
     return getCuratedSummary(req.user.tenantId, p.data.entityKind, p.data.entityId, true);
   });
 }

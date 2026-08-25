@@ -5,6 +5,7 @@ import { createTestContext, type TestContext } from './helpers/testApp.js';
 import { buildServerAiContext, contextManifestToken } from '../src/ai.js';
 import { inspectMatterOwnerAssignments, userOwnsMatter } from '../src/matter/ownership.js';
 import { executeMatterOwnerTransfer } from '../src/mutation/matterOwnership.js';
+import { seedLegacyCandidateAuthority } from './helpers/candidateAuthority.js';
 
 function auth(token: string) { return { authorization: `Bearer ${token}` }; }
 
@@ -530,7 +531,9 @@ describe('INT-107 stable ownership and sensitive read ACL', () => {
       await context.prisma.changeProposal.create({ data: {
         id: 'cp-log-ok', tenantId: context.tenant.id, accountId: 'acc-log-proposal', entityKind: 'personLog', entityId: 'p-log-proposal', field: 'append', oldValue: '',
         newValue: JSON.stringify({ date: '2026-07-12', content: 'append-only', visibility: 'self' }), dedupeKey: 'cp-log-ok-key',
+        proposedBy: member.user.id,
       } });
+      await seedLegacyCandidateAuthority(context.prisma, context.tenant.id, 'ChangeProposal', 'cp-log-ok');
       const accepted = await context.app.inject({ method: 'POST', url: '/api/proposals/cp-log-ok/accept', headers: auth(member.token) });
       expect(accepted.statusCode).toBe(200);
       const logs = JSON.parse((await context.prisma.person.findUniqueOrThrow({ where: { id: 'p-log-proposal' } })).logs);
@@ -539,7 +542,9 @@ describe('INT-107 stable ownership and sensitive read ACL', () => {
       await context.prisma.changeProposal.create({ data: {
         id: 'cp-log-forged', tenantId: context.tenant.id, accountId: 'acc-log-proposal', entityKind: 'personLog', entityId: 'p-log-proposal', field: 'append', oldValue: '',
         newValue: JSON.stringify({ date: '2026-07-12', content: 'forged', visibility: 'self', createdBy: context.owner.id }), dedupeKey: 'cp-log-forged-key',
+        proposedBy: member.user.id,
       } });
+      await seedLegacyCandidateAuthority(context.prisma, context.tenant.id, 'ChangeProposal', 'cp-log-forged');
       const forged = await context.app.inject({ method: 'POST', url: '/api/proposals/cp-log-forged/accept', headers: auth(member.token) });
       expect(forged.statusCode).toBe(400);
       expect((await context.prisma.changeProposal.findUniqueOrThrow({ where: { id: 'cp-log-forged' } })).status).toBe('pending');
@@ -550,7 +555,9 @@ describe('INT-107 stable ownership and sensitive read ACL', () => {
       await context.prisma.changeProposal.create({ data: {
         id: 'cp-log-legacy', tenantId: context.tenant.id, accountId: 'acc-log-proposal', entityKind: 'person', entityId: 'p-log-proposal', field: 'logs',
         oldValue: before, newValue: JSON.stringify([legacyLog, ...beforeRows]), dedupeKey: 'cp-log-legacy-key',
+        proposedBy: member.user.id,
       } });
+      await seedLegacyCandidateAuthority(context.prisma, context.tenant.id, 'ChangeProposal', 'cp-log-legacy');
       expect((await context.app.inject({ method: 'POST', url: '/api/proposals/cp-log-legacy/accept', headers: auth(member.token) })).statusCode).toBe(200);
       const afterLegacy = JSON.parse((await context.prisma.person.findUniqueOrThrow({ where: { id: 'p-log-proposal' } })).logs);
       expect(afterLegacy[0]).toMatchObject({ content: 'legacy append', createdBy: member.user.id });

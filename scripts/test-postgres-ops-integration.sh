@@ -123,7 +123,19 @@ docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U 
      (id,\"tenantId\",\"accountId\",\"opportunityId\",\"personId\",\"signalKey\",direction,tier,\"rawContent\",\"occurredAt\",status,origin,\"createdBy\") VALUES
      ('legacy-evidence-event','legacy-owner-tenant','legacy-owner-account','legacy-matter-active',
       'legacy-candidate-person-one','intro_referral',1,'strong','legacy evidence raw','2026-08-24',
-      'pending_review','voice','legacy-owner-user');" >/dev/null
+      'pending_review','voice','legacy-owner-user');
+   INSERT INTO \"Note\"
+     (id,\"tenantId\",\"accountId\",\"opportunityId\",\"personId\",content,source,tags,\"createdBy\") VALUES
+     ('legacy-note-known','legacy-owner-tenant','legacy-owner-account','legacy-matter-active',
+      'legacy-candidate-person-one','legacy known private note','manual','[]','legacy-owner-user'),
+     ('legacy-note-quarantine','legacy-owner-tenant','legacy-owner-account','legacy-matter-active',
+      NULL,'legacy unknown note','import','[]','unknown-user');
+   INSERT INTO \"Transcript\"
+     (id,\"tenantId\",\"accountId\",\"opportunityId\",source,\"externalRef\",title,\"contentEnc\",\"createdBy\") VALUES
+     ('legacy-transcript-known','legacy-owner-tenant','legacy-owner-account','legacy-matter-active',
+      'manual','legacy-transcript-known','Known creator','ciphertext-known','legacy-owner-user'),
+     ('legacy-transcript-quarantine','legacy-owner-tenant','legacy-owner-account','legacy-matter-active',
+      'manual','legacy-transcript-quarantine','Unknown creator','ciphertext-unknown','');" >/dev/null
 # Simulate a process kill after the first of the three adoption resolves. The
 # next server start must recognize and complete this partial history.
 docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint npx server \
@@ -189,6 +201,8 @@ legacy_commitment_mapping_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec
 [[ "$legacy_commitment_mapping_count" == 1 ]]
 docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
   'npm run migrate:candidate-report >/dev/null && npm run migrate:candidate-apply >/dev/null && npm run migrate:candidate-verify >/dev/null'
+docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npm run migrate:sensitive-acl-report >/dev/null && npm run migrate:sensitive-acl-apply >/dev/null && npm run migrate:sensitive-acl-verify >/dev/null'
 legacy_candidate_source_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
   'SELECT
      (SELECT count(*) FROM "PersonSuggestion")
@@ -204,13 +218,62 @@ candidate_migration_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db
      AND finished_at IS NOT NULL AND rolled_back_at IS NULL" | tr -d '[:space:]')
 candidate_backfill_marker_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
   "SELECT count(*) FROM \"DataMigrationState\" WHERE key = 'CORE-203-candidate-backfill-v1'" | tr -d '[:space:]')
+sensitive_acl_migration_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+  "SELECT count(*) FROM \"_prisma_migrations\"
+   WHERE migration_name = '20260825000000_expand_sensitive_resource_acl'
+     AND finished_at IS NOT NULL AND rolled_back_at IS NULL" | tr -d '[:space:]')
+sensitive_acl_marker_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+  "SELECT count(*) FROM \"DataMigrationState\" WHERE key = 'CORE-204-sensitive-acl-v1'" | tr -d '[:space:]')
+sensitive_acl_mapping_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+  "SELECT
+     (SELECT count(*) FROM \"Note\"
+       WHERE id = 'legacy-note-known' AND \"createdByUserId\" = 'legacy-owner-user'
+         AND visibility = 'private' AND \"aclVersion\" = 1)
+   + (SELECT count(*) FROM \"Note\"
+       WHERE id = 'legacy-note-quarantine' AND \"createdByUserId\" IS NULL
+         AND visibility = 'owner_admin_only' AND \"aclVersion\" = 1)
+   + (SELECT count(*) FROM \"Transcript\"
+       WHERE id = 'legacy-transcript-known' AND \"createdByUserId\" = 'legacy-owner-user'
+         AND visibility = 'private' AND \"aclVersion\" = 1
+         AND \"idempotencyDomain\" = 'creator-private-v1:\"legacy-owner-user\"')
+   + (SELECT count(*) FROM \"Transcript\"
+       WHERE id = 'legacy-transcript-quarantine' AND \"createdByUserId\" IS NULL
+         AND visibility = 'owner_admin_only' AND \"aclVersion\" = 1
+         AND \"idempotencyDomain\" = 'system-quarantine-v1')" | tr -d '[:space:]')
+candidate_semantic_mapping_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+  "SELECT
+     (SELECT count(*) FROM \"Candidate\"
+       WHERE \"legacySourceKind\" = 'PersonSuggestion' AND \"legacySourceId\" = 'legacy-person-suggestion'
+         AND \"dedupeKey\" = 'creator-private-v1:[\"legacy-owner-user\",\"person-pending-v1:legacy-owner-account:suggested person\"]')
+   + (SELECT count(*) FROM \"Candidate\"
+       WHERE \"legacySourceKind\" = 'RelSuggestion' AND \"legacySourceId\" = 'legacy-rel-suggestion'
+         AND \"dedupeKey\" = 'relation-pending-v1:legacy-matter-active:person:legacy-candidate-person-one|person:legacy-candidate-person-two')
+   + (SELECT count(*) FROM \"Candidate\"
+       WHERE \"legacySourceKind\" = 'ChangeProposal' AND \"legacySourceId\" = 'legacy-change-proposal'
+         AND \"dedupeKey\" = 'creator-private-v1:'
+           || '[\"legacy-owner-user\",'
+           || to_json('[\"legacy-owner-tenant\",\"legacy-owner-account\",\"person\",\"legacy-candidate-person-one\",\"title\"]'::text)::text
+           || ']'
+         AND payload::jsonb ->> 'legacyDedupeKey' = \"dedupeKey\")
+   + (SELECT count(*) FROM \"Candidate\"
+       WHERE \"legacySourceKind\" = 'Reminder' AND \"legacySourceId\" = 'legacy-reminder'
+         AND \"dedupeKey\" = 'reminder-pending-v1:legacy-reminder-key')
+   + (SELECT count(*) FROM \"Candidate\"
+       WHERE \"legacySourceKind\" = 'EvidenceEvent' AND \"legacySourceId\" = 'legacy-evidence-event'
+         AND \"dedupeKey\" = 'creator-private-v1:[\"legacy-owner-user\",\"evidence-source-v1:voice:legacy:EvidenceEvent:legacy-evidence-event\"]')" | tr -d '[:space:]')
 [[ "$legacy_candidate_source_count" == 5 ]]
 [[ "$legacy_candidate_target_count" == 5 ]]
 [[ "$candidate_migration_count" == 1 ]]
 [[ "$candidate_backfill_marker_count" == 1 ]]
+[[ "$sensitive_acl_migration_count" == 1 ]]
+[[ "$sensitive_acl_marker_count" == 1 ]]
+[[ "$sensitive_acl_mapping_count" == 4 ]]
+[[ "$candidate_semantic_mapping_count" == 5 ]]
 echo "LEGACY_CANDIDATE_REPORT_OK=1"
 echo "CANDIDATE_BACKFILL_APPLY_OK=1"
 echo "CANDIDATE_SOURCE_ROWS_UNCHANGED_OK=1"
+echo "SENSITIVE_ACL_BACKFILL_APPLY_OK=1"
+echo "SENSITIVE_ACL_CREATOR_QUARANTINE_OK=1"
 echo "LEGACY_ACCOUNT_OWNER_BACKFILL_OK=1"
 echo "LEGACY_SCHEMA_MIGRATION_PREFLIGHT_OK=1"
 echo "LEGACY_MATTER_STATUS_BACKFILL_OK=1"
@@ -770,6 +833,216 @@ candidate_restore_parity=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db 
 [[ "$candidate_restore_parity" == 1 ]]
 echo "CANDIDATE_RESTORE_ROLLBACK_OK=1"
 echo "CORE_203_CANDIDATE_CUTOVER_OK=1"
+
+# CORE-204 expands creator/share ACL columns and performs a separate marker-last
+# data cutover. Exercise committed-DDL adoption, semantic and marker drift,
+# partial-schema refusal, and authenticated restoration of the pre-ACL schema.
+sensitive_acl_db=jianghu_sensitive_acl_migration
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$sensitive_acl_db"
+POSTGRES_DB="$sensitive_acl_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npx prisma db push --schema prisma/postgres/legacy/20260825_pre_core204.prisma --skip-generate >/dev/null
+   for path in prisma/postgres/migrations/20*; do
+     [ -d "$path" ] || continue
+     migration=$(basename "$path")
+     [ "$migration" = 20260825000000_expand_sensitive_resource_acl ] && break
+     npx prisma migrate resolve --applied "$migration" --schema prisma/postgres/schema.prisma >/dev/null
+   done' >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$sensitive_acl_db" -c \
+  "INSERT INTO \"Tenant\" (id,name) VALUES ('sensitive-acl-tenant','Sensitive ACL Tenant');
+   INSERT INTO \"User\" (id,\"tenantId\",email,\"passwordHash\",name,role)
+     VALUES ('sensitive-acl-user','sensitive-acl-tenant','sensitive-acl@example.test','unused','Owner','owner');
+   INSERT INTO \"Account\" (id,\"tenantId\",name,\"customerType\")
+     VALUES ('sensitive-acl-account','sensitive-acl-tenant','Sensitive ACL Account',1);
+   INSERT INTO \"Opportunity\"
+     (id,\"tenantId\",\"accountId\",name,\"customerType\",\"pipelineStage\",\"engageStage\")
+     VALUES ('sensitive-acl-matter','sensitive-acl-tenant','sensitive-acl-account',
+       'Sensitive ACL Matter',1,'qualify','discover');
+   INSERT INTO \"Person\" (id,\"tenantId\",\"accountId\",name,title)
+     VALUES ('sensitive-acl-person','sensitive-acl-tenant','sensitive-acl-account','Sensitive Person','Sponsor');
+   INSERT INTO \"Note\"
+     (id,\"tenantId\",\"accountId\",\"opportunityId\",\"personId\",content,source,tags,\"createdBy\") VALUES
+     ('sensitive-note-known','sensitive-acl-tenant','sensitive-acl-account','sensitive-acl-matter',
+      'sensitive-acl-person','known note body','manual','[]','sensitive-acl-user'),
+     ('sensitive-note-quarantine','sensitive-acl-tenant','sensitive-acl-account','sensitive-acl-matter',
+      NULL,'unknown note body','import','[]','foreign-user');
+   INSERT INTO \"Transcript\"
+     (id,\"tenantId\",\"accountId\",\"opportunityId\",source,\"externalRef\",title,\"contentEnc\",\"createdBy\") VALUES
+     ('sensitive-transcript-known','sensitive-acl-tenant','sensitive-acl-account','sensitive-acl-matter',
+      'manual','sensitive-known','Known transcript','ciphertext-known','sensitive-acl-user'),
+     ('sensitive-transcript-quarantine','sensitive-acl-tenant','sensitive-acl-account','sensitive-acl-matter',
+      'manual','sensitive-unknown','Unknown transcript','ciphertext-unknown','');
+   INSERT INTO \"Candidate\"
+     (id,\"tenantId\",kind,\"accountId\",\"matterId\",\"targetKind\",\"targetId\",source,
+      \"sourceRef\",evidence,confidence,\"createdByUserId\",visibility,\"dedupeKey\",\"updatedAt\") VALUES
+     ('sensitive-candidate-known','sensitive-acl-tenant','field_change','sensitive-acl-account',
+      'sensitive-acl-matter','person','sensitive-acl-person','manual','sensitive-known',
+      'known candidate evidence',0.8,'sensitive-acl-user','private','sensitive-known',CURRENT_TIMESTAMP),
+     ('sensitive-candidate-quarantine','sensitive-acl-tenant','field_change','sensitive-acl-account',
+      'sensitive-acl-matter','person','sensitive-acl-person','import','sensitive-unknown',
+      'unknown candidate evidence',0.5,NULL,'private','sensitive-unknown',CURRENT_TIMESTAMP);
+   INSERT INTO \"ChangeProposal\"
+     (id,\"tenantId\",\"accountId\",\"opportunityId\",\"entityKind\",\"entityId\",field,
+      \"newValue\",origin,evidence,confidence,\"dedupeKey\",\"proposedBy\") VALUES
+     ('sensitive-field-proposal','sensitive-acl-tenant','sensitive-acl-account','sensitive-acl-matter',
+      'person','sensitive-acl-person','title','Decision maker','mcp','field evidence',0.8,
+      'legacy-v1:ChangeProposal:sensitive-field-proposal','sensitive-acl-user');
+   INSERT INTO \"Candidate\"
+     (id,\"tenantId\",kind,\"accountId\",\"matterId\",\"targetKind\",\"targetId\",\"fieldKey\",
+      \"oldValue\",\"newValue\",payload,source,\"sourceRef\",evidence,confidence,\"createdByUserId\",visibility,
+      \"dedupeKey\",\"legacySourceKind\",\"legacySourceId\",\"updatedAt\") VALUES
+     ('cand_0dda2cb646322f048c369fc11e209ad4','sensitive-acl-tenant','field_change','sensitive-acl-account',
+      'sensitive-acl-matter','person','sensitive-acl-person','title','','Decision maker',
+      '{\"legacyDedupeKey\":\"legacy-v1:ChangeProposal:sensitive-field-proposal\",\"legacyStatus\":\"pending\"}',
+      'mcp','legacy:ChangeProposal:sensitive-field-proposal','field evidence',0.8,'sensitive-acl-user','private',
+      'legacy-v1:ChangeProposal:sensitive-field-proposal','ChangeProposal','sensitive-field-proposal',CURRENT_TIMESTAMP);" >/dev/null
+
+sensitive_backup_root="$BACKUP_DIR/core204-pre"
+mkdir -p "$sensitive_backup_root"
+derive_backup_keys "$BACKUP_MASTER_SECRET"
+sensitive_backup_work=$(mktemp -d "$sensitive_backup_root/.sensitive-work.XXXXXX")
+sensitive_backup="$sensitive_backup_root/jianghu-core204-$(openssl rand -hex 8).backup"
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db \
+  pg_dump -U "$POSTGRES_USER" -d "$sensitive_acl_db" -Fc \
+  | backup_encrypt_payload "$sensitive_backup_work/payload.enc"
+{
+  backup_cipher_metadata
+  printf 'source_database=%s\n' "$sensitive_acl_db"
+  printf 'created_at=%s\n' "$(date -u +%Y%m%dT%H%M%SZ)"
+} > "$sensitive_backup_work/metadata"
+write_artifact_integrity "$sensitive_backup_work"
+verify_artifact_auth "$sensitive_backup_work"
+mv "$sensitive_backup_work" "$sensitive_backup"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db \
+  psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$sensitive_acl_db" \
+  < server/prisma/postgres/migrations/20260825000000_expand_sensitive_resource_acl/migration.sql >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$sensitive_acl_db" -c \
+  "INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+   VALUES ('int-sensitive-after-commit', repeat('0', 64),
+     '20260825000000_expand_sensitive_resource_acl', CURRENT_TIMESTAMP, 0);" >/dev/null
+POSTGRES_DB="$sensitive_acl_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+sensitive_after_commit_adoption=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$sensitive_acl_db" -tAc \
+  "SELECT ((SELECT count(*) FROM \"_prisma_migrations\"
+              WHERE migration_name = '20260825000000_expand_sensitive_resource_acl'
+                AND finished_at IS NOT NULL AND rolled_back_at IS NULL) = 1
+       AND (SELECT count(*) FROM \"_prisma_migrations\"
+              WHERE migration_name = '20260825000000_expand_sensitive_resource_acl'
+                AND finished_at IS NULL AND rolled_back_at IS NULL) = 0
+       AND (SELECT count(*) FROM \"DataMigrationState\"
+              WHERE key = 'CORE-204-sensitive-acl-v1') = 1
+       AND (SELECT count(*) FROM \"Note\"
+              WHERE id = 'sensitive-note-known' AND \"createdByUserId\" = 'sensitive-acl-user'
+                AND visibility = 'private' AND \"aclVersion\" = 1) = 1
+       AND (SELECT count(*) FROM \"Note\"
+              WHERE id = 'sensitive-note-quarantine' AND \"createdByUserId\" IS NULL
+                AND visibility = 'owner_admin_only' AND \"aclVersion\" = 1) = 1
+       AND (SELECT count(*) FROM \"Transcript\"
+              WHERE id = 'sensitive-transcript-known' AND \"createdByUserId\" = 'sensitive-acl-user'
+                AND visibility = 'private' AND \"aclVersion\" = 1
+                AND \"idempotencyDomain\" = 'creator-private-v1:\"sensitive-acl-user\"') = 1
+       AND (SELECT count(*) FROM \"Transcript\"
+              WHERE id = 'sensitive-transcript-quarantine' AND \"createdByUserId\" IS NULL
+                AND visibility = 'owner_admin_only' AND \"aclVersion\" = 1
+                AND \"idempotencyDomain\" = 'system-quarantine-v1') = 1
+       AND to_regclass('public.\"Transcript_tenantId_source_externalRef_key\"') IS NULL
+       AND to_regclass('public.\"Transcript_tenantId_idempotencyDomain_source_externalRef_key\"') IS NOT NULL
+       AND (SELECT count(*) FROM \"Candidate\"
+              WHERE id = 'sensitive-candidate-known'
+                AND \"dedupeKey\" = 'creator-private-v1:[\"sensitive-acl-user\",\"sensitive-known\"]'
+                AND \"createdByUserId\" = 'sensitive-acl-user'
+                AND visibility = 'private' AND \"aclVersion\" = 1) = 1
+       AND (SELECT count(*) FROM \"Candidate\"
+              WHERE id = 'cand_0dda2cb646322f048c369fc11e209ad4'
+                AND \"dedupeKey\" = 'creator-private-v1:'
+                  || '[\"sensitive-acl-user\",'
+                  || to_json('[\"sensitive-acl-tenant\",\"sensitive-acl-account\",\"person\",\"sensitive-acl-person\",\"title\"]'::text)::text
+                  || ']'
+                AND payload::jsonb ->> 'legacyDedupeKey' = \"dedupeKey\"
+                AND payload::jsonb ->> 'legacyStatus' = 'pending') = 1
+       AND (SELECT count(*) FROM \"ChangeProposal\"
+              WHERE id = 'sensitive-field-proposal'
+                AND \"dedupeKey\" = 'creator-private-v1:'
+                  || '[\"sensitive-acl-user\",'
+                  || to_json('[\"sensitive-acl-tenant\",\"sensitive-acl-account\",\"person\",\"sensitive-acl-person\",\"title\"]'::text)::text
+                  || ']') = 1
+       AND (SELECT count(*) FROM \"Candidate\"
+              WHERE id = 'sensitive-candidate-quarantine' AND \"createdByUserId\" IS NULL
+                AND visibility = 'owner_admin_only' AND \"aclVersion\" = 1) = 1)::int" | tr -d '[:space:]')
+[[ "$sensitive_after_commit_adoption" == 1 ]]
+echo "INTERRUPTED_SENSITIVE_ACL_AFTER_COMMIT_ADOPTION_OK=1"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$sensitive_acl_db" -c \
+  "UPDATE \"Note\" SET visibility = 'tampered' WHERE id = 'sensitive-note-known';" >/dev/null
+if POSTGRES_DB="$sensitive_acl_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "sensitive ACL semantic conflict unexpectedly deployed" >&2; exit 1
+fi
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$sensitive_acl_db" -c \
+  "UPDATE \"Note\" SET visibility = 'private' WHERE id = 'sensitive-note-known';" >/dev/null
+POSTGRES_DB="$sensitive_acl_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+echo "SENSITIVE_ACL_SEMANTIC_CONFLICT_FAIL_CLOSED_OK=1"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$sensitive_acl_db" -c \
+  "UPDATE \"DataMigrationState\"
+      SET details = jsonb_set(details::jsonb, '{markerChecksum}', to_jsonb(repeat('0', 64)))::text
+    WHERE key = 'CORE-204-sensitive-acl-v1';" >/dev/null
+if POSTGRES_DB="$sensitive_acl_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "sensitive ACL marker checksum drift unexpectedly deployed" >&2; exit 1
+fi
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$sensitive_acl_db" -c \
+  "DELETE FROM \"DataMigrationState\" WHERE key = 'CORE-204-sensitive-acl-v1';" >/dev/null
+POSTGRES_DB="$sensitive_acl_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+echo "SENSITIVE_ACL_MARKER_CHECKSUM_FAIL_CLOSED_OK=1"
+
+sensitive_partial_db=jianghu_sensitive_acl_partial
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$sensitive_partial_db"
+POSTGRES_DB="$sensitive_partial_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npx prisma db push --schema prisma/postgres/legacy/20260825_pre_core204.prisma --skip-generate >/dev/null
+   for path in prisma/postgres/migrations/20*; do
+     [ -d "$path" ] || continue
+     migration=$(basename "$path")
+     [ "$migration" = 20260825000000_expand_sensitive_resource_acl ] && break
+     npx prisma migrate resolve --applied "$migration" --schema prisma/postgres/schema.prisma >/dev/null
+   done' >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$sensitive_partial_db" -c \
+  "ALTER TABLE \"Candidate\" ADD COLUMN \"aclVersion\" INTEGER NOT NULL DEFAULT 1;
+   INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+   VALUES ('int-sensitive-partial', repeat('0', 64),
+     '20260825000000_expand_sensitive_resource_acl', CURRENT_TIMESTAMP, 0);" >/dev/null
+if POSTGRES_DB="$sensitive_partial_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "partial sensitive ACL schema unexpectedly migrated" >&2; exit 1
+fi
+sensitive_partial_columns=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$sensitive_partial_db" -tAc \
+  "SELECT count(*) FROM information_schema.columns
+   WHERE table_schema = 'public' AND table_name = 'Candidate' AND column_name = 'aclVersion'" | tr -d '[:space:]')
+sensitive_partial_applied=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$sensitive_partial_db" -tAc \
+  "SELECT count(*) FROM \"_prisma_migrations\"
+   WHERE migration_name = '20260825000000_expand_sensitive_resource_acl'
+     AND finished_at IS NOT NULL AND rolled_back_at IS NULL" | tr -d '[:space:]')
+[[ "$sensitive_partial_columns" == 1 ]]
+[[ "$sensitive_partial_applied" == 0 ]]
+echo "PARTIAL_SENSITIVE_ACL_SCHEMA_FAIL_CLOSED_OK=1"
+
+sensitive_restore_db=jianghu_restore_sensitive_acl_core204
+bash scripts/restore-postgres.sh "$sensitive_backup" --database "$sensitive_restore_db" >/dev/null
+sensitive_restore_parity=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$sensitive_restore_db" -tAc \
+  "SELECT ((to_regclass('public.\"SourceArtifact\"') IS NULL)
+       AND (to_regclass('public.\"SensitiveResourceGrant\"') IS NULL)
+       AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'Note' AND column_name = 'aclVersion')
+       AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'Transcript' AND column_name = 'idempotencyDomain')
+       AND to_regclass('public.\"Transcript_tenantId_source_externalRef_key\"') IS NOT NULL
+       AND to_regclass('public.\"Transcript_tenantId_idempotencyDomain_source_externalRef_key\"') IS NULL
+       AND (SELECT count(*) FROM \"Note\" WHERE id IN ('sensitive-note-known','sensitive-note-quarantine')) = 2)::int" | tr -d '[:space:]')
+[[ "$sensitive_restore_parity" == 1 ]]
+echo "SENSITIVE_ACL_RESTORE_ROLLBACK_OK=1"
+echo "CORE_204_SENSITIVE_ACL_CUTOVER_OK=1"
 
 # A duplicate tenant-local owner name must roll the bridge transaction back.
 # After data repair, the same database must resume and complete safely.

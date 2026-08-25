@@ -1,6 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { assembleProductAccess } from '@jianghu/domain-contracts';
 import { createTestContext } from './helpers/testApp.js';
 import {
   claimPersonCandidate,
@@ -14,6 +15,8 @@ import {
   rejectRelationCandidate,
   updatePendingPersonCandidate,
 } from '../src/candidates/personRelation.js';
+import { applyCandidateMigration } from '../src/candidates/migration.js';
+import { candidateDedupeKeyForCreator } from '../src/candidates/dedupe.js';
 
 async function seedCustomerTree(context: Awaited<ReturnType<typeof createTestContext>>, suffix = '') {
   const accountId = `candidate-cutover-account${suffix}`;
@@ -40,6 +43,12 @@ async function seedCustomerTree(context: Awaited<ReturnType<typeof createTestCon
   ] });
   return { accountId, matterId, sourcePersonId, targetPersonId };
 }
+
+const reviewFor = (context: Awaited<ReturnType<typeof createTestContext>>) => ({
+  actorId: context.owner.id,
+  actorRole: 'owner' as const,
+  capabilityPolicy: assembleProductAccess({ edition: 'internal' }).policy,
+});
 
 describe('CORE-202 Candidate person/relation write helper', () => {
   it('atomically writes one authoritative person Candidate and one legacy projection, then replays the same tenant key', async () => {
@@ -86,7 +95,7 @@ describe('CORE-202 Candidate person/relation write helper', () => {
         confidence: input.confidence,
         createdByUserId: context.owner.id,
         visibility: 'private',
-        dedupeKey: input.dedupeKey,
+        dedupeKey: candidateDedupeKeyForCreator(input.dedupeKey, context.owner.id),
         legacySourceKind: 'PersonSuggestion',
         legacySourceId: input.id,
         version: 0,
@@ -196,7 +205,14 @@ describe('CORE-202 Candidate person/relation write helper', () => {
         dedupeKey: sharedKey,
       });
       expect(first.candidateId).not.toBe(second.candidateId);
-      await expect(context.prisma.candidate.count({ where: { dedupeKey: sharedKey } })).resolves.toBe(2);
+      await expect(context.prisma.candidate.findUniqueOrThrow({ where: { id: first.candidateId } }))
+        .resolves.toMatchObject({
+          dedupeKey: candidateDedupeKeyForCreator(sharedKey, context.owner.id),
+        });
+      await expect(context.prisma.candidate.findUniqueOrThrow({ where: { id: second.candidateId } }))
+        .resolves.toMatchObject({
+          dedupeKey: candidateDedupeKeyForCreator(sharedKey, userB.id),
+        });
 
       await expect(createPersonCandidate(context.prisma, {
         id: 'core-202-cross-tenant-parent', tenantId: context.tenant.id, accountId: accountB.id,
@@ -294,7 +310,7 @@ describe('CORE-202 Candidate person/relation write helper', () => {
     }
   });
 
-  it('lazily adopts legacy rows and keeps Candidate plus compatibility status under one CAS transaction', async () => {
+  it('fails closed when a legacy review row has no authoritative Candidate', async () => {
     const context = await createTestContext();
     try {
       const tree = await seedCustomerTree(context);
@@ -304,45 +320,16 @@ describe('CORE-202 Candidate person/relation write helper', () => {
         origin: 'mcp', evidence: 'legacy evidence', confidence: 0.4, status: 'pending', proposedBy: context.owner.id,
       } });
 
-      await expect(context.prisma.$transaction(async (tx) => {
-        await claimPersonCandidate(tx, {
-          tenantId: context.tenant.id, id: 'ps-core202-legacy', override: { title: 'Rolled back' },
-        });
-        throw new Error('fault after claim');
-      })).rejects.toThrow('fault after claim');
+      await expect(claimPersonCandidate(context.prisma, {
+        tenantId: context.tenant.id, id: 'ps-core202-legacy', override: { title: 'Must not apply' },
+        review: reviewFor(context),
+      })).rejects.toThrow('scoped resource not found');
       await expect(context.prisma.candidate.count({ where: { tenantId: context.tenant.id } })).resolves.toBe(0);
       await expect(context.prisma.personSuggestion.findUniqueOrThrow({ where: { id: 'ps-core202-legacy' } }))
         .resolves.toMatchObject({ status: 'pending', title: 'Old' });
-
-      const finalPersonId = 'candidate-cutover-materialized';
-      const receipt = await context.prisma.$transaction(async (tx) => {
-        const claim = await claimPersonCandidate(tx, {
-          tenantId: context.tenant.id, id: 'ps-core202-legacy', override: { title: 'Reviewed' },
-        });
-        await tx.person.create({ data: {
-          id: finalPersonId, tenantId: context.tenant.id, accountId: tree.accountId,
-          name: 'Legacy Candidate', title: 'Reviewed',
-        } });
-        return finalizePersonCandidate(tx, {
-          tenantId: context.tenant.id,
-          id: 'ps-core202-legacy',
-          expectedVersion: claim.candidateVersion,
-          resolvedPersonId: finalPersonId,
-        });
-      });
-
-      expect(receipt.row).toMatchObject({ status: 'accepted', title: 'Reviewed', resolvedPersonId: finalPersonId });
-      const adopted = await context.prisma.candidate.findUniqueOrThrow({
-        where: { tenantId_legacySourceKind_legacySourceId: {
-          tenantId: context.tenant.id, legacySourceKind: 'PersonSuggestion', legacySourceId: 'ps-core202-legacy',
-        } },
-      });
-      expect(adopted).toMatchObject({ status: 'accepted', version: 2, targetKind: 'person' });
-      expect(JSON.parse(adopted.payload)).toMatchObject({
-        legacyStatus: 'accepted', title: 'Reviewed', resolvedPersonId: finalPersonId,
-      });
       await expect(rejectPersonCandidate(context.prisma, {
         tenantId: context.tenant.id, id: 'ps-core202-legacy',
+        review: reviewFor(context),
       })).resolves.toBe(false);
     } finally {
       await context.cleanup();
@@ -371,8 +358,15 @@ describe('CORE-202 Candidate person/relation write helper', () => {
         await redirectCandidatePersonReferences(tx, {
           tenantId: context.tenant.id, accountId: tree.accountId,
           from: { kind: 'suggestion', id: pendingPerson.row.id }, toPersonId: tree.sourcePersonId,
+          review: {
+            actorId: context.owner.id,
+            actorRole: 'owner',
+            capabilityPolicy: assembleProductAccess({ edition: 'internal' }).policy,
+          },
         });
-        const claim = await claimRelationCandidate(tx, { tenantId: context.tenant.id, id: relation.row.id });
+        const claim = await claimRelationCandidate(tx, {
+          tenantId: context.tenant.id, id: relation.row.id, review: reviewFor(context),
+        });
         await finalizeRelationCandidate(tx, {
           tenantId: context.tenant.id, id: relation.row.id, expectedVersion: claim.candidateVersion,
           sourcePersonId: tree.sourcePersonId, targetPersonId: tree.targetPersonId,
@@ -395,6 +389,7 @@ describe('CORE-202 Candidate person/relation write helper', () => {
       });
       await expect(rejectRelationCandidate(context.prisma, {
         tenantId: context.tenant.id, id: relation.row.id,
+        review: reviewFor(context),
       })).resolves.toBe(false);
     } finally {
       await context.cleanup();
@@ -410,9 +405,11 @@ describe('CORE-202 Candidate person/relation write helper', () => {
         name: 'Pending Update', title: '', orgLevel: 3, origin: 'ai', evidence: 'old evidence',
         confidence: 0.3, status: 'pending', proposedBy: '',
       } });
+      await applyCandidateMigration(context.prisma);
       const updated = await updatePendingPersonCandidate(context.prisma, {
         tenantId: context.tenant.id,
         id: 'ps-core202-pending-update',
+        createdByUserId: null,
         dedupeKey: `person-pending-v1:${tree.accountId}:pending update`,
         patch: { title: 'New title', evidence: 'new evidence with source', confidence: 0.8 },
       });
@@ -438,6 +435,7 @@ describe('CORE-202 Candidate person/relation write helper', () => {
       });
       await expect(rejectPersonCandidate(context.prisma, {
         tenantId: context.tenant.id, id: first.row.id,
+        review: reviewFor(context),
       })).resolves.toBe(true);
       const second = await createPersonCandidate(context.prisma, {
         id: 'core-202-terminal-second', tenantId: context.tenant.id, accountId: tree.accountId,
@@ -450,7 +448,11 @@ describe('CORE-202 Candidate person/relation write helper', () => {
       await expect(context.prisma.candidate.findUniqueOrThrow({ where: { id: first.candidateId } }))
         .resolves.toMatchObject({ status: 'rejected', dedupeKey: `terminal-v1:${first.candidateId}`, version: 1 });
       await expect(context.prisma.candidate.findUniqueOrThrow({ where: { id: second.candidateId } }))
-        .resolves.toMatchObject({ status: 'pending', dedupeKey: semanticKey, version: 0 });
+        .resolves.toMatchObject({
+          status: 'pending',
+          dedupeKey: candidateDedupeKeyForCreator(semanticKey, context.owner.id),
+          version: 0,
+        });
 
       const relation = await createRelationCandidate(context.prisma, {
         id: 'core-202-stale-relation', tenantId: context.tenant.id, matterId: tree.matterId,
@@ -462,6 +464,7 @@ describe('CORE-202 Candidate person/relation write helper', () => {
       });
       const claimed = await claimRelationCandidate(context.prisma, {
         tenantId: context.tenant.id, id: relation.row.id,
+        review: reviewFor(context),
       });
       await expect(finalizeRelationCandidate(context.prisma, {
         tenantId: context.tenant.id, id: relation.row.id, expectedVersion: claimed.candidateVersion - 1,

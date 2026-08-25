@@ -15,10 +15,13 @@ import { requireSalesCustomerType } from '../salesClassification.js';
 import {
   createPersonCandidate,
   createRelationCandidate,
+  findPendingPersonCandidateForProducer,
   personCandidateDedupeKey,
   relationCandidateDedupeKey,
 } from '../candidates/personRelation.js';
 import { createEvidenceCandidate } from '../candidates/reviewItems.js';
+import { resolveEffectiveResourceScope, type EffectiveResourceScope } from '../resourceScope.js';
+import { ScopedNotFoundError } from '../mutation/scopeGuards.js';
 
 const OPAQUE_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:#/-]*$/;
 const OpaqueRefSchema = z.string().trim().min(1).max(80).regex(OPAQUE_REF_PATTERN, 'ref must be an opaque identifier without names or free text');
@@ -208,11 +211,117 @@ function validateBundleRefs(input: SyncIntelBundleArgs): void {
   }
 }
 
+interface BundleAuthorization {
+  scope: EffectiveResourceScope;
+  actorName: string;
+}
+
+async function authorizeBundleAnchors(
+  db: DbClient,
+  ctx: CommandContext,
+  input: SyncIntelBundleArgs,
+): Promise<BundleAuthorization> {
+  const scope = await resolveEffectiveResourceScope(db, {
+    tenantId: ctx.tenantId,
+    userId: ctx.actorId,
+    role: ctx.actorRole,
+  });
+  if (!scope.valid || scope.actorRole === 'viewer') throw new ScopedNotFoundError();
+  const actor = await db.user.findFirst({
+    where: { id: ctx.actorId, tenantId: ctx.tenantId },
+    select: { name: true },
+  });
+  if (!actor) throw new ScopedNotFoundError();
+
+  const fact = input.bundle.account;
+  const [byId, byExternal, byCredit] = await Promise.all([
+    fact.id
+      ? db.account.findFirst({
+          where: { id: fact.id, tenantId: ctx.tenantId, archivedAt: null },
+          select: { id: true },
+        })
+      : null,
+    fact.externalRef
+      ? db.account.findFirst({
+          where: { tenantId: ctx.tenantId, externalRef: fact.externalRef, archivedAt: null },
+          select: { id: true },
+        })
+      : null,
+    fact.unifiedCreditCode
+      ? db.account.findFirst({
+          where: {
+            tenantId: ctx.tenantId,
+            unifiedCreditCode: fact.unifiedCreditCode,
+            archivedAt: null,
+          },
+          select: { id: true },
+        })
+      : null,
+  ]);
+  if (fact.id && !byId) throw new ScopedNotFoundError();
+  const resolvedIds = [...new Set([byId?.id, byExternal?.id, byCredit?.id].filter(
+    (id): id is string => Boolean(id),
+  ))];
+  if (resolvedIds.some((id) => !scope.canReadAccountData(id))) {
+    throw new ScopedNotFoundError();
+  }
+  if (resolvedIds.length > 1) throw new Error('account anchors resolve to different rows');
+  const accountId = resolvedIds[0];
+  if (!accountId) return { scope, actorName: actor.name };
+
+  const opportunityFact = input.bundle.opportunity;
+  const opportunity = opportunityFact
+    ? await db.opportunity.findFirst({
+        where: {
+          tenantId: ctx.tenantId,
+          accountId,
+          externalRef: opportunityFact.externalRef,
+          archivedAt: null,
+        },
+        select: { id: true },
+      })
+    : null;
+  if (opportunity && !scope.canReadMatter(opportunity.id)) throw new ScopedNotFoundError();
+
+  const visit = input.bundle.visit;
+  if (visit?.opportunityId) {
+    const visitMatter = await db.opportunity.findFirst({
+      where: {
+        id: visit.opportunityId,
+        tenantId: ctx.tenantId,
+        accountId,
+        archivedAt: null,
+      },
+      select: { id: true },
+    });
+    if (!visitMatter || !scope.canReadMatter(visitMatter.id)) throw new ScopedNotFoundError();
+  }
+  if (visit) {
+    const existingVisit = await db.visitNote.findUnique({
+      where: {
+        tenantId_accountId_externalRef: {
+          tenantId: ctx.tenantId,
+          accountId,
+          externalRef: visit.externalRef,
+        },
+      },
+      select: { accountId: true, opportunityId: true },
+    });
+    const sourceAllowed = !existingVisit
+      || (existingVisit.opportunityId
+        ? scope.canReadMatter(existingVisit.opportunityId)
+        : scope.canReadAccountData(existingVisit.accountId));
+    if (!sourceAllowed) throw new ScopedNotFoundError();
+  }
+  return { scope, actorName: actor.name };
+}
+
 async function executeBundle(
   ctx: CommandContext,
   input: SyncIntelBundleArgs,
   syncRunId: string,
   db: DbClient,
+  authorization: BundleAuthorization,
   options?: FaultOptions,
 ): Promise<StoredSyncReceipt> {
   const receipt: StoredSyncReceipt = { syncRunId, created: [], updated: [], proposed: [], skipped: [], failed: [] };
@@ -236,25 +345,22 @@ async function executeBundle(
   if (accountFact.unifiedCreditCode && account?.unifiedCreditCode && accountFact.unifiedCreditCode !== account.unifiedCreditCode) {
     throw new Error('account anchors conflict: unifiedCreditCode does not match the resolved row');
   }
-  if (input.bundle.people.length) {
-    const uniqueNames = [...new Set(input.bundle.people.map((candidate) => candidate.name))];
-    const [pendingCount, existingNames] = await Promise.all([
-      db.personSuggestion.count({ where: { tenantId: ctx.tenantId, status: 'pending' } }),
-      account ? db.personSuggestion.findMany({
-        where: { tenantId: ctx.tenantId, accountId: account.id, status: 'pending', name: { in: uniqueNames } },
-        select: { name: true },
-      }) : Promise.resolve([]),
-    ]);
-    const additional = uniqueNames.filter((name) => !existingNames.some((row) => row.name === name)).length;
-    if (pendingCount + additional > MAX_PENDING_PERSON_SUGGESTIONS) {
-      throw new Error(`候选干系人已达上限（${MAX_PENDING_PERSON_SUGGESTIONS}），请先处理现有候选`);
-    }
-  }
   if (accountFact.primaryOwnerUserId) {
     const owner = await db.user.findFirst({ where: { id: accountFact.primaryOwnerUserId, tenantId: ctx.tenantId }, select: { id: true } });
     if (!owner) throw new Error('primary owner not found in tenant');
   }
   if (!account) {
+    if (authorization.scope.actorRole === 'member'
+      && accountFact.primaryOwnerUserId
+      && accountFact.primaryOwnerUserId !== ctx.actorId) {
+      throw new ScopedNotFoundError();
+    }
+    const effectiveOwnerUserId = authorization.scope.actorRole === 'member'
+      ? ctx.actorId
+      : accountFact.primaryOwnerUserId ?? null;
+    const effectiveOwnerName = authorization.scope.actorRole === 'member'
+      ? authorization.actorName
+      : accountFact.primaryOwner ?? '';
     const profile = {
       ...(accountFact.profile ?? {}),
       _mcpOrigin: { source: 'mcp', syncRunId, at: new Date().toISOString(), needsReview: true },
@@ -264,7 +370,7 @@ async function executeBundle(
       externalRef: accountFact.externalRef ?? null, unifiedCreditCode: accountFact.unifiedCreditCode ?? null,
       name: accountFact.name, customerType: accountFact.customerType ?? null,
       region: accountFact.region ?? '', group: accountFact.group ?? '',
-      primaryOwner: accountFact.primaryOwner ?? '', primaryOwnerUserId: accountFact.primaryOwnerUserId ?? null,
+      primaryOwner: effectiveOwnerName, primaryOwnerUserId: effectiveOwnerUserId,
       profile: JSON.stringify(profile),
     } });
     try { await enqueueEnrichJob(ctx.tenantId, account.id, 'auto', db); }
@@ -399,10 +505,23 @@ async function executeBundle(
 
   const candidateIds = new Map<string, string>();
   for (const candidate of input.bundle.people) {
-    let row = await db.personSuggestion.findFirst({ where: {
-      tenantId: ctx.tenantId, accountId: account.id, name: candidate.name, status: 'pending',
-    } });
+    const dedupeKey = personCandidateDedupeKey(account.id, candidate.name);
+    let row = await findPendingPersonCandidateForProducer(db, {
+      tenantId: ctx.tenantId,
+      dedupeKey,
+      createdByUserId: ctx.actorId,
+    });
+    if (row?.opportunityId && row.opportunityId !== (opportunity?.id ?? null)) {
+      throw new Error('scoped resource not found');
+    }
     if (!row) {
+      const pendingCount = await db.candidate.count({ where: {
+        tenantId: ctx.tenantId, kind: 'person_create', status: 'pending',
+        createdByUserId: ctx.actorId,
+      } });
+      if (pendingCount >= MAX_PENDING_PERSON_SUGGESTIONS) {
+        throw new Error(`候选干系人已达上限（${MAX_PENDING_PERSON_SUGGESTIONS}），请先处理现有候选`);
+      }
       const created = await createPersonCandidate(db, {
         id: 'ps_' + randomUUID().replaceAll('-', ''),
         tenantId: ctx.tenantId,
@@ -416,7 +535,7 @@ async function executeBundle(
         evidence: candidate.evidence || 'MCP 同步未提供人物依据，必须由人工核实',
         confidence: candidate.confidence,
         createdByUserId: ctx.actorId,
-        dedupeKey: personCandidateDedupeKey(account.id, candidate.name),
+        dedupeKey,
       });
       row = created.row;
     }
@@ -425,40 +544,35 @@ async function executeBundle(
   }
 
   if (input.bundle.relations.length && !opportunity) throw new Error('relationship candidates require an opportunity');
-  if (input.bundle.relations.length) {
-    const pendingCount = await db.relSuggestion.count({ where: { tenantId: ctx.tenantId, opportunityId: opportunity!.id, status: 'pending' } });
-    if (pendingCount + input.bundle.relations.length > MAX_PENDING_REL_SUGGESTIONS) {
-      throw new Error(`候选关系已达上限（${MAX_PENDING_REL_SUGGESTIONS}），请先处理现有候选`);
-    }
-  }
   for (const relation of input.bundle.relations) {
     const sourcePersonId = candidateIds.get(relation.sourceRef)!;
     const targetPersonId = candidateIds.get(relation.targetRef)!;
-    const existing = await db.relSuggestion.findFirst({ where: {
-      tenantId: ctx.tenantId, opportunityId: opportunity!.id, status: 'pending',
-      OR: [
-        { sourceKind: 'suggestion', sourcePersonId, targetKind: 'suggestion', targetPersonId },
-        { sourceKind: 'suggestion', sourcePersonId: targetPersonId, targetKind: 'suggestion', targetPersonId: sourcePersonId },
-      ],
+    const source = { kind: 'suggestion' as const, id: sourcePersonId };
+    const target = { kind: 'suggestion' as const, id: targetPersonId };
+    const pendingCount = await db.candidate.count({ where: {
+      tenantId: ctx.tenantId,
+      matterId: opportunity!.id,
+      kind: 'relation_create',
+      status: 'pending',
+      createdByUserId: ctx.actorId,
     } });
-    if (!existing) {
-      const source = { kind: 'suggestion' as const, id: sourcePersonId };
-      const target = { kind: 'suggestion' as const, id: targetPersonId };
-      await createRelationCandidate(db, {
-        id: 'rs_' + randomUUID().replaceAll('-', ''),
-        tenantId: ctx.tenantId,
-        matterId: opportunity!.id,
-        source,
-        target,
-        layer: relation.layer,
-        label: relation.label,
-        sourceType: 'mcp',
-        sourceRef: `mcp-sync:${syncRunId}:relation:${relation.ref}`,
-        evidence: relation.evidence || 'MCP 同步未提供关系依据，必须由人工核实',
-        confidence: relation.confidence,
-        createdByUserId: ctx.actorId,
-        dedupeKey: relationCandidateDedupeKey(opportunity!.id, source, target),
-      });
+    const created = await createRelationCandidate(db, {
+      id: 'rs_' + randomUUID().replaceAll('-', ''),
+      tenantId: ctx.tenantId,
+      matterId: opportunity!.id,
+      source,
+      target,
+      layer: relation.layer,
+      label: relation.label,
+      sourceType: 'mcp',
+      sourceRef: `mcp-sync:${syncRunId}:relation:${relation.ref}`,
+      evidence: relation.evidence || 'MCP 同步未提供关系依据，必须由人工核实',
+      confidence: relation.confidence,
+      createdByUserId: ctx.actorId,
+      dedupeKey: relationCandidateDedupeKey(opportunity!.id, source, target),
+    });
+    if (created.created && pendingCount >= MAX_PENDING_REL_SUGGESTIONS) {
+      throw new Error(`候选关系已达上限（${MAX_PENDING_REL_SUGGESTIONS}），请先处理现有候选`);
     }
     receipt.proposed.push(`relationship:${relation.ref}`);
   }
@@ -506,6 +620,7 @@ export async function syncIntelBundle(
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
       return await db.$transaction(async (tx) => {
+        const authorization = await authorizeBundleAnchors(tx, ctx, input);
         const existing = await tx.syncRun.findUnique({ where });
         if (existing && existing.requestHash !== hash) throw new Error('idempotency key reused with a different bundle');
         if (existing?.status === 'completed') return replayReceipt(parseReceipt(existing.receipt));
@@ -515,7 +630,7 @@ export async function syncIntelBundle(
             id: proposedRunId, tenantId: ctx.tenantId, actorId: ctx.actorId,
             idempotencyKey: storedKey, requestHash: hash,
           } });
-        const receipt = await executeBundle(ctx, input, syncRun.id, tx, options);
+        const receipt = await executeBundle(ctx, input, syncRun.id, tx, authorization, options);
         await tx.syncRun.update({ where: { id: syncRun.id }, data: { status: 'completed', receipt: JSON.stringify(receipt) } });
         return { ...receipt, replayed: false };
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5_000, timeout: 30_000 });
@@ -524,7 +639,15 @@ export async function syncIntelBundle(
       if (code === 'P2002') {
         const existing = await db.syncRun.findUnique({ where });
         if (existing && existing.requestHash !== hash) throw new Error('idempotency key reused with a different bundle');
-        if (existing?.status === 'completed') return replayReceipt(parseReceipt(existing.receipt));
+        if (existing?.status === 'completed') {
+          if (attempt < 3) continue;
+          return db.$transaction(async (tx) => {
+            await authorizeBundleAnchors(tx, ctx, input);
+            const current = await tx.syncRun.findUnique({ where });
+            if (!current || current.status !== 'completed' || current.requestHash !== hash) throw error;
+            return replayReceipt(parseReceipt(current.receipt));
+          }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+        }
       }
       if (retryableTransactionError(error) && attempt < 3) {
         await new Promise((resolve) => setTimeout(resolve, 15 * attempt));
@@ -532,7 +655,11 @@ export async function syncIntelBundle(
       }
       const isIdempotencyConflict = error instanceof Error
         && error.message === 'idempotency key reused with a different bundle';
-      if (!isIdempotencyConflict) await persistFailedSyncRun(db, ctx, input, hash, proposedRunId);
+      const isScopedMiss = error instanceof ScopedNotFoundError
+        || Boolean(error && typeof error === 'object' && 'scopedNotFound' in error);
+      if (!isIdempotencyConflict && !isScopedMiss) {
+        await persistFailedSyncRun(db, ctx, input, hash, proposedRunId);
+      }
       throw error;
     }
   }

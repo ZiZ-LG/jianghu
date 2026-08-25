@@ -11,10 +11,12 @@
 //     绝不直接写正式 Person/Edge。候选须经用户在前端人审采纳才上图（PIPL 红线）。
 
 import { createHash, randomUUID } from 'node:crypto';
+import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import {
   ACCOUNT_PROFILE_FIELDS,
   ActionSchema,
+  CapabilityPolicySchema,
   capabilityPolicyAllows,
   capabilityRequirementForActionType,
   type CommandContext,
@@ -25,18 +27,23 @@ import { C5_ITEMS, scoreFromState, ITEM_LABEL, ITEM_MAX, type ItemKey } from './
 import { activePersonWhere } from './activePerson.js';
 import { createFieldProposal } from './proposals.js';
 import { enqueueEnrichJob, enqueueSuggestJob, enqueueProfileJob } from './jobs.js';
-import { resolveScopedRelSuggestions } from './suggestionScope.js';
 import { syncIntelBundle } from './mcp/syncBundle.js';
 import { ALL_ACCESS_SCOPES, scopesForCurrentRole, type AccessScope } from './accessToken.js';
 import { resolveEffectiveResourceScope } from './resourceScope.js';
+import { ScopedNotFoundError } from './mutation/scopeGuards.js';
 import { requireSalesCustomerType } from './salesClassification.js';
 import {
   createPersonCandidate,
   createRelationCandidate,
+  findPendingPersonCandidateForProducer,
   personCandidateDedupeKey,
   relationCandidateDedupeKey,
   updatePendingPersonCandidate,
 } from './candidates/personRelation.js';
+import {
+  candidateDescriptor,
+  createSensitiveAccessEvaluator,
+} from './sensitiveAccess.js';
 
 // 每租户 pending 候选容量上限（防外部 agent 刷爆）
 const MAX_PENDING_PERSON_SUGG = 200;
@@ -738,7 +745,8 @@ async function proposeMachineFieldChanges(ctx: CommandContext, input: {
   current: Record<string, unknown>;
   patch: Record<string, unknown>;
   evidence?: string;
-}): Promise<number> {
+}, policyInput: unknown): Promise<number> {
+  const capabilityPolicy = CapabilityPolicySchema.parse(policyInput);
   let count = 0;
   for (const [field, value] of Object.entries(input.patch)) {
     const oldValue = proposalValue(input.current[field]);
@@ -756,42 +764,58 @@ async function proposeMachineFieldChanges(ctx: CommandContext, input: {
       evidence: input.evidence || `WorkBuddy 同步：${input.entityKind}.${field} 疑似变化`,
       confidence: 0.6,
       proposedBy: ctx.actorId,
-    });
+    }, prisma, capabilityPolicy);
     count += 1;
   }
   return count;
 }
 
 /** propose_person：提议候选干系人 → 落 PersonSuggestion（不建正式 Person）。 */
-async function proposePerson(tenantId: string, userId: string, args: Record<string, unknown>) {
+const MCP_SCOPED_MISS = '资源不存在或无权限';
+
+async function proposePerson(ctx: CommandContext, args: Record<string, unknown>) {
+  const { tenantId, actorId: userId } = ctx;
   const accountId = str(args.accountId);
   const name = str(args.name, 40).trim();
   if (!accountId) throw new Error('缺少参数 accountId');
   if (!name) throw new Error('缺少参数 name');
-
-  // tenantId 隔离：客户必须属于本租户
-  const account = await prisma.account.findFirst({ where: { id: accountId, tenantId } });
-  if (!account) throw new Error('客户不存在或不属于当前工作区');
-
+  const opportunityId = str(args.opportunityId) || null;
+  const scope = await resolveEffectiveResourceScope(prisma, {
+    tenantId, userId, role: ctx.actorRole,
+  });
+  if (!scope.valid || scope.actorRole === 'viewer'
+    || (opportunityId
+      ? !scope.canReadMatter(opportunityId)
+      : !scope.canReadAccountData(accountId))) {
+    throw new Error(MCP_SCOPED_MISS);
+  }
+  const account = await prisma.account.findFirst({
+    where: { id: accountId, tenantId, archivedAt: null },
+    select: { id: true },
+  });
+  if (!account) throw new Error(MCP_SCOPED_MISS);
   const title = str(args.title, 60);
   const orgLevel = Math.min(4, Math.max(1, Math.round(num(args.orgLevel) ?? 3)));
-  const opportunityId = str(args.opportunityId) || null;
   if (opportunityId) {
-    const opportunity = await prisma.opportunity.findFirst({ where: { id: opportunityId, tenantId, accountId } });
-    if (!opportunity) throw new Error('商机不存在或不属于该客户');
+    const opportunity = await prisma.opportunity.findFirst({
+      where: { id: opportunityId, tenantId, accountId, archivedAt: null },
+      select: { id: true },
+    });
+    if (!opportunity) throw new Error(MCP_SCOPED_MISS);
   }
   const evidence = str(args.evidence, 500);
   const sourceUrl = str(args.sourceUrl, 500) || null;
   const confidence = Math.max(0, Math.min(1, num(args.confidence) ?? 0.5));
   const suggestedRole = ['A', 'D', 'U', 'R', 'C'].includes(str(args.suggestedRole)) ? str(args.suggestedRole) : null;
   const suggestedSentiment = ['star', 'plus', 'neutral', 'unknown', 'minus', 'x'].includes(str(args.suggestedSentiment)) ? str(args.suggestedSentiment) : null;
+  const dedupeKey = personCandidateDedupeKey(accountId, name);
 
-  // 容量上限（防滥用）
-  const pendingCount = await prisma.personSuggestion.count({ where: { tenantId, status: 'pending' } });
-  if (pendingCount >= MAX_PENDING_PERSON_SUGG) throw new Error(`候选干系人已达上限（${MAX_PENDING_PERSON_SUGG}），请先在江湖里处理现有候选`);
-
-  // 应用层去重：同租户+同客户+同名+pending → 更新（取高 confidence、补 evidence），不新增
-  const dup = await prisma.personSuggestion.findFirst({ where: { tenantId, accountId, name, status: 'pending' } });
+  // Candidate 是去重权威；先验 producer ACL，再在同一快照读取兼容投影正文。
+  const dup = await findPendingPersonCandidateForProducer(prisma, {
+    tenantId,
+    dedupeKey,
+    createdByUserId: userId,
+  });
   if (dup) {
     if (dup.opportunityId) {
       const duplicateOpportunity = await prisma.opportunity.findFirst({ where: { id: dup.opportunityId, tenantId, accountId } });
@@ -800,7 +824,8 @@ async function proposePerson(tenantId: string, userId: string, args: Record<stri
     await updatePendingPersonCandidate(prisma, {
       tenantId,
       id: dup.id,
-      dedupeKey: personCandidateDedupeKey(accountId, name),
+      createdByUserId: userId,
+      dedupeKey,
       patch: {
         title: title || dup.title,
         ...(evidence ? { evidence } : {}),
@@ -813,29 +838,41 @@ async function proposePerson(tenantId: string, userId: string, args: Record<stri
     return { suggestionId: dup.id, deduped: true, note: '已存在同名候选干系人（pending），已更新其依据而非新增。' };
   }
 
-  // 提示：是否已有同名正式干系人（由人审决定合并，AI 不替判）
-  const existingPerson = await prisma.person.findFirst({ where: { tenantId, accountId, name, ...activePersonWhere } });
+  // 容量上限（防滥用）；可访问的幂等刷新不消耗新配额。
+  const pendingCount = await prisma.candidate.count({ where: {
+    tenantId, kind: 'person_create', status: 'pending', createdByUserId: userId,
+  } });
+  if (pendingCount >= MAX_PENDING_PERSON_SUGG) throw new Error(`候选干系人已达上限（${MAX_PENDING_PERSON_SUGG}），请先在江湖里处理现有候选`);
 
   const id = 'ps_' + randomUUID().replaceAll('-', '');
-  const dedupeKey = personCandidateDedupeKey(accountId, name);
-  const created = await createPersonCandidate(prisma, {
-    id,
-    tenantId,
-    accountId,
-    matterId: opportunityId,
-    name,
-    title,
-    orgLevel,
-    source: 'mcp',
-    sourceRef: `mcp:propose-person:${createHash('sha256').update(dedupeKey).digest('hex').slice(0, 24)}`,
-    evidence: evidence || 'MCP 未提供人物依据，必须由人工核实',
-    sourceUrl,
-    confidence,
-    createdByUserId: userId,
-    dedupeKey,
-    suggestedRole,
-    suggestedSentiment,
-  });
+  let created;
+  try {
+    created = await createPersonCandidate(prisma, {
+      id,
+      tenantId,
+      accountId,
+      matterId: opportunityId,
+      name,
+      title,
+      orgLevel,
+      source: 'mcp',
+      sourceRef: `mcp:propose-person:${createHash('sha256').update(dedupeKey).digest('hex').slice(0, 24)}`,
+      evidence: evidence || 'MCP 未提供人物依据，必须由人工核实',
+      sourceUrl,
+      confidence,
+      createdByUserId: userId,
+      dedupeKey,
+      suggestedRole,
+      suggestedSentiment,
+    });
+  } catch (error) {
+    if (error instanceof ScopedNotFoundError || (error as { scopedNotFound?: boolean })?.scopedNotFound) {
+      throw new Error(MCP_SCOPED_MISS);
+    }
+    throw error;
+  }
+  // 仅在 Candidate producer scope 已验证并成功创建后读取正式同名提示。
+  const existingPerson = await prisma.person.findFirst({ where: { tenantId, accountId, name, ...activePersonWhere } });
   return {
     suggestionId: created.row.id,
     note: existingPerson
@@ -845,7 +882,8 @@ async function proposePerson(tenantId: string, userId: string, args: Record<stri
 }
 
 /** propose_relationship：提议候选关系 → 落 RelSuggestion（端点可为 person 或 suggestion）。 */
-async function proposeRelationship(tenantId: string, _userId: string, args: Record<string, unknown>) {
+async function proposeRelationship(ctx: CommandContext, args: Record<string, unknown>) {
+  const { tenantId, actorId: userId } = ctx;
   const opportunityId = str(args.opportunityId);
   if (!opportunityId) throw new Error('缺少参数 opportunityId');
   const ep = (v: unknown): { kind: string; id: string } => {
@@ -863,67 +901,60 @@ async function proposeRelationship(tenantId: string, _userId: string, args: Reco
   if (!source.id || !target.id) throw new Error('缺少 source/target 端点 id');
   if (source.kind === target.kind && source.id === target.id) throw new Error('source 与 target 不能相同');
 
-  // tenantId 隔离：商机必须属于本租户
-  const opp = await prisma.opportunity.findFirst({ where: { id: opportunityId, tenantId } });
-  if (!opp) throw new Error('商机不存在或不属于当前工作区');
-  const account = await prisma.account.findFirst({ where: { id: opp.accountId, tenantId } });
-  if (!account) throw new Error('商机所属客户不存在或不属于当前工作区');
-
-  // 校验两端点存在且属于该商机的 Account（person → Person 表；suggestion → PersonSuggestion 表）
-  const checkEndpoint = async (e: { kind: string; id: string }, role: string) => {
-    if (e.kind === 'person') {
-      const p = await prisma.person.findFirst({ where: { id: e.id, tenantId, accountId: opp.accountId, ...activePersonWhere } });
-      if (!p) throw new Error(`${role}端点（正式干系人 ${e.id}）不存在或不属于该商机客户`);
-    } else {
-      const s = await prisma.personSuggestion.findFirst({ where: { id: e.id, tenantId, accountId: opp.accountId } });
-      if (!s) throw new Error(`${role}端点（候选干系人 ${e.id}）不存在或不属于该商机客户`);
-      if (s.opportunityId) {
-        const candidateOpportunity = await prisma.opportunity.findFirst({ where: { id: s.opportunityId, tenantId, accountId: opp.accountId } });
-        if (!candidateOpportunity) throw new Error(`${role}端点（候选干系人 ${e.id}）的商机关联不属于该商机客户`);
-      }
-    }
-  };
-  await checkEndpoint(source, 'source');
-  await checkEndpoint(target, 'target');
-
-  // 容量上限
-  const pendingCount = await prisma.relSuggestion.count({ where: { tenantId, opportunityId, status: 'pending' } });
-  if (pendingCount >= MAX_PENDING_REL_SUGG) throw new Error(`候选关系已达上限（${MAX_PENDING_REL_SUGG}），请先处理现有候选`);
-
-  // 去重：同商机下，相同端点对（含 kind）+ pending
-  const tag = (e: { kind: string; id: string }) => `${e.kind}:${e.id}`;
-  const key = [tag(source), tag(target)].sort().join('|');
-  const existing = await prisma.relSuggestion.findMany({ where: { tenantId, opportunityId, status: 'pending' } });
-  for (const r of existing) {
-    const k = [`${r.sourceKind}:${r.sourcePersonId}`, `${r.targetKind}:${r.targetPersonId}`].sort().join('|');
-    if (k === key) return { suggestionId: r.id, deduped: true, note: '该端点对已有 pending 候选关系，未重复创建。' };
+  const scope = await resolveEffectiveResourceScope(prisma, {
+    tenantId, userId, role: ctx.actorRole,
+  });
+  if (!scope.valid || scope.actorRole === 'viewer' || !scope.canReadMatter(opportunityId)) {
+    throw new Error(MCP_SCOPED_MISS);
   }
+  const opp = await prisma.opportunity.findFirst({
+    where: { id: opportunityId, tenantId, archivedAt: null },
+    select: { id: true },
+  });
+  if (!opp) throw new Error(MCP_SCOPED_MISS);
+  // 容量上限
+  const pendingCount = await prisma.candidate.count({ where: {
+    tenantId, matterId: opportunityId, kind: 'relation_create', status: 'pending',
+    createdByUserId: userId,
+  } });
+  if (pendingCount >= MAX_PENDING_REL_SUGG) throw new Error(`候选关系已达上限（${MAX_PENDING_REL_SUGG}），请先处理现有候选`);
 
   const id = 'rs_' + randomUUID().replaceAll('-', '');
   const typedSource = { kind: source.kind as 'person' | 'suggestion', id: source.id };
   const typedTarget = { kind: target.kind as 'person' | 'suggestion', id: target.id };
   const dedupeKey = relationCandidateDedupeKey(opportunityId, typedSource, typedTarget);
-  const created = await createRelationCandidate(prisma, {
-    id,
-    tenantId,
-    matterId: opportunityId,
-    source: typedSource,
-    target: typedTarget,
-    layer,
-    label,
-    sourceType: 'mcp',
-    sourceRef: `mcp:propose-relation:${createHash('sha256').update(dedupeKey).digest('hex').slice(0, 24)}`,
-    evidence: evidence || 'MCP 未提供关系依据，必须由人工核实',
-    confidence,
-    createdByUserId: _userId,
-    dedupeKey,
-  });
-  return { suggestionId: created.row.id, note: '候选关系已提交，等待用户人审采纳后才会画到关系地图上。' };
+  let created;
+  try {
+    created = await createRelationCandidate(prisma, {
+      id,
+      tenantId,
+      matterId: opportunityId,
+      source: typedSource,
+      target: typedTarget,
+      layer,
+      label,
+      sourceType: 'mcp',
+      sourceRef: `mcp:propose-relation:${createHash('sha256').update(dedupeKey).digest('hex').slice(0, 24)}`,
+      evidence: evidence || 'MCP 未提供关系依据，必须由人工核实',
+      confidence,
+      createdByUserId: userId,
+      dedupeKey,
+    });
+  } catch (error) {
+    if (error instanceof ScopedNotFoundError || (error as { scopedNotFound?: boolean })?.scopedNotFound) {
+      throw new Error(MCP_SCOPED_MISS);
+    }
+    throw error;
+  }
+  return created.created
+    ? { suggestionId: created.row.id, note: '候选关系已提交，等待用户人审采纳后才会画到关系地图上。' }
+    : { suggestionId: created.row.id, deduped: true, note: '该端点对已有 pending 候选关系，未重复创建。' };
 }
 
 /** list_pending：列本租户待人审候选（只读）。 */
-async function listPending(ctx: CommandContext, accountId: string) {
+async function listPending(ctx: CommandContext, accountId: string, policyInput: unknown) {
   const { tenantId } = ctx;
+  const capabilityPolicy = CapabilityPolicySchema.parse(policyInput);
   const scope = await resolveEffectiveResourceScope(prisma, {
     tenantId,
     userId: ctx.actorId,
@@ -931,36 +962,124 @@ async function listPending(ctx: CommandContext, accountId: string) {
   });
   if (accountId && !scope.canReadAccountContainer(accountId)) throw new Error('客户不存在或不属于当前工作区');
 
-  const readablePersonAccountIds = accountId
-    ? (scope.canReadAccountData(accountId) ? [accountId] : [])
-    : [...scope.fullAccountIds];
-  const personWhere: any = {
-    tenantId,
-    status: 'pending',
-    accountId: { in: readablePersonAccountIds },
-  };
-  const persons = await prisma.personSuggestion.findMany({ where: personWhere, orderBy: { createdAt: 'desc' }, take: 100 });
-
-  const visibleMatters = await prisma.opportunity.findMany({
-    where: {
+  const { persons, rels } = await prisma.$transaction(async (tx) => {
+    const evaluator = await createSensitiveAccessEvaluator(tx, {
       tenantId,
-      archivedAt: null,
-      id: { in: [...scope.matterIds] },
-      ...(accountId ? { accountId } : {}),
-    },
-    select: { id: true },
+      userId: ctx.actorId,
+      role: ctx.actorRole,
+    }, capabilityPolicy);
+    const aclWhere = await evaluator.metadataWhere('candidate', 'read');
+    const metadata = await tx.candidate.findMany({
+      where: {
+        tenantId,
+        status: 'pending',
+        legacySourceKind: { in: ['PersonSuggestion', 'RelSuggestion'] },
+        legacySourceId: { not: null },
+        ...(accountId ? { accountId } : {}),
+        ...aclWhere,
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+      take: 200,
+      select: {
+        id: true, tenantId: true, kind: true, status: true, accountId: true, matterId: true,
+        createdByUserId: true, visibility: true, aclVersion: true,
+        legacySourceKind: true, legacySourceId: true,
+      },
+    });
+    const metadataDecisions = await evaluator.authorizeMany(metadata.map(candidateDescriptor), 'read');
+    const readable = [] as typeof metadata;
+    for (const [index, row] of metadata.entries()) {
+      if (metadataDecisions[index]?.allowed) readable.push(row);
+    }
+    const personMetadata = readable.filter((row) => row.legacySourceKind === 'PersonSuggestion');
+    const relationMetadata = readable.filter((row) => row.legacySourceKind === 'RelSuggestion' && row.matterId);
+    const personIds = personMetadata.flatMap((row) => row.legacySourceId ? [row.legacySourceId] : []);
+    const relationIds = relationMetadata.flatMap((row) => row.legacySourceId ? [row.legacySourceId] : []);
+    const [personRows, relationRows] = await Promise.all([
+      personIds.length === 0 ? [] : tx.personSuggestion.findMany({
+        where: { id: { in: personIds }, tenantId, status: 'pending' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+        take: 100,
+      }),
+      relationIds.length === 0 ? [] : tx.relSuggestion.findMany({
+        where: { id: { in: relationIds }, tenantId, status: 'pending' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+        take: 100,
+      }),
+    ]);
+    const personAuthority = new Map(personMetadata.map((row) => [row.legacySourceId, row]));
+    const relationAuthority = new Map(relationMetadata.map((row) => [row.legacySourceId, row]));
+    const validPersons = personRows.filter((row) => {
+      const authority = personAuthority.get(row.id);
+      return authority?.kind === 'person_create'
+        && authority.accountId === row.accountId
+        && authority.matterId === row.opportunityId;
+    });
+    const candidateEndpointIds = new Set<string>();
+    const formalEndpointIds = new Set<string>();
+    for (const row of relationRows) {
+      if (row.sourceKind === 'suggestion') candidateEndpointIds.add(row.sourcePersonId);
+      else if (row.sourceKind === 'person') formalEndpointIds.add(row.sourcePersonId);
+      if (row.targetKind === 'suggestion') candidateEndpointIds.add(row.targetPersonId);
+      else if (row.targetKind === 'person') formalEndpointIds.add(row.targetPersonId);
+    }
+    const [formalEndpoints, candidateEndpointMetadata] = await Promise.all([
+      formalEndpointIds.size === 0 ? [] : tx.person.findMany({
+        where: { tenantId, id: { in: [...formalEndpointIds] }, ...activePersonWhere },
+        select: { id: true, accountId: true },
+      }),
+      candidateEndpointIds.size === 0 ? [] : tx.candidate.findMany({
+        where: {
+          tenantId,
+          legacySourceKind: 'PersonSuggestion',
+          legacySourceId: { in: [...candidateEndpointIds] },
+          ...aclWhere,
+        },
+        select: {
+          id: true, tenantId: true, kind: true, status: true, accountId: true, matterId: true,
+          createdByUserId: true, visibility: true, aclVersion: true, legacySourceId: true,
+        },
+      }),
+    ]);
+    const endpointDecisions = await evaluator.authorizeMany(
+      candidateEndpointMetadata.map(candidateDescriptor), 'read',
+    );
+    const readableCandidateEndpoints = new Map<string, typeof candidateEndpointMetadata[number]>();
+    for (const [index, row] of candidateEndpointMetadata.entries()) {
+      if (endpointDecisions[index]?.allowed && row.legacySourceId) {
+        readableCandidateEndpoints.set(row.legacySourceId, row);
+      }
+    }
+    const formalById = new Map(formalEndpoints.map((row) => [row.id, row]));
+    const endpointValid = (
+      kind: string,
+      id: string,
+      expectedAccountId: string,
+      expectedMatterId: string,
+    ): boolean => {
+      if (kind === 'person') return formalById.get(id)?.accountId === expectedAccountId;
+      if (kind !== 'suggestion') return false;
+      const endpoint = readableCandidateEndpoints.get(id);
+      return endpoint?.kind === 'person_create'
+        && endpoint.accountId === expectedAccountId
+        && (!endpoint.matterId || endpoint.matterId === expectedMatterId);
+    };
+    const validRelations = relationRows.filter((row) => {
+      const authority = relationAuthority.get(row.id);
+      if (authority?.kind !== 'relation_create' || authority.matterId !== row.opportunityId) return false;
+      return endpointValid(row.sourceKind, row.sourcePersonId, authority.accountId, row.opportunityId)
+        && endpointValid(row.targetKind, row.targetPersonId, authority.accountId, row.opportunityId);
+    });
+    return { persons: validPersons, rels: validRelations };
+  }, {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    maxWait: 5_000,
+    timeout: 30_000,
   });
-  const relWhere: any = {
-    tenantId,
-    status: 'pending',
-    opportunityId: { in: visibleMatters.map((matter) => matter.id) },
-  };
-  const rels = await prisma.relSuggestion.findMany({ where: relWhere, orderBy: { createdAt: 'desc' }, take: 100 });
-  const scopedRels = await resolveScopedRelSuggestions(prisma, tenantId, rels);
 
   return {
     pendingPersons: persons.map((p) => ({ id: p.id, accountId: p.accountId, name: p.name, title: p.title, orgLevel: p.orgLevel, evidence: p.evidence, sourceUrl: p.sourceUrl ?? undefined, confidence: p.confidence })),
-    pendingRelationships: scopedRels.map(({ row: r }) => ({ id: r.id, opportunityId: r.opportunityId, source: { kind: r.sourceKind, id: r.sourcePersonId }, target: { kind: r.targetKind, id: r.targetPersonId }, layer: r.layer, label: r.label, evidence: r.evidence, confidence: r.confidence })),
+    pendingRelationships: rels.map((r) => ({ id: r.id, opportunityId: r.opportunityId, source: { kind: r.sourceKind, id: r.sourcePersonId }, target: { kind: r.targetKind, id: r.targetPersonId }, layer: r.layer, label: r.label, evidence: r.evidence, confidence: r.confidence })),
   };
 }
 
@@ -1291,7 +1410,7 @@ async function upsertOpportunity(ctx: CommandContext, args: Record<string, unkno
       accountId: account.id, opportunityId: existing.id, entityKind: 'opportunity', entityId: existing.id,
       current: existing as unknown as Record<string, unknown>, patch,
       evidence: 'WorkBuddy 同步现有商机字段，等待人工确认',
-    });
+    }, policyInput);
     return { id: existing.id, accountId: account.id, proposed, origin: 'mcp', note: `已命中商机「${existing.name}」；${proposed} 个字段变更转入收件箱待人审（winProbability 未改）。` };
   }
 
@@ -1459,7 +1578,7 @@ async function setOpportunityRoles(ctx: CommandContext, args: Record<string, unk
           evidence: str(r?.evidence, 500) || `WorkBuddy 同步：${person.name} 的 ${field} 疑似变化`,
           confidence: 0.6,
           proposedBy: ctx.actorId,
-        });
+        }, prisma, CapabilityPolicySchema.parse(policyInput));
         proposed.push({ personId: person.id, name: person.name, field, from: oldValue, to: value });
       }
       continue;
@@ -1490,7 +1609,7 @@ async function setBurningIssue(ctx: CommandContext, args: Record<string, unknown
       accountId: opp.accountId, opportunityId: opp.id, entityKind: 'bi', entityId: existing.id,
       current: existing as unknown as Record<string, unknown>, patch: { description, confidence, isPrivate },
       evidence: `WorkBuddy 同步「${person.name}」的 BI（${category}）`,
-    });
+    }, policyInput);
     return { id: existing.id, opportunityId: opp.id, personId: person.id, proposed, origin: 'workbuddy', note: `${proposed} 个 BI 字段变更转入收件箱待人审。` };
   }
   const id = 'bi_' + randomUUID().replaceAll('-', '');
@@ -1524,7 +1643,7 @@ async function setUcv(ctx: CommandContext, args: Record<string, unknown>, policy
       accountId: opp.accountId, opportunityId: opp.id, entityKind: 'ucv', entityId: existing.id,
       current: existing as unknown as Record<string, unknown>, patch: { description, competitorCannot, status },
       evidence: 'WorkBuddy 同步现有 UCV 字段',
-    });
+    }, policyInput);
     return { id: existing.id, opportunityId: opp.id, targetBiId, proposed, origin: 'workbuddy', note: `${proposed} 个 UCV 字段变更转入收件箱待人审。` };
   }
   const id = 'ucv_' + randomUUID().replaceAll('-', '');
@@ -1554,11 +1673,11 @@ export async function executeMcpTool(ctx: CommandContext, name: string, args: Re
       return getWinTendency(ctx, opportunityId);
     }
     case 'propose_person':
-      return proposePerson(tenantId, userId, args);
+      return proposePerson(ctx, args);
     case 'propose_relationship':
-      return proposeRelationship(tenantId, userId, args);
+      return proposeRelationship(ctx, args);
     case 'list_pending':
-      return listPending(ctx, typeof args.accountId === 'string' ? args.accountId : '');
+      return listPending(ctx, typeof args.accountId === 'string' ? args.accountId : '', policyInput);
     case 'upsert_account':
       return syncLegacyAccount(ctx, args, policyInput);
     case 'upsert_opportunity':

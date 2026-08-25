@@ -10,7 +10,6 @@ import { z } from 'zod';
 import {
   ActionSchema,
   ActorRoleSchema,
-  assembleProductAccess,
   capabilityRequirementForActionType,
   capabilityPolicyAllows,
   type CapabilityRequirement,
@@ -49,6 +48,7 @@ import { repairRoutes } from './repair.js';
 import { personMergeRoutes } from './personMerge.js';
 import { todayRoutes } from './today.js';
 import { crmContextRoutes } from './crmContext.js';
+import { deploymentProductAccess } from './productPolicy.js';
 
 async function registerSecurityPlugins(app: FastifyInstance): Promise<void> {
   const isProd = process.env.NODE_ENV === 'production';
@@ -174,18 +174,18 @@ function registerRoutes(app: FastifyInstance, readinessProbe: ReadinessProbe, pr
 
   authRoutes(app, product);
   aiRoutes(app);
-  suggestRoutes(app);
-  proposalRoutes(app);
+  suggestRoutes(app, product.policy);
+  proposalRoutes(app, product.policy);
   strategyRoutes(app);
   advisorRoutes(app);
   enrichRoutes(app);
   jobRoutes(app);
   voiceRoutes(app);
-  recordingRoutes(app);
+  recordingRoutes(app, product.policy);
   curatedRoutes(app);
   opportunityRoutes(app);
   accessTokenRoutes(app);
-  wecomRoutes(app); // 企微日历：配置/绑定（江湖→企微同步在 mutate 落库后触发）
+  wecomRoutes(app, product.policy); // 企微日历：配置/绑定（江湖→企微同步在 mutate 落库后触发）
   pdeRoutes(app); // PDE 决策引擎（M3 评估主链）：ev / intel-priorities / action-ranking / snapshot
   compoundCommandRoutes(app, product);
   matterOwnershipRoutes(app);
@@ -193,8 +193,8 @@ function registerRoutes(app: FastifyInstance, readinessProbe: ReadinessProbe, pr
   customerRoutes(app, product.policy);
   commitmentRoutes(app);
   methodologyCommandRoutes(app);
-  repairRoutes(app);
-  personMergeRoutes(app);
+  repairRoutes(app, product.policy);
+  personMergeRoutes(app, product.policy);
   todayRoutes(app);
   crmContextRoutes(app);
 
@@ -202,6 +202,7 @@ function registerRoutes(app: FastifyInstance, readinessProbe: ReadinessProbe, pr
   // 服务端组装时传入当前身份，统一执行归属与敏感字段 ACL。
   app.get('/api/state', { preHandler: [app.authenticate] }, async (req) => {
     const stateOptions = {
+      capabilityPolicy: product.policy,
       onSecurityWarning: (warning: StateSecurityWarning) => {
         req.log.warn(warning, 'state scope rows dropped');
       },
@@ -233,7 +234,7 @@ function registerRoutes(app: FastifyInstance, readinessProbe: ReadinessProbe, pr
       assertionMode: 'user_asserted',
     };
     try {
-      await applyAction(ctx, parsed.data);
+      await applyAction(ctx, parsed.data, prisma, product.policy);
       void syncFromAction(req.user.tenantId, req.user.userId, parsed.data).catch(() => {}); // 江湖→企微日历同步：不阻塞、失败不影响落库
       return { ok: true };
     } catch (e: any) {
@@ -439,23 +440,11 @@ export interface BuildAppOptions {
   productAccess?: unknown;
 }
 
-function productAccessFrom(options: BuildAppOptions): ProductAccess {
-  if (options.productAccess !== undefined) return assembleProductAccess(options.productAccess);
-  const enabledEntitlements = process.env.PRODUCT_ENTITLEMENTS
-    ?.split(',')
-    .map((key) => key.trim())
-    .filter(Boolean);
-  return assembleProductAccess({
-    edition: process.env.PRODUCT_EDITION ?? 'commercial',
-    ...(enabledEntitlements && enabledEntitlements.length > 0 ? { enabledEntitlements } : {}),
-  });
-}
-
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
   // trustProxy：部署在 Nginx 反代之后，据此识别真实客户端 IP（限流/日志才准确）
   const logger = options.logger === true ? { level: 'warn' } : false;
   const app = Fastify({ logger, trustProxy: true });
-  const product = productAccessFrom(options);
+  const product = deploymentProductAccess(options.productAccess);
   await registerSecurityPlugins(app);
   registerCapabilityEnforcement(app, product);
   registerRoutes(app, options.readinessProbe ?? (async () => {

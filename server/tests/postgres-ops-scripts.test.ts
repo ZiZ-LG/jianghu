@@ -705,3 +705,41 @@ describe('CORE-201 Candidate migration operations', () => {
     expect(drill).toContain('migrate:candidate-verify');
   });
 });
+
+describe('CORE-204 sensitive ACL migration operations', () => {
+  it('failure-injects expansion, adoption, semantic drift, partial schema, and restore paths', async () => {
+    const deploy = await read('server/scripts/deploy-postgres-migrations.sh');
+    const drill = await read('scripts/test-postgres-ops-integration.sh');
+
+    expect(deploy).toContain('SENSITIVE_ACL_MIGRATION=20260825000000_expand_sensitive_resource_acl');
+    expect(deploy).toContain('recover_incomplete_sensitive_acl_migration');
+    expect(deploy).toContain('adopt_existing_sensitive_acl_schema_if_safe');
+    expect(deploy).toContain('sensitive_acl_schema_matches_known_state');
+    expect(deploy.lastIndexOf('npm run migrate:sensitive-acl-report'))
+      .toBeGreaterThan(deploy.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deploy.lastIndexOf('npm run migrate:sensitive-acl-apply'))
+      .toBeGreaterThan(deploy.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deploy.lastIndexOf('npm run migrate:sensitive-acl-verify'))
+      .toBeGreaterThan(deploy.lastIndexOf('npm run migrate:sensitive-acl-apply'));
+
+    for (const marker of [
+      'SENSITIVE_ACL_BACKFILL_APPLY_OK=1',
+      'SENSITIVE_ACL_CREATOR_QUARANTINE_OK=1',
+      'INTERRUPTED_SENSITIVE_ACL_AFTER_COMMIT_ADOPTION_OK=1',
+      'SENSITIVE_ACL_SEMANTIC_CONFLICT_FAIL_CLOSED_OK=1',
+      'SENSITIVE_ACL_MARKER_CHECKSUM_FAIL_CLOSED_OK=1',
+      'PARTIAL_SENSITIVE_ACL_SCHEMA_FAIL_CLOSED_OK=1',
+      'SENSITIVE_ACL_RESTORE_ROLLBACK_OK=1',
+      'CORE_204_SENSITIVE_ACL_CUTOVER_OK=1',
+    ]) expect(drill).toContain(marker);
+    expect(drill).toContain('20260825000000_expand_sensitive_resource_acl');
+    expect(drill).toContain('prisma/postgres/legacy/20260825_pre_core204.prisma');
+    expect(drill).toContain('migrate:sensitive-acl-report');
+    expect(drill).toContain('migrate:sensitive-acl-apply');
+    expect(drill).toContain('migrate:sensitive-acl-verify');
+    expect(drill).toContain('Transcript_tenantId_idempotencyDomain_source_externalRef_key');
+    expect(drill).toContain('creator-private-v1:\\\"sensitive-acl-user\\\"');
+    expect(drill).toContain('legacy-v1:ChangeProposal:sensitive-field-proposal');
+    expect(drill).toContain("payload::jsonb ->> 'legacyDedupeKey' = \\\"dedupeKey\\\"");
+  });
+});

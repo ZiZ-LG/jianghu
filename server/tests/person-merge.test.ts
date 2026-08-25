@@ -9,6 +9,7 @@ import { createPdeDecisionContext } from '../src/pde/context.js';
 import { handleMcpBody } from '../src/mcpServer.js';
 import { internalProductPolicy } from './helpers/productPolicy.js';
 import { resolveScopedRelSuggestions } from '../src/suggestionScope.js';
+import { seedLegacyCandidateAuthorities } from './helpers/candidateAuthority.js';
 
 const auth = (token: string, key = 'person-merge-key-0001') => ({
   authorization: `Bearer ${token}`,
@@ -83,6 +84,14 @@ async function seedMergeGraph(context: TestContext, suffix: string) {
     context.prisma.changeProposal.create({ data: { id: `proposal-role-${suffix}`, tenantId: context.tenant.id, accountId, opportunityId, entityKind: 'oppRole', entityId: sourcePersonId, field: 'sentiment', oldValue: 'secret old', newValue: 'secret new' } }),
     context.prisma.reminder.create({ data: { id: `reminder-source-${suffix}`, tenantId: context.tenant.id, accountId, accountName: 'Merge account', opportunityId, kind: 'sentiment_recheck', title: 'secret reminder', entityId: sourcePersonId, dedupeKey: `${opportunityId}:sentiment_recheck:${sourcePersonId}` } }),
     context.prisma.reminder.create({ data: { id: `reminder-target-${suffix}`, tenantId: context.tenant.id, accountId, accountName: 'Merge account', opportunityId, kind: 'sentiment_recheck', title: 'target reminder', entityId: targetPersonId, dedupeKey: `${opportunityId}:sentiment_recheck:${targetPersonId}` } }),
+  ]);
+  await seedLegacyCandidateAuthorities(context.prisma, context.tenant.id, [
+    { sourceKind: 'RelSuggestion', sourceId: `rel-${suffix}` },
+    { sourceKind: 'PersonSuggestion', sourceId: `candidate-${suffix}` },
+    { sourceKind: 'ChangeProposal', sourceId: `proposal-person-${suffix}` },
+    { sourceKind: 'ChangeProposal', sourceId: `proposal-role-${suffix}` },
+    { sourceKind: 'Reminder', sourceId: `reminder-source-${suffix}` },
+    { sourceKind: 'Reminder', sourceId: `reminder-target-${suffix}` },
   ]);
   return { accountId, targetPersonId, sourcePersonId, otherPersonId, opportunityId, secondOpportunityId };
 }
@@ -227,6 +236,9 @@ describe('INT-302 safe duplicate Person merge', () => {
     const context = await createTestContext();
     try {
       const tree = await seedMergeGraph(context, 'proposal-reconcile');
+      await context.prisma.candidate.deleteMany({
+        where: { tenantId: context.tenant.id, legacySourceKind: 'ChangeProposal' },
+      });
       await context.prisma.changeProposal.deleteMany({ where: { tenantId: context.tenant.id } });
       const key = (entityKind: string, entityId: string, field: string) => JSON.stringify([context.tenant.id, tree.accountId, entityKind, entityId, field]);
       await context.prisma.changeProposal.createMany({ data: [
@@ -236,6 +248,13 @@ describe('INT-302 safe duplicate Person merge', () => {
         { id: 'cp-role-target', tenantId: context.tenant.id, accountId: tree.accountId, opportunityId: tree.opportunityId, entityKind: 'oppRole', entityId: tree.targetPersonId, field: 'sentiment', oldValue: 'plus', newValue: 'neutral', dedupeKey: key('oppRole', tree.targetPersonId, 'sentiment') },
         { id: 'cp-role-source', tenantId: context.tenant.id, accountId: tree.accountId, opportunityId: tree.opportunityId, entityKind: 'oppRole', entityId: tree.sourcePersonId, field: 'sentiment', oldValue: 'minus', newValue: 'star', dedupeKey: key('oppRole', tree.sourcePersonId, 'sentiment') },
       ] });
+      await seedLegacyCandidateAuthorities(context.prisma, context.tenant.id, [
+        { sourceKind: 'ChangeProposal', sourceId: 'cp-person-target' },
+        { sourceKind: 'ChangeProposal', sourceId: 'cp-person-source' },
+        { sourceKind: 'ChangeProposal', sourceId: 'cp-log-source' },
+        { sourceKind: 'ChangeProposal', sourceId: 'cp-role-target' },
+        { sourceKind: 'ChangeProposal', sourceId: 'cp-role-source' },
+      ]);
       const response = await context.app.inject({
         method: 'POST', url: '/api/repair/person-merge', headers: auth(context.token, 'person-merge-proposal-reconcile'),
         payload: { targetPersonId: tree.targetPersonId, sourcePersonId: tree.sourcePersonId, roleConflictByOpportunity: { [tree.opportunityId]: 'keep_source' } },
@@ -330,6 +349,13 @@ describe('INT-302 safe duplicate Person merge', () => {
         personId: tree.targetPersonId,
         version: 1,
       });
+      await expect(Promise.all([
+        context.prisma.note.findUniqueOrThrow({ where: { id: 'note-success' } }),
+        context.prisma.transcript.findUniqueOrThrow({ where: { id: 'transcript-success' } }),
+      ])).resolves.toEqual([
+        expect.objectContaining({ personId: tree.targetPersonId, aclVersion: 2 }),
+        expect.objectContaining({ personId: tree.targetPersonId, aclVersion: 2 }),
+      ]);
       await expect(context.prisma.relSuggestion.findFirstOrThrow({ where: { tenantId: context.tenant.id } })).resolves.toMatchObject({ sourcePersonId: tree.targetPersonId });
       await expect(context.prisma.changeProposal.findMany({ where: { tenantId: context.tenant.id } })).resolves.toEqual([
         expect.objectContaining({ entityId: tree.targetPersonId }), expect.objectContaining({ entityId: tree.targetPersonId }),

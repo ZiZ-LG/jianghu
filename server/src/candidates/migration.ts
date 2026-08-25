@@ -74,6 +74,7 @@ export interface CandidateProjection {
   reviewBatchId: null;
   createdByUserId: string | null;
   visibility: 'private' | 'owner_admin_only';
+  aclVersion: 1;
   dedupeKey: string;
   legacySourceKind: LegacyCandidateSourceKind;
   legacySourceId: string;
@@ -271,6 +272,7 @@ function projectionBase(args: {
     sourceArtifactId: null,
     reviewBatchId: null,
     ...args.creator,
+    aclVersion: 1,
     dedupeKey: identity.dedupeKey,
     legacySourceKind: args.sourceKind,
     legacySourceId: args.sourceId,
@@ -991,7 +993,7 @@ export async function applyCandidateMigration(
   });
 }
 
-const CANDIDATE_COLUMNS = new Map<string, { type: string; required: boolean }>([
+const CANDIDATE_BASE_COLUMNS = new Map<string, { type: string; required: boolean }>([
   ['id', { type: 'TEXT', required: true }],
   ['tenantId', { type: 'TEXT', required: true }],
   ['kind', { type: 'TEXT', required: true }],
@@ -1020,7 +1022,10 @@ const CANDIDATE_COLUMNS = new Map<string, { type: string; required: boolean }>([
   ['updatedAt', { type: 'DATETIME', required: true }],
 ]);
 
-const CANDIDATE_INDEXES = new Set([
+const CANDIDATE_ACL_COLUMNS = new Map(CANDIDATE_BASE_COLUMNS);
+CANDIDATE_ACL_COLUMNS.set('aclVersion', { type: 'INTEGER', required: true });
+
+const CANDIDATE_BASE_INDEXES = new Set([
   'Candidate_tenantId_status_createdAt_idx',
   'Candidate_tenantId_accountId_status_createdAt_idx',
   'Candidate_tenantId_matterId_status_createdAt_idx',
@@ -1030,6 +1035,9 @@ const CANDIDATE_INDEXES = new Set([
   'Candidate_tenantId_dedupeKey_key',
   'Candidate_tenantId_legacySourceKind_legacySourceId_key',
 ]);
+
+const CANDIDATE_ACL_INDEXES = new Set(CANDIDATE_BASE_INDEXES);
+CANDIDATE_ACL_INDEXES.add('Candidate_tenantId_visibility_aclVersion_idx');
 
 export async function inspectCandidateSchemaState(db: Pick<CandidateReadClient, '$queryRawUnsafe'>): Promise<CandidateSchemaState> {
   const tables = await db.$queryRawUnsafe<Array<{ name: string }>>(
@@ -1043,9 +1051,14 @@ export async function inspectCandidateSchemaState(db: Pick<CandidateReadClient, 
   const columns = await db.$queryRawUnsafe<Array<{
     name: string; type: string; notnull: number; pk: number;
   }>>('PRAGMA table_info("Candidate")');
-  if (columns.length !== CANDIDATE_COLUMNS.size) return 'partial';
+  const expectedColumns = columns.length === CANDIDATE_BASE_COLUMNS.size
+    ? CANDIDATE_BASE_COLUMNS
+    : columns.length === CANDIDATE_ACL_COLUMNS.size
+      ? CANDIDATE_ACL_COLUMNS
+      : null;
+  if (!expectedColumns) return 'partial';
   for (const column of columns) {
-    const expected = CANDIDATE_COLUMNS.get(column.name);
+    const expected = expectedColumns.get(column.name);
     if (!expected || column.type.toUpperCase() !== expected.type) return 'partial';
     if (Number(column.notnull) !== (expected.required ? 1 : 0)) return 'partial';
     if (column.name === 'id' && Number(column.pk) !== 1) return 'partial';
@@ -1053,8 +1066,12 @@ export async function inspectCandidateSchemaState(db: Pick<CandidateReadClient, 
 
   const indexes = await db.$queryRawUnsafe<Array<{ name: string }>>('PRAGMA index_list("Candidate")');
   const namedIndexes = indexes.map((row) => row.name).filter((name) => !name.startsWith('sqlite_autoindex_'));
-  if (namedIndexes.length !== CANDIDATE_INDEXES.size
-    || namedIndexes.some((name) => !CANDIDATE_INDEXES.has(name))) return 'partial';
+  const expectedIndexes = namedIndexes.length === CANDIDATE_BASE_INDEXES.size
+    ? CANDIDATE_BASE_INDEXES
+    : namedIndexes.length === CANDIDATE_ACL_INDEXES.size
+      ? CANDIDATE_ACL_INDEXES
+      : null;
+  if (!expectedIndexes || namedIndexes.some((name) => !expectedIndexes.has(name))) return 'partial';
 
   const foreignKeys = await db.$queryRawUnsafe<Array<{
     table: string; from: string; to: string; on_update: string; on_delete: string;

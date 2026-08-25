@@ -13,10 +13,27 @@ import {
 } from '../mutation/scopeGuards.js';
 import { activePersonWhere } from '../activePerson.js';
 import {
+  candidateDescriptor,
+  requireCandidateProducerAccess,
+  requireCandidateReviewAccess,
+  type CandidateReviewAccessContext,
+} from '../sensitiveAccess.js';
+import {
   candidateIdentityForLegacy,
   canonicalCandidateJson,
   type CanonicalCandidateStatus,
 } from './migration.js';
+import {
+  candidateDedupeKeyForCreator,
+  personCandidateDedupeKey,
+  relationCandidateDedupeKey,
+  sourceCandidateDedupeKey,
+} from './dedupe.js';
+export {
+  personCandidateDedupeKey,
+  relationCandidateDedupeKey,
+  sourceCandidateDedupeKey,
+} from './dedupe.js';
 
 type CandidateTx = Prisma.TransactionClient;
 type CandidateEndpoint = { kind: 'person' | 'suggestion'; id: string };
@@ -85,6 +102,7 @@ export interface RelationCandidateReceipt {
 export interface UpdatePendingPersonCandidateInput {
   tenantId: string;
   id: string;
+  createdByUserId: string | null;
   dedupeKey?: string;
   patch: Partial<Pick<
     PersonSuggestion,
@@ -99,10 +117,17 @@ export interface UpdatePendingPersonCandidateInput {
   >>;
 }
 
+export interface FindPendingPersonCandidateForProducerInput {
+  tenantId: string;
+  dedupeKey: string;
+  createdByUserId: string | null;
+}
+
 export interface ClaimPersonCandidateInput {
   tenantId: string;
   id: string;
   override?: { name?: string; title?: string };
+  review: CandidateReviewAccessContext;
 }
 
 export interface FinalizePersonCandidateInput {
@@ -115,6 +140,7 @@ export interface FinalizePersonCandidateInput {
 export interface ClaimRelationCandidateInput {
   tenantId: string;
   id: string;
+  review: CandidateReviewAccessContext;
 }
 
 export interface FinalizeRelationCandidateInput {
@@ -130,6 +156,7 @@ export interface FinalizeRelationCandidateInput {
 export interface RejectCandidateInput {
   tenantId: string;
   id: string;
+  review: CandidateReviewAccessContext;
 }
 
 export interface RedirectCandidatePersonReferencesInput {
@@ -137,6 +164,7 @@ export interface RedirectCandidatePersonReferencesInput {
   accountId: string;
   from: CandidateEndpoint;
   toPersonId: string;
+  review: CandidateReviewAccessContext;
 }
 
 export interface RedirectCandidatePersonReferencesReceipt {
@@ -188,25 +216,10 @@ function terminalDedupeKey(candidateId: string): string {
   return `terminal-v1:${candidateId}`;
 }
 
-function normalizeDedupeText(value: string): string {
-  return value.normalize('NFKC').trim().toLocaleLowerCase('zh-CN');
-}
-
-export function personCandidateDedupeKey(accountId: string, name: string): string {
-  return `person-pending-v1:${accountId}:${normalizeDedupeText(name)}`;
-}
-
-export function relationCandidateDedupeKey(
-  matterId: string,
-  source: CandidateEndpoint,
-  target: CandidateEndpoint,
-): string {
-  const pair = [`${source.kind}:${source.id}`, `${target.kind}:${target.id}`].sort().join('|');
-  return `relation-pending-v1:${matterId}:${pair}`;
-}
-
-export function sourceCandidateDedupeKey(source: string, sourceRef: string): string {
-  return `source-v1:${normalizeDedupeText(source)}:${requiredText(sourceRef, 'sourceRef')}`;
+function isScopedNotFound(error: unknown): boolean {
+  return error instanceof ScopedNotFoundError
+    || Boolean(error && typeof error === 'object' && 'scopedNotFound' in error
+      && (error as { scopedNotFound?: boolean }).scopedNotFound);
 }
 
 async function creatorScope(
@@ -352,8 +365,25 @@ function relationPayload(row: RelSuggestion): string {
   });
 }
 
+type LinkedCandidateMetadata = Pick<Candidate,
+  | 'id'
+  | 'tenantId'
+  | 'kind'
+  | 'status'
+  | 'accountId'
+  | 'matterId'
+  | 'createdByUserId'
+  | 'visibility'
+  | 'aclVersion'
+  | 'dedupeKey'
+  | 'legacySourceKind'
+  | 'legacySourceId'
+  | 'sourceRef'
+  | 'version'
+>;
+
 function assertLinkedCandidate(
-  candidate: Candidate,
+  candidate: LinkedCandidateMetadata,
   expected: {
     kind: 'person_create' | 'relation_create';
     tenantId: string;
@@ -392,6 +422,125 @@ async function findLinkedCandidate(
   });
 }
 
+const producerCandidateSelect = {
+  id: true,
+  tenantId: true,
+  kind: true,
+  status: true,
+  accountId: true,
+  matterId: true,
+  createdByUserId: true,
+  visibility: true,
+  aclVersion: true,
+  dedupeKey: true,
+  legacySourceKind: true,
+  legacySourceId: true,
+  version: true,
+  sourceRef: true,
+} as const;
+
+async function findLinkedProducerCandidate(
+  tx: CandidateTx,
+  tenantId: string,
+  sourceKind: typeof PERSON_SOURCE_KIND | typeof REL_SOURCE_KIND,
+  sourceId: string,
+): Promise<LinkedCandidateMetadata | null> {
+  return tx.candidate.findUnique({
+    where: {
+      tenantId_legacySourceKind_legacySourceId: {
+        tenantId,
+        legacySourceKind: sourceKind,
+        legacySourceId: sourceId,
+      },
+    },
+    select: producerCandidateSelect,
+  });
+}
+
+/**
+ * Resolve a producer-owned person Candidate by semantic key. Candidate ACL metadata is
+ * checked before the legacy projection body is selected, in the same database snapshot.
+ */
+export async function findPendingPersonCandidateForProducer(
+  db: DbClient,
+  input: FindPendingPersonCandidateForProducerInput,
+): Promise<PersonSuggestion | null> {
+  return inTransaction(db, async (tx) => {
+    const scope = await creatorScope(tx, input.tenantId, input.createdByUserId, true);
+    const dedupeKey = candidateDedupeKeyForCreator(input.dedupeKey, scope.createdByUserId);
+    const candidate = await tx.candidate.findUnique({
+      where: { tenantId_dedupeKey: { tenantId: input.tenantId, dedupeKey } },
+      select: producerCandidateSelect,
+    });
+    if (!candidate) return null;
+    await requireCandidateProducerAccess(tx, candidateDescriptor(candidate), input.createdByUserId);
+    if (candidate.kind !== 'person_create'
+      || candidate.status !== 'pending'
+      || candidate.legacySourceKind !== PERSON_SOURCE_KIND
+      || !candidate.legacySourceId) {
+      throw new CandidateWriteConflictError();
+    }
+    const row = await tx.personSuggestion.findFirst({
+      where: {
+        id: candidate.legacySourceId,
+        tenantId: input.tenantId,
+        accountId: candidate.accountId,
+        opportunityId: candidate.matterId,
+        status: 'pending',
+      },
+    });
+    if (!row) throw new CandidateWriteConflictError();
+    return row;
+  });
+}
+
+async function requireProducerSuggestionEndpoint(
+  tx: CandidateTx,
+  input: {
+    tenantId: string;
+    accountId: string;
+    matterId: string;
+    suggestionId: string;
+    createdByUserId: string | null;
+  },
+): Promise<void> {
+  const candidate = await tx.candidate.findUnique({
+    where: {
+      tenantId_legacySourceKind_legacySourceId: {
+        tenantId: input.tenantId,
+        legacySourceKind: PERSON_SOURCE_KIND,
+        legacySourceId: input.suggestionId,
+      },
+    },
+    select: producerCandidateSelect,
+  });
+  if (!candidate) throw new ScopedNotFoundError();
+  await requireCandidateProducerAccess(tx, candidateDescriptor(candidate), input.createdByUserId);
+  if (candidate.kind !== 'person_create'
+    || candidate.status !== 'pending'
+    || candidate.accountId !== input.accountId
+    || (candidate.matterId && candidate.matterId !== input.matterId)) {
+    throw new ScopedNotFoundError();
+  }
+}
+
+async function requireProducerCandidateEndpoints(
+  tx: CandidateTx,
+  input: Pick<CreateRelationCandidateInput, 'tenantId' | 'matterId' | 'source' | 'target' | 'createdByUserId'>,
+  accountId: string,
+): Promise<void> {
+  for (const endpoint of [input.source, input.target]) {
+    if (endpoint.kind !== 'suggestion') continue;
+    await requireProducerSuggestionEndpoint(tx, {
+      tenantId: input.tenantId,
+      accountId,
+      matterId: input.matterId,
+      suggestionId: endpoint.id,
+      createdByUserId: input.createdByUserId,
+    });
+  }
+}
+
 async function createCandidateForPerson(
   tx: CandidateTx,
   row: PersonSuggestion,
@@ -404,10 +553,11 @@ async function createCandidateForPerson(
 ): Promise<Candidate> {
   await validatePersonParent(tx, row);
   const identity = candidateIdentityForLegacy(row.tenantId, PERSON_SOURCE_KIND, row.id);
+  const legacyScope = metadata ? null : await creatorScope(tx, row.tenantId, row.proposedBy || null, false);
   const scope = metadata ?? {
     sourceRef: identity.sourceRef,
-    dedupeKey: identity.dedupeKey,
-    ...await creatorScope(tx, row.tenantId, row.proposedBy || null, false),
+    dedupeKey: candidateDedupeKeyForCreator(identity.dedupeKey, legacyScope!.createdByUserId),
+    ...legacyScope!,
   };
   return tx.candidate.create({ data: {
     id: identity.id,
@@ -425,6 +575,7 @@ async function createCandidateForPerson(
     confidence: row.confidence,
     createdByUserId: scope.createdByUserId,
     visibility: scope.visibility,
+    aclVersion: 1,
     dedupeKey: scope.dedupeKey,
     legacySourceKind: PERSON_SOURCE_KIND,
     legacySourceId: row.id,
@@ -444,10 +595,17 @@ async function ensurePersonCandidate(
       kind: 'person_create', tenantId: row.tenantId, accountId: row.accountId,
       matterId: row.opportunityId, legacySourceKind: PERSON_SOURCE_KIND, legacySourceId: row.id,
     });
-    if (options.dedupeKey && existing.dedupeKey !== options.dedupeKey) {
+    const requestedDedupeKey = options.dedupeKey
+      ? candidateDedupeKeyForCreator(options.dedupeKey, existing.createdByUserId)
+      : null;
+    if (requestedDedupeKey && existing.dedupeKey !== requestedDedupeKey) {
       const legacyIdentity = candidateIdentityForLegacy(row.tenantId, PERSON_SOURCE_KIND, row.id);
-      if (existing.dedupeKey !== legacyIdentity.dedupeKey) throw new CandidateWriteConflictError();
-      return tx.candidate.update({ where: { id: existing.id }, data: { dedupeKey: options.dedupeKey } });
+      const legacyDedupeKey = candidateDedupeKeyForCreator(
+        legacyIdentity.dedupeKey,
+        existing.createdByUserId,
+      );
+      if (existing.dedupeKey !== legacyDedupeKey) throw new CandidateWriteConflictError();
+      return tx.candidate.update({ where: { id: existing.id }, data: { dedupeKey: requestedDedupeKey } });
     }
     return existing;
   }
@@ -469,7 +627,8 @@ async function ensurePersonCandidate(
     confidence: row.confidence,
     createdByUserId: scope.createdByUserId,
     visibility: scope.visibility,
-    dedupeKey: options.dedupeKey ?? identity.dedupeKey,
+    aclVersion: 1,
+    dedupeKey: candidateDedupeKeyForCreator(options.dedupeKey ?? identity.dedupeKey, scope.createdByUserId),
     legacySourceKind: PERSON_SOURCE_KIND,
     legacySourceId: row.id,
     createdAt: row.createdAt,
@@ -511,6 +670,7 @@ async function createCandidateForRelation(
     confidence: row.confidence,
     createdByUserId: scope.createdByUserId,
     visibility: scope.visibility,
+    aclVersion: 1,
     dedupeKey: scope.dedupeKey,
     legacySourceKind: REL_SOURCE_KIND,
     legacySourceId: row.id,
@@ -537,9 +697,10 @@ async function ensureRelationCandidate(
 
 async function replayPerson(
   tx: CandidateTx,
-  candidate: Candidate,
+  candidate: LinkedCandidateMetadata,
   input: CreatePersonCandidateInput,
 ): Promise<PersonCandidateReceipt> {
+  await requireCandidateProducerAccess(tx, candidateDescriptor(candidate), input.createdByUserId);
   assertLinkedCandidate(candidate, {
     kind: 'person_create', tenantId: input.tenantId, accountId: input.accountId,
     matterId: input.matterId ?? null, legacySourceKind: PERSON_SOURCE_KIND,
@@ -555,11 +716,13 @@ async function replayPerson(
 
 async function replayRelation(
   tx: CandidateTx,
-  candidate: Candidate,
+  candidate: LinkedCandidateMetadata,
   input: CreateRelationCandidateInput,
 ): Promise<RelationCandidateReceipt> {
+  await requireCandidateProducerAccess(tx, candidateDescriptor(candidate), input.createdByUserId);
   if (!candidate.legacySourceId) throw new CandidateWriteConflictError();
   const accountId = await requireMatterAccount(tx, input.tenantId, input.matterId);
+  await requireProducerCandidateEndpoints(tx, input, accountId);
   assertLinkedCandidate(candidate, {
     kind: 'relation_create', tenantId: input.tenantId, accountId,
     matterId: input.matterId, legacySourceKind: REL_SOURCE_KIND,
@@ -590,11 +753,22 @@ async function createPersonCandidateInTransaction(
     if (matterAccountId !== input.accountId) throw new ScopedNotFoundError();
   }
   const scope = await creatorScope(tx, input.tenantId, input.createdByUserId, true);
+  const dedupeKey = candidateDedupeKeyForCreator(input.dedupeKey, scope.createdByUserId);
+  await requireCandidateProducerAccess(tx, candidateDescriptor({
+    id: input.id,
+    tenantId: input.tenantId,
+    accountId: input.accountId,
+    matterId: input.matterId ?? null,
+    createdByUserId: scope.createdByUserId,
+    visibility: scope.visibility,
+    aclVersion: 1,
+  }), input.createdByUserId);
   const existingByKey = await tx.candidate.findUnique({
-    where: { tenantId_dedupeKey: { tenantId: input.tenantId, dedupeKey: input.dedupeKey } },
+    where: { tenantId_dedupeKey: { tenantId: input.tenantId, dedupeKey } },
+    select: producerCandidateSelect,
   });
   if (existingByKey) return replayPerson(tx, existingByKey, input);
-  const linked = await findLinkedCandidate(tx, input.tenantId, PERSON_SOURCE_KIND, input.id);
+  const linked = await findLinkedProducerCandidate(tx, input.tenantId, PERSON_SOURCE_KIND, input.id);
   if (linked) return replayPerson(tx, linked, input);
   const legacy = await tx.personSuggestion.findFirst({ where: { id: input.id, tenantId: input.tenantId } });
   if (legacy) {
@@ -603,7 +777,7 @@ async function createPersonCandidateInTransaction(
     }
     const candidate = await createCandidateForPerson(tx, legacy, {
       sourceRef: input.sourceRef,
-      dedupeKey: input.dedupeKey,
+      dedupeKey,
       ...scope,
     });
     return { row: legacy, candidateId: candidate.id, candidateVersion: candidate.version, created: false };
@@ -627,7 +801,7 @@ async function createPersonCandidateInTransaction(
   } });
   const candidate = await createCandidateForPerson(tx, row, {
     sourceRef: input.sourceRef,
-    dedupeKey: input.dedupeKey,
+    dedupeKey,
     ...scope,
   });
   return { row, candidateId: candidate.id, candidateVersion: candidate.version, created: true };
@@ -642,8 +816,10 @@ export async function createPersonCandidate(
   } catch (error) {
     if (prismaCode(error) !== 'P2002' || !isRootClient(db)) throw error;
     return inTransaction(db, async (tx) => {
+      const dedupeKey = candidateDedupeKeyForCreator(input.dedupeKey, input.createdByUserId);
       const existing = await tx.candidate.findUnique({
-        where: { tenantId_dedupeKey: { tenantId: input.tenantId, dedupeKey: input.dedupeKey } },
+        where: { tenantId_dedupeKey: { tenantId: input.tenantId, dedupeKey } },
+        select: producerCandidateSelect,
       });
       if (!existing) throw error;
       return replayPerson(tx, existing, input);
@@ -667,21 +843,33 @@ async function createRelationCandidateInTransaction(
   }
   validConfidence(input.confidence);
   const accountId = await requireMatterAccount(tx, input.tenantId, input.matterId);
+  const scope = await creatorScope(tx, input.tenantId, input.createdByUserId, true);
+  const dedupeKey = candidateDedupeKeyForCreator(input.dedupeKey, scope.createdByUserId);
+  await requireCandidateProducerAccess(tx, candidateDescriptor({
+    id: input.id,
+    tenantId: input.tenantId,
+    accountId,
+    matterId: input.matterId,
+    createdByUserId: scope.createdByUserId,
+    visibility: scope.visibility,
+    aclVersion: 1,
+  }), input.createdByUserId);
+  await requireProducerCandidateEndpoints(tx, input, accountId);
   await validateEndpoint(tx, input.tenantId, accountId, input.matterId, input.source);
   await validateEndpoint(tx, input.tenantId, accountId, input.matterId, input.target);
-  const scope = await creatorScope(tx, input.tenantId, input.createdByUserId, true);
   const existingByKey = await tx.candidate.findUnique({
-    where: { tenantId_dedupeKey: { tenantId: input.tenantId, dedupeKey: input.dedupeKey } },
+    where: { tenantId_dedupeKey: { tenantId: input.tenantId, dedupeKey } },
+    select: producerCandidateSelect,
   });
   if (existingByKey) return replayRelation(tx, existingByKey, input);
-  const linked = await findLinkedCandidate(tx, input.tenantId, REL_SOURCE_KIND, input.id);
+  const linked = await findLinkedProducerCandidate(tx, input.tenantId, REL_SOURCE_KIND, input.id);
   if (linked) return replayRelation(tx, linked, input);
   const legacy = await tx.relSuggestion.findFirst({ where: { id: input.id, tenantId: input.tenantId } });
   if (legacy) {
     if (legacy.opportunityId !== input.matterId) throw new CandidateWriteConflictError();
     const candidate = await createCandidateForRelation(tx, legacy, {
       sourceRef: input.sourceRef,
-      dedupeKey: input.dedupeKey,
+      dedupeKey,
       ...scope,
     });
     return { row: legacy, candidateId: candidate.id, candidateVersion: candidate.version, created: false };
@@ -703,7 +891,7 @@ async function createRelationCandidateInTransaction(
   } });
   const candidate = await createCandidateForRelation(tx, row, {
     sourceRef: input.sourceRef,
-    dedupeKey: input.dedupeKey,
+    dedupeKey,
     ...scope,
   });
   return { row, candidateId: candidate.id, candidateVersion: candidate.version, created: true };
@@ -718,8 +906,10 @@ export async function createRelationCandidate(
   } catch (error) {
     if (prismaCode(error) !== 'P2002' || !isRootClient(db)) throw error;
     return inTransaction(db, async (tx) => {
+      const dedupeKey = candidateDedupeKeyForCreator(input.dedupeKey, input.createdByUserId);
       const existing = await tx.candidate.findUnique({
-        where: { tenantId_dedupeKey: { tenantId: input.tenantId, dedupeKey: input.dedupeKey } },
+        where: { tenantId_dedupeKey: { tenantId: input.tenantId, dedupeKey } },
+        select: producerCandidateSelect,
       });
       if (!existing) throw error;
       return replayRelation(tx, existing, input);
@@ -734,11 +924,56 @@ export async function updatePendingPersonCandidate(
   return inTransaction(db, async (tx) => {
     if (input.patch.evidence !== undefined) requiredText(input.patch.evidence, 'evidence');
     if (input.patch.confidence !== undefined) validConfidence(input.patch.confidence);
-    const row = await tx.personSuggestion.findFirst({ where: { id: input.id, tenantId: input.tenantId } });
-    if (!row) throw new ScopedNotFoundError();
-    if (row.status !== 'pending') throw new CandidateWriteConflictError();
-    const candidate = await ensurePersonCandidate(tx, row, { dedupeKey: input.dedupeKey });
-    if (candidate.status !== 'pending') throw new CandidateWriteConflictError();
+    const candidate = await tx.candidate.findUnique({
+      where: {
+        tenantId_legacySourceKind_legacySourceId: {
+          tenantId: input.tenantId,
+          legacySourceKind: PERSON_SOURCE_KIND,
+          legacySourceId: input.id,
+        },
+      },
+      select: producerCandidateSelect,
+    });
+    if (!candidate) throw new ScopedNotFoundError();
+    await requireCandidateProducerAccess(tx, candidateDescriptor(candidate), input.createdByUserId);
+    if (candidate.kind !== 'person_create'
+      || candidate.status !== 'pending'
+      || candidate.legacySourceKind !== PERSON_SOURCE_KIND
+      || candidate.legacySourceId !== input.id) {
+      throw new CandidateWriteConflictError();
+    }
+    const requestedDedupeKey = input.dedupeKey
+      ? candidateDedupeKeyForCreator(input.dedupeKey, candidate.createdByUserId)
+      : null;
+    if (requestedDedupeKey && candidate.dedupeKey !== requestedDedupeKey) {
+      const legacyIdentity = candidateIdentityForLegacy(input.tenantId, PERSON_SOURCE_KIND, input.id);
+      const legacyDedupeKey = candidateDedupeKeyForCreator(
+        legacyIdentity.dedupeKey,
+        candidate.createdByUserId,
+      );
+      if (candidate.dedupeKey !== legacyDedupeKey) throw new CandidateWriteConflictError();
+      const remapped = await tx.candidate.updateMany({
+        where: {
+          id: candidate.id,
+          tenantId: input.tenantId,
+          dedupeKey: candidate.dedupeKey,
+          version: candidate.version,
+          aclVersion: candidate.aclVersion,
+        },
+        data: { dedupeKey: requestedDedupeKey },
+      });
+      if (remapped.count !== 1) throw new CandidateWriteConflictError();
+    }
+    const row = await tx.personSuggestion.findFirst({
+      where: {
+        id: input.id,
+        tenantId: input.tenantId,
+        accountId: candidate.accountId,
+        opportunityId: candidate.matterId,
+        status: 'pending',
+      },
+    });
+    if (!row) throw new CandidateWriteConflictError();
     const changed = await tx.personSuggestion.updateMany({
       where: { id: row.id, tenantId: row.tenantId, status: 'pending' },
       data: input.patch,
@@ -746,7 +981,13 @@ export async function updatePendingPersonCandidate(
     if (changed.count !== 1) throw new CandidateWriteConflictError();
     const updatedRow = await tx.personSuggestion.findFirstOrThrow({ where: { id: row.id, tenantId: row.tenantId } });
     const updatedCandidate = await tx.candidate.updateMany({
-      where: { id: candidate.id, tenantId: row.tenantId, status: 'pending', version: candidate.version },
+      where: {
+        id: candidate.id,
+        tenantId: row.tenantId,
+        status: 'pending',
+        version: candidate.version,
+        aclVersion: candidate.aclVersion,
+      },
       data: {
         payload: personPayload(updatedRow),
         source: updatedRow.origin,
@@ -770,6 +1011,7 @@ export async function claimPersonCandidate(
   input: ClaimPersonCandidateInput,
 ): Promise<PersonCandidateReceipt> {
   return inTransaction(db, async (tx) => {
+    await requireCandidateReviewAccess(tx, input.tenantId, PERSON_SOURCE_KIND, input.id, input.review);
     const row = await tx.personSuggestion.findFirst({ where: { id: input.id, tenantId: input.tenantId } });
     if (!row) throw new ScopedNotFoundError();
     if (row.status !== 'pending' || row.resolvedPersonId) throw new CandidateWriteConflictError();
@@ -786,7 +1028,10 @@ export async function claimPersonCandidate(
     if (changed.count !== 1) throw new CandidateWriteConflictError();
     const updatedRow = await tx.personSuggestion.findFirstOrThrow({ where: { id: row.id, tenantId: row.tenantId } });
     const claimed = await tx.candidate.updateMany({
-      where: { id: candidate.id, tenantId: row.tenantId, status: 'pending', version: candidate.version },
+      where: {
+        id: candidate.id, tenantId: row.tenantId, status: 'pending',
+        version: candidate.version, aclVersion: candidate.aclVersion,
+      },
       data: {
         status: 'accepted',
         dedupeKey: terminalDedupeKey(candidate.id),
@@ -829,6 +1074,7 @@ export async function finalizePersonCandidate(
         tenantId: row.tenantId,
         status: 'accepted',
         version: input.expectedVersion,
+        aclVersion: candidate.aclVersion,
       },
       data: { payload: personPayload(updatedRow), version: { increment: 1 } },
     });
@@ -847,6 +1093,7 @@ export async function claimRelationCandidate(
   input: ClaimRelationCandidateInput,
 ): Promise<RelationCandidateReceipt> {
   return inTransaction(db, async (tx) => {
+    await requireCandidateReviewAccess(tx, input.tenantId, REL_SOURCE_KIND, input.id, input.review);
     const row = await tx.relSuggestion.findFirst({ where: { id: input.id, tenantId: input.tenantId } });
     if (!row) throw new ScopedNotFoundError();
     if (row.status !== 'pending') throw new CandidateWriteConflictError();
@@ -859,7 +1106,10 @@ export async function claimRelationCandidate(
     if (changed.count !== 1) throw new CandidateWriteConflictError();
     const updatedRow = await tx.relSuggestion.findFirstOrThrow({ where: { id: row.id, tenantId: row.tenantId } });
     const claimed = await tx.candidate.updateMany({
-      where: { id: candidate.id, tenantId: row.tenantId, status: 'pending', version: candidate.version },
+      where: {
+        id: candidate.id, tenantId: row.tenantId, status: 'pending',
+        version: candidate.version, aclVersion: candidate.aclVersion,
+      },
       data: {
         status: 'accepted',
         dedupeKey: terminalDedupeKey(candidate.id),
@@ -911,6 +1161,7 @@ export async function finalizeRelationCandidate(
         tenantId: row.tenantId,
         status: 'accepted',
         version: input.expectedVersion,
+        aclVersion: candidate.aclVersion,
       },
       data: { payload: relationPayload(updatedRow), version: { increment: 1 } },
     });
@@ -926,6 +1177,12 @@ export async function finalizeRelationCandidate(
 
 export async function rejectPersonCandidate(db: DbClient, input: RejectCandidateInput): Promise<boolean> {
   return inTransaction(db, async (tx) => {
+    try {
+      await requireCandidateReviewAccess(tx, input.tenantId, PERSON_SOURCE_KIND, input.id, input.review);
+    } catch (error) {
+      if (isScopedNotFound(error)) return false;
+      throw error;
+    }
     const row = await tx.personSuggestion.findFirst({ where: { id: input.id, tenantId: input.tenantId } });
     if (!row || row.status !== 'pending' || row.resolvedPersonId) return false;
     const candidate = await ensurePersonCandidate(tx, row);
@@ -937,7 +1194,10 @@ export async function rejectPersonCandidate(db: DbClient, input: RejectCandidate
     if (changed.count !== 1) throw new CandidateWriteConflictError();
     const updatedRow = await tx.personSuggestion.findFirstOrThrow({ where: { id: row.id, tenantId: row.tenantId } });
     const rejected = await tx.candidate.updateMany({
-      where: { id: candidate.id, tenantId: row.tenantId, status: 'pending', version: candidate.version },
+      where: {
+        id: candidate.id, tenantId: row.tenantId, status: 'pending',
+        version: candidate.version, aclVersion: candidate.aclVersion,
+      },
       data: {
         status: 'rejected',
         dedupeKey: terminalDedupeKey(candidate.id),
@@ -952,6 +1212,12 @@ export async function rejectPersonCandidate(db: DbClient, input: RejectCandidate
 
 export async function rejectRelationCandidate(db: DbClient, input: RejectCandidateInput): Promise<boolean> {
   return inTransaction(db, async (tx) => {
+    try {
+      await requireCandidateReviewAccess(tx, input.tenantId, REL_SOURCE_KIND, input.id, input.review);
+    } catch (error) {
+      if (isScopedNotFound(error)) return false;
+      throw error;
+    }
     const row = await tx.relSuggestion.findFirst({ where: { id: input.id, tenantId: input.tenantId } });
     if (!row || row.status !== 'pending') return false;
     const candidate = await ensureRelationCandidate(tx, row);
@@ -963,7 +1229,10 @@ export async function rejectRelationCandidate(db: DbClient, input: RejectCandida
     if (changed.count !== 1) throw new CandidateWriteConflictError();
     const updatedRow = await tx.relSuggestion.findFirstOrThrow({ where: { id: row.id, tenantId: row.tenantId } });
     const rejected = await tx.candidate.updateMany({
-      where: { id: candidate.id, tenantId: row.tenantId, status: 'pending', version: candidate.version },
+      where: {
+        id: candidate.id, tenantId: row.tenantId, status: 'pending',
+        version: candidate.version, aclVersion: candidate.aclVersion,
+      },
       data: {
         status: 'rejected',
         dedupeKey: terminalDedupeKey(candidate.id),
@@ -992,6 +1261,9 @@ export async function redirectCandidatePersonReferences(
     });
     if (!target) throw new ScopedNotFoundError();
     if (input.from.kind === 'suggestion') {
+      await requireCandidateReviewAccess(
+        tx, input.tenantId, PERSON_SOURCE_KIND, input.from.id, input.review,
+      );
       const source = await tx.personSuggestion.findFirst({
         where: { id: input.from.id, tenantId: input.tenantId, accountId: input.accountId },
         select: { id: true },
@@ -1009,7 +1281,7 @@ export async function redirectCandidatePersonReferences(
       select: { id: true },
     });
     const matterIds = matters.map((matter) => matter.id);
-    const relationRows = matterIds.length
+    const relationRefs = matterIds.length
       ? await tx.relSuggestion.findMany({
           where: {
             tenantId: input.tenantId,
@@ -1020,11 +1292,15 @@ export async function redirectCandidatePersonReferences(
               { targetKind: input.from.kind, targetPersonId: input.from.id },
             ],
           },
+          select: { id: true },
         })
       : [];
     let relationSources = 0;
     let relationTargets = 0;
-    for (const row of relationRows) {
+    for (const ref of relationRefs) {
+      await requireCandidateReviewAccess(tx, input.tenantId, REL_SOURCE_KIND, ref.id, input.review);
+      const row = await tx.relSuggestion.findFirst({ where: { id: ref.id, tenantId: input.tenantId } });
+      if (!row) throw new CandidateWriteConflictError();
       const candidate = await ensureRelationCandidate(tx, row, { allowArchived: true });
       const patch: Prisma.RelSuggestionUpdateManyMutationInput = {};
       if (row.sourceKind === input.from.kind && row.sourcePersonId === input.from.id) {
@@ -1044,7 +1320,10 @@ export async function redirectCandidatePersonReferences(
       if (changed.count !== 1) throw new CandidateWriteConflictError();
       const updatedRow = await tx.relSuggestion.findFirstOrThrow({ where: { id: row.id, tenantId: input.tenantId } });
       const synced = await tx.candidate.updateMany({
-        where: { id: candidate.id, tenantId: input.tenantId, version: candidate.version },
+        where: {
+          id: candidate.id, tenantId: input.tenantId,
+          version: candidate.version, aclVersion: candidate.aclVersion,
+        },
         data: { payload: relationPayload(updatedRow), version: { increment: 1 } },
       });
       if (synced.count !== 1) throw new CandidateWriteConflictError();
@@ -1052,10 +1331,14 @@ export async function redirectCandidatePersonReferences(
 
     let resolvedPersons = 0;
     if (input.from.kind === 'person') {
-      const personRows = await tx.personSuggestion.findMany({
+      const personRefs = await tx.personSuggestion.findMany({
         where: { tenantId: input.tenantId, accountId: input.accountId, resolvedPersonId: input.from.id },
+        select: { id: true },
       });
-      for (const row of personRows) {
+      for (const ref of personRefs) {
+        await requireCandidateReviewAccess(tx, input.tenantId, PERSON_SOURCE_KIND, ref.id, input.review);
+        const row = await tx.personSuggestion.findFirst({ where: { id: ref.id, tenantId: input.tenantId } });
+        if (!row) throw new CandidateWriteConflictError();
         const candidate = await ensurePersonCandidate(tx, row, { allowArchived: true });
         const changed = await tx.personSuggestion.updateMany({
           where: { id: row.id, tenantId: input.tenantId, resolvedPersonId: input.from.id },
@@ -1064,7 +1347,10 @@ export async function redirectCandidatePersonReferences(
         if (changed.count !== 1) throw new CandidateWriteConflictError();
         const updatedRow = await tx.personSuggestion.findFirstOrThrow({ where: { id: row.id, tenantId: input.tenantId } });
         const synced = await tx.candidate.updateMany({
-          where: { id: candidate.id, tenantId: input.tenantId, version: candidate.version },
+          where: {
+            id: candidate.id, tenantId: input.tenantId,
+            version: candidate.version, aclVersion: candidate.aclVersion,
+          },
           data: { payload: personPayload(updatedRow), version: { increment: 1 } },
         });
         if (synced.count !== 1) throw new CandidateWriteConflictError();

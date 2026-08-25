@@ -21,6 +21,7 @@ import {
   createFieldCandidate,
   upsertReminderCandidate,
 } from '../src/candidates/reviewItems.js';
+import { seedLegacyCandidateAuthorities } from './helpers/candidateAuthority.js';
 
 const executeActionFeedback = (
   ctx: Parameters<typeof executeActionFeedbackWithPolicy>[0],
@@ -266,6 +267,10 @@ describe('atomic idempotent compound commands', () => {
       id, tenantId: test.tenant.id, accountId: 'acc-command', entityKind: 'person', entityId: 'person-inbox-failure',
       field: 'name', oldValue: 'A', newValue: 'B', status: 'pending',
     } });
+    await seedLegacyCandidateAuthorities(test.prisma, test.tenant.id, [
+      { sourceKind: 'ChangeProposal', sourceId: 'cp-one' },
+      { sourceKind: 'ChangeProposal', sourceId: 'cp-two' },
+    ]);
     await expect(runCommand(ctx, { kind: 'inbox-batch', idempotencyKey: 'inbox-failure-key' },
       (tx) => executeInboxBatch(ctx, { items: [
         { kind: 'proposal', id: 'cp-one', decision: 'reject' },
@@ -298,8 +303,16 @@ describe('atomic idempotent compound commands', () => {
     } });
     await test.prisma.reminder.create({ data: {
       id: 'rem-mixed', tenantId: test.tenant.id, accountId: 'acc-command', kind: 'stalled', title: '提醒',
+      opportunityId: 'opp-inbox', oppName: 'Inbox Opp',
       dedupeKey: 'mixed-reminder', status: 'pending',
     } });
+    await seedLegacyCandidateAuthorities(test.prisma, test.tenant.id, [
+      { sourceKind: 'ChangeProposal', sourceId: 'cp-mixed' },
+      { sourceKind: 'PersonSuggestion', sourceId: 'ps-mixed' },
+      { sourceKind: 'RelSuggestion', sourceId: 'rs-mixed' },
+      { sourceKind: 'EvidenceEvent', sourceId: 'ev-mixed' },
+      { sourceKind: 'Reminder', sourceId: 'rem-mixed' },
+    ]);
 
     await expect(runCommand(ctx, { kind: 'inbox-batch', idempotencyKey: 'mixed-inbox-failure' },
       (tx) => executeInboxBatch(ctx, { items: [

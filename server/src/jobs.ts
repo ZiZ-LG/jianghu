@@ -17,12 +17,13 @@ import {
   type PatrolRole,
   type ReminderDraft,
 } from './patrol.js';
-import type { DbClient } from './mutation/scopeGuards.js';
+import { ScopedNotFoundError, type DbClient } from './mutation/scopeGuards.js';
 import { activePersonWhere } from './activePerson.js';
 import { BUSINESS_TIME_ZONE } from './businessDate.js';
 import { resolveEffectiveResourceScope } from './resourceScope.js';
 import {
   createPersonCandidate,
+  findPendingPersonCandidateForProducer,
   personCandidateDedupeKey,
   updatePendingPersonCandidate,
 } from './candidates/personRelation.js';
@@ -181,20 +182,39 @@ export async function writeEnrichCandidates(
   for (const p of persons) {
     const name = (p.name || '').trim();
     if (!name) { skipped++; continue; }
-    const pendingCount = await db.personSuggestion.count({ where: { tenantId: job.tenantId, status: 'pending' } });
-    if (pendingCount >= MAX_PENDING_PERSON_SUGG) { skipped++; continue; }
-    // 去重：同租户+同客户+同名+pending → 更新（取高 confidence、补 title），不新增
-    const dup = await db.personSuggestion.findFirst({ where: { tenantId: job.tenantId, accountId: job.accountId, name, status: 'pending' } });
+    const dedupeKey = personCandidateDedupeKey(job.accountId, name);
+    // Candidate ACL metadata is checked before the compatibility projection body is read.
+    let dup;
+    try {
+      dup = await findPendingPersonCandidateForProducer(db, {
+        tenantId: job.tenantId,
+        dedupeKey,
+        createdByUserId: null,
+      });
+    } catch (error) {
+      // A user-private/shared semantic collision is not system-owned work. Skip without
+      // reading or mutating the projection and allow the claimed job to complete safely.
+      if (error instanceof ScopedNotFoundError || (error as { scopedNotFound?: boolean })?.scopedNotFound) {
+        skipped++;
+        continue;
+      }
+      throw error;
+    }
     if (dup) {
       await updatePendingPersonCandidate(db, {
         tenantId: job.tenantId,
         id: dup.id,
-        dedupeKey: personCandidateDedupeKey(job.accountId, name),
+        createdByUserId: null,
+        dedupeKey,
         patch: { title: (p.title || '').trim() || dup.title, confidence: Math.max(dup.confidence, confidence) },
       });
       deduped++;
       continue;
     }
+    const pendingCount = await db.candidate.count({ where: {
+      tenantId: job.tenantId, kind: 'person_create', status: 'pending', createdByUserId: null,
+    } });
+    if (pendingCount >= MAX_PENDING_PERSON_SUGG) { skipped++; continue; }
     const id = 'ps_' + randomUUID().replaceAll('-', '');
     const sourceRef = `enrich:${job.id}:${source}:${name.normalize('NFKC').trim()}`;
     await createPersonCandidate(db, {
@@ -210,7 +230,7 @@ export async function writeEnrichCandidates(
       evidence: `江湖自算·${source === 'qcc' ? '企查查' : 'AI'} 发现，待核实`,
       confidence,
       createdByUserId: null,
-      dedupeKey: personCandidateDedupeKey(job.accountId, name),
+      dedupeKey,
     });
     created++;
   }
@@ -249,19 +269,37 @@ const PROFILE_NOTE_PREFIX = '【AI 企业背景研究·待核】';
 async function runProfileJob(job: ClaimedJob): Promise<void> {
   const acc = await prisma.account.findFirst({ where: { id: job.accountId, tenantId: job.tenantId } });
   if (!acc) { await finish(job, 'failed', '', '目标客户不存在或已删除'); return; }
-  const dup = await prisma.note.findFirst({ where: { tenantId: job.tenantId, accountId: acc.id, source: 'ai', content: { startsWith: PROFILE_NOTE_PREFIX } } });
+  const dup = await prisma.note.findFirst({
+    where: {
+      tenantId: job.tenantId,
+      accountId: acc.id,
+      source: 'ai',
+      createdByUserId: null,
+      visibility: 'owner_admin_only',
+      aclVersion: { gte: 1 },
+      content: { startsWith: PROFILE_NOTE_PREFIX },
+    },
+    select: { id: true },
+  });
   if (dup) { await finish(job, 'done', JSON.stringify({ skipped: 'exists' }), ''); return; }
   const r = await researchCompanyProfile(job.tenantId, acc.name);
   if (!r) { await finish(job, 'done', JSON.stringify({ source: 'none', note: '未配置企查查/AI，跳过背景研究' }), ''); return; }
   await commitJobSideEffect(job, async (db) => {
     const current = await db.note.findFirst({ where: {
-      tenantId: job.tenantId, accountId: acc.id, source: 'ai', content: { startsWith: PROFILE_NOTE_PREFIX },
-    } });
+      tenantId: job.tenantId,
+      accountId: acc.id,
+      source: 'ai',
+      createdByUserId: null,
+      visibility: 'owner_admin_only',
+      aclVersion: { gte: 1 },
+      content: { startsWith: PROFILE_NOTE_PREFIX },
+    }, select: { id: true } });
     if (current) return;
     await db.note.create({ data: {
       id: 'note_' + randomUUID().replaceAll('-', ''), tenantId: job.tenantId, accountId: acc.id,
       content: `${PROFILE_NOTE_PREFIX}（来源：${r.source === 'qcc' ? '企查查工商数据' : 'AI 生成·未联网核实'}）\n${r.content}`,
       source: 'ai',
+      createdBy: '', createdByUserId: null, visibility: 'owner_admin_only', aclVersion: 1,
     } });
   });
   await finish(job, 'done', JSON.stringify({ source: r.source, chars: r.content.length }), '');
@@ -460,6 +498,7 @@ export function startJobWorker(): void {
 // ── 后台巡检（确定性·零 LLM）：每日扫活跃商机 → 提醒型提案进收件箱（铁律②：只产候选，人审）──
 const PATROL_MS = 24 * 60 * 60 * 1000; // 每日一轮
 const PATROL_FIRST_DELAY_MS = 30_000; // 启动后延迟首跑，避开启动风暴
+const PATROL_CANDIDATE_BATCH_SIZE = 200;
 let patrolTimer: NodeJS.Timeout | null = null;
 let patrolling = false;
 
@@ -636,24 +675,108 @@ export async function runPatrol(): Promise<{ scanned: number; created: number; r
     'stalled', 'no_decider', 'sentiment_recheck', 'action_overdue', 'form_empty',
     'confirmation_due', 'commitment_due', 'matter_without_next_commitment',
   ];
-  const pending = await prisma.candidate.findMany({ where: {
-    kind: 'reminder', status: 'pending', legacySourceKind: 'Reminder', legacySourceId: { not: null },
-  }, select: { tenantId: true, legacySourceId: true, payload: true } });
   let resolved = 0;
-  for (const candidate of pending) {
-    let payload: { legacyDedupeKey?: unknown; reminderKind?: unknown } = {};
-    try { payload = JSON.parse(candidate.payload) as typeof payload; } catch { /* fail closed below */ }
-    if (typeof payload.legacyDedupeKey !== 'string'
-      || typeof payload.reminderKind !== 'string'
-      || !managedKinds.includes(payload.reminderKind)) continue;
-    if (draftKeysByTenant.get(candidate.tenantId)?.has(payload.legacyDedupeKey)) continue;
-    const changed = await resolveReminderCandidate(prisma, {
-      tenantId: candidate.tenantId,
-      id: candidate.legacySourceId!,
-    });
-    if (!changed) continue;
-    resolved += 1;
-    bucket(candidate.tenantId).resolved += 1;
+  const patrolTenantIds = [...new Set(accs.map((account) => account.tenantId))].sort();
+  for (const tenantId of patrolTenantIds) {
+    let afterId = '';
+    while (true) {
+      const batch = await prisma.candidate.findMany({
+        where: {
+          tenantId,
+          ...(afterId ? { id: { gt: afterId } } : {}),
+          kind: 'reminder',
+          status: 'pending',
+          legacySourceKind: 'Reminder',
+          legacySourceId: { not: null },
+          createdByUserId: null,
+          visibility: 'owner_admin_only',
+          aclVersion: { gte: 1 },
+        },
+        orderBy: { id: 'asc' },
+        take: PATROL_CANDIDATE_BATCH_SIZE,
+        select: { id: true, tenantId: true, accountId: true, matterId: true },
+      });
+      if (!batch.length) break;
+      afterId = batch[batch.length - 1]!.id;
+      const bodies = await prisma.$transaction(async (tx) => {
+        const current = await tx.candidate.findMany({
+          where: {
+            tenantId,
+            id: { in: batch.map((candidate) => candidate.id) },
+            kind: 'reminder',
+            status: 'pending',
+            legacySourceKind: 'Reminder',
+            legacySourceId: { not: null },
+            createdByUserId: null,
+            visibility: 'owner_admin_only',
+            aclVersion: { gte: 1 },
+          },
+          select: { id: true, accountId: true, matterId: true },
+        });
+        const accountIds = [...new Set(current.map((candidate) => candidate.accountId))];
+        const matterIds = [...new Set(current.flatMap((candidate) => candidate.matterId ? [candidate.matterId] : []))];
+        const [accounts, matters] = await Promise.all([
+          accountIds.length ? tx.account.findMany({
+            where: { tenantId, id: { in: accountIds }, archivedAt: null },
+            select: { id: true },
+          }) : Promise.resolve([]),
+          matterIds.length ? tx.opportunity.findMany({
+            where: { tenantId, id: { in: matterIds }, archivedAt: null },
+            select: { id: true, accountId: true },
+          }) : Promise.resolve([]),
+        ]);
+        const validAccounts = new Set(accounts.map((account) => account.id));
+        const matterAccount = new Map(matters.map((matter) => [matter.id, matter.accountId]));
+        const authorizedIds = current.filter((candidate) =>
+          validAccounts.has(candidate.accountId)
+          && (!candidate.matterId || matterAccount.get(candidate.matterId) === candidate.accountId))
+          .map((candidate) => candidate.id);
+        if (!authorizedIds.length) return [];
+        return tx.candidate.findMany({
+          where: {
+            tenantId,
+            id: { in: authorizedIds },
+            kind: 'reminder',
+            status: 'pending',
+            legacySourceKind: 'Reminder',
+            legacySourceId: { not: null },
+            createdByUserId: null,
+            visibility: 'owner_admin_only',
+            aclVersion: { gte: 1 },
+          },
+          select: { id: true, payload: true, legacySourceId: true },
+        });
+      }, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 5_000,
+        timeout: 30_000,
+      });
+      const bodiesByCandidate = new Map<string, { payload: string; legacySourceId: string }>();
+      for (const body of bodies) {
+        if (body.legacySourceId) bodiesByCandidate.set(
+          body.id,
+          { payload: body.payload, legacySourceId: body.legacySourceId },
+        );
+      }
+      for (const candidate of batch) {
+        const body = bodiesByCandidate.get(candidate.id);
+        if (!body?.legacySourceId) continue;
+        let payload: { legacyDedupeKey?: unknown; reminderKind?: unknown } = {};
+        try { payload = JSON.parse(body.payload) as typeof payload; } catch { /* fail closed below */ }
+        if (typeof payload.legacyDedupeKey !== 'string'
+          || typeof payload.reminderKind !== 'string'
+          || !managedKinds.includes(payload.reminderKind)) continue;
+        if (draftKeysByTenant.get(tenantId)?.has(payload.legacyDedupeKey)) continue;
+        const changed = await resolveReminderCandidate(prisma, {
+          tenantId,
+          id: body.legacySourceId,
+        });
+        if (!changed) continue;
+        resolved += 1;
+        bucket(tenantId).resolved += 1;
+      }
+      if (batch.length < PATROL_CANDIDATE_BATCH_SIZE) break;
+    }
   }
 
   recordPatrol(byTenant, now.toISOString());
@@ -682,6 +805,14 @@ export function jobRoutes(app: FastifyInstance): void {
     if (req.user.role === 'viewer') return reply.code(403).send({ error: '只读成员不可发起自算' });
     const p = z.object({ accountId: z.string().min(1), mode: z.enum(['auto', 'web']).default('auto') }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '缺少 accountId' });
+    const scope = await resolveEffectiveResourceScope(prisma, {
+      tenantId: req.user.tenantId,
+      userId: req.user.userId,
+      role: req.user.role,
+    });
+    if (!scope.valid || scope.actorRole === 'viewer' || !scope.canReadAccountData(p.data.accountId)) {
+      return reply.code(404).send({ error: '客户不存在' });
+    }
     const acc = await prisma.account.findFirst({ where: { id: p.data.accountId, tenantId: req.user.tenantId } });
     if (!acc) return reply.code(404).send({ error: '客户不存在' });
     try {
@@ -695,6 +826,14 @@ export function jobRoutes(app: FastifyInstance): void {
     if (req.user.role === 'viewer') return reply.code(403).send({ error: '只读成员不可发起自算' });
     const p = z.object({ opportunityId: z.string().min(1) }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '缺少 opportunityId' });
+    const scope = await resolveEffectiveResourceScope(prisma, {
+      tenantId: req.user.tenantId,
+      userId: req.user.userId,
+      role: req.user.role,
+    });
+    if (!scope.valid || scope.actorRole === 'viewer' || !scope.canReadMatter(p.data.opportunityId)) {
+      return reply.code(404).send({ error: '商机不存在' });
+    }
     const opp = await prisma.opportunity.findFirst({ where: { id: p.data.opportunityId, tenantId: req.user.tenantId } });
     if (!opp) return reply.code(404).send({ error: '商机不存在' });
     try {

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { assembleProductAccess } from '@jianghu/domain-contracts';
 import { createTestContext, type TestContext } from './helpers/testApp.js';
 import {
   createEvidenceCandidate,
@@ -35,6 +36,12 @@ describe('CORE-203 field, reminder, and evidence Candidate authority', () => {
   });
 
   afterEach(async () => test.cleanup());
+
+  const review = () => ({
+    actorId: test.owner.id,
+    actorRole: 'owner' as const,
+    capabilityPolicy: assembleProductAccess({ edition: 'internal' }).policy,
+  });
 
   it('creates and updates a field Candidate with one same-transaction compatibility projection', async () => {
     const first = await createFieldCandidate(test.prisma, {
@@ -80,6 +87,7 @@ describe('CORE-203 field, reminder, and evidence Candidate authority', () => {
 
     await expect(rejectFieldCandidate(test.prisma, {
       tenantId: test.tenant.id, id: created.row.id,
+      review: review(),
     })).rejects.toMatchObject({ candidateConflict: true });
     await expect(test.prisma.changeProposal.findUniqueOrThrow({ where: { id: created.row.id } }))
       .resolves.toMatchObject({ status: 'pending' });
@@ -98,6 +106,7 @@ describe('CORE-203 field, reminder, and evidence Candidate authority', () => {
 
     await expect(prepareFieldCandidatesForPersonMerge(test.prisma, {
       tenantId: test.tenant.id, ids: [created.row.id],
+      review: review(),
     })).rejects.toMatchObject({ candidateConflict: true });
     await expect(test.prisma.changeProposal.findUniqueOrThrow({ where: { id: created.row.id } }))
       .resolves.toMatchObject({ status: 'applying', dedupeKey: expect.any(String) });
@@ -118,6 +127,7 @@ describe('CORE-203 field, reminder, and evidence Candidate authority', () => {
 
     await expect(dismissReminderCandidate(test.prisma, {
       tenantId: test.tenant.id, id: created.row.id,
+      review: review(),
     })).resolves.toBe(true);
     await expect(test.prisma.reminder.findUniqueOrThrow({ where: { id: created.row.id } }))
       .resolves.toMatchObject({ status: 'dismissed' });
@@ -163,6 +173,7 @@ describe('CORE-203 field, reminder, and evidence Candidate authority', () => {
     await expect(reviewEvidenceCandidate(test.prisma, {
       tenantId: test.tenant.id, id: created.row.id, decision: 'accept', reviewedBy: test.owner.id,
       reviewedAt: '2026-08-24', direction: -1,
+      review: review(),
     }, async () => { throw new Error('snapshot failed'); })).rejects.toThrow('snapshot failed');
     await expect(test.prisma.evidenceEvent.findUniqueOrThrow({ where: { id: created.row.id } }))
       .resolves.toMatchObject({ status: 'pending_review', direction: 1 });
@@ -172,6 +183,7 @@ describe('CORE-203 field, reminder, and evidence Candidate authority', () => {
     await expect(reviewEvidenceCandidate(test.prisma, {
       tenantId: test.tenant.id, id: created.row.id, decision: 'accept', reviewedBy: test.owner.id,
       reviewedAt: '2026-08-24', direction: -1,
+      review: review(),
     })).resolves.toBe(true);
     await expect(test.prisma.evidenceEvent.findUniqueOrThrow({ where: { id: created.row.id } }))
       .resolves.toMatchObject({ status: 'approved', direction: -1, reviewedBy: test.owner.id });
@@ -199,6 +211,73 @@ describe('CORE-203 field, reminder, and evidence Candidate authority', () => {
       .resolves.toBe(1);
   });
 
+  it('scopes identical private field and evidence idempotency to each creator', async () => {
+    const other = await test.prisma.user.create({ data: {
+      tenantId: test.tenant.id,
+      email: 'core-204-review-item-other@test.invalid',
+      passwordHash: 'x',
+      name: 'Review item other',
+      role: 'member',
+    } });
+    const ownerField = await createFieldCandidate(test.prisma, {
+      id: 'core-204-private-field-owner', tenantId: test.tenant.id, accountId, matterId,
+      targetKind: 'person', targetId: personId, fieldKey: 'title', oldValue: '负责人', newValue: '决策人',
+      source: 'mcp', sourceRef: 'mcp:core-204-private-field-owner', evidence: '所有者字段依据',
+      confidence: 0.71, createdByUserId: test.owner.id,
+    });
+    const otherField = await createFieldCandidate(test.prisma, {
+      id: 'core-204-private-field-other', tenantId: test.tenant.id, accountId, matterId,
+      targetKind: 'person', targetId: personId, fieldKey: 'title', oldValue: '负责人', newValue: '影响人',
+      source: 'mcp', sourceRef: 'mcp:core-204-private-field-other', evidence: '成员字段依据',
+      confidence: 0.72, createdByUserId: other.id,
+    });
+    const otherFieldReplay = await createFieldCandidate(test.prisma, {
+      id: 'core-204-private-field-other-replay', tenantId: test.tenant.id, accountId, matterId,
+      targetKind: 'person', targetId: personId, fieldKey: 'title', oldValue: '负责人', newValue: '关键影响人',
+      source: 'mcp', sourceRef: 'mcp:core-204-private-field-other-replay', evidence: '成员字段补充依据',
+      confidence: 0.8, createdByUserId: other.id,
+    });
+    expect(ownerField.created).toBe(true);
+    expect(otherField.created).toBe(true);
+    expect(otherFieldReplay).toMatchObject({ created: false, candidateId: otherField.candidateId });
+    await expect(test.prisma.changeProposal.findUniqueOrThrow({ where: { id: ownerField.row.id } }))
+      .resolves.toMatchObject({ newValue: '决策人', evidence: '所有者字段依据' });
+    await expect(test.prisma.changeProposal.findUniqueOrThrow({ where: { id: otherField.row.id } }))
+      .resolves.toMatchObject({ newValue: '关键影响人', evidence: '成员字段补充依据' });
+
+    const ownerEvidence = await createEvidenceCandidate(test.prisma, {
+      id: 'core-204-private-evidence-owner', tenantId: test.tenant.id, accountId, matterId, personId,
+      signalKey: 'intro_referral', direction: 1, tier: 'strong', rawContent: '相同私有证据原句',
+      occurredAt: '2026-08-25', source: 'mcp', sourceRef: 'mcp:core-204-private-evidence',
+      confidence: 0.73, createdByUserId: test.owner.id,
+    });
+    const otherEvidence = await createEvidenceCandidate(test.prisma, {
+      id: 'core-204-private-evidence-other', tenantId: test.tenant.id, accountId, matterId, personId,
+      signalKey: 'intro_referral', direction: 1, tier: 'strong', rawContent: '相同私有证据原句',
+      occurredAt: '2026-08-25', source: 'mcp', sourceRef: 'mcp:core-204-private-evidence',
+      confidence: 0.73, createdByUserId: other.id,
+    });
+    const otherEvidenceReplay = await createEvidenceCandidate(test.prisma, {
+      id: 'core-204-private-evidence-other-replay', tenantId: test.tenant.id, accountId, matterId, personId,
+      signalKey: 'intro_referral', direction: 1, tier: 'strong', rawContent: '相同私有证据原句',
+      occurredAt: '2026-08-25', source: 'mcp', sourceRef: 'mcp:core-204-private-evidence',
+      confidence: 0.73, createdByUserId: other.id,
+    });
+    expect(ownerEvidence.created).toBe(true);
+    expect(otherEvidence.created).toBe(true);
+    expect(otherEvidenceReplay).toMatchObject({ created: false, candidateId: otherEvidence.candidateId });
+
+    const privateCandidates = await test.prisma.candidate.findMany({ where: {
+      tenantId: test.tenant.id,
+      kind: { in: ['field_change', 'evidence_create'] },
+      status: 'pending',
+    } });
+    expect(privateCandidates).toHaveLength(4);
+    expect(new Set(privateCandidates.map((candidate) => candidate.dedupeKey)).size).toBe(4);
+    expect(privateCandidates.filter((candidate) => candidate.createdByUserId === test.owner.id)).toHaveLength(2);
+    expect(privateCandidates.filter((candidate) => candidate.createdByUserId === other.id)).toHaveLength(2);
+  });
+
   it('keeps bidirectional migration verification green after terminal reviews', async () => {
     const field = await createFieldCandidate(test.prisma, {
       id: 'cp-core-203-verify', tenantId: test.tenant.id, accountId, matterId,
@@ -220,13 +299,18 @@ describe('CORE-203 field, reminder, and evidence Candidate authority', () => {
     });
 
     await expect(applyCandidateMigration(test.prisma)).resolves.toMatchObject({ ok: true });
-    await expect(rejectFieldCandidate(test.prisma, { tenantId: test.tenant.id, id: field.row.id }))
+    await expect(rejectFieldCandidate(test.prisma, {
+      tenantId: test.tenant.id, id: field.row.id, review: review(),
+    }))
       .resolves.toBe(true);
-    await expect(dismissReminderCandidate(test.prisma, { tenantId: test.tenant.id, id: reminder.row.id }))
+    await expect(dismissReminderCandidate(test.prisma, {
+      tenantId: test.tenant.id, id: reminder.row.id, review: review(),
+    }))
       .resolves.toBe(true);
     await expect(reviewEvidenceCandidate(test.prisma, {
       tenantId: test.tenant.id, id: evidence.row.id, decision: 'accept',
       reviewedBy: test.owner.id, reviewedAt: '2026-08-24',
+      review: review(),
     })).resolves.toBe(true);
 
     await expect(verifyCandidateMigration(test.prisma)).resolves.toMatchObject({

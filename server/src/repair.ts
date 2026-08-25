@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Prisma } from '@prisma/client';
-import { ActorRoleSchema, type CommandContext } from '@jianghu/domain-contracts';
+import { ActorRoleSchema, type CapabilityPolicy, type CommandContext } from '@jianghu/domain-contracts';
 import { z } from 'zod';
 import { prisma } from './prisma.js';
 import {
@@ -14,6 +14,7 @@ import {
 import { archiveEntity, restoreEntity, type ArchiveTarget } from './mutation/audit.js';
 import { mapLegacyOpportunityStatus } from './matter/lifecycle.js';
 import { resolveEffectiveResourceScope } from './resourceScope.js';
+import { authorizeSensitiveResource, noteDescriptor } from './sensitiveAccess.js';
 
 const accountPatchSchema = z.object({
   base: z.object({
@@ -177,6 +178,14 @@ async function repairAccount(ctx: CommandContext, id: string, patch: z.infer<typ
 
 async function repairOpportunity(ctx: CommandContext, id: string, patch: z.infer<typeof opportunityPatchSchema>): Promise<void> {
   await prisma.$transaction(async (tx) => {
+    const scope = await resolveEffectiveResourceScope(tx, {
+      tenantId: ctx.tenantId,
+      userId: ctx.actorId,
+      role: ctx.actorRole,
+    });
+    if (scope.actorRole === 'viewer' || !scope.canReadMatter(id)) {
+      throw new ScopedNotFoundError();
+    }
     const { baseVersion, ...approvedPatch } = patch;
     const opportunity = await requireScopedRow(tx.opportunity.findFirst({
       where: { id, tenantId: ctx.tenantId, archivedAt: null, account: { archivedAt: null } },
@@ -231,18 +240,33 @@ async function repairOpportunity(ctx: CommandContext, id: string, patch: z.infer
   });
 }
 
-async function rebind(ctx: CommandContext, input: z.infer<typeof rebindSchema>): Promise<void> {
+async function rebind(
+  ctx: CommandContext,
+  input: z.infer<typeof rebindSchema>,
+  capabilityPolicy: CapabilityPolicy,
+): Promise<void> {
   await prisma.$transaction(async (tx) => {
+    const scope = await resolveEffectiveResourceScope(tx, {
+      tenantId: ctx.tenantId, userId: ctx.actorId, role: ctx.actorRole,
+    });
     await requireAccount(tx, ctx.tenantId, input.accountId);
     if (input.opportunityId) {
       await requireOpportunity(tx, ctx.tenantId, input.accountId, input.opportunityId);
     }
+    const canWriteTarget = input.opportunityId
+      ? scope.canReadMatter(input.opportunityId)
+      : scope.canReadAccountData(input.accountId);
+    if (!canWriteTarget || scope.actorRole === 'viewer') throw new ScopedNotFoundError();
 
     if (input.kind === 'visitNote') {
       const current = await requireScopedRow(tx.visitNote.findFirst({
         where: { id: input.id, tenantId: ctx.tenantId },
         select: { accountId: true, opportunityId: true, externalRef: true },
       }));
+      const canWriteSource = current.opportunityId
+        ? scope.canReadMatter(current.opportunityId)
+        : scope.canReadAccountData(current.accountId);
+      if (!canWriteSource) throw new ScopedNotFoundError();
       await requireAccount(tx, ctx.tenantId, current.accountId);
       if (current.opportunityId) {
         await requireOpportunity(tx, ctx.tenantId, current.accountId, current.opportunityId);
@@ -270,8 +294,15 @@ async function rebind(ctx: CommandContext, input: z.infer<typeof rebindSchema>):
 
     const current = await requireScopedRow(tx.note.findFirst({
       where: { id: input.id, tenantId: ctx.tenantId },
-      select: { accountId: true, opportunityId: true, personId: true },
+      select: {
+        id: true, tenantId: true, accountId: true, opportunityId: true, personId: true,
+        createdByUserId: true, visibility: true, aclVersion: true,
+      },
     }));
+    const access = await authorizeSensitiveResource(tx, {
+      tenantId: ctx.tenantId, userId: ctx.actorId, role: ctx.actorRole,
+    }, capabilityPolicy, noteDescriptor(current), 'manage');
+    if (!access.allowed) throw new ScopedNotFoundError();
     if (current.accountId) {
       await requireAccount(tx, ctx.tenantId, current.accountId);
       if (current.opportunityId) {
@@ -287,6 +318,15 @@ async function rebind(ctx: CommandContext, input: z.infer<typeof rebindSchema>):
       await requirePerson(tx, ctx.tenantId, input.accountId, current.personId);
     }
     if (current.accountId === input.accountId && current.opportunityId === (input.opportunityId ?? null)) return;
+    const prospective = noteDescriptor({
+      ...current,
+      accountId: input.accountId,
+      opportunityId: input.opportunityId ?? null,
+    });
+    const targetAccess = await authorizeSensitiveResource(tx, {
+      tenantId: ctx.tenantId, userId: ctx.actorId, role: ctx.actorRole,
+    }, capabilityPolicy, prospective, 'manage');
+    if (!targetAccess.allowed) throw new ScopedNotFoundError();
     const updated = await tx.note.updateMany({
       where: {
         id: input.id,
@@ -294,8 +334,13 @@ async function rebind(ctx: CommandContext, input: z.infer<typeof rebindSchema>):
         accountId: current.accountId,
         opportunityId: current.opportunityId,
         personId: current.personId,
+        aclVersion: current.aclVersion,
       },
-      data: { accountId: input.accountId, opportunityId: input.opportunityId ?? null },
+      data: {
+        accountId: input.accountId,
+        opportunityId: input.opportunityId ?? null,
+        aclVersion: { increment: 1 },
+      },
     });
     if (updated.count !== 1) throw new ScopedNotFoundError();
     await writeRepairAudit(tx, ctx, {
@@ -303,7 +348,7 @@ async function rebind(ctx: CommandContext, input: z.infer<typeof rebindSchema>):
       entityKind: 'note',
       entityId: input.id,
       sourceRef: null,
-      changedFields: ['accountId', 'opportunityId'],
+      changedFields: ['accountId', 'opportunityId', 'aclVersion'],
     });
   });
 }
@@ -363,7 +408,12 @@ async function loadRelatedSyncRuns(tenantId: string, prefix: string, sourceRef: 
   return matches;
 }
 
-async function loadRepairContext(ctx: CommandContext, kind: z.infer<typeof contextKindSchema>, id: string) {
+async function loadRepairContext(
+  ctx: CommandContext,
+  kind: z.infer<typeof contextKindSchema>,
+  id: string,
+  capabilityPolicy: CapabilityPolicy,
+) {
   const scope = await resolveEffectiveResourceScope(prisma, {
     tenantId: ctx.tenantId,
     userId: ctx.actorId,
@@ -413,21 +463,16 @@ async function loadRepairContext(ctx: CommandContext, kind: z.infer<typeof conte
   } else {
     const parent = await requireScopedRow(prisma.note.findFirst({
       where: { id, tenantId: ctx.tenantId },
-      select: { accountId: true, opportunityId: true, personId: true },
+      select: {
+        id: true, tenantId: true, accountId: true, opportunityId: true, personId: true,
+        createdByUserId: true, visibility: true, aclVersion: true, source: true,
+      },
     }));
-    const canReadUnfiled = scope.actorRole === 'owner'
-      || scope.actorRole === 'admin'
-      || (scope.actorRole === 'member' && scope.policy === 'legacy_tenant_shared');
-    const canRead = parent.opportunityId
-      ? scope.canReadMatter(parent.opportunityId)
-      : parent.accountId
-        ? scope.canReadAccountData(parent.accountId)
-        : !parent.personId && canReadUnfiled;
-    if (!canRead) throw new ScopedNotFoundError();
-    const row = await requireScopedRow(prisma.note.findFirst({
-      where: { id, tenantId: ctx.tenantId },
-      select: { accountId: true, opportunityId: true, personId: true, source: true },
-    }));
+    const access = await authorizeSensitiveResource(prisma, {
+      tenantId: ctx.tenantId, userId: ctx.actorId, role: ctx.actorRole,
+    }, capabilityPolicy, noteDescriptor(parent), 'read');
+    if (!access.allowed) throw new ScopedNotFoundError();
+    const row = parent;
     if (row.accountId) {
       await requireAccount(prisma, ctx.tenantId, row.accountId);
       if (row.opportunityId) await requireOpportunity(prisma, ctx.tenantId, row.accountId, row.opportunityId);
@@ -494,7 +539,7 @@ function handleRepairError(req: any, reply: any, error: unknown) {
   return reply.code(400).send({ error: '纠错失败' });
 }
 
-export function repairRoutes(app: FastifyInstance): void {
+export function repairRoutes(app: FastifyInstance, capabilityPolicy: CapabilityPolicy): void {
   app.patch('/api/repair/account/:id', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (!requireWriter(req, reply)) return;
     const patch = accountPatchSchema.safeParse(req.body);
@@ -524,7 +569,7 @@ export function repairRoutes(app: FastifyInstance): void {
     const input = rebindSchema.safeParse(req.body);
     if (!input.success) return reply.code(400).send({ error: '重绑参数无效' });
     try {
-      await rebind(commandContext(req), input.data);
+      await rebind(commandContext(req), input.data, capabilityPolicy);
       return { ok: true };
     } catch (error) {
       return handleRepairError(req, reply, error);
@@ -536,7 +581,9 @@ export function repairRoutes(app: FastifyInstance): void {
     const params = z.object({ kind: contextKindSchema, id: z.string().min(1) }).safeParse(req.params);
     if (!params.success) return reply.code(400).send({ error: '溯源参数无效' });
     try {
-      return await loadRepairContext(commandContext(req), params.data.kind, params.data.id);
+      return await loadRepairContext(
+        commandContext(req), params.data.kind, params.data.id, capabilityPolicy,
+      );
     } catch (error) {
       return handleRepairError(req, reply, error);
     }

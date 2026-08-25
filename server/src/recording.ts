@@ -5,9 +5,10 @@
 //      ④ 江湖只取转写文字，不碰音频、不自建 ASR（三源自带语音转写）。
 
 import type { FastifyInstance } from 'fastify';
+import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { ActorRoleSchema, type CommandContext } from '@jianghu/domain-contracts';
+import { ActorRoleSchema, type CapabilityPolicy, type CommandContext } from '@jianghu/domain-contracts';
 import { prisma } from './prisma.js';
 import { denyViewer } from './scope.js';
 import { enc, dec } from './ai.js';
@@ -20,8 +21,15 @@ import mammoth from 'mammoth';
 import { extractText, getDocumentProxy } from 'unpdf';
 import { listGetnoteNotes, getGetnoteTranscript } from './getnote.js';
 import { failReservedCommand, readCommandReplay, reserveCommand, runCommand } from './mutation/commandRunner.js';
-import type { DbClient } from './mutation/scopeGuards.js';
+import { ScopedNotFoundError, type DbClient } from './mutation/scopeGuards.js';
+import {
+  authorizeSensitiveResource,
+  createSensitiveAccessEvaluator,
+  transcriptDescriptor,
+} from './sensitiveAccess.js';
 import { resolveEffectiveResourceScope } from './resourceScope.js';
+import { runSerializableTransaction } from './mutate.js';
+import { transcriptIdempotencyDomainForCreator } from './transcriptDedupe.js';
 
 export type RecordingSource = 'getnote' | 'feishu' | 'dingtalk' | 'mock' | 'manual' | 'upload';
 
@@ -32,6 +40,52 @@ export interface PulledTranscript {
   text: string;            // 转写全文（隐私 → 落库前加密）
   durationSec?: number;
   recordedAt?: Date | null;
+}
+
+class TranscriptScopedNotFoundError extends ScopedNotFoundError {
+  constructor(message = '转写或挂载对象不存在或无权访问') {
+    super();
+    this.message = message;
+  }
+}
+
+const isScopedNotFound = (error: unknown): boolean => (
+  error instanceof ScopedNotFoundError
+  || Boolean(error && typeof error === 'object' && 'scopedNotFound' in error
+    && (error as { scopedNotFound?: boolean }).scopedNotFound)
+);
+
+async function requireTranscriptMountAccess(
+  db: DbClient,
+  tenantId: string,
+  userId: string,
+  actorRole: 'owner' | 'admin' | 'member' | 'viewer',
+  mount: { accountId?: string; opportunityId?: string },
+): Promise<void> {
+  if (userId) {
+    const access = await authorizeSensitiveResource(db, {
+      tenantId, userId, role: actorRole,
+    }, { entitlements: [], permissions: [] }, {
+      kind: 'transcript', id: 'pending-transcript', tenantId,
+      accountId: mount.accountId ?? null, matterId: mount.opportunityId ?? null, personId: null,
+      createdByUserId: userId, visibility: 'private', aclVersion: 1,
+    }, 'manage');
+    if (!access.allowed) throw new TranscriptScopedNotFoundError();
+    return;
+  }
+  if (mount.opportunityId) {
+    const matter = await db.opportunity.findFirst({ where: {
+      id: mount.opportunityId, tenantId, archivedAt: null,
+      ...(mount.accountId ? { accountId: mount.accountId } : {}),
+      account: { tenantId, archivedAt: null },
+    }, select: { id: true } });
+    if (!matter) throw new TranscriptScopedNotFoundError();
+  } else if (mount.accountId) {
+    const account = await db.account.findFirst({
+      where: { id: mount.accountId, tenantId, archivedAt: null }, select: { id: true },
+    });
+    if (!account) throw new TranscriptScopedNotFoundError();
+  }
 }
 
 // ── mock 源：演示用拜访录音转写（无外部凭据即可端到端验证抽取链路）──
@@ -73,7 +127,7 @@ async function pullFromSource(tenantId: string, userId: string, source: Recordin
   throw new Error(`录音源「${source}」暂未接入：请改用文件上传，或在录音接入里先完成该来源的授权/配置`);
 }
 
-/** 把拉到的转写加密存 Transcript。幂等：同租户+源+externalRef 已存在则跳过。返回 {saved, skipped}。 */
+/** 把拉到的转写加密存 Transcript。幂等：同租户+不可变创建者域+源+externalRef 已存在则跳过。 */
 async function saveTranscripts(
   tenantId: string,
   userId: string,
@@ -82,12 +136,87 @@ async function saveTranscripts(
   mount: { accountId?: string; opportunityId?: string },
   db: DbClient = prisma,
 ): Promise<{ saved: number; skipped: number }> {
+  const creator = userId ? await db.user.findFirst({
+    where: { id: userId, tenantId }, select: { id: true, role: true },
+  }) : null;
+  if (userId && !creator) throw new TranscriptScopedNotFoundError();
+  if (creator) {
+    await requireTranscriptMountAccess(
+      db, tenantId, creator.id, ActorRoleSchema.parse(creator.role), mount,
+    );
+  } else {
+    await requireTranscriptMountAccess(db, tenantId, '', 'member', mount);
+  }
+  const creatorAcl = creator
+    ? { createdByUserId: creator.id, visibility: 'private' as const }
+    : { createdByUserId: null, visibility: 'owner_admin_only' as const };
+  const idempotencyDomain = transcriptIdempotencyDomainForCreator(creator?.id ?? null);
   let saved = 0, skipped = 0;
   for (const it of items) {
     const ref = it.externalRef?.trim() || '';
     if (ref) {
-      const dup = await db.transcript.findFirst({ where: { tenantId, source, externalRef: ref } });
-      if (dup) { skipped++; continue; } // 同一条录音不重复拉取（幂等）
+      const dup = await db.transcript.findUnique({
+        where: {
+          tenantId_idempotencyDomain_source_externalRef: {
+            tenantId, idempotencyDomain, source, externalRef: ref,
+          },
+        },
+        select: {
+          id: true, tenantId: true, accountId: true, opportunityId: true, personId: true,
+          createdByUserId: true, visibility: true, aclVersion: true,
+        },
+      });
+      if (dup) {
+        if (creator) {
+          const duplicateAccess = await authorizeSensitiveResource(db, {
+            tenantId, userId: creator.id, role: ActorRoleSchema.parse(creator.role),
+          }, { entitlements: [], permissions: [] }, transcriptDescriptor(dup), 'manage');
+          if (!duplicateAccess.allowed) throw new TranscriptScopedNotFoundError('转写不存在或无权访问');
+        } else if (dup.createdByUserId !== null
+          || dup.visibility !== 'owner_admin_only'
+          || !Number.isSafeInteger(dup.aclVersion)
+          || dup.aclVersion < 1) {
+          throw new TranscriptScopedNotFoundError('转写不存在或无权访问');
+        } else {
+          let effectiveAccountId = dup.accountId;
+          if (dup.opportunityId) {
+            const matter = await db.opportunity.findFirst({
+              where: {
+                id: dup.opportunityId,
+                tenantId,
+                archivedAt: null,
+                account: { tenantId, archivedAt: null },
+              },
+              select: { accountId: true },
+            });
+            if (!matter || (effectiveAccountId && matter.accountId !== effectiveAccountId)) {
+              throw new TranscriptScopedNotFoundError('转写不存在或无权访问');
+            }
+            effectiveAccountId = matter.accountId;
+          } else if (effectiveAccountId) {
+            const account = await db.account.findFirst({
+              where: { id: effectiveAccountId, tenantId, archivedAt: null }, select: { id: true },
+            });
+            if (!account) throw new TranscriptScopedNotFoundError('转写不存在或无权访问');
+          }
+          if (dup.personId) {
+            if (!effectiveAccountId) throw new TranscriptScopedNotFoundError('转写不存在或无权访问');
+            const person = await db.person.findFirst({
+              where: {
+                id: dup.personId,
+                tenantId,
+                accountId: effectiveAccountId,
+                archivedAt: null,
+                mergedIntoPersonId: null,
+              },
+              select: { id: true },
+            });
+            if (!person) throw new TranscriptScopedNotFoundError('转写不存在或无权访问');
+          }
+        }
+        skipped++;
+        continue; // 同一条可管理录音不重复拉取（幂等）
+      }
     }
     await db.transcript.create({
       data: {
@@ -97,12 +226,15 @@ async function saveTranscripts(
         opportunityId: mount.opportunityId ?? null,
         source,
         externalRef: ref || null,
+        idempotencyDomain,
         title: (it.title || '').slice(0, 200),
         contentEnc: enc(it.text || ''), // PIPL：转写正文加密落库，绝不明文
         durationSec: Math.max(0, Math.round(it.durationSec ?? 0)),
         recordedAt: it.recordedAt ?? null,
         status: 'active',
         createdBy: userId,
+        ...creatorAcl,
+        aclVersion: 1,
       },
     });
     saved++;
@@ -118,10 +250,52 @@ export async function pullAndSave(
   mount: { accountId?: string; opportunityId?: string },
   commitWrite?: <T>(write: (db: DbClient) => Promise<T>) => Promise<T>,
 ): Promise<{ source: RecordingSource; saved: number; skipped: number; note: string }> {
+  await requireTranscriptMountAccess(prisma, tenantId, userId, 'member', mount);
   const { items, note } = await pullFromSource(tenantId, userId, source);
   const write = (db: DbClient) => saveTranscripts(tenantId, userId, source, items, mount, db);
-  const stat = commitWrite ? await commitWrite(write) : await write(prisma);
+  let stat: { saved: number; skipped: number };
+  if (commitWrite) {
+    // The caller owns the surrounding command transaction and its retry contract.
+    stat = await commitWrite(write);
+  } else {
+    const maxAttempts = 3;
+    let completed: { saved: number; skipped: number } | null = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        completed = await runSerializableTransaction(prisma, write);
+        break;
+      } catch (error) {
+        const code = error && typeof error === 'object' && 'code' in error
+          ? (error as { code?: unknown }).code
+          : undefined;
+        if ((code !== 'P2002' && code !== 'P2034') || attempt === maxAttempts) throw error;
+      }
+    }
+    if (!completed) throw new Error('Transcript import retry exhausted');
+    stat = completed;
+  }
   return { source, ...stat, note };
+}
+
+async function requireTranscriptAccessMetadata(
+  db: DbClient,
+  ctx: CommandContext,
+  capabilityPolicy: CapabilityPolicy,
+  transcriptId: string,
+  intent: 'read' | 'manage',
+) {
+  const row = await db.transcript.findFirst({
+    where: { id: transcriptId, tenantId: ctx.tenantId },
+    select: {
+      id: true, tenantId: true, accountId: true, opportunityId: true, personId: true,
+      createdByUserId: true, visibility: true, aclVersion: true,
+    },
+  });
+  if (!row) return null;
+  const access = await authorizeSensitiveResource(db, {
+    tenantId: ctx.tenantId, userId: ctx.actorId, role: ctx.actorRole,
+  }, capabilityPolicy, transcriptDescriptor(row), intent);
+  return access.allowed ? row : null;
 }
 
 /**
@@ -131,11 +305,16 @@ export async function pullAndSave(
 export async function extractTranscript(
   ctx: CommandContext,
   transcriptId: string,
+  capabilityPolicy: CapabilityPolicy,
   db: DbClient = prisma,
   prepared?: PreparedVoiceIngest,
 ): Promise<IngestResult> {
   const { tenantId } = ctx;
-  const tr = await db.transcript.findFirst({ where: { id: transcriptId, tenantId } });
+  const metadata = await requireTranscriptAccessMetadata(db, ctx, capabilityPolicy, transcriptId, 'manage');
+  if (!metadata) return { ok: false, status: 404, body: { error: '转写不存在或无权访问' } };
+  const tr = await db.transcript.findFirst({
+    where: { id: transcriptId, tenantId, aclVersion: metadata.aclVersion },
+  });
   if (!tr) return { ok: false, status: 404, body: { error: '转写不存在或无权访问' } };
   if (tr.status === 'redacted' || !tr.contentEnc) return { ok: false, status: 400, body: { error: '该转写原文已降解/删除，无法再抽取' } };
   const text = dec(tr.contentEnc);
@@ -151,7 +330,11 @@ export async function extractTranscript(
   const r = await executePreparedVoiceIngest(machineCtx, input, db, prepared ?? await prepareVoiceIngest(machineCtx, input, db));
   // 真正抽取成功（非"未配模型"退化）才标记已抽取，可降解原文。
   if (r.ok && !r.receipt?.needConfig) {
-    await db.transcript.update({ where: { id: tr.id }, data: { status: 'extracted', extractedAt: new Date() } });
+    const changed = await db.transcript.updateMany({
+      where: { id: tr.id, tenantId, aclVersion: metadata.aclVersion },
+      data: { status: 'extracted', extractedAt: new Date() },
+    });
+    if (changed.count !== 1) return { ok: false, status: 409, body: { error: '转写权限已变化，请重试' } };
   }
   return r;
 }
@@ -200,25 +383,79 @@ async function feishuToken(tenantId: string, userId: string): Promise<string> {
 }
 
 /** 飞书一键拉取：搜索妙记 → 筛标题「【拜访】」开头 → externalRef 去重(只拉新增) → 逐篇拉转写存 Transcript。 */
-async function pullFeishuAuto(tenantId: string, userId: string, mount: { accountId?: string; opportunityId?: string }): Promise<{ saved: number; skipped: number; scanned: number; note: string }> {
+async function pullFeishuAuto(
+  ctx: CommandContext,
+  capabilityPolicy: CapabilityPolicy,
+  mount: { accountId?: string; opportunityId?: string },
+): Promise<{ saved: number; skipped: number; scanned: number; note: string }> {
+  const { tenantId, actorId: userId } = ctx;
+  await requireTranscriptMountAccess(prisma, tenantId, userId, ctx.actorRole, mount);
   const token = await feishuToken(tenantId, userId);
   const { briefs, debug } = await searchFeishuMinutes(token, '【拜访】');
   const visits = briefs.filter((b) => b.title.trim().startsWith('【拜访】'));
   let pulled = 0, skippedDone = 0, failed = 0;
   for (const b of visits) {
     const ref = `feishu:${b.token}`;
-    const existing = await prisma.transcript.findFirst({ where: { tenantId, source: 'feishu', externalRef: ref } });
-    // 「是否新增」按「是否已成图」判定：非 active（已成图 extracted / 已降解 redacted）→ 跳过
-    if (existing && existing.status !== 'active') { skippedDone++; continue; }
+    const idempotencyDomain = transcriptIdempotencyDomainForCreator(userId);
+    const existing = await prisma.transcript.findUnique({
+      where: {
+        tenantId_idempotencyDomain_source_externalRef: {
+          tenantId, idempotencyDomain, source: 'feishu', externalRef: ref,
+        },
+      },
+      select: {
+        id: true, tenantId: true, accountId: true, opportunityId: true, personId: true,
+        createdByUserId: true, visibility: true, aclVersion: true, status: true,
+      },
+    });
     if (existing) {
-      // 已拉过但未成图 → 重新挂到当前商机，让此处可处理（不重复拉转写）
-      await prisma.transcript.update({ where: { id: existing.id }, data: { accountId: mount.accountId ?? existing.accountId, opportunityId: mount.opportunityId ?? existing.opportunityId } });
-      pulled++; continue;
+      const rebound = await runSerializableTransaction(prisma, async (tx) => {
+        const current = await tx.transcript.findFirst({
+          where: { id: existing.id, tenantId },
+          select: {
+            id: true, tenantId: true, accountId: true, opportunityId: true, personId: true,
+            createdByUserId: true, visibility: true, aclVersion: true, status: true,
+          },
+        });
+        if (!current) throw new TranscriptScopedNotFoundError();
+        const currentAccess = await authorizeSensitiveResource(tx, {
+          tenantId, userId, role: ctx.actorRole,
+        }, capabilityPolicy, transcriptDescriptor(current), 'manage');
+        if (!currentAccess.allowed) throw new TranscriptScopedNotFoundError();
+        // 状态本身也是私有元数据，必须在同一串行化快照的 ACL 通过后才能分支。
+        if (current.status !== 'active') return 'skip' as const;
+        const target = {
+          ...current,
+          accountId: mount.accountId ?? current.accountId,
+          opportunityId: mount.opportunityId ?? current.opportunityId,
+        };
+        const targetAccess = await authorizeSensitiveResource(tx, {
+          tenantId, userId, role: ctx.actorRole,
+        }, capabilityPolicy, transcriptDescriptor(target), 'manage');
+        if (!targetAccess.allowed) throw new TranscriptScopedNotFoundError();
+        const changed = await tx.transcript.updateMany({
+          where: { id: current.id, tenantId, aclVersion: current.aclVersion },
+          data: {
+            accountId: target.accountId,
+            opportunityId: target.opportunityId,
+            aclVersion: { increment: 1 },
+          },
+        });
+        if (changed.count !== 1) throw new Error('转写权限已变化，请重试');
+        return 'rebound' as const;
+      });
+      if (rebound === 'skip') skippedDone++;
+      else pulled++;
+      continue;
     }
     try {
       const m = await getFeishuMinute(token, b.token);
       if (!m.transcript) { failed++; continue; }
-      await saveTranscripts(tenantId, userId, 'feishu', [{ externalRef: ref, title: m.title, text: m.transcript, durationSec: m.durationSec }], mount);
+      await runSerializableTransaction(prisma, (tx) => saveTranscripts(
+        tenantId, userId, 'feishu',
+        [{ externalRef: ref, title: m.title, text: m.transcript, durationSec: m.durationSec }],
+        mount, tx,
+      ));
       pulled++;
     } catch { failed++; } // 单篇失败不阻塞整体
   }
@@ -229,13 +466,23 @@ async function pullFeishuAuto(tenantId: string, userId: string, mount: { account
 }
 
 /** 飞书拉取：按 minute_token/链接拉单篇（备选入口）。 */
-async function pullFeishuByToken(tenantId: string, userId: string, input: string, mount: { accountId?: string; opportunityId?: string }): Promise<{ saved: number; skipped: number; note: string }> {
+async function pullFeishuByToken(
+  ctx: CommandContext,
+  input: string,
+  mount: { accountId?: string; opportunityId?: string },
+): Promise<{ saved: number; skipped: number; note: string }> {
+  const { tenantId, actorId: userId } = ctx;
+  await requireTranscriptMountAccess(prisma, tenantId, userId, ctx.actorRole, mount);
   const minuteToken = extractFeishuMinuteToken(input);
   if (!minuteToken) throw new Error('请粘贴妙记链接或 token');
   const token = await feishuToken(tenantId, userId);
   const m = await getFeishuMinute(token, minuteToken);
   if (!m.transcript) throw new Error('该妙记暂无转写正文（可能尚未转写完成，或该篇无语音转写）');
-  const stat = await saveTranscripts(tenantId, userId, 'feishu', [{ externalRef: `feishu:${minuteToken}`, title: m.title, text: m.transcript, durationSec: m.durationSec }], mount);
+  const stat = await runSerializableTransaction(prisma, (tx) => saveTranscripts(
+    tenantId, userId, 'feishu',
+    [{ externalRef: `feishu:${minuteToken}`, title: m.title, text: m.transcript, durationSec: m.durationSec }],
+    mount, tx,
+  ));
   return { ...stat, note: `飞书妙记「${m.title}」` };
 }
 
@@ -259,7 +506,7 @@ async function pullGetnote(tenantId: string, userId: string): Promise<{ items: P
   return { items, note: `得到大脑 ${items.length} 条转写（候选 ${cand.length} 条，无转写的已跳过）` };
 }
 
-export function recordingRoutes(app: FastifyInstance): void {
+export function recordingRoutes(app: FastifyInstance, capabilityPolicy: CapabilityPolicy): void {
   // 拉录音转写 → 加密存 Transcript。viewer 只读不可触发。
   app.post('/api/recording/pull', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (req.user.role === 'viewer') return reply.code(403).send({ error: '只读成员不可拉取录音' });
@@ -269,15 +516,22 @@ export function recordingRoutes(app: FastifyInstance): void {
       opportunityId: z.string().optional(),
     }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '参数错误' });
-    // 挂载对象须属本租户（隔离）
-    if (p.data.accountId) {
-      const acc = await prisma.account.findFirst({ where: { id: p.data.accountId, tenantId: req.user.tenantId } });
-      if (!acc) return reply.code(404).send({ error: '客户不存在' });
-    }
+    const ctx: CommandContext = {
+      tenantId: req.user.tenantId, actorId: req.user.userId,
+      actorRole: ActorRoleSchema.parse(req.user.role), channel: 'web',
+      requestId: req.id, assertionMode: 'user_asserted',
+    };
     try {
+      await requireTranscriptMountAccess(
+        prisma, ctx.tenantId, ctx.actorId, ctx.actorRole,
+        { accountId: p.data.accountId, opportunityId: p.data.opportunityId },
+      );
       const r = await pullAndSave(req.user.tenantId, req.user.userId || '', p.data.source, { accountId: p.data.accountId, opportunityId: p.data.opportunityId });
       return r;
-    } catch (e: any) { return reply.code(400).send({ error: e?.message || '拉取失败' }); }
+    } catch (e: any) {
+      if (isScopedNotFound(e)) return reply.code(404).send({ error: '转写或挂载对象不存在或无权访问' });
+      return reply.code(400).send({ error: e?.message || '拉取失败' });
+    }
   });
 
   // 抽取某条转写 → 双轨落库 + 候选进收件箱。viewer 只读不可触发。
@@ -296,6 +550,10 @@ export function recordingRoutes(app: FastifyInstance): void {
       assertionMode: 'machine_proposed',
     };
     const commandInput = { kind: 'recording-ingest', idempotencyKey: key, payload: p.data } as const;
+    const previewMetadata = await requireTranscriptAccessMetadata(
+      prisma, ctx, capabilityPolicy, p.data.transcriptId, 'manage',
+    );
+    if (!previewMetadata) return reply.code(404).send({ error: '转写不存在或无权访问' });
     try {
       const replay = await readCommandReplay<Extract<IngestResult, { ok: true }>>(ctx, commandInput);
       if (replay) return { ...replay.result.receipt, replayed: true };
@@ -303,7 +561,9 @@ export function recordingRoutes(app: FastifyInstance): void {
       if (error instanceof IngestCommandError) return reply.code(error.result.status).send(error.result.body);
       throw error;
     }
-    const preview = await prisma.transcript.findFirst({ where: { id: p.data.transcriptId, tenantId: ctx.tenantId } });
+    const preview = await prisma.transcript.findFirst({ where: {
+      id: p.data.transcriptId, tenantId: ctx.tenantId, aclVersion: previewMetadata.aclVersion,
+    } });
     if (!preview) return reply.code(404).send({ error: '转写不存在或无权访问' });
     if (preview.status === 'redacted' || !preview.contentEnc) return reply.code(400).send({ error: '该转写原文已降解/删除，无法再抽取' });
     const previewText = dec(preview.contentEnc);
@@ -325,7 +585,7 @@ export function recordingRoutes(app: FastifyInstance): void {
     let command: Awaited<ReturnType<typeof runCommand<Extract<IngestResult, { ok: true }>>>>;
     try {
       command = await runCommand(ctx, { ...commandInput, reservationToken: reservation.reservationToken }, async (tx) => {
-        const result = await extractTranscript(ctx, p.data.transcriptId, tx, prepared);
+        const result = await extractTranscript(ctx, p.data.transcriptId, capabilityPolicy, tx, prepared);
         if (!result.ok) throw new IngestCommandError(result);
         return result;
       });
@@ -339,24 +599,65 @@ export function recordingRoutes(app: FastifyInstance): void {
 
   // 列转写。PIPL 脱敏：列表只返元数据，绝不返回转写明文（要正文须经抽取，不旁路泄露）。
   app.get('/api/recording/transcripts', { preHandler: [app.authenticate] }, async (req: any, reply: any) => {
-    if (denyViewer(req, reply)) return; // viewer 只读，不可操作
     const accountId = typeof req.query?.accountId === 'string' ? req.query.accountId : undefined;
-    const scope = await resolveEffectiveResourceScope(prisma, {
+    const ctx: CommandContext = {
       tenantId: req.user.tenantId,
-      userId: req.user.userId,
-      role: req.user.role,
-    });
-    if (scope.actorRole === 'viewer') return reply.code(403).send({ error: '只读成员不可操作' });
-    const rows = await prisma.transcript.findMany({
-      where: {
-        tenantId: req.user.tenantId,
-        ...(accountId ? { accountId } : {}),
-        OR: [
-          { accountId: { in: [...scope.fullAccountIds] } },
-          { opportunityId: { in: [...scope.matterIds] } },
-        ],
-      },
-      orderBy: { createdAt: 'desc' }, take: 50,
+      actorId: req.user.userId,
+      actorRole: ActorRoleSchema.parse(req.user.role),
+      channel: 'web',
+      requestId: req.id,
+      assertionMode: 'user_asserted',
+    };
+    const rows = await prisma.$transaction(async (tx) => {
+      const evaluator = await createSensitiveAccessEvaluator(tx, {
+        tenantId: ctx.tenantId, userId: ctx.actorId, role: ctx.actorRole,
+      }, capabilityPolicy);
+      const aclWhere = await evaluator.metadataWhere('transcript', 'read', {
+        matterId: 'opportunityId',
+      });
+      const readableRefs: Array<{ id: string; aclVersion: number }> = [];
+      let cursor: string | undefined;
+      while (readableRefs.length < 50) {
+        const metadata = await tx.transcript.findMany({
+          where: {
+            tenantId: req.user.tenantId,
+            ...(accountId ? { accountId } : {}),
+            ...aclWhere,
+          },
+          orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+          take: 100,
+          ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+          select: {
+            id: true, tenantId: true, accountId: true, opportunityId: true, personId: true,
+            createdByUserId: true, visibility: true, aclVersion: true,
+          },
+        });
+        if (metadata.length === 0) break;
+        const decisions = await evaluator.authorizeMany(
+          metadata.map(transcriptDescriptor), 'read',
+        );
+        for (const [index, row] of metadata.entries()) {
+          if (decisions[index]?.allowed) {
+            readableRefs.push({ id: row.id, aclVersion: row.aclVersion });
+            if (readableRefs.length === 50) break;
+          }
+        }
+        cursor = metadata.at(-1)?.id;
+        if (metadata.length < 100 || !cursor) break;
+      }
+      return readableRefs.length === 0 ? [] : tx.transcript.findMany({
+        where: { tenantId: ctx.tenantId, OR: readableRefs },
+        orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+        select: {
+          id: true, source: true, title: true, accountId: true, opportunityId: true,
+          durationSec: true, status: true, recordedAt: true, extractedAt: true, createdAt: true,
+          contentEnc: true,
+        },
+      });
+    }, {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      maxWait: 5_000,
+      timeout: 30_000,
     });
     return {
       transcripts: rows.map((t) => ({
@@ -374,26 +675,73 @@ export function recordingRoutes(app: FastifyInstance): void {
     if (req.user.role === 'viewer') return reply.code(403).send({ error: '只读成员不可操作' });
     const p = z.object({ transcriptId: z.string().min(1) }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '缺少 transcriptId' });
-    const tr = await prisma.transcript.findFirst({ where: { id: p.data.transcriptId, tenantId: req.user.tenantId } });
-    if (!tr) return reply.code(404).send({ error: '转写不存在或无权访问' });
-    await prisma.transcript.update({ where: { id: tr.id }, data: { contentEnc: '', status: 'redacted' } });
-    return { ok: true, id: tr.id, status: 'redacted' };
+    const ctx: CommandContext = {
+      tenantId: req.user.tenantId, actorId: req.user.userId,
+      actorRole: ActorRoleSchema.parse(req.user.role), channel: 'web',
+      requestId: req.id, assertionMode: 'user_asserted',
+    };
+    const result = await runSerializableTransaction(prisma, async (tx) => {
+      const tr = await requireTranscriptAccessMetadata(
+        tx, ctx, capabilityPolicy, p.data.transcriptId, 'manage',
+      );
+      if (!tr) return { status: 'missing' as const };
+      const changed = await tx.transcript.updateMany({
+        where: { id: tr.id, tenantId: ctx.tenantId, aclVersion: tr.aclVersion },
+        data: { contentEnc: '', status: 'redacted' },
+      });
+      return changed.count === 1
+        ? { status: 'ok' as const, id: tr.id }
+        : { status: 'conflict' as const };
+    });
+    if (result.status === 'missing') return reply.code(404).send({ error: '转写不存在或无权访问' });
+    if (result.status === 'conflict') return reply.code(409).send({ error: '转写权限已变化，请重试' });
+    return { ok: true, id: result.id, status: 'redacted' };
   });
 
   // PIPL 可删：彻底删除转写原文 + 元数据。viewer 只读不可删。
   app.delete('/api/recording/transcripts/:id', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (req.user.role === 'viewer') return reply.code(403).send({ error: '只读成员不可删除' });
     const id = (req.params as any)?.id;
-    const tr = await prisma.transcript.findFirst({ where: { id, tenantId: req.user.tenantId } });
-    if (!tr) return reply.code(404).send({ error: '转写不存在或无权访问' });
-    await prisma.transcript.delete({ where: { id: tr.id } });
-    return { ok: true, id: tr.id };
+    const ctx: CommandContext = {
+      tenantId: req.user.tenantId, actorId: req.user.userId,
+      actorRole: ActorRoleSchema.parse(req.user.role), channel: 'web',
+      requestId: req.id, assertionMode: 'user_asserted',
+    };
+    const result = await runSerializableTransaction(prisma, async (tx) => {
+      const tr = await requireTranscriptAccessMetadata(tx, ctx, capabilityPolicy, id, 'manage');
+      if (!tr) return { status: 'missing' as const };
+      const changed = await tx.transcript.deleteMany({
+        where: { id: tr.id, tenantId: ctx.tenantId, aclVersion: tr.aclVersion },
+      });
+      return changed.count === 1
+        ? { status: 'ok' as const, id: tr.id }
+        : { status: 'conflict' as const };
+    });
+    if (result.status === 'missing') return reply.code(404).send({ error: '转写不存在或无权访问' });
+    if (result.status === 'conflict') return reply.code(409).send({ error: '转写权限已变化，请重试' });
+    return { ok: true, id: result.id };
   });
 
   // ── 文件上传（替代钉钉听记）：md/txt/docx/pdf 文件 → 服务端解析提取文字 → 存 Transcript（加密）→ 可抽取 ──
   // multipart 文件，accountId/opportunityId 走 query。docx=mammoth、pdf=unpdf、md/txt=直读。
   app.post('/api/recording/upload', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (req.user.role === 'viewer') return reply.code(403).send({ error: '只读成员不可上传' });
+    const accountId = typeof req.query?.accountId === 'string' ? req.query.accountId : undefined;
+    const opportunityId = typeof req.query?.opportunityId === 'string' ? req.query.opportunityId : undefined;
+    try {
+      await requireTranscriptMountAccess(
+        prisma,
+        req.user.tenantId,
+        req.user.userId,
+        ActorRoleSchema.parse(req.user.role),
+        { accountId, opportunityId },
+      );
+    } catch (error) {
+      if (isScopedNotFound(error)) {
+        return reply.code(404).send({ error: '转写或挂载对象不存在或无权访问' });
+      }
+      throw error;
+    }
     const data = await req.file();
     if (!data) return reply.code(400).send({ error: '缺少上传文件' });
     const buf = await data.toBuffer();
@@ -411,13 +759,10 @@ export function recordingRoutes(app: FastifyInstance): void {
     } catch (e: any) { return reply.code(400).send({ error: '文件解析失败：' + (e?.message || e) }); }
     text = text.trim();
     if (!text) return reply.code(400).send({ error: ext === 'pdf' ? '没从 PDF 提取到文字（可能是扫描版/图片型 PDF，无文本层）' : '文件没有可提取的文字' });
-    const accountId = typeof req.query?.accountId === 'string' ? req.query.accountId : undefined;
-    const opportunityId = typeof req.query?.opportunityId === 'string' ? req.query.opportunityId : undefined;
-    if (accountId) {
-      const acc = await prisma.account.findFirst({ where: { id: accountId, tenantId: req.user.tenantId } });
-      if (!acc) return reply.code(404).send({ error: '客户不存在' });
-    }
-    const stat = await saveTranscripts(req.user.tenantId, req.user.userId || '', 'upload', [{ externalRef: '', title: name, text }], { accountId, opportunityId });
+    const stat = await runSerializableTransaction(prisma, (tx) => saveTranscripts(
+      req.user.tenantId, req.user.userId || '', 'upload',
+      [{ externalRef: '', title: name, text }], { accountId, opportunityId }, tx,
+    ));
     return { source: 'upload', ...stat };
   });
 
@@ -457,14 +802,21 @@ export function recordingRoutes(app: FastifyInstance): void {
     const p = z.object({ accountId: z.string().optional(), opportunityId: z.string().optional() }).safeParse(req.body || {});
     const accountId = p.success ? p.data.accountId : undefined;
     const opportunityId = p.success ? p.data.opportunityId : undefined;
-    if (accountId) {
-      const acc = await prisma.account.findFirst({ where: { id: accountId, tenantId: req.user.tenantId } });
-      if (!acc) return reply.code(404).send({ error: '客户不存在' });
-    }
     try {
-      const r = await pullFeishuAuto(req.user.tenantId, req.user.userId, { accountId, opportunityId });
+      const ctx: CommandContext = {
+        tenantId: req.user.tenantId, actorId: req.user.userId,
+        actorRole: ActorRoleSchema.parse(req.user.role), channel: 'web',
+        requestId: req.id, assertionMode: 'user_asserted',
+      };
+      await requireTranscriptMountAccess(
+        prisma, ctx.tenantId, ctx.actorId, ctx.actorRole, { accountId, opportunityId },
+      );
+      const r = await pullFeishuAuto(ctx, capabilityPolicy, { accountId, opportunityId });
       return { source: 'feishu', ...r };
-    } catch (e: any) { return reply.code(400).send({ error: e?.message || '一键拉取失败' }); }
+    } catch (e: any) {
+      if (isScopedNotFound(e)) return reply.code(404).send({ error: '转写或挂载对象不存在或无权访问' });
+      return reply.code(400).send({ error: e?.message || '一键拉取失败' });
+    }
   });
 
   // ── 飞书妙记：按链接/token 拉单篇转写（飞书无列表 API）。viewer 只读不可触发 ──
@@ -472,14 +824,25 @@ export function recordingRoutes(app: FastifyInstance): void {
     if (req.user.role === 'viewer') return reply.code(403).send({ error: '只读成员不可拉取' });
     const p = z.object({ url: z.string().min(1), accountId: z.string().optional(), opportunityId: z.string().optional() }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '请粘贴妙记链接' });
-    if (p.data.accountId) {
-      const acc = await prisma.account.findFirst({ where: { id: p.data.accountId, tenantId: req.user.tenantId } });
-      if (!acc) return reply.code(404).send({ error: '客户不存在' });
-    }
     try {
-      const r = await pullFeishuByToken(req.user.tenantId, req.user.userId, p.data.url, { accountId: p.data.accountId, opportunityId: p.data.opportunityId });
+      const ctx: CommandContext = {
+        tenantId: req.user.tenantId, actorId: req.user.userId,
+        actorRole: ActorRoleSchema.parse(req.user.role), channel: 'web',
+        requestId: req.id, assertionMode: 'user_asserted',
+      };
+      await requireTranscriptMountAccess(
+        prisma, ctx.tenantId, ctx.actorId, ctx.actorRole,
+        { accountId: p.data.accountId, opportunityId: p.data.opportunityId },
+      );
+      const r = await pullFeishuByToken(
+        ctx, p.data.url,
+        { accountId: p.data.accountId, opportunityId: p.data.opportunityId },
+      );
       return { source: 'feishu', ...r };
-    } catch (e: any) { return reply.code(400).send({ error: e?.message || '拉取失败' }); }
+    } catch (e: any) {
+      if (isScopedNotFound(e)) return reply.code(404).send({ error: '转写或挂载对象不存在或无权访问' });
+      return reply.code(400).send({ error: e?.message || '拉取失败' });
+    }
   });
 
   // ── 飞书 OAuth：生成授权 URL（前端跳转）。state 加密含 tenantId+userId，回调按它定位授权人 ──

@@ -11,6 +11,7 @@ PRE_METHODOLOGY_SCHEMA=prisma/postgres/legacy/20260821_pre_core110.prisma
 PRE_METHODOLOGY_DATA_SCHEMA=prisma/postgres/legacy/20260821_pre_core111.prisma
 PRE_PDE_CONTEXT_SCHEMA=prisma/postgres/legacy/20260821_pre_core113.prisma
 PRE_CANDIDATE_SCHEMA=prisma/postgres/legacy/20260824_pre_core201.prisma
+PRE_SENSITIVE_SCHEMA=prisma/postgres/legacy/20260825_pre_core204.prisma
 PRE_CUSTOMER_SCHEMA=$(mktemp /tmp/jianghu-pre-core115.prisma.XXXXXX)
 cleanup_pre_customer_schema() {
   rm -f "$PRE_CUSTOMER_SCHEMA"
@@ -29,6 +30,7 @@ METHODOLOGY_DATA_MIGRATION=20260821060000_add_methodology_data_foundation
 PDE_CONTEXT_MIGRATION=20260821070000_add_pde_decision_context
 CUSTOMER_MIGRATION=20260823000000_expand_customer_fields
 CANDIDATE_MIGRATION=20260824000000_expand_candidate_foundation
+SENSITIVE_ACL_MIGRATION=20260825000000_expand_sensitive_resource_acl
 
 npx tsx scripts/render-pre-customer-schema.ts "$PRE_CANDIDATE_SCHEMA" "$PRE_CUSTOMER_SCHEMA"
 
@@ -63,7 +65,7 @@ matter_schema_matches_known_state() {
     || schema_matches "$PRE_COMMITMENT_CUTOVER_SCHEMA" || schema_matches "$PRE_SCOPE_SCHEMA" \
     || schema_matches "$PRE_METHODOLOGY_SCHEMA" || schema_matches "$PRE_METHODOLOGY_DATA_SCHEMA" \
     || schema_matches "$PRE_PDE_CONTEXT_SCHEMA" || schema_matches "$PRE_CUSTOMER_SCHEMA" \
-    || schema_matches "$PRE_CANDIDATE_SCHEMA" \
+    || schema_matches "$PRE_CANDIDATE_SCHEMA" || schema_matches "$PRE_SENSITIVE_SCHEMA" \
     || schema_matches "$SCHEMA"
 }
 
@@ -72,6 +74,7 @@ participant_schema_matches_known_state() {
     || schema_matches "$PRE_SCOPE_SCHEMA" || schema_matches "$PRE_METHODOLOGY_SCHEMA" \
     || schema_matches "$PRE_METHODOLOGY_DATA_SCHEMA" || schema_matches "$PRE_PDE_CONTEXT_SCHEMA" \
     || schema_matches "$PRE_CUSTOMER_SCHEMA" || schema_matches "$PRE_CANDIDATE_SCHEMA" \
+    || schema_matches "$PRE_SENSITIVE_SCHEMA" \
     || schema_matches "$SCHEMA"
 }
 
@@ -79,38 +82,46 @@ commitment_cutover_schema_matches_known_state() {
   schema_matches "$PRE_SCOPE_SCHEMA" || schema_matches "$PRE_METHODOLOGY_SCHEMA" \
     || schema_matches "$PRE_METHODOLOGY_DATA_SCHEMA" || schema_matches "$PRE_PDE_CONTEXT_SCHEMA" \
     || schema_matches "$PRE_CUSTOMER_SCHEMA" || schema_matches "$PRE_CANDIDATE_SCHEMA" \
+    || schema_matches "$PRE_SENSITIVE_SCHEMA" \
     || schema_matches "$SCHEMA"
 }
 
 scope_schema_matches_known_state() {
   schema_matches "$PRE_METHODOLOGY_SCHEMA" || schema_matches "$PRE_METHODOLOGY_DATA_SCHEMA" \
     || schema_matches "$PRE_PDE_CONTEXT_SCHEMA" || schema_matches "$PRE_CUSTOMER_SCHEMA" \
-    || schema_matches "$PRE_CANDIDATE_SCHEMA" \
+    || schema_matches "$PRE_CANDIDATE_SCHEMA" || schema_matches "$PRE_SENSITIVE_SCHEMA" \
     || schema_matches "$SCHEMA"
 }
 
 methodology_schema_matches_known_state() {
   schema_matches "$PRE_METHODOLOGY_DATA_SCHEMA" || schema_matches "$PRE_PDE_CONTEXT_SCHEMA" \
     || schema_matches "$PRE_CUSTOMER_SCHEMA" || schema_matches "$PRE_CANDIDATE_SCHEMA" \
+    || schema_matches "$PRE_SENSITIVE_SCHEMA" \
     || schema_matches "$SCHEMA"
 }
 
 methodology_data_schema_matches_known_state() {
   schema_matches "$PRE_PDE_CONTEXT_SCHEMA" || schema_matches "$PRE_CUSTOMER_SCHEMA" \
-    || schema_matches "$PRE_CANDIDATE_SCHEMA" \
+    || schema_matches "$PRE_CANDIDATE_SCHEMA" || schema_matches "$PRE_SENSITIVE_SCHEMA" \
     || schema_matches "$SCHEMA"
 }
 
 pde_context_schema_matches_known_state() {
   schema_matches "$PRE_CUSTOMER_SCHEMA" || schema_matches "$PRE_CANDIDATE_SCHEMA" \
+    || schema_matches "$PRE_SENSITIVE_SCHEMA" \
     || schema_matches "$SCHEMA"
 }
 
 customer_schema_matches_known_state() {
-  schema_matches "$PRE_CANDIDATE_SCHEMA" || schema_matches "$SCHEMA"
+  schema_matches "$PRE_CANDIDATE_SCHEMA" || schema_matches "$PRE_SENSITIVE_SCHEMA" \
+    || schema_matches "$SCHEMA"
 }
 
 candidate_schema_matches_known_state() {
+  schema_matches "$PRE_SENSITIVE_SCHEMA" || schema_matches "$SCHEMA"
+}
+
+sensitive_acl_schema_matches_known_state() {
   schema_matches "$SCHEMA"
 }
 
@@ -686,11 +697,67 @@ adopt_existing_candidate_schema_if_safe() {
   esac
 }
 
+recover_incomplete_sensitive_acl_migration() {
+  incomplete_migrations=$(npx tsx scripts/list-incomplete-postgres-migrations.ts)
+  if ! printf '%s\n' "$incomplete_migrations" | grep -Fxq "$SENSITIVE_ACL_MIGRATION"; then
+    return 0
+  fi
+  sensitive_acl_schema_state=$(npx tsx scripts/postgres-sensitive-acl-schema-state.ts)
+  case "$sensitive_acl_schema_state" in
+    legacy)
+      echo "[migration] 检测到中断且已由 PostgreSQL 回滚的敏感资源 ACL 事务，登记后安全重放。"
+      npx prisma migrate resolve --rolled-back "$SENSITIVE_ACL_MIGRATION" --schema "$SCHEMA"
+      ;;
+    expanded)
+      echo "[migration] 检测到已提交但未完成登记的敏感资源 ACL 事务，只读校验后接管。"
+      npm run migrate:sensitive-acl-report
+      if ! sensitive_acl_schema_matches_known_state; then
+        echo "[migration] 敏感资源 ACL schema 已扩展但与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$SENSITIVE_ACL_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] 敏感资源 ACL migration 留下部分 schema，必须从认证备份恢复后再试。" >&2
+      exit 1
+      ;;
+  esac
+}
+
+adopt_existing_sensitive_acl_schema_if_safe() {
+  refresh_applied_migrations
+  if migration_is_applied "$SENSITIVE_ACL_MIGRATION"; then
+    return 0
+  fi
+  sensitive_acl_schema_state=$(npx tsx scripts/postgres-sensitive-acl-schema-state.ts)
+  case "$sensitive_acl_schema_state" in
+    uninitialized|legacy) return 0 ;;
+    expanded)
+      echo "[migration] 检测到未登记但完整的敏感资源 ACL schema，只读校验后接管。"
+      npm run migrate:sensitive-acl-report
+      if ! sensitive_acl_schema_matches_known_state; then
+        echo "[migration] 未登记敏感资源 ACL schema 与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$SENSITIVE_ACL_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] 检测到未登记的部分敏感资源 ACL schema，拒绝继续。" >&2
+      exit 1
+      ;;
+  esac
+}
+
 state=$(wait_for_migration_state)
 case "$state" in
   untracked)
     if schema_matches "$SCHEMA"; then
       echo "[migration] 检测到与当前模型一致的未纳管 schema。"
+      npx tsx scripts/assert-untracked-command-runs-empty.ts
+    elif schema_matches "$PRE_SENSITIVE_SCHEMA"; then
+      echo "[migration] 检测到已批准的 CORE-203 未纳管 schema。"
       npx tsx scripts/assert-untracked-command-runs-empty.ts
     elif schema_matches "$PRE_CANDIDATE_SCHEMA"; then
       echo "[migration] 检测到已批准的 CORE-115 未纳管 schema。"
@@ -746,7 +813,8 @@ case "$state" in
         fi
         echo "[migration] 继续中断的当前 schema 接管。"
         resolve_missing_pre_bridge_migrations
-      elif schema_matches "$PRE_CANDIDATE_SCHEMA" || schema_matches "$PRE_CUSTOMER_SCHEMA" \
+      elif schema_matches "$PRE_SENSITIVE_SCHEMA" \
+        || schema_matches "$PRE_CANDIDATE_SCHEMA" || schema_matches "$PRE_CUSTOMER_SCHEMA" \
         || schema_matches "$PRE_PDE_CONTEXT_SCHEMA" \
         || schema_matches "$PRE_METHODOLOGY_DATA_SCHEMA" \
         || schema_matches "$PRE_METHODOLOGY_SCHEMA" \
@@ -786,6 +854,8 @@ recover_incomplete_customer_migration
 adopt_existing_customer_schema_if_safe
 recover_incomplete_candidate_migration
 adopt_existing_candidate_schema_if_safe
+recover_incomplete_sensitive_acl_migration
+adopt_existing_sensitive_acl_schema_if_safe
 refresh_applied_migrations
 matter_migration_pending=0
 if ! migration_is_applied "$MATTER_MIGRATION"; then
@@ -850,6 +920,12 @@ if ! migration_is_applied "$CANDIDATE_MIGRATION"; then
   npm run migrate:candidate-report
 fi
 
+sensitive_acl_migration_pending=0
+if ! migration_is_applied "$SENSITIVE_ACL_MIGRATION"; then
+  sensitive_acl_migration_pending=1
+  echo "[migration] CORE-204 将扩展敏感资源 ACL；DDL 后先只读预演，再以单事务回填。"
+fi
+
 echo "[migration] 在唯一索引迁移前执行同步锚与企微绑定冲突扫描…"
 npm run migrate:sync-anchor-report
 npm run migrate:wecom-bind-report
@@ -891,6 +967,13 @@ echo "[migration] 以单事务幂等回填五来源 Candidate，并在最后写�
 npm run migrate:candidate-apply
 echo "[migration] 双向校验 Candidate 权威与五张只读兼容投影…"
 npm run migrate:candidate-verify
+
+echo "[migration] 只读预演敏感资源 creator 映射、隔离状态、父树与 reviewer grant…"
+npm run migrate:sensitive-acl-report
+echo "[migration] 以单事务回填敏感资源 ACL，并在最后写入 CORE-204 marker…"
+npm run migrate:sensitive-acl-apply
+echo "[migration] 校验敏感资源 ACL marker、租户父树、可见性与 grant 版本…"
+npm run migrate:sensitive-acl-verify
 
 if ! schema_matches "$SCHEMA"; then
   echo "[migration] 迁移后 schema 与当前模型仍不一致，拒绝启动：" >&2

@@ -13,6 +13,12 @@ import { generateRelSuggestions } from '../src/suggest.js';
 import { syncIntelBundle } from '../src/mcp/syncBundle.js';
 import { handleMcpBody } from '../src/mcpServer.js';
 import { internalProductPolicy } from './helpers/productPolicy.js';
+import {
+  createPersonCandidate,
+  createRelationCandidate,
+  personCandidateDedupeKey,
+  relationCandidateDedupeKey,
+} from '../src/candidates/personRelation.js';
 
 describe('CORE-202 Candidate producer cutover', () => {
   let test: TestContext;
@@ -166,6 +172,172 @@ describe('CORE-202 Candidate producer cutover', () => {
     await expect(test.prisma.person.count({ where: { tenantId: test.tenant.id } })).resolves.toBe(0);
     await expect(test.prisma.enrichJob.findUniqueOrThrow({ where: { id: claimed!.id } }))
       .resolves.toMatchObject({ status: 'done' });
+  });
+
+  it('keeps a system quarantine candidate independent from a same-name private candidate', async () => {
+    const tree = await seedTree('enrich-private');
+    const existing = await createPersonCandidate(test.prisma, {
+      id: 'core-204-enrich-private-candidate',
+      tenantId: test.tenant.id,
+      accountId: tree.accountId,
+      name: '系统同名私有候选',
+      title: '私有职务',
+      source: 'mcp',
+      sourceRef: 'core-204-private-source',
+      evidence: 'PRIVATE_ENRICH_EVIDENCE',
+      confidence: 0.51,
+      createdByUserId: test.owner.id,
+      dedupeKey: personCandidateDedupeKey(tree.accountId, '系统同名私有候选'),
+    });
+    const enqueued = await enqueueEnrichJob(test.tenant.id, tree.accountId, 'auto', test.prisma);
+    const claimed = await claimNextJob('core-204-private-enrich-worker', new Date(Date.now() + 1_000), test.prisma);
+    expect(claimed?.id).toBe(enqueued.id);
+
+    await expect(writeEnrichCandidates(claimed!, 'qcc', [
+      { name: '系统同名私有候选', title: '系统不得覆盖' },
+    ], '虚构系统结果')).resolves.toEqual({ created: 1, deduped: 0, skipped: 0 });
+
+    await expect(test.prisma.personSuggestion.findUniqueOrThrow({ where: { id: existing.row.id } }))
+      .resolves.toMatchObject({
+        title: '私有职务',
+        evidence: 'PRIVATE_ENRICH_EVIDENCE',
+        confidence: 0.51,
+      });
+    await expect(test.prisma.candidate.findUniqueOrThrow({ where: { id: existing.candidateId } }))
+      .resolves.toMatchObject({
+        createdByUserId: test.owner.id,
+        visibility: 'private',
+        version: 0,
+      });
+    await expect(test.prisma.candidate.count({ where: {
+      tenantId: test.tenant.id,
+      kind: 'person_create',
+      status: 'pending',
+      createdByUserId: null,
+      visibility: 'owner_admin_only',
+    } })).resolves.toBe(1);
+    await expect(test.prisma.enrichJob.findUniqueOrThrow({ where: { id: claimed!.id } }))
+      .resolves.toMatchObject({ status: 'done' });
+  });
+
+  it('keeps identical private person proposals independent across creators', async () => {
+    const tree = await seedTree('sync-private');
+    const other = await test.prisma.user.create({ data: {
+      tenantId: test.tenant.id,
+      email: 'core-204-sync-other@test.invalid',
+      passwordHash: 'x',
+      name: 'Sync other',
+      role: 'member',
+    } });
+    const existing = await createPersonCandidate(test.prisma, {
+      id: 'core-204-sync-private-candidate',
+      tenantId: test.tenant.id,
+      accountId: tree.accountId,
+      matterId: tree.matterId,
+      name: '同步同名私有候选',
+      title: '原私有职务',
+      source: 'mcp',
+      sourceRef: 'core-204-sync-private-source',
+      evidence: 'PRIVATE_SYNC_EVIDENCE',
+      confidence: 0.54,
+      createdByUserId: test.owner.id,
+      dedupeKey: personCandidateDedupeKey(tree.accountId, '同步同名私有候选'),
+    });
+    const otherCtx: CommandContext = {
+      ...ctx,
+      actorId: other.id,
+      requestId: 'core-204-sync-private-request',
+      channel: 'mcp',
+      assertionMode: 'machine_proposed',
+    };
+
+    await expect(syncIntelBundle(otherCtx, {
+      idempotencyKey: 'core-204-sync-private-idempotency',
+      bundle: {
+        account: { id: tree.accountId, name: 'Producer Account sync-private' },
+        opportunity: { externalRef: 'core-204-sync-private-matter', name: 'Sync private matter' },
+        people: [{
+          ref: 'private-person',
+          name: '同步同名私有候选',
+          title: '不得覆盖',
+          evidence: '不得替换私有依据',
+        }],
+      },
+    }, test.prisma)).resolves.toMatchObject({ proposed: ['person:private-person'], failed: [] });
+
+    await expect(test.prisma.personSuggestion.findUniqueOrThrow({ where: { id: existing.row.id } }))
+      .resolves.toMatchObject({ title: '原私有职务', evidence: 'PRIVATE_SYNC_EVIDENCE', confidence: 0.54 });
+    await expect(test.prisma.candidate.findUniqueOrThrow({ where: { id: existing.candidateId } }))
+      .resolves.toMatchObject({ createdByUserId: test.owner.id, visibility: 'private', version: 0 });
+    const privateCandidates = await test.prisma.candidate.findMany({
+      where: {
+        tenantId: test.tenant.id,
+        kind: 'person_create',
+        status: 'pending',
+      },
+      orderBy: { createdByUserId: 'asc' },
+    });
+    expect(privateCandidates).toHaveLength(2);
+    expect(new Set(privateCandidates.map((candidate) => candidate.createdByUserId)))
+      .toEqual(new Set([test.owner.id, other.id]));
+    expect(new Set(privateCandidates.map((candidate) => candidate.dedupeKey)).size).toBe(2);
+    const otherProjection = await test.prisma.personSuggestion.findFirstOrThrow({
+      where: {
+        tenantId: test.tenant.id,
+        id: { not: existing.row.id },
+        name: '同步同名私有候选',
+      },
+    });
+    expect(otherProjection).toMatchObject({ title: '不得覆盖', evidence: '不得替换私有依据' });
+  });
+
+  it('keeps identical private relation proposals idempotent only inside each creator domain', async () => {
+    const tree = await seedTree('relation-private-domains');
+    const other = await test.prisma.user.create({ data: {
+      tenantId: test.tenant.id,
+      email: 'core-204-relation-other@test.invalid',
+      passwordHash: 'x',
+      name: 'Relation other',
+      role: 'member',
+    } });
+    const sourceId = 'core-204-relation-source';
+    const targetId = 'core-204-relation-target';
+    await test.prisma.person.createMany({ data: [
+      { id: sourceId, tenantId: test.tenant.id, accountId: tree.accountId, name: '关系甲', title: '' },
+      { id: targetId, tenantId: test.tenant.id, accountId: tree.accountId, name: '关系乙', title: '' },
+    ] });
+    const source = { kind: 'person' as const, id: sourceId };
+    const target = { kind: 'person' as const, id: targetId };
+    const semanticKey = relationCandidateDedupeKey(tree.matterId, source, target);
+    const first = await createRelationCandidate(test.prisma, {
+      id: 'core-204-private-relation-owner', tenantId: test.tenant.id, matterId: tree.matterId,
+      source, target, layer: 'L3', label: '可能协作', sourceType: 'mcp',
+      sourceRef: 'mcp:core-204-private-relation-owner', evidence: '所有者私有关系依据',
+      confidence: 0.61, createdByUserId: test.owner.id, dedupeKey: semanticKey,
+    });
+    const second = await createRelationCandidate(test.prisma, {
+      id: 'core-204-private-relation-other', tenantId: test.tenant.id, matterId: tree.matterId,
+      source, target, layer: 'L3', label: '可能协作', sourceType: 'mcp',
+      sourceRef: 'mcp:core-204-private-relation-other', evidence: '成员私有关系依据',
+      confidence: 0.62, createdByUserId: other.id, dedupeKey: semanticKey,
+    });
+    const replay = await createRelationCandidate(test.prisma, {
+      id: 'core-204-private-relation-other-replay', tenantId: test.tenant.id, matterId: tree.matterId,
+      source, target, layer: 'L3', label: '可能协作', sourceType: 'mcp',
+      sourceRef: 'mcp:core-204-private-relation-other', evidence: '成员私有关系依据',
+      confidence: 0.62, createdByUserId: other.id, dedupeKey: semanticKey,
+    });
+
+    expect(first.created).toBe(true);
+    expect(second.created).toBe(true);
+    expect(replay).toMatchObject({ created: false, candidateId: second.candidateId });
+    const candidates = await test.prisma.candidate.findMany({ where: {
+      tenantId: test.tenant.id, kind: 'relation_create', status: 'pending',
+    } });
+    expect(candidates).toHaveLength(2);
+    expect(new Set(candidates.map((candidate) => candidate.createdByUserId)))
+      .toEqual(new Set([test.owner.id, other.id]));
+    expect(new Set(candidates.map((candidate) => candidate.dedupeKey)).size).toBe(2);
   });
 
   it('writes graph suggestions as Candidate projections and replays without another relation or Edge', async () => {
@@ -325,6 +497,9 @@ describe('CORE-203 legacy review-table freeze', () => {
     const allowedHelpers = new Set([
       'candidates/personRelation.ts',
       'candidates/reviewItems.ts',
+      // Versioned CORE-204 migration keeps ChangeProposal's compatibility
+      // dedupe key atomic with its creator-domain Candidate key.
+      'sensitiveAcl/migration.ts',
     ]);
     const bypasses: string[] = [];
     for (const path of files) {
@@ -349,7 +524,7 @@ describe('CORE-203 legacy review-table freeze', () => {
     for (const legacyModel of [
       'personSuggestion', 'relSuggestion', 'changeProposal', 'reminder', 'evidenceEvent',
     ]) expect(inboxSource).not.toContain(`prisma.${legacyModel}`);
-    expect(inboxSource).toContain('prisma.candidate.findMany');
+    expect(inboxSource).toContain('tx.candidate.findMany');
     expect(inboxSource).toContain('CANDIDATE_BACKFILL_MARKER');
   });
 });

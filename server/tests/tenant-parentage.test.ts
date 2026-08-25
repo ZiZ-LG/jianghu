@@ -1,14 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import type { Prisma, PrismaClient } from '@prisma/client';
-import type { Action, CommandContext } from '@jianghu/domain-contracts';
+import { assembleProductAccess, type Action, type CommandContext } from '@jianghu/domain-contracts';
 import { describe, expect, it } from 'vitest';
 import { applyAction } from '../src/mutate.js';
 import { assembleState, type StateSecurityWarning } from '../src/state.js';
 import { createTestContext, type TestContext } from './helpers/testApp.js';
 import {
+  createPersonCandidate,
   createRelationCandidate,
   relationCandidateDedupeKey,
 } from '../src/candidates/personRelation.js';
+import { setSensitiveResourceVisibility } from '../src/sensitiveAcl/service.js';
+import { candidateIdentityForLegacy } from '../src/candidates/migration.js';
 
 const SCOPED_NOT_FOUND = { error: '资源不存在' };
 
@@ -271,6 +274,57 @@ async function acceptRelSuggestion(
     headers: { authorization: `Bearer ${token}` },
     payload,
   });
+}
+
+async function seedPersonCandidateAuthority(db: PrismaClient, id: string): Promise<void> {
+  const row = await db.personSuggestion.findUniqueOrThrow({ where: { id } });
+  const identity = candidateIdentityForLegacy(row.tenantId, 'PersonSuggestion', row.id);
+  await db.candidate.create({ data: {
+    id: identity.id,
+    tenantId: row.tenantId,
+    kind: 'person_create',
+    status: row.status,
+    accountId: row.accountId,
+    matterId: row.opportunityId,
+    targetKind: 'person',
+    payload: '{}',
+    source: row.origin,
+    sourceRef: identity.sourceRef,
+    evidence: row.evidence,
+    confidence: row.confidence,
+    createdByUserId: null,
+    visibility: 'owner_admin_only',
+    aclVersion: 1,
+    dedupeKey: identity.dedupeKey,
+    legacySourceKind: 'PersonSuggestion',
+    legacySourceId: row.id,
+  } });
+}
+
+async function seedRelationCandidateAuthority(db: PrismaClient, id: string): Promise<void> {
+  const row = await db.relSuggestion.findUniqueOrThrow({ where: { id } });
+  const matter = await db.opportunity.findUniqueOrThrow({ where: { id: row.opportunityId } });
+  const identity = candidateIdentityForLegacy(row.tenantId, 'RelSuggestion', row.id);
+  await db.candidate.create({ data: {
+    id: identity.id,
+    tenantId: row.tenantId,
+    kind: 'relation_create',
+    status: row.status,
+    accountId: matter.accountId,
+    matterId: row.opportunityId,
+    targetKind: 'relation',
+    payload: '{}',
+    source: row.origin,
+    sourceRef: identity.sourceRef,
+    evidence: row.evidence,
+    confidence: row.confidence,
+    createdByUserId: null,
+    visibility: 'owner_admin_only',
+    aclVersion: 1,
+    dedupeKey: identity.dedupeKey,
+    legacySourceKind: 'RelSuggestion',
+    legacySourceId: row.id,
+  } });
 }
 
 function simulateLostAcceptanceClaim(
@@ -736,6 +790,8 @@ describe('INT-102 tenant parentage and reference guards', () => {
           },
         ],
       });
+      await seedPersonCandidateAuthority(context.prisma, 'ps-scoped-rewrite');
+      await seedRelationCandidateAuthority(context.prisma, 'rs-valid-rewrite');
 
       const response = await acceptPersonSuggestion(context, context.token, 'ps-scoped-rewrite');
       const candidate = await context.prisma.personSuggestion.findUniqueOrThrow({ where: { id: 'ps-scoped-rewrite' } });
@@ -790,6 +846,7 @@ describe('INT-102 tenant parentage and reference guards', () => {
           status: 'pending',
         },
       });
+      await seedPersonCandidateAuthority(context.prisma, 'ps-lost-claim');
       const [personCountBefore, roleCountBefore, memberCountBefore] = await Promise.all([
         context.prisma.person.count({ where: { tenantId: context.tenant.id } }),
         context.prisma.oppRole.count({ where: { tenantId: context.tenant.id } }),
@@ -834,6 +891,7 @@ describe('INT-102 tenant parentage and reference guards', () => {
           status: 'pending',
         },
       });
+      await seedRelationCandidateAuthority(context.prisma, 'rs-lost-claim');
       const edgeCountBefore = await context.prisma.edge.count({ where: { tenantId: context.tenant.id } });
       simulateLostAcceptanceClaim(context, 'RelSuggestion', 'rs-lost-claim');
 
@@ -873,6 +931,7 @@ describe('INT-102 tenant parentage and reference guards', () => {
           status: 'pending',
         },
       });
+      await seedPersonCandidateAuthority(context.prisma, 'ps-concurrent-accept');
 
       const responses = await Promise.all([
         acceptPersonSuggestion(context, context.token, 'ps-concurrent-accept'),
@@ -909,6 +968,7 @@ describe('INT-102 tenant parentage and reference guards', () => {
           status: 'pending',
         },
       });
+      await seedRelationCandidateAuthority(context.prisma, 'rs-concurrent-accept');
 
       const responses = await Promise.all([
         acceptRelSuggestion(context, context.token, 'rs-concurrent-accept'),
@@ -951,6 +1011,7 @@ describe('INT-102 tenant parentage and reference guards', () => {
           status: 'pending',
         },
       });
+      await seedRelationCandidateAuthority(context.prisma, 'rs-reject-after-accept');
       const accepted = await acceptRelSuggestion(context, context.token, 'rs-reject-after-accept');
       expect(accepted.statusCode).toBe(200);
 
@@ -996,14 +1057,6 @@ describe('INT-102 tenant parentage and reference guards', () => {
             status: 'pending',
           },
           {
-            id: 'same-id-read-endpoints',
-            tenantId: context.tenant.id,
-            accountId: right.accountId,
-            opportunityId: right.opportunityId,
-            name: 'Right candidate name',
-            status: 'pending',
-          },
-          {
             id: 'ps-read-bad-optional-opp',
             tenantId: context.tenant.id,
             accountId: right.accountId,
@@ -1015,6 +1068,14 @@ describe('INT-102 tenant parentage and reference guards', () => {
       });
       await context.prisma.person.create({
         data: { id: 'same-id-read-endpoints', tenantId: context.tenant.id, accountId: right.accountId, name: 'Right formal name', title: '' },
+      });
+      const candidateEndpoint = await createPersonCandidate(context.prisma, {
+        id: 'same-id-read-endpoints', tenantId: context.tenant.id,
+        accountId: right.accountId, matterId: right.opportunityId,
+        name: 'Right candidate name', source: 'test', sourceRef: 'test:parentage:right-candidate',
+        evidence: 'right candidate evidence', confidence: 0.5,
+        createdByUserId: context.owner.id,
+        dedupeKey: 'test:parentage:right-candidate',
       });
       await context.prisma.relSuggestion.createMany({
         data: [
@@ -1033,18 +1094,42 @@ describe('INT-102 tenant parentage and reference guards', () => {
             sourceKind: 'suggestion', sourcePersonId: 'ps-read-bad-optional-opp', targetKind: 'person', targetPersonId: right.targetPersonId,
             layer: 'L3', label: 'invalid optional opportunity', confidence: 0.97, status: 'pending',
           },
-          {
-            id: 'rs-read-valid', tenantId: context.tenant.id, opportunityId: right.opportunityId,
-            sourceKind: 'person', sourcePersonId: right.sourcePersonId, targetKind: 'person', targetPersonId: right.targetPersonId,
-            layer: 'L2', label: 'valid relation', confidence: 0.6, status: 'pending',
-          },
-          {
-            id: 'rs-read-kind-key-collision', tenantId: context.tenant.id, opportunityId: right.opportunityId,
-            sourceKind: 'person', sourcePersonId: 'same-id-read-endpoints', targetKind: 'suggestion', targetPersonId: 'same-id-read-endpoints',
-            layer: 'L3', label: 'kind collision relation', confidence: 0.5, status: 'pending',
-          },
         ],
       });
+      const validSource = { kind: 'person' as const, id: right.sourcePersonId };
+      const validTarget = { kind: 'person' as const, id: right.targetPersonId };
+      const validRelation = await createRelationCandidate(context.prisma, {
+        id: 'rs-read-valid', tenantId: context.tenant.id, matterId: right.opportunityId,
+        source: validSource, target: validTarget, layer: 'L2', label: 'valid relation',
+        sourceType: 'test', sourceRef: 'test:parentage:valid-relation',
+        evidence: 'valid relation evidence', confidence: 0.6,
+        createdByUserId: context.owner.id,
+        dedupeKey: relationCandidateDedupeKey(right.opportunityId, validSource, validTarget),
+      });
+      const collisionSource = { kind: 'person' as const, id: 'same-id-read-endpoints' };
+      const collisionTarget = { kind: 'suggestion' as const, id: 'same-id-read-endpoints' };
+      const collisionRelation = await createRelationCandidate(context.prisma, {
+        id: 'rs-read-kind-key-collision', tenantId: context.tenant.id, matterId: right.opportunityId,
+        source: collisionSource, target: collisionTarget, layer: 'L3', label: 'kind collision relation',
+        sourceType: 'test', sourceRef: 'test:parentage:kind-collision',
+        evidence: 'kind collision evidence', confidence: 0.5,
+        createdByUserId: context.owner.id,
+        dedupeKey: relationCandidateDedupeKey(right.opportunityId, collisionSource, collisionTarget),
+      });
+      const policy = assembleProductAccess({ edition: 'internal' }).policy;
+      for (const candidateId of [
+        candidateEndpoint.candidateId, validRelation.candidateId, collisionRelation.candidateId,
+      ]) {
+        await setSensitiveResourceVisibility(context.prisma, {
+          tenantId: context.tenant.id,
+          actorId: context.owner.id,
+          actorRole: 'owner',
+          kind: 'candidate',
+          resourceId: candidateId,
+          visibility: 'matter_shared',
+          expectedAclVersion: 1,
+        }, policy);
+      }
 
       const viewerResponse = await context.app.inject({
         method: 'GET',
