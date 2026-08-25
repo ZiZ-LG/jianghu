@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { runSequentialEditorialScans } from '../../scripts/stephen-editorial-runner';
+import {
+  projectEditorialGovernance,
+  runSequentialEditorialScans,
+} from '../../scripts/stephen-editorial-runner';
 
 describe('SAAS-605 multi-source editorial scan orchestration', () => {
   it('passes accumulated history to each later source and isolates one source failure', async () => {
@@ -32,5 +35,21 @@ describe('SAAS-605 multi-source editorial scan orchestration', () => {
     ]);
     expect(result.nextHistory.normalizedUrls)
       .toEqual(new Set(['https://example.com/first', 'https://example.com/third']));
+  });
+
+  it('projects per-candidate governance decisions for the SAAS-606 review gate', () => {
+    const decisions = [{ itemId: 'ED-ONE', disposition: 'manual_review' }];
+
+    expect(projectEditorialGovernance({
+      decisions,
+      autoReady: [],
+      manualReview: decisions,
+      rejected: [{ itemId: 'ED-TWO' }],
+    })).toEqual({
+      autoReady: 0,
+      manualReview: 1,
+      rejected: 1,
+      decisions,
+    });
   });
 });

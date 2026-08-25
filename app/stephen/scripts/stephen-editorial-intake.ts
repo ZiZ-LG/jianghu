@@ -15,7 +15,10 @@ import {
   draftEditorialCopy,
   type EditorialAiConfig,
 } from './stephen-editorial-ai.ts';
-import { runSequentialEditorialScans } from './stephen-editorial-runner.ts';
+import {
+  projectEditorialGovernance,
+  runSequentialEditorialScans,
+} from './stephen-editorial-runner.ts';
 import { fetchAllowlistedRss, parseRss2Feed } from './stephen-rss.ts';
 
 type MachineSource = SourceRegistryEntry & { readonly ingestion: SourceRssIngestion };
@@ -97,11 +100,7 @@ async function scanSource(
       candidates: intake.candidates.length,
       manualReview: intake.manualReview.length,
       duplicates: intake.duplicates.length,
-      governance: {
-        autoReady: governance.autoReady.length,
-        manualReview: governance.manualReview.length,
-        rejected: governance.rejected.length,
-      },
+      governance: projectEditorialGovernance(governance),
       records,
     },
     nextHistory: intake.nextHistory,

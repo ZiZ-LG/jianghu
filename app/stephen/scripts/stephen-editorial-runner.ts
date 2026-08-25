@@ -18,6 +18,24 @@ export interface SequentialEditorialScanResult<TReport> {
   readonly nextHistory: EditorialIntakeHistory;
 }
 
+interface EditorialGovernanceProjectionInput<TDecision> {
+  readonly decisions: readonly TDecision[];
+  readonly autoReady: readonly unknown[];
+  readonly manualReview: readonly unknown[];
+  readonly rejected: readonly unknown[];
+}
+
+export function projectEditorialGovernance<TDecision>(
+  governance: EditorialGovernanceProjectionInput<TDecision>,
+) {
+  return {
+    autoReady: governance.autoReady.length,
+    manualReview: governance.manualReview.length,
+    rejected: governance.rejected.length,
+    decisions: governance.decisions,
+  };
+}
+
 export async function runSequentialEditorialScans<
   TSource extends EditorialScanSource,
   TReport,
