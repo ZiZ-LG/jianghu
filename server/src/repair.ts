@@ -15,6 +15,7 @@ import { archiveEntity, restoreEntity, type ArchiveTarget } from './mutation/aud
 import { mapLegacyOpportunityStatus } from './matter/lifecycle.js';
 import { resolveEffectiveResourceScope } from './resourceScope.js';
 import { authorizeSensitiveResource, noteDescriptor } from './sensitiveAccess.js';
+import { ensureSourceArtifactForNote } from './sourceArtifacts/service.js';
 
 const accountPatchSchema = z.object({
   base: z.object({
@@ -343,6 +344,7 @@ async function rebind(
       },
     });
     if (updated.count !== 1) throw new ScopedNotFoundError();
+    await ensureSourceArtifactForNote(tx, ctx.tenantId, input.id);
     await writeRepairAudit(tx, ctx, {
       action: 'rebind',
       entityKind: 'note',

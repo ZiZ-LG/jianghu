@@ -31,6 +31,7 @@ import {
   resolveReminderCandidate,
   upsertReminderCandidate,
 } from './candidates/reviewItems.js';
+import { ensureSourceArtifactForNote } from './sourceArtifacts/service.js';
 
 // 江湖自算 · 轻量后台任务队列（DB-backed）。
 // 设计取舍（对齐架构纲领「加轻量 job 队列」）：单实例 setInterval 消费，原子 claim；
@@ -295,12 +296,14 @@ async function runProfileJob(job: ClaimedJob): Promise<void> {
       content: { startsWith: PROFILE_NOTE_PREFIX },
     }, select: { id: true } });
     if (current) return;
+    const noteId = 'note_' + randomUUID().replaceAll('-', '');
     await db.note.create({ data: {
-      id: 'note_' + randomUUID().replaceAll('-', ''), tenantId: job.tenantId, accountId: acc.id,
+      id: noteId, tenantId: job.tenantId, accountId: acc.id,
       content: `${PROFILE_NOTE_PREFIX}（来源：${r.source === 'qcc' ? '企查查工商数据' : 'AI 生成·未联网核实'}）\n${r.content}`,
       source: 'ai',
       createdBy: '', createdByUserId: null, visibility: 'owner_admin_only', aclVersion: 1,
     } });
+    await ensureSourceArtifactForNote(db, job.tenantId, noteId);
   });
   await finish(job, 'done', JSON.stringify({ source: r.source, chars: r.content.length }), '');
 }

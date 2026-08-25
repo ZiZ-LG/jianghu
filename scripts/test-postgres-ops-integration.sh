@@ -203,6 +203,8 @@ docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh ser
   'npm run migrate:candidate-report >/dev/null && npm run migrate:candidate-apply >/dev/null && npm run migrate:candidate-verify >/dev/null'
 docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
   'npm run migrate:sensitive-acl-report >/dev/null && npm run migrate:sensitive-acl-apply >/dev/null && npm run migrate:sensitive-acl-verify >/dev/null'
+docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npm run migrate:source-artifact-report >/dev/null && npm run migrate:source-artifact-apply >/dev/null && npm run migrate:source-artifact-verify >/dev/null'
 legacy_candidate_source_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
   'SELECT
      (SELECT count(*) FROM "PersonSuggestion")
@@ -224,6 +226,22 @@ sensitive_acl_migration_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -
      AND finished_at IS NOT NULL AND rolled_back_at IS NULL" | tr -d '[:space:]')
 sensitive_acl_marker_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
   "SELECT count(*) FROM \"DataMigrationState\" WHERE key = 'CORE-204-sensitive-acl-v1'" | tr -d '[:space:]')
+source_artifact_migration_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+  "SELECT count(*) FROM \"_prisma_migrations\"
+   WHERE migration_name = '20260825010000_expand_source_artifact_projection'
+     AND finished_at IS NOT NULL AND rolled_back_at IS NULL" | tr -d '[:space:]')
+source_artifact_marker_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+  "SELECT count(*) FROM \"DataMigrationState\" WHERE key = 'SAAS-201-source-artifact-projection-v1'" | tr -d '[:space:]')
+source_artifact_mapping_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+  "SELECT count(*) FROM \"SourceArtifact\"
+   WHERE \"tenantId\" = 'legacy-owner-tenant'
+     AND \"backingKind\" IN ('note','transcript')
+     AND \"artifactKind\" IN ('note','transcript')
+     AND \"fingerprintKind\" = 'content_sha256_v1'
+     AND \"sourceFingerprint\" ~ '^[a-f0-9]{64}$'
+     AND \"retentionState\" = 'available'
+     AND ((\"createdByUserId\" = 'legacy-owner-user' AND visibility = 'private')
+       OR (\"createdByUserId\" IS NULL AND visibility = 'owner_admin_only'))" | tr -d '[:space:]')
 sensitive_acl_mapping_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
   "SELECT
      (SELECT count(*) FROM \"Note\"
@@ -268,12 +286,17 @@ candidate_semantic_mapping_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exe
 [[ "$sensitive_acl_migration_count" == 1 ]]
 [[ "$sensitive_acl_marker_count" == 1 ]]
 [[ "$sensitive_acl_mapping_count" == 4 ]]
+[[ "$source_artifact_migration_count" == 1 ]]
+[[ "$source_artifact_marker_count" == 1 ]]
+[[ "$source_artifact_mapping_count" == 4 ]]
 [[ "$candidate_semantic_mapping_count" == 5 ]]
 echo "LEGACY_CANDIDATE_REPORT_OK=1"
 echo "CANDIDATE_BACKFILL_APPLY_OK=1"
 echo "CANDIDATE_SOURCE_ROWS_UNCHANGED_OK=1"
 echo "SENSITIVE_ACL_BACKFILL_APPLY_OK=1"
 echo "SENSITIVE_ACL_CREATOR_QUARANTINE_OK=1"
+echo "SOURCE_ARTIFACT_BACKFILL_APPLY_OK=1"
+echo "SOURCE_ARTIFACT_CREATOR_QUARANTINE_OK=1"
 echo "LEGACY_ACCOUNT_OWNER_BACKFILL_OK=1"
 echo "LEGACY_SCHEMA_MIGRATION_PREFLIGHT_OK=1"
 echo "LEGACY_MATTER_STATUS_BACKFILL_OK=1"
@@ -1043,6 +1066,190 @@ sensitive_restore_parity=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db 
 [[ "$sensitive_restore_parity" == 1 ]]
 echo "SENSITIVE_ACL_RESTORE_ROLLBACK_OK=1"
 echo "CORE_204_SENSITIVE_ACL_CUTOVER_OK=1"
+
+# SAAS-201 expands the CORE-204 metadata shell, then projects each Note and
+# Transcript authority exactly once. Exercise committed-DDL adoption, semantic
+# and marker drift, partial-schema refusal, and authenticated pre-cutover restore.
+source_artifact_db=jianghu_source_artifact_migration
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$source_artifact_db"
+POSTGRES_DB="$source_artifact_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npx prisma db push --schema prisma/postgres/legacy/20260825_pre_saas201.prisma --skip-generate >/dev/null
+   for path in prisma/postgres/migrations/20*; do
+     [ -d "$path" ] || continue
+     migration=$(basename "$path")
+     [ "$migration" = 20260825010000_expand_source_artifact_projection ] && break
+     npx prisma migrate resolve --applied "$migration" --schema prisma/postgres/schema.prisma >/dev/null
+   done' >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$source_artifact_db" -c \
+  "INSERT INTO \"Tenant\" (id,name) VALUES ('source-artifact-tenant','Source Artifact Tenant');
+   INSERT INTO \"User\" (id,\"tenantId\",email,\"passwordHash\",name,role)
+     VALUES ('source-artifact-user','source-artifact-tenant','source-artifact@example.test','unused','Owner','owner');
+   INSERT INTO \"Account\" (id,\"tenantId\",name,\"customerType\")
+     VALUES ('source-artifact-account','source-artifact-tenant','Source Artifact Account',1);
+   INSERT INTO \"Opportunity\"
+     (id,\"tenantId\",\"accountId\",name,\"customerType\",\"pipelineStage\",\"engageStage\")
+     VALUES ('source-artifact-matter','source-artifact-tenant','source-artifact-account',
+       'Source Artifact Matter',1,'qualify','discover');
+   INSERT INTO \"Note\"
+     (id,\"tenantId\",\"accountId\",\"opportunityId\",content,source,tags,\"createdBy\",
+      \"createdByUserId\",visibility,\"aclVersion\")
+     VALUES ('source-artifact-note','source-artifact-tenant','source-artifact-account',
+       'source-artifact-matter','private note authority','manual','[]','source-artifact-user',
+       'source-artifact-user','private',1);
+   INSERT INTO \"Transcript\"
+     (id,\"tenantId\",\"accountId\",\"opportunityId\",source,\"externalRef\",
+      \"idempotencyDomain\",title,\"contentEnc\",status,\"createdBy\",\"createdByUserId\",
+      visibility,\"aclVersion\")
+     VALUES ('source-artifact-transcript','source-artifact-tenant','source-artifact-account',
+       'source-artifact-matter','manual','source-artifact-external',
+       'creator-private-v1:\"source-artifact-user\"','Customer meeting','opaque-ciphertext','active',
+       'source-artifact-user','source-artifact-user','private',1);" >/dev/null
+
+source_artifact_backup_root="$BACKUP_DIR/saas201-pre"
+mkdir -p "$source_artifact_backup_root"
+derive_backup_keys "$BACKUP_MASTER_SECRET"
+source_artifact_backup_work=$(mktemp -d "$source_artifact_backup_root/.source-artifact-work.XXXXXX")
+source_artifact_backup="$source_artifact_backup_root/jianghu-saas201-$(openssl rand -hex 8).backup"
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db \
+  pg_dump -U "$POSTGRES_USER" -d "$source_artifact_db" -Fc \
+  | backup_encrypt_payload "$source_artifact_backup_work/payload.enc"
+{
+  backup_cipher_metadata
+  printf 'source_database=%s\n' "$source_artifact_db"
+  printf 'created_at=%s\n' "$(date -u +%Y%m%dT%H%M%SZ)"
+} > "$source_artifact_backup_work/metadata"
+write_artifact_integrity "$source_artifact_backup_work"
+verify_artifact_auth "$source_artifact_backup_work"
+mv "$source_artifact_backup_work" "$source_artifact_backup"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db \
+  psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$source_artifact_db" \
+  < server/prisma/postgres/migrations/20260825010000_expand_source_artifact_projection/migration.sql >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$source_artifact_db" -c \
+  "INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+   VALUES ('int-source-artifact-after-commit', repeat('0', 64),
+     '20260825010000_expand_source_artifact_projection', CURRENT_TIMESTAMP, 0);" >/dev/null
+POSTGRES_DB="$source_artifact_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+source_artifact_after_commit_adoption=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$source_artifact_db" -tAc \
+  "SELECT ((SELECT count(*) FROM \"_prisma_migrations\"
+              WHERE migration_name = '20260825010000_expand_source_artifact_projection'
+                AND finished_at IS NOT NULL AND rolled_back_at IS NULL) = 1
+       AND (SELECT count(*) FROM \"_prisma_migrations\"
+              WHERE migration_name = '20260825010000_expand_source_artifact_projection'
+                AND finished_at IS NULL AND rolled_back_at IS NULL) = 0
+       AND (SELECT count(*) FROM \"DataMigrationState\"
+              WHERE key = 'SAAS-201-source-artifact-projection-v1') = 1
+       AND (SELECT count(*) FROM \"SourceArtifact\"
+              WHERE \"tenantId\" = 'source-artifact-tenant') = 2
+       AND (SELECT count(*) FROM \"SourceArtifact\"
+              WHERE \"tenantId\" = 'source-artifact-tenant'
+                AND \"backingKind\" = 'note' AND \"backingId\" = 'source-artifact-note'
+                AND \"artifactKind\" = 'note' AND source = 'manual'
+                AND \"externalRef\" IS NULL AND \"fingerprintKind\" = 'content_sha256_v1'
+                AND \"sourceFingerprint\" ~ '^[a-f0-9]{64}$'
+                AND \"retentionState\" = 'available' AND visibility = 'private') = 1
+       AND (SELECT count(*) FROM \"SourceArtifact\"
+              WHERE \"tenantId\" = 'source-artifact-tenant'
+                AND \"backingKind\" = 'transcript' AND \"backingId\" = 'source-artifact-transcript'
+                AND \"artifactKind\" = 'transcript' AND source = 'manual'
+                AND \"externalRef\" = 'source-artifact-external'
+                AND \"idempotencyDomain\" = 'creator-private-v1:\"source-artifact-user\"'
+                AND title = 'Customer meeting' AND \"fingerprintKind\" = 'content_sha256_v1'
+                AND \"sourceFingerprint\" ~ '^[a-f0-9]{64}$'
+                AND \"retentionState\" = 'available' AND visibility = 'private') = 1
+       AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'SourceArtifact'
+                AND column_name IN ('content','contentEnc','body','payload')))::int" | tr -d '[:space:]')
+[[ "$source_artifact_after_commit_adoption" == 1 ]]
+echo "INTERRUPTED_SOURCE_ARTIFACT_AFTER_COMMIT_ADOPTION_OK=1"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$source_artifact_db" -c \
+  "UPDATE \"SourceArtifact\" SET \"backingId\" = 'tampered-backing'
+    WHERE \"backingKind\" = 'note' AND \"backingId\" = 'source-artifact-note';" >/dev/null
+if POSTGRES_DB="$source_artifact_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "source artifact semantic conflict unexpectedly deployed" >&2; exit 1
+fi
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$source_artifact_db" -c \
+  "UPDATE \"SourceArtifact\" SET \"backingId\" = 'source-artifact-note'
+    WHERE \"backingKind\" = 'note' AND \"backingId\" = 'tampered-backing';" >/dev/null
+POSTGRES_DB="$source_artifact_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+echo "SOURCE_ARTIFACT_SEMANTIC_CONFLICT_FAIL_CLOSED_OK=1"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$source_artifact_db" -c \
+  "UPDATE \"SourceArtifact\" SET \"sourceFingerprint\" = repeat('f', 64)
+    WHERE \"backingKind\" = 'note' AND \"backingId\" = 'source-artifact-note';" >/dev/null
+if POSTGRES_DB="$source_artifact_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "post-marker source artifact fingerprint drift unexpectedly deployed" >&2; exit 1
+fi
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$source_artifact_db" -c \
+  "DELETE FROM \"DataMigrationState\" WHERE key = 'SAAS-201-source-artifact-projection-v1';" >/dev/null
+POSTGRES_DB="$source_artifact_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+echo "SOURCE_ARTIFACT_FINGERPRINT_DRIFT_FAIL_CLOSED_OK=1"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$source_artifact_db" -c \
+  "UPDATE \"DataMigrationState\"
+      SET details = jsonb_set(details::jsonb, '{integrityChecksum}', to_jsonb(repeat('0', 64)))::text
+    WHERE key = 'SAAS-201-source-artifact-projection-v1';" >/dev/null
+if POSTGRES_DB="$source_artifact_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "source artifact marker checksum drift unexpectedly deployed" >&2; exit 1
+fi
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$source_artifact_db" -c \
+  "DELETE FROM \"DataMigrationState\" WHERE key = 'SAAS-201-source-artifact-projection-v1';" >/dev/null
+POSTGRES_DB="$source_artifact_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+echo "SOURCE_ARTIFACT_MARKER_CHECKSUM_FAIL_CLOSED_OK=1"
+
+source_artifact_partial_db=jianghu_source_artifact_partial
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$source_artifact_partial_db"
+POSTGRES_DB="$source_artifact_partial_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npx prisma db push --schema prisma/postgres/legacy/20260825_pre_saas201.prisma --skip-generate >/dev/null
+   for path in prisma/postgres/migrations/20*; do
+     [ -d "$path" ] || continue
+     migration=$(basename "$path")
+     [ "$migration" = 20260825010000_expand_source_artifact_projection ] && break
+     npx prisma migrate resolve --applied "$migration" --schema prisma/postgres/schema.prisma >/dev/null
+   done' >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$source_artifact_partial_db" -c \
+  "ALTER TABLE \"SourceArtifact\" ADD COLUMN \"artifactKind\" TEXT NOT NULL DEFAULT 'external_reference';
+   INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+   VALUES ('int-source-artifact-partial', repeat('0', 64),
+     '20260825010000_expand_source_artifact_projection', CURRENT_TIMESTAMP, 0);" >/dev/null
+if POSTGRES_DB="$source_artifact_partial_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "partial source artifact schema unexpectedly migrated" >&2; exit 1
+fi
+source_artifact_partial_columns=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$source_artifact_partial_db" -tAc \
+  "SELECT count(*) FROM information_schema.columns
+   WHERE table_schema = 'public' AND table_name = 'SourceArtifact' AND column_name = 'artifactKind'" | tr -d '[:space:]')
+source_artifact_partial_applied=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$source_artifact_partial_db" -tAc \
+  "SELECT count(*) FROM \"_prisma_migrations\"
+   WHERE migration_name = '20260825010000_expand_source_artifact_projection'
+     AND finished_at IS NOT NULL AND rolled_back_at IS NULL" | tr -d '[:space:]')
+[[ "$source_artifact_partial_columns" == 1 ]]
+[[ "$source_artifact_partial_applied" == 0 ]]
+echo "PARTIAL_SOURCE_ARTIFACT_SCHEMA_FAIL_CLOSED_OK=1"
+
+source_artifact_restore_db=jianghu_restore_source_artifact_saas201
+bash scripts/restore-postgres.sh "$source_artifact_backup" --database "$source_artifact_restore_db" >/dev/null
+source_artifact_restore_parity=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$source_artifact_restore_db" -tAc \
+  "SELECT ((SELECT count(*) FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'SourceArtifact'
+                AND column_name IN ('artifactKind','source','externalRef','idempotencyDomain','title',
+                  'occurredAt','fingerprintKind','sourceFingerprint','retentionState','retentionUpdatedAt')) = 0
+       AND (SELECT count(*) FROM \"SourceArtifact\") = 0
+       AND (SELECT count(*) FROM \"Note\" WHERE id = 'source-artifact-note') = 1
+       AND (SELECT count(*) FROM \"Transcript\" WHERE id = 'source-artifact-transcript') = 1
+       AND NOT EXISTS (SELECT 1 FROM \"DataMigrationState\"
+              WHERE key = 'SAAS-201-source-artifact-projection-v1'))::int" | tr -d '[:space:]')
+[[ "$source_artifact_restore_parity" == 1 ]]
+echo "SOURCE_ARTIFACT_RESTORE_ROLLBACK_OK=1"
+echo "SAAS_201_SOURCE_ARTIFACT_CUTOVER_OK=1"
 
 # A duplicate tenant-local owner name must roll the bridge transaction back.
 # After data repair, the same database must resume and complete safely.

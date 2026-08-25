@@ -24,6 +24,10 @@ import {
   createEvidenceCandidate,
 } from './candidates/reviewItems.js';
 import { authorizeSensitiveResource, noteDescriptor } from './sensitiveAccess.js';
+import {
+  ensureSourceArtifactForNote,
+  markSourceArtifactRetentionForBacking,
+} from './sourceArtifacts/service.js';
 
 export type { DbClient } from './mutation/scopeGuards.js';
 
@@ -565,6 +569,7 @@ async function applyActionInTransaction(
         tags: S(n.tags ?? []), createdBy: ctx.actorId,
         createdByUserId: ctx.actorId, visibility: 'private', aclVersion: 1,
       } });
+      await ensureSourceArtifactForNote(db, tenantId, n.id);
       return;
     }
     case 'UPDATE_NOTE': {
@@ -598,10 +603,12 @@ async function applyActionInTransaction(
         data: d,
       });
       if (changed.count !== 1) throw new ScopedNotFoundError();
+      await ensureSourceArtifactForNote(db, tenantId, action.noteId);
       return;
     }
     case 'DELETE_NOTE': {
       const current = await requireNoteManage(action.noteId);
+      await ensureSourceArtifactForNote(db, tenantId, action.noteId);
       const changed = await db.note.deleteMany({
         where: {
           id: action.noteId,
@@ -611,6 +618,9 @@ async function applyActionInTransaction(
         },
       });
       if (changed.count !== 1) throw new ScopedNotFoundError();
+      await markSourceArtifactRetentionForBacking(db, {
+        tenantId, backingKind: 'note', backingId: action.noteId, retentionState: 'deleted',
+      });
       return;
     }
 

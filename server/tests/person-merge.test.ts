@@ -274,6 +274,18 @@ describe('INT-302 safe duplicate Person merge', () => {
     const context = await createTestContext();
     try {
       const tree = await seedMergeGraph(context, 'success');
+      const externalArtifact = await context.app.inject({
+        method: 'POST', url: '/api/source-artifacts/external',
+        headers: {
+          authorization: `Bearer ${context.token}`,
+          'idempotency-key': 'person-merge-source-artifact',
+        },
+        payload: {
+          source: 'person-merge-test', externalRef: 'person-merge-test-ref',
+          personId: tree.sourcePersonId,
+        },
+      });
+      expect(externalArtifact.statusCode, externalArtifact.body).toBe(200);
       await context.prisma.oppRole.updateMany({
         where: { tenantId: context.tenant.id, opportunityId: tree.secondOpportunityId, personId: tree.sourcePersonId },
         data: { role: 'D' },
@@ -325,9 +337,12 @@ describe('INT-302 safe duplicate Person merge', () => {
       expect(await context.prisma.matterParticipant.count({ where: { tenantId: context.tenant.id, personId: tree.sourcePersonId } })).toBe(0);
       expect(await context.prisma.matterParticipant.count({ where: { tenantId: context.tenant.id, personId: tree.targetPersonId } })).toBe(2);
       expect(first.json()).toMatchObject({
-        redirected: { matterParticipants: 1 },
+        redirected: { matterParticipants: 1, sourceArtifacts: 1 },
         deleted: { matterParticipants: 1 },
       });
+      await expect(context.prisma.sourceArtifact.findUniqueOrThrow({
+        where: { id: externalArtifact.json().id },
+      })).resolves.toMatchObject({ personId: tree.targetPersonId, aclVersion: 2 });
 
       const edges = await context.prisma.edge.findMany({ where: { tenantId: context.tenant.id }, orderBy: { id: 'asc' } });
       expect(edges).toHaveLength(3);

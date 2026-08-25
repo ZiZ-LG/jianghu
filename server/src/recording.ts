@@ -6,7 +6,7 @@
 
 import type { FastifyInstance } from 'fastify';
 import { Prisma } from '@prisma/client';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { ActorRoleSchema, type CapabilityPolicy, type CommandContext } from '@jianghu/domain-contracts';
 import { prisma } from './prisma.js';
@@ -30,6 +30,11 @@ import {
 import { resolveEffectiveResourceScope } from './resourceScope.js';
 import { runSerializableTransaction } from './mutate.js';
 import { transcriptIdempotencyDomainForCreator } from './transcriptDedupe.js';
+import {
+  ensureSourceArtifactForTranscript,
+  externalSourceArtifactAdoptionMetadata,
+  markSourceArtifactRetentionForBacking,
+} from './sourceArtifacts/service.js';
 
 export type RecordingSource = 'getnote' | 'feishu' | 'dingtalk' | 'mock' | 'manual' | 'upload';
 
@@ -61,31 +66,34 @@ async function requireTranscriptMountAccess(
   userId: string,
   actorRole: 'owner' | 'admin' | 'member' | 'viewer',
   mount: { accountId?: string; opportunityId?: string },
-): Promise<void> {
+): Promise<{ accountId: string | null; opportunityId: string | null }> {
+  let accountId = mount.accountId ?? null;
+  const opportunityId = mount.opportunityId ?? null;
+  if (opportunityId) {
+    const matter = await db.opportunity.findFirst({ where: {
+      id: opportunityId, tenantId, archivedAt: null,
+      ...(accountId ? { accountId } : {}),
+      account: { tenantId, archivedAt: null },
+    }, select: { accountId: true } });
+    if (!matter) throw new TranscriptScopedNotFoundError();
+    accountId = matter.accountId;
+  } else if (accountId) {
+    const account = await db.account.findFirst({
+      where: { id: accountId, tenantId, archivedAt: null }, select: { id: true },
+    });
+    if (!account) throw new TranscriptScopedNotFoundError();
+  }
   if (userId) {
     const access = await authorizeSensitiveResource(db, {
       tenantId, userId, role: actorRole,
     }, { entitlements: [], permissions: [] }, {
       kind: 'transcript', id: 'pending-transcript', tenantId,
-      accountId: mount.accountId ?? null, matterId: mount.opportunityId ?? null, personId: null,
+      accountId, matterId: opportunityId, personId: null,
       createdByUserId: userId, visibility: 'private', aclVersion: 1,
     }, 'manage');
     if (!access.allowed) throw new TranscriptScopedNotFoundError();
-    return;
   }
-  if (mount.opportunityId) {
-    const matter = await db.opportunity.findFirst({ where: {
-      id: mount.opportunityId, tenantId, archivedAt: null,
-      ...(mount.accountId ? { accountId: mount.accountId } : {}),
-      account: { tenantId, archivedAt: null },
-    }, select: { id: true } });
-    if (!matter) throw new TranscriptScopedNotFoundError();
-  } else if (mount.accountId) {
-    const account = await db.account.findFirst({
-      where: { id: mount.accountId, tenantId, archivedAt: null }, select: { id: true },
-    });
-    if (!account) throw new TranscriptScopedNotFoundError();
-  }
+  return { accountId, opportunityId };
 }
 
 // ── mock 源：演示用拜访录音转写（无外部凭据即可端到端验证抽取链路）──
@@ -140,13 +148,11 @@ async function saveTranscripts(
     where: { id: userId, tenantId }, select: { id: true, role: true },
   }) : null;
   if (userId && !creator) throw new TranscriptScopedNotFoundError();
-  if (creator) {
-    await requireTranscriptMountAccess(
+  const normalizedMount = creator
+    ? await requireTranscriptMountAccess(
       db, tenantId, creator.id, ActorRoleSchema.parse(creator.role), mount,
-    );
-  } else {
-    await requireTranscriptMountAccess(db, tenantId, '', 'member', mount);
-  }
+    )
+    : await requireTranscriptMountAccess(db, tenantId, '', 'member', mount);
   const creatorAcl = creator
     ? { createdByUserId: creator.id, visibility: 'private' as const }
     : { createdByUserId: null, visibility: 'owner_admin_only' as const };
@@ -214,16 +220,38 @@ async function saveTranscripts(
             if (!person) throw new TranscriptScopedNotFoundError('转写不存在或无权访问');
           }
         }
+        await ensureSourceArtifactForTranscript(db, tenantId, dup.id);
         skipped++;
         continue; // 同一条可管理录音不重复拉取（幂等）
       }
     }
+    const adoption = ref && creator ? await externalSourceArtifactAdoptionMetadata(db, {
+      tenantId,
+      actorId: creator.id,
+      actorRole: ActorRoleSchema.parse(creator.role),
+      source,
+      externalRef: ref,
+    }) : null;
+    if (adoption
+      && ((mount.accountId !== undefined && normalizedMount.accountId !== adoption.accountId)
+        || (mount.opportunityId !== undefined && normalizedMount.opportunityId !== adoption.matterId))) {
+      throw new TranscriptScopedNotFoundError('来源资料挂载已变化，请刷新后重试');
+    }
+    const effectiveMount = adoption ?? {
+      accountId: normalizedMount.accountId,
+      matterId: normalizedMount.opportunityId,
+      personId: null,
+      visibility: creatorAcl.visibility,
+      aclVersion: 1,
+    };
+    const transcriptId = 'tr_' + randomUUID().replaceAll('-', '');
     await db.transcript.create({
       data: {
-        id: 'tr_' + randomUUID().replaceAll('-', ''),
+        id: transcriptId,
         tenantId,
-        accountId: mount.accountId ?? null,
-        opportunityId: mount.opportunityId ?? null,
+        accountId: effectiveMount.accountId,
+        opportunityId: effectiveMount.matterId,
+        personId: effectiveMount.personId,
         source,
         externalRef: ref || null,
         idempotencyDomain,
@@ -233,10 +261,12 @@ async function saveTranscripts(
         recordedAt: it.recordedAt ?? null,
         status: 'active',
         createdBy: userId,
-        ...creatorAcl,
-        aclVersion: 1,
+        createdByUserId: creatorAcl.createdByUserId,
+        visibility: effectiveMount.visibility,
+        aclVersion: effectiveMount.aclVersion,
       },
     });
+    await ensureSourceArtifactForTranscript(db, tenantId, transcriptId);
     saved++;
   }
   return { saved, skipped };
@@ -335,6 +365,7 @@ export async function extractTranscript(
       data: { status: 'extracted', extractedAt: new Date() },
     });
     if (changed.count !== 1) return { ok: false, status: 409, body: { error: '转写权限已变化，请重试' } };
+    await ensureSourceArtifactForTranscript(db, tenantId, tr.id);
   }
   return r;
 }
@@ -442,6 +473,7 @@ async function pullFeishuAuto(
           },
         });
         if (changed.count !== 1) throw new Error('转写权限已变化，请重试');
+        await ensureSourceArtifactForTranscript(tx, tenantId, current.id);
         return 'rebound' as const;
       });
       if (rebound === 'skip') skippedDone++;
@@ -685,13 +717,17 @@ export function recordingRoutes(app: FastifyInstance, capabilityPolicy: Capabili
         tx, ctx, capabilityPolicy, p.data.transcriptId, 'manage',
       );
       if (!tr) return { status: 'missing' as const };
+      await ensureSourceArtifactForTranscript(tx, ctx.tenantId, tr.id);
       const changed = await tx.transcript.updateMany({
         where: { id: tr.id, tenantId: ctx.tenantId, aclVersion: tr.aclVersion },
         data: { contentEnc: '', status: 'redacted' },
       });
-      return changed.count === 1
-        ? { status: 'ok' as const, id: tr.id }
-        : { status: 'conflict' as const };
+      if (changed.count !== 1) return { status: 'conflict' as const };
+      await markSourceArtifactRetentionForBacking(tx, {
+        tenantId: ctx.tenantId, backingKind: 'transcript', backingId: tr.id,
+        retentionState: 'degraded',
+      });
+      return { status: 'ok' as const, id: tr.id };
     });
     if (result.status === 'missing') return reply.code(404).send({ error: '转写不存在或无权访问' });
     if (result.status === 'conflict') return reply.code(409).send({ error: '转写权限已变化，请重试' });
@@ -710,12 +746,16 @@ export function recordingRoutes(app: FastifyInstance, capabilityPolicy: Capabili
     const result = await runSerializableTransaction(prisma, async (tx) => {
       const tr = await requireTranscriptAccessMetadata(tx, ctx, capabilityPolicy, id, 'manage');
       if (!tr) return { status: 'missing' as const };
+      await ensureSourceArtifactForTranscript(tx, ctx.tenantId, tr.id);
       const changed = await tx.transcript.deleteMany({
         where: { id: tr.id, tenantId: ctx.tenantId, aclVersion: tr.aclVersion },
       });
-      return changed.count === 1
-        ? { status: 'ok' as const, id: tr.id }
-        : { status: 'conflict' as const };
+      if (changed.count !== 1) return { status: 'conflict' as const };
+      await markSourceArtifactRetentionForBacking(tx, {
+        tenantId: ctx.tenantId, backingKind: 'transcript', backingId: tr.id,
+        retentionState: 'deleted',
+      });
+      return { status: 'ok' as const, id: tr.id };
     });
     if (result.status === 'missing') return reply.code(404).send({ error: '转写不存在或无权访问' });
     if (result.status === 'conflict') return reply.code(409).send({ error: '转写权限已变化，请重试' });
@@ -761,7 +801,11 @@ export function recordingRoutes(app: FastifyInstance, capabilityPolicy: Capabili
     if (!text) return reply.code(400).send({ error: ext === 'pdf' ? '没从 PDF 提取到文字（可能是扫描版/图片型 PDF，无文本层）' : '文件没有可提取的文字' });
     const stat = await runSerializableTransaction(prisma, (tx) => saveTranscripts(
       req.user.tenantId, req.user.userId || '', 'upload',
-      [{ externalRef: '', title: name, text }], { accountId, opportunityId }, tx,
+      [{
+        externalRef: `upload:${createHash('sha256').update(buf).digest('hex')}`,
+        title: name,
+        text,
+      }], { accountId, opportunityId }, tx,
     ));
     return { source: 'upload', ...stat };
   });

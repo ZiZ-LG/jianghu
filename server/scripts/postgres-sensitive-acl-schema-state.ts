@@ -60,6 +60,76 @@ const expectedIndexes = new Set([
   'SensitiveResourceGrant_tenantId_resourceKind_resourceId_gra_key',
 ]);
 
+type SourceColumnExpectation = {
+  type: string;
+  nullable: 'YES' | 'NO';
+  defaultValue?: string | null;
+};
+const sourceArtifactBaseColumns = new Map<string, SourceColumnExpectation>([
+  ['id', { type: 'text', nullable: 'NO', defaultValue: null }],
+  ['tenantId', { type: 'text', nullable: 'NO', defaultValue: null }],
+  ['accountId', { type: 'text', nullable: 'YES', defaultValue: null }],
+  ['matterId', { type: 'text', nullable: 'YES', defaultValue: null }],
+  ['personId', { type: 'text', nullable: 'YES', defaultValue: null }],
+  ['backingKind', { type: 'text', nullable: 'NO', defaultValue: null }],
+  ['backingId', { type: 'text', nullable: 'NO', defaultValue: null }],
+  ['createdByUserId', { type: 'text', nullable: 'YES', defaultValue: null }],
+  ['visibility', { type: 'text', nullable: 'NO', defaultValue: "'owner_admin_only'::text" }],
+  ['aclVersion', { type: 'integer', nullable: 'NO', defaultValue: '1' }],
+  ['createdAt', { type: 'timestamp without time zone', nullable: 'NO' }],
+  ['updatedAt', { type: 'timestamp without time zone', nullable: 'NO', defaultValue: null }],
+]);
+const sourceArtifactSuccessorColumns = new Map(sourceArtifactBaseColumns);
+for (const [name, expectation] of [
+  ['artifactKind', { type: 'text', nullable: 'NO', defaultValue: "'external_reference'::text" }],
+  ['source', { type: 'text', nullable: 'NO', defaultValue: "'legacy'::text" }],
+  ['externalRef', { type: 'text', nullable: 'YES', defaultValue: null }],
+  ['idempotencyDomain', { type: 'text', nullable: 'NO', defaultValue: "'system-quarantine-v1'::text" }],
+  ['title', { type: 'text', nullable: 'NO', defaultValue: "''::text" }],
+  ['occurredAt', { type: 'timestamp without time zone', nullable: 'YES', defaultValue: null }],
+  ['fingerprintKind', { type: 'text', nullable: 'NO', defaultValue: "'reference_sha256_v1'::text" }],
+  ['sourceFingerprint', {
+    type: 'text', nullable: 'NO',
+    defaultValue: "'0000000000000000000000000000000000000000000000000000000000000000'::text",
+  }],
+  ['retentionState', { type: 'text', nullable: 'NO', defaultValue: "'reference_only'::text" }],
+  ['retentionUpdatedAt', { type: 'timestamp without time zone', nullable: 'NO' }],
+] satisfies Array<[string, SourceColumnExpectation]>) {
+  sourceArtifactSuccessorColumns.set(name, expectation);
+}
+const sourceArtifactBaseIndexes = new Set([
+  'SourceArtifact_pkey',
+  'SourceArtifact_tenantId_accountId_idx',
+  'SourceArtifact_tenantId_matterId_idx',
+  'SourceArtifact_tenantId_personId_idx',
+  'SourceArtifact_tenantId_createdByUserId_visibility_idx',
+  'SourceArtifact_tenantId_visibility_aclVersion_idx',
+  'SourceArtifact_tenantId_backingKind_backingId_key',
+]);
+const sourceArtifactSuccessorIndexes = new Set([
+  ...sourceArtifactBaseIndexes,
+  'SourceArtifact_tenantId_domain_source_externalRef_key',
+  'SourceArtifact_tenantId_artifactKind_createdAt_idx',
+  'SourceArtifact_tenantId_retentionState_updatedAt_idx',
+]);
+
+function exactSourceArtifactShape(
+  columns: ColumnRow[],
+  indexNames: Set<string>,
+  expectedColumns: Map<string, SourceColumnExpectation>,
+  expectedSourceIndexes: Set<string>,
+): boolean {
+  return columns.length === expectedColumns.size
+    && columns.every((column) => {
+      const expected = expectedColumns.get(column.column_name);
+      if (!expected || expected.type !== column.data_type || expected.nullable !== column.is_nullable) return false;
+      if ('defaultValue' in expected) return column.column_default === expected.defaultValue;
+      return typeof column.column_default === 'string' && column.column_default.includes('CURRENT_TIMESTAMP');
+    })
+    && indexNames.size === expectedSourceIndexes.size
+    && [...expectedSourceIndexes].every((name) => indexNames.has(name));
+}
+
 try {
   const [tableRow] = await prisma.$queryRawUnsafe<TableRow[]>(`
     SELECT
@@ -77,7 +147,7 @@ try {
   } else if (!base) {
     process.stdout.write('partial');
   } else {
-    const [columns, indexes, foreignKeys] = await Promise.all([
+    const [columns, sourceArtifactColumns, indexes, foreignKeys] = await Promise.all([
       prisma.$queryRawUnsafe<ColumnRow[]>(`
         SELECT table_name, column_name, data_type, is_nullable, column_default
         FROM information_schema.columns
@@ -90,6 +160,12 @@ try {
               AND column_name IN ('createdByUserId', 'visibility', 'aclVersion', 'idempotencyDomain'))
           )
         ORDER BY table_name, column_name
+      `),
+      prisma.$queryRawUnsafe<ColumnRow[]>(`
+        SELECT table_name, column_name, data_type, is_nullable, column_default
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'SourceArtifact'
+        ORDER BY ordinal_position
       `),
       prisma.$queryRawUnsafe<IndexRow[]>(`
         SELECT indexname
@@ -140,13 +216,27 @@ try {
       const indexNames = new Set(indexes.map((row) => row.indexname));
       const indexesMatch = [...expectedIndexes].every((name) => indexNames.has(name))
         && !indexNames.has('Transcript_tenantId_source_externalRef_key');
+      const sourceArtifactIndexNames = new Set(
+        indexes.filter((row) => row.indexname.startsWith('SourceArtifact_')).map((row) => row.indexname),
+      );
+      const sourceArtifactShapeMatches = exactSourceArtifactShape(
+        sourceArtifactColumns,
+        sourceArtifactIndexNames,
+        sourceArtifactBaseColumns,
+        sourceArtifactBaseIndexes,
+      ) || exactSourceArtifactShape(
+        sourceArtifactColumns,
+        sourceArtifactIndexNames,
+        sourceArtifactSuccessorColumns,
+        sourceArtifactSuccessorIndexes,
+      );
       const foreignKeysMatch = ['SourceArtifact', 'SensitiveResourceGrant'].every((table) =>
         foreignKeys.some((row) => row.table_name === table
           && row.definition.includes('FOREIGN KEY ("tenantId") REFERENCES "Tenant"(id)')
           && row.definition.includes('ON UPDATE CASCADE ON DELETE CASCADE')));
       process.stdout.write(
         tableRow.candidate_exists && tableRow.artifact_exists && tableRow.grant_exists
-          && columnsMatch && indexesMatch && foreignKeysMatch
+          && columnsMatch && indexesMatch && sourceArtifactShapeMatches && foreignKeysMatch
           ? 'expanded'
           : 'partial',
       );

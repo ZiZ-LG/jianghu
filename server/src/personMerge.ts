@@ -23,8 +23,15 @@ import {
   createSensitiveAccessEvaluator,
   noteDescriptor,
   requireCandidateReviewAccess,
+  sourceArtifactDescriptor,
   transcriptDescriptor,
 } from './sensitiveAccess.js';
+import {
+  ensureSourceArtifactForNote,
+  ensureSourceArtifactForTranscript,
+  SOURCE_ARTIFACT_METADATA_SELECT,
+  sourceArtifactMetadataIsValid,
+} from './sourceArtifacts/service.js';
 
 const INTERNAL_CAPABILITY_POLICY = assembleProductAccess({ edition: 'internal' }).policy;
 
@@ -261,7 +268,8 @@ export async function executePersonMerge(
     throw new MergeInputError('每个实际角色冲突都必须提供且仅提供一个明确决策');
   }
 
-  const [members, participants, edges, burningIssues, evidenceEvents, notes, planActions, strategyCards, transcripts, advisorMsgs,
+  const [members, participants, edges, burningIssues, evidenceEvents, notes, planActions, strategyCards, transcripts,
+    detachedSourceArtifacts, advisorMsgs,
     relSuggestionRefs, personSuggestions, changeProposalRefs, reminderRefs] = await Promise.all([
     tx.opportunityMember.findMany({ where: { tenantId: ctx.tenantId, personId: { in: [target.id, source.id] } }, orderBy: { id: 'asc' } }),
     tx.matterParticipant.findMany({ where: { tenantId: ctx.tenantId, personId: { in: [target.id, source.id] } }, orderBy: { id: 'asc' } }),
@@ -280,6 +288,14 @@ export async function executePersonMerge(
       id: true, tenantId: true, accountId: true, opportunityId: true, personId: true,
       createdByUserId: true, visibility: true, aclVersion: true,
     } }),
+    tx.sourceArtifact.findMany({
+      where: {
+        tenantId: ctx.tenantId,
+        personId: source.id,
+        OR: [{ backingKind: 'external_reference' }, { retentionState: 'deleted' }],
+      },
+      select: SOURCE_ARTIFACT_METADATA_SELECT,
+    }),
     tx.advisorMsg.findMany({ where: { tenantId: ctx.tenantId, personId: source.id }, select: { id: true, accountId: true, opportunityId: true } }),
     tx.relSuggestion.findMany({ where: { tenantId: ctx.tenantId, OR: [
       { sourceKind: 'person', sourcePersonId: source.id }, { targetKind: 'person', targetPersonId: source.id },
@@ -322,12 +338,19 @@ export async function executePersonMerge(
     if (row.accountId !== account.id) throw new MergeNotFoundError('引用客户异常');
     requireAccountOpportunity(account.id, row.opportunityId, opportunityAccounts);
   }
+  for (const row of detachedSourceArtifacts) {
+    if (!sourceArtifactMetadataIsValid(row) || row.accountId !== account.id) {
+      throw new MergeNotFoundError('来源资料引用异常');
+    }
+    requireAccountOpportunity(account.id, row.matterId, opportunityAccounts);
+  }
   const sensitiveEvaluator = await createSensitiveAccessEvaluator(tx, {
     tenantId: ctx.tenantId, userId: ctx.actorId, role: ctx.actorRole,
   }, capabilityPolicy);
   const sensitiveDecisions = await sensitiveEvaluator.authorizeMany([
     ...notes.map(noteDescriptor),
     ...transcripts.map(transcriptDescriptor),
+    ...detachedSourceArtifacts.map(sourceArtifactDescriptor),
   ], 'manage');
   if (sensitiveDecisions.some((access) => !access.allowed)) {
     throw new MergeNotFoundError('敏感引用不存在或无权限');
@@ -555,6 +578,7 @@ export async function executePersonMerge(
   const updateMany = async (model: { updateMany: (args: any) => Promise<{ count: number }> }, where: object, data: object) =>
     (await model.updateMany({ where, data })).count;
   const redirectSensitiveRows = async (
+    kind: 'note' | 'transcript',
     model: { updateMany: (args: any) => Promise<{ count: number }> },
     rows: ReadonlyArray<{ id: string; aclVersion: number }>,
   ): Promise<number> => {
@@ -570,6 +594,25 @@ export async function executePersonMerge(
         data: { personId: target.id, aclVersion: { increment: 1 } },
       });
       if (changed.count !== 1) throw new MergeNotFoundError('敏感引用已变化或无权限');
+      if (kind === 'note') await ensureSourceArtifactForNote(tx, ctx.tenantId, row.id);
+      else await ensureSourceArtifactForTranscript(tx, ctx.tenantId, row.id);
+      redirected += 1;
+    }
+    return redirected;
+  };
+  const redirectDetachedSourceArtifacts = async (): Promise<number> => {
+    let redirected = 0;
+    for (const row of detachedSourceArtifacts) {
+      const changed = await tx.sourceArtifact.updateMany({
+        where: {
+          id: row.id,
+          tenantId: ctx.tenantId,
+          personId: source.id,
+          aclVersion: row.aclVersion,
+        },
+        data: { personId: target.id, aclVersion: { increment: 1 } },
+      });
+      if (changed.count !== 1) throw new MergeNotFoundError('来源资料已变化或无权限');
       redirected += 1;
     }
     return redirected;
@@ -671,13 +714,14 @@ export async function executePersonMerge(
     edges: edgeRedirect.count + edgeTargetRedirect.count,
     burningIssues: await updateMany(tx.burningIssue, { tenantId: ctx.tenantId, personId: source.id }, { personId: target.id }),
     evidenceEvents: redirectedEvidenceEvents,
-    notes: await redirectSensitiveRows(tx.note, notes),
+    notes: await redirectSensitiveRows('note', tx.note, notes),
     planActions: await updateMany(tx.planAction, { tenantId: ctx.tenantId, personId: source.id }, {
       personId: target.id,
       version: { increment: 1 },
     }),
     strategyCards: await updateMany(tx.strategyCard, { tenantId: ctx.tenantId, personId: source.id }, { personId: target.id }),
-    transcripts: await redirectSensitiveRows(tx.transcript, transcripts),
+    transcripts: await redirectSensitiveRows('transcript', tx.transcript, transcripts),
+    sourceArtifacts: await redirectDetachedSourceArtifacts(),
     advisorMsgs: await updateMany(tx.advisorMsg, { tenantId: ctx.tenantId, personId: source.id }, { personId: target.id }),
     relSuggestionSources: candidateRedirects.relationSources,
     relSuggestionTargets: candidateRedirects.relationTargets,

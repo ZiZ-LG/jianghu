@@ -7,9 +7,9 @@ import { describe, expect, it } from 'vitest';
 const serverRoot = resolve('.');
 const prismaBin = resolve('node_modules/.bin/prisma');
 const tsxBin = resolve('node_modules/.bin/tsx');
-// Each case launches the full cumulative SQLite upgrade in subprocesses. CORE-204
+// Each case launches the full cumulative SQLite upgrade in subprocesses. SAAS-201
 // adds another report/apply/verify stage, so CI runners need deterministic headroom.
-const SQLITE_UPGRADE_TEST_TIMEOUT_MS = 60_000;
+const SQLITE_UPGRADE_TEST_TIMEOUT_MS = 90_000;
 const methodologyFoundationTables = [
   'MethodologyPack',
   'MethodologyPackVersion',
@@ -498,6 +498,48 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       await expect(upgradedClient.dataMigrationState.findUnique({
         where: { key: 'CORE-204-sensitive-acl-v1' },
       })).resolves.toMatchObject({ key: 'CORE-204-sensitive-acl-v1' });
+      await expect(upgradedClient.sourceArtifact.findMany({
+        where: { tenantId: 'sqlite-upgrade-tenant' },
+        orderBy: [{ backingKind: 'asc' }, { backingId: 'asc' }],
+        select: {
+          backingKind: true, backingId: true, artifactKind: true, source: true,
+          fingerprintKind: true, sourceFingerprint: true, retentionState: true,
+          createdByUserId: true, visibility: true, aclVersion: true,
+        },
+      })).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          backingKind: 'note', backingId: 'sqlite-upgrade-note-known', artifactKind: 'note',
+          fingerprintKind: 'content_sha256_v1', retentionState: 'available',
+          createdByUserId: 'sqlite-upgrade-user', visibility: 'private', aclVersion: 1,
+        }),
+        expect.objectContaining({
+          backingKind: 'note', backingId: 'sqlite-upgrade-note-quarantine', artifactKind: 'note',
+          fingerprintKind: 'content_sha256_v1', retentionState: 'available',
+          createdByUserId: null, visibility: 'owner_admin_only', aclVersion: 1,
+        }),
+        expect.objectContaining({
+          backingKind: 'transcript', backingId: 'sqlite-upgrade-transcript-known', artifactKind: 'transcript',
+          fingerprintKind: 'content_sha256_v1', retentionState: 'available',
+          createdByUserId: 'sqlite-upgrade-user', visibility: 'private', aclVersion: 1,
+        }),
+        expect.objectContaining({
+          backingKind: 'transcript', backingId: 'sqlite-upgrade-transcript-quarantine', artifactKind: 'transcript',
+          fingerprintKind: 'content_sha256_v1', retentionState: 'available',
+          createdByUserId: null, visibility: 'owner_admin_only', aclVersion: 1,
+        }),
+      ]));
+      await expect(upgradedClient.sourceArtifact.count({
+        where: { tenantId: 'sqlite-upgrade-tenant' },
+      })).resolves.toBe(4);
+      const sourceArtifactColumns = await upgradedClient.$queryRawUnsafe<Array<{ name: string }>>(
+        'PRAGMA table_info("SourceArtifact")',
+      );
+      expect(sourceArtifactColumns.map((column) => column.name)).not.toEqual(expect.arrayContaining([
+        'content', 'contentEnc', 'body', 'payload',
+      ]));
+      await expect(upgradedClient.dataMigrationState.findUnique({
+        where: { key: 'SAAS-201-source-artifact-projection-v1' },
+      })).resolves.toMatchObject({ key: 'SAAS-201-source-artifact-projection-v1' });
       await expect(upgradedClient.personSuggestion.findUniqueOrThrow({
         where: { id: 'sqlite-upgrade-person-suggestion' },
         select: { status: true, evidence: true },
@@ -934,6 +976,33 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       expect(failed.status).not.toBe(0);
       expect(`${failed.stdout}\n${failed.stderr}`).toContain(
         'partial sensitive resource ACL expansion detected; restore the latest backup before retrying',
+      );
+    } finally {
+      await client?.$disconnect();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
+
+  it('fails closed when only part of the SourceArtifact projection expansion exists', async () => {
+    const directory = await mkdtemp(resolve('prisma/.source-artifact-partial-test-'));
+    const relativeDirectory = basename(directory);
+    const databaseUrl = `file:./${relativeDirectory}/partial.db`;
+    let client: PrismaClient | null = null;
+    try {
+      run(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], databaseUrl);
+      client = new PrismaClient({ datasourceUrl: databaseUrl });
+      await client.$executeRawUnsafe('DROP INDEX "SourceArtifact_tenantId_retentionState_updatedAt_idx"');
+      await client.$disconnect();
+      client = null;
+
+      const failed = spawnSync(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], {
+        cwd: serverRoot,
+        encoding: 'utf8',
+        env: { ...process.env, DATABASE_URL: databaseUrl, JIANGHU_SKIP_PRISMA_GENERATE: '1' },
+      });
+      expect(failed.status).not.toBe(0);
+      expect(`${failed.stdout}\n${failed.stderr}`).toContain(
+        'partial SourceArtifact projection expansion detected; restore the latest backup before retrying',
       );
     } finally {
       await client?.$disconnect();

@@ -13,6 +13,10 @@ import {
   type SensitiveResourceVisibility,
 } from '../sensitiveAccess.js';
 import type { VisibilityRole } from '../visibility.js';
+import {
+  ensureSourceArtifactForNote,
+  ensureSourceArtifactForTranscript,
+} from '../sourceArtifacts/service.js';
 
 export class SensitiveAclError extends Error {
   constructor(readonly code: string) {
@@ -177,6 +181,11 @@ export async function setSensitiveResourceVisibility(
       visibility: input.visibility,
       aclVersion,
     });
+    if (descriptor.kind === 'note') {
+      await ensureSourceArtifactForNote(tx, input.tenantId, descriptor.id);
+    } else if (descriptor.kind === 'transcript') {
+      await ensureSourceArtifactForTranscript(tx, input.tenantId, descriptor.id);
+    }
     if (descriptor.kind === 'candidate') {
       if (input.visibility === 'private') {
         await tx.sensitiveResourceGrant.updateMany({

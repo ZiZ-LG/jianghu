@@ -177,6 +177,53 @@ describe('CORE-204 sensitive route enforcement', () => {
     await expect(test.prisma.note.findUnique({ where: { id: 'producer-note' } })).resolves.toMatchObject({
       createdByUserId: test.owner.id, visibility: 'private', aclVersion: 1,
     });
+    await expect(test.prisma.sourceArtifact.findFirstOrThrow({ where: {
+      tenantId: test.tenant.id, backingKind: 'note', backingId: 'producer-note',
+    } })).resolves.toMatchObject({
+      artifactKind: 'note', source: 'manual', retentionState: 'available',
+      fingerprintKind: 'content_sha256_v1', createdByUserId: test.owner.id,
+      visibility: 'private', aclVersion: 1,
+    });
+  });
+
+  it('projects an uploaded file once using a stable creator-domain content reference', async () => {
+    const boundary = '----jianghu-saas-201-upload';
+    const multipart = Buffer.from([
+      `--${boundary}\r\n`,
+      'Content-Disposition: form-data; name="file"; filename="customer-meeting.txt"\r\n',
+      'Content-Type: text/plain\r\n\r\n',
+      'private uploaded meeting body\r\n',
+      `--${boundary}--\r\n`,
+    ].join(''));
+    const upload = () => test.app.inject({
+      method: 'POST',
+      url: `/api/recording/upload?accountId=${accountId}&opportunityId=${matterId}`,
+      headers: { ...auth(), 'content-type': `multipart/form-data; boundary=${boundary}` },
+      payload: multipart,
+    });
+
+    const first = await upload();
+    expect(first.statusCode, first.body).toBe(200);
+    expect(first.json()).toMatchObject({ source: 'upload', saved: 1, skipped: 0 });
+    const transcript = await test.prisma.transcript.findFirstOrThrow({ where: {
+      tenantId: test.tenant.id, source: 'upload', createdByUserId: test.owner.id,
+    } });
+    expect(transcript.externalRef).toMatch(/^upload:[a-f0-9]{64}$/);
+    await expect(test.prisma.sourceArtifact.findFirstOrThrow({ where: {
+      tenantId: test.tenant.id, backingKind: 'transcript', backingId: transcript.id,
+    } })).resolves.toMatchObject({
+      artifactKind: 'uploaded_file', source: 'upload', externalRef: transcript.externalRef,
+      idempotencyDomain: transcript.idempotencyDomain, retentionState: 'available',
+      fingerprintKind: 'content_sha256_v1', createdByUserId: test.owner.id,
+      visibility: 'private', aclVersion: 1,
+    });
+
+    const replay = await upload();
+    expect(replay.statusCode, replay.body).toBe(200);
+    expect(replay.json()).toMatchObject({ source: 'upload', saved: 0, skipped: 1 });
+    await expect(test.prisma.sourceArtifact.count({ where: {
+      tenantId: test.tenant.id, source: 'upload', externalRef: transcript.externalRef,
+    } })).resolves.toBe(1);
   });
 
   it('checks both sides of a Note rebind and advances the ACL generation', async () => {
@@ -324,6 +371,10 @@ describe('CORE-204 sensitive route enforcement', () => {
     expect(new Set(rows.map((row) => row.idempotencyDomain)).size).toBe(2);
     expect(rows.filter((row) => row.createdByUserId === first.user.id)).toHaveLength(2);
     expect(rows.filter((row) => row.createdByUserId === second.user.id)).toHaveLength(2);
+    await expect(test.prisma.sourceArtifact.count({ where: {
+      tenantId: test.tenant.id, backingKind: 'transcript', artifactKind: 'transcript',
+      retentionState: 'available',
+    } })).resolves.toBe(4);
 
     const firstRow = rows.find((row) => row.createdByUserId === first.user.id)!;
     const domainBeforeShare = firstRow.idempotencyDomain;
@@ -338,6 +389,11 @@ describe('CORE-204 sensitive route enforcement', () => {
     }, internalPolicy);
     await expect(test.prisma.transcript.findUniqueOrThrow({ where: { id: firstRow.id } }))
       .resolves.toMatchObject({ idempotencyDomain: domainBeforeShare, aclVersion: 2 });
+    await expect(test.prisma.sourceArtifact.findFirstOrThrow({ where: {
+      tenantId: test.tenant.id, backingKind: 'transcript', backingId: firstRow.id,
+    } })).resolves.toMatchObject({
+      idempotencyDomain: domainBeforeShare, visibility: 'matter_shared', aclVersion: 2,
+    });
   });
 
   it('converges concurrent Transcript imports inside one creator domain', async () => {

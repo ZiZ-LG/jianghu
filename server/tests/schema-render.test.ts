@@ -706,4 +706,87 @@ describe('PostgreSQL schema delivery', () => {
     expect(sqliteUpgrade).toContain("['run', 'migrate:sensitive-acl-apply']");
     expect(sqliteUpgrade).toContain("['run', 'migrate:sensitive-acl-verify']");
   });
+
+  it('delivers SAAS-201 as a body-free SourceArtifact projection with guarded dual-database cutover', async () => {
+    const sqliteSchema = await read('prisma/schema.prisma');
+    const postgresSchema = await read('prisma/postgres/schema.prisma');
+    const preSourceSchema = await read('prisma/postgres/legacy/20260825_pre_saas201.prisma');
+    const migration = await read(
+      'prisma/postgres/migrations/20260825010000_expand_source_artifact_projection/migration.sql',
+    );
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const sqliteUpgrade = await read('scripts/upgrade-sqlite-schema.ts');
+    const schemaState = await read('scripts/postgres-source-artifact-schema-state.ts');
+    const sensitiveState = await read('scripts/postgres-sensitive-acl-schema-state.ts');
+    const migrationCli = await read('scripts/migrate-source-artifacts.ts');
+    const packageJson = JSON.parse(await read('package.json')) as { scripts?: Record<string, string> };
+
+    for (const schema of [sqliteSchema, postgresSchema]) {
+      for (const field of [
+        'artifactKind', 'source', 'externalRef', 'idempotencyDomain', 'title', 'occurredAt',
+        'fingerprintKind', 'sourceFingerprint', 'retentionState', 'retentionUpdatedAt',
+      ]) expect(schema).toMatch(new RegExp(`model SourceArtifact \\{[\\s\\S]*?${field}\\s+`));
+      expect(schema).toContain(
+        '@@unique([tenantId, idempotencyDomain, source, externalRef], map: "SourceArtifact_tenantId_domain_source_externalRef_key")',
+      );
+      expect(schema).toContain('@@index([tenantId, artifactKind, createdAt])');
+      expect(schema).toContain('@@index([tenantId, retentionState, updatedAt])');
+      expect(schema).not.toMatch(/model SourceArtifact \{[^}]*\b(?:content|contentEnc|body|payload)\b/);
+      expect(schema).not.toMatch(/^enum\s+/m);
+      expect(schema).not.toMatch(/^\s*\w+\s+Json[?\[\]]*/m);
+    }
+    expect(preSourceSchema).toContain('model SourceArtifact');
+    expect(preSourceSchema).not.toMatch(/model SourceArtifact \{[^}]*artifactKind/);
+    expect(preSourceSchema).not.toContain('SourceArtifact_tenantId_domain_source_externalRef_key');
+
+    expect(migration.trimStart().startsWith('BEGIN;')).toBe(true);
+    expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(migration).toContain("SET LOCAL lock_timeout = '30s'");
+    expect(migration).toContain("SET LOCAL statement_timeout = '15min'");
+    expect(migration).toContain('LOCK TABLE "SourceArtifact" IN SHARE ROW EXCLUSIVE MODE');
+    expect(migration.indexOf('projection columns partially exist'))
+      .toBeLessThan(migration.indexOf('ADD COLUMN "artifactKind"'));
+    expect(migration.match(/ADD COLUMN/g)).toHaveLength(10);
+    expect(migration).toContain('SourceArtifact_tenantId_domain_source_externalRef_key');
+    expect(migration).toContain('SourceArtifact_tenantId_artifactKind_createdAt_idx');
+    expect(migration).toContain('SourceArtifact_tenantId_retentionState_updatedAt_idx');
+    expect(migration).toContain('projection expansion parity failed');
+    expect(migration).not.toMatch(/(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+"(?:Note|Transcript|SourceArtifact)"/i);
+
+    expect(packageJson.scripts?.['migrate:source-artifact-report'])
+      .toBe('tsx scripts/migrate-source-artifacts.ts --dry-run');
+    expect(packageJson.scripts?.['migrate:source-artifact-apply'])
+      .toBe('tsx scripts/migrate-source-artifacts.ts --apply');
+    expect(packageJson.scripts?.['migrate:source-artifact-verify'])
+      .toBe('tsx scripts/migrate-source-artifacts.ts --verify');
+    expect(migrationCli).toContain('reportSourceArtifactMigration');
+    expect(migrationCli).toContain('applySourceArtifactMigration');
+    expect(migrationCli).toContain('verifySourceArtifactMigration');
+    expect(migrationCli).not.toContain('contentEnc');
+    expect(migrationCli).not.toContain('Note.content');
+
+    expect(deployScript).toContain('PRE_SOURCE_ARTIFACT_SCHEMA=prisma/postgres/legacy/20260825_pre_saas201.prisma');
+    expect(deployScript).toContain('SOURCE_ARTIFACT_MIGRATION=20260825010000_expand_source_artifact_projection');
+    expect(deployScript).toContain('recover_incomplete_source_artifact_migration');
+    expect(deployScript).toContain('adopt_existing_source_artifact_schema_if_safe');
+    expect(deployScript).toContain('postgres-source-artifact-schema-state.ts');
+    expect(deployScript.lastIndexOf('npm run migrate:source-artifact-report'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:source-artifact-apply'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:source-artifact-verify'))
+      .toBeGreaterThan(deployScript.lastIndexOf('npm run migrate:source-artifact-apply'));
+    expect(schemaState).toContain("process.stdout.write('uninitialized')");
+    expect(schemaState).toContain("process.stdout.write('legacy')");
+    expect(schemaState).toContain("'expanded'");
+    expect(schemaState).toContain("'partial'");
+    expect(schemaState).toContain('expectedColumns');
+    expect(schemaState).toContain('expectedIndexes');
+    expect(sensitiveState).toContain('sourceArtifactBaseColumns');
+    expect(sensitiveState).toContain('sourceArtifactSuccessorColumns');
+    expect(sqliteUpgrade).toContain('inspectSourceArtifactSchemaState');
+    expect(sqliteUpgrade).toContain('partial SourceArtifact projection expansion detected');
+    expect(sqliteUpgrade).toContain("['run', 'migrate:source-artifact-apply']");
+    expect(sqliteUpgrade).toContain("['run', 'migrate:source-artifact-verify']");
+  });
 });

@@ -879,6 +879,26 @@ const SOURCE_ARTIFACT_COLUMNS = new Map<string, SqliteColumnSpec>([
   ['updatedAt', { type: 'DATETIME', required: true, defaultValue: null }],
 ]);
 
+// SAAS-201 is the only registered successor shape. CORE-204 must continue to
+// recognize its own exact shell during ordered upgrades, while rejecting any
+// unregistered extra column or index drift.
+const SOURCE_ARTIFACT_SAAS201_COLUMNS = new Map<string, SqliteColumnSpec>([
+  ...SOURCE_ARTIFACT_COLUMNS,
+  ['artifactKind', { type: 'TEXT', required: true, defaultValue: "'external_reference'" }],
+  ['source', { type: 'TEXT', required: true, defaultValue: "'legacy'" }],
+  ['externalRef', { type: 'TEXT', required: false, defaultValue: null }],
+  ['idempotencyDomain', { type: 'TEXT', required: true, defaultValue: "'system-quarantine-v1'" }],
+  ['title', { type: 'TEXT', required: true, defaultValue: "''" }],
+  ['occurredAt', { type: 'DATETIME', required: false, defaultValue: null }],
+  ['fingerprintKind', { type: 'TEXT', required: true, defaultValue: "'reference_sha256_v1'" }],
+  ['sourceFingerprint', {
+    type: 'TEXT', required: true,
+    defaultValue: "'0000000000000000000000000000000000000000000000000000000000000000'",
+  }],
+  ['retentionState', { type: 'TEXT', required: true, defaultValue: "'reference_only'" }],
+  ['retentionUpdatedAt', { type: 'DATETIME', required: true, defaultValue: 'CURRENT_TIMESTAMP' }],
+]);
+
 const SENSITIVE_GRANT_COLUMNS = new Map<string, SqliteColumnSpec>([
   ['id', { type: 'TEXT', required: true, defaultValue: null, primaryKey: true }],
   ['tenantId', { type: 'TEXT', required: true, defaultValue: null }],
@@ -905,6 +925,19 @@ const SOURCE_ARTIFACT_INDEXES = new Map<string, SqliteIndexSpec>([
   }],
   ['SourceArtifact_tenantId_backingKind_backingId_key', {
     unique: true, columns: ['tenantId', 'backingKind', 'backingId'],
+  }],
+]);
+
+const SOURCE_ARTIFACT_SAAS201_INDEXES = new Map<string, SqliteIndexSpec>([
+  ...SOURCE_ARTIFACT_INDEXES,
+  ['SourceArtifact_tenantId_domain_source_externalRef_key', {
+    unique: true, columns: ['tenantId', 'idempotencyDomain', 'source', 'externalRef'],
+  }],
+  ['SourceArtifact_tenantId_artifactKind_createdAt_idx', {
+    unique: false, columns: ['tenantId', 'artifactKind', 'createdAt'],
+  }],
+  ['SourceArtifact_tenantId_retentionState_updatedAt_idx', {
+    unique: false, columns: ['tenantId', 'retentionState', 'updatedAt'],
   }],
 ]);
 
@@ -1029,13 +1062,20 @@ export async function inspectSensitiveAclSchemaState(
     db.$queryRawUnsafe<SqliteColumnRow[]>('PRAGMA table_info("SourceArtifact")'),
     db.$queryRawUnsafe<SqliteColumnRow[]>('PRAGMA table_info("SensitiveResourceGrant")'),
   ]);
-  if (!columnsMatchExact(artifactColumns, SOURCE_ARTIFACT_COLUMNS)
+  const artifactCore204Shape = columnsMatchExact(artifactColumns, SOURCE_ARTIFACT_COLUMNS);
+  const artifactSaas201Shape = columnsMatchExact(artifactColumns, SOURCE_ARTIFACT_SAAS201_COLUMNS);
+  if ((!artifactCore204Shape && !artifactSaas201Shape)
     || !columnsMatchExact(grantColumns, SENSITIVE_GRANT_COLUMNS)) return 'partial';
 
   const [artifactIndexes, grantIndexes, noteIndexes, transcriptIndexes, legacyTranscriptIndexAbsent,
     candidateIndexes,
     artifactForeignKey, grantForeignKey] = await Promise.all([
-    indexesMatch(db, 'SourceArtifact', SOURCE_ARTIFACT_INDEXES, true),
+    indexesMatch(
+      db,
+      'SourceArtifact',
+      artifactSaas201Shape ? SOURCE_ARTIFACT_SAAS201_INDEXES : SOURCE_ARTIFACT_INDEXES,
+      true,
+    ),
     indexesMatch(db, 'SensitiveResourceGrant', SENSITIVE_GRANT_INDEXES, true),
     indexesMatch(db, 'Note', new Map<string, SqliteIndexSpec>([
       ['Note_tenantId_createdByUserId_visibility_idx', {

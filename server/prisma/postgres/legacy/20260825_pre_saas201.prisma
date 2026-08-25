@@ -5,7 +5,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -654,39 +654,26 @@ model Candidate {
 
 // G4 敏感来源基座。CORE-204 只建立 ACL-ready 物理模型；产品导入、投影与挂载 API 由 SAAS-201 开放。
 model SourceArtifact {
-  id                 String   @id
-  tenantId           String
-  tenant             Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  accountId          String?
-  matterId           String?
-  personId           String?
-  backingKind        String
-  backingId          String
-  artifactKind       String   @default("external_reference")
-  source             String   @default("legacy")
-  externalRef        String?
-  idempotencyDomain  String   @default("system-quarantine-v1")
-  title              String   @default("")
-  occurredAt         DateTime?
-  fingerprintKind    String   @default("reference_sha256_v1")
-  sourceFingerprint  String   @default("0000000000000000000000000000000000000000000000000000000000000000")
-  retentionState     String   @default("reference_only")
-  retentionUpdatedAt DateTime @default(now())
-  createdByUserId    String?
-  visibility         String   @default("owner_admin_only")
-  aclVersion         Int      @default(1)
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  id              String   @id
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  accountId       String?
+  matterId        String?
+  personId        String?
+  backingKind     String
+  backingId       String
+  createdByUserId String?
+  visibility      String   @default("owner_admin_only")
+  aclVersion      Int      @default(1)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   @@unique([tenantId, backingKind, backingId])
-  @@unique([tenantId, idempotencyDomain, source, externalRef], map: "SourceArtifact_tenantId_domain_source_externalRef_key")
   @@index([tenantId, accountId])
   @@index([tenantId, matterId])
   @@index([tenantId, personId])
   @@index([tenantId, createdByUserId, visibility])
   @@index([tenantId, visibility, aclVersion])
-  @@index([tenantId, artifactKind, createdAt])
-  @@index([tenantId, retentionState, updatedAt])
 }
 
 // 显式敏感资源授权。正文、证据和密文绝不复制到授权记录；resourceAclVersion 绑定当前 ACL 世代。

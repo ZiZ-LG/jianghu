@@ -73,6 +73,10 @@ describe('server product capability enforcement', () => {
     });
     await expectDenied(context.app, context.token, 'POST', '/api/commands/methodology', {});
     await expectDenied(context.app, context.token, 'GET', '/api/pde/missing/ev');
+    await expectDenied(context.app, context.token, 'GET', '/api/source-artifacts');
+    await expectDenied(context.app, context.token, 'POST', '/api/source-artifacts/external', {
+      source: 'free-denied', externalRef: 'free-denied-ref',
+    });
     expect(await context.prisma.account.count({ where: { tenantId: context.tenant.id } })).toBe(0);
     expect(await context.prisma.opportunity.count({ where: { tenantId: context.tenant.id } })).toBe(0);
   });
@@ -137,6 +141,10 @@ describe('server product capability enforcement', () => {
     expect((await context.app.inject({ method: 'POST', url: '/api/opportunity/clone', headers: auth(context.token), payload: {} })).statusCode).not.toBe(403);
     expect((await context.app.inject({ method: 'POST', url: '/api/commands/methodology', headers: auth(context.token), payload: {} })).statusCode).not.toBe(403);
     expect((await context.app.inject({ method: 'GET', url: '/api/pde/missing/ev', headers: auth(context.token) })).statusCode).not.toBe(403);
+    expect((await context.app.inject({ method: 'GET', url: '/api/source-artifacts', headers: auth(context.token) })).statusCode).toBe(200);
+    expect((await context.app.inject({
+      method: 'POST', url: '/api/source-artifacts/external', headers: auth(context.token), payload: {},
+    })).statusCode).not.toBe(403);
   });
 
   it('returns the same typed 403 when proposal review lacks its generated Action entitlement', async () => {

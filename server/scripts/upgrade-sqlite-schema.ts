@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import type { CandidateSchemaState } from '../src/candidates/migration.js';
 import type { SensitiveAclSchemaState } from '../src/sensitiveAcl/migration.js';
+import type { SourceArtifactSchemaState } from '../src/sourceArtifacts/migration.js';
 
 type MatterSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
 type ParticipantSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
@@ -266,6 +267,7 @@ let pdeDecisionContextState: PdeDecisionContextSchemaState;
 let customerState: CustomerSchemaState;
 let candidateState: CandidateSchemaState;
 let sensitiveAclState: SensitiveAclSchemaState;
+let sourceArtifactState: SourceArtifactSchemaState;
 let backupPath: string | null = null;
 let schemaChanges = false;
 let matterBackfillRequired = false;
@@ -280,6 +282,8 @@ let candidateExpansionRequired = false;
 let candidateBackfillRequired = false;
 let sensitiveAclExpansionRequired = false;
 let sensitiveAclBackfillRequired = false;
+let sourceArtifactExpansionRequired = false;
+let sourceArtifactBackfillRequired = false;
 
 try {
   state = await inspectSchemaState(prisma);
@@ -293,6 +297,8 @@ try {
   candidateState = await inspectCandidateSchemaState(prisma);
   const { inspectSensitiveAclSchemaState } = await import('../src/sensitiveAcl/migration.js');
   sensitiveAclState = await inspectSensitiveAclSchemaState(prisma);
+  const { inspectSourceArtifactSchemaState } = await import('../src/sourceArtifacts/migration.js');
+  sourceArtifactState = await inspectSourceArtifactSchemaState(prisma);
   if (state === 'partial') {
     throw new Error('partial Matter column expansion detected; restore the latest backup before retrying');
   }
@@ -317,6 +323,9 @@ try {
   if (candidateState === 'partial') {
     throw new Error('partial Candidate foundation detected; restore the latest backup before retrying');
   }
+  if (sourceArtifactState === 'partial') {
+    throw new Error('partial SourceArtifact projection expansion detected; restore the latest backup before retrying');
+  }
   if (sensitiveAclState === 'partial') {
     throw new Error('partial sensitive resource ACL expansion detected; restore the latest backup before retrying');
   }
@@ -325,6 +334,8 @@ try {
   candidateBackfillRequired = candidateState !== 'expanded';
   sensitiveAclExpansionRequired = sensitiveAclState === 'uninitialized' || sensitiveAclState === 'legacy';
   sensitiveAclBackfillRequired = sensitiveAclState !== 'expanded';
+  sourceArtifactExpansionRequired = sourceArtifactState === 'uninitialized' || sourceArtifactState === 'legacy';
+  sourceArtifactBackfillRequired = sourceArtifactState !== 'expanded';
   if (candidateState === 'legacy') {
     run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:candidate-report'], url);
   } else if (candidateState === 'expanded') {
@@ -343,6 +354,15 @@ try {
     sensitiveAclBackfillRequired = !marker;
     run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
       'run', marker ? 'migrate:sensitive-acl-verify' : 'migrate:sensitive-acl-report',
+    ], url);
+  }
+  if (sourceArtifactState === 'expanded') {
+    const marker = await prisma.dataMigrationState.findUnique({
+      where: { key: 'SAAS-201-source-artifact-projection-v1' }, select: { key: true },
+    });
+    sourceArtifactBackfillRequired = !marker;
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
+      'run', marker ? 'migrate:source-artifact-verify' : 'migrate:source-artifact-report',
     ], url);
   }
   if (state === 'legacy') {
@@ -435,7 +455,7 @@ try {
     }
   }
   schemaChanges = state === 'uninitialized' ? true : schemaHasChanges(url);
-  if (state !== 'uninitialized' && (schemaChanges || matterBackfillRequired || participantBackfillRequired || commitmentBackfillRequired || methodologyExpansionRequired || methodologyDataExpansionRequired || pdeDecisionContextExpansionRequired || pdeDecisionContextBackfillRequired || customerExpansionRequired || candidateExpansionRequired || candidateBackfillRequired || sensitiveAclExpansionRequired || sensitiveAclBackfillRequired)) {
+  if (state !== 'uninitialized' && (schemaChanges || matterBackfillRequired || participantBackfillRequired || commitmentBackfillRequired || methodologyExpansionRequired || methodologyDataExpansionRequired || pdeDecisionContextExpansionRequired || pdeDecisionContextBackfillRequired || customerExpansionRequired || candidateExpansionRequired || candidateBackfillRequired || sensitiveAclExpansionRequired || sensitiveAclBackfillRequired || sourceArtifactExpansionRequired || sourceArtifactBackfillRequired)) {
     backupPath = await createConsistentBackup(prisma, databasePath);
   }
 } finally {
@@ -458,6 +478,10 @@ try {
   const { inspectSensitiveAclSchemaState } = await import('../src/sensitiveAcl/migration.js');
   if (await inspectSensitiveAclSchemaState(postPushPrisma) !== 'expanded') {
     throw new Error('sensitive resource ACL expansion verification failed');
+  }
+  const { inspectSourceArtifactSchemaState } = await import('../src/sourceArtifacts/migration.js');
+  if (await inspectSourceArtifactSchemaState(postPushPrisma) !== 'expanded') {
+    throw new Error('SourceArtifact projection expansion verification failed');
   }
 } finally {
   await postPushPrisma.$disconnect();
@@ -493,6 +517,10 @@ if (sensitiveAclBackfillRequired) {
   run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:sensitive-acl-apply'], url);
 }
 run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:sensitive-acl-verify'], url);
+if (sourceArtifactBackfillRequired) {
+  run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:source-artifact-apply'], url);
+}
+run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:source-artifact-verify'], url);
 
 console.log(JSON.stringify({
   ok: true,
@@ -518,5 +546,8 @@ console.log(JSON.stringify({
   sensitiveAclStateBefore: sensitiveAclState,
   sensitiveAclExpansionRequired,
   sensitiveAclBackfillRequired,
+  sourceArtifactStateBefore: sourceArtifactState,
+  sourceArtifactExpansionRequired,
+  sourceArtifactBackfillRequired,
   backupPath,
 }, null, 2));

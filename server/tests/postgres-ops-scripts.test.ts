@@ -743,3 +743,41 @@ describe('CORE-204 sensitive ACL migration operations', () => {
     expect(drill).toContain("payload::jsonb ->> 'legacyDedupeKey' = \\\"dedupeKey\\\"");
   });
 });
+
+describe('SAAS-201 SourceArtifact projection migration operations', () => {
+  it('failure-injects committed DDL adoption, semantic drift, marker drift, partial schema, and restore', async () => {
+    const deploy = await read('server/scripts/deploy-postgres-migrations.sh');
+    const drill = await read('scripts/test-postgres-ops-integration.sh');
+
+    expect(deploy).toContain('SOURCE_ARTIFACT_MIGRATION=20260825010000_expand_source_artifact_projection');
+    expect(deploy).toContain('recover_incomplete_source_artifact_migration');
+    expect(deploy).toContain('adopt_existing_source_artifact_schema_if_safe');
+    expect(deploy).toContain('source_artifact_schema_matches_known_state');
+    expect(deploy.lastIndexOf('npm run migrate:source-artifact-report'))
+      .toBeGreaterThan(deploy.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deploy.lastIndexOf('npm run migrate:source-artifact-apply'))
+      .toBeGreaterThan(deploy.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deploy.lastIndexOf('npm run migrate:source-artifact-verify'))
+      .toBeGreaterThan(deploy.lastIndexOf('npm run migrate:source-artifact-apply'));
+
+    for (const marker of [
+      'SOURCE_ARTIFACT_BACKFILL_APPLY_OK=1',
+      'SOURCE_ARTIFACT_CREATOR_QUARANTINE_OK=1',
+      'INTERRUPTED_SOURCE_ARTIFACT_AFTER_COMMIT_ADOPTION_OK=1',
+      'SOURCE_ARTIFACT_SEMANTIC_CONFLICT_FAIL_CLOSED_OK=1',
+      'SOURCE_ARTIFACT_FINGERPRINT_DRIFT_FAIL_CLOSED_OK=1',
+      'SOURCE_ARTIFACT_MARKER_CHECKSUM_FAIL_CLOSED_OK=1',
+      'PARTIAL_SOURCE_ARTIFACT_SCHEMA_FAIL_CLOSED_OK=1',
+      'SOURCE_ARTIFACT_RESTORE_ROLLBACK_OK=1',
+      'SAAS_201_SOURCE_ARTIFACT_CUTOVER_OK=1',
+    ]) expect(drill).toContain(marker);
+    expect(drill).toContain('20260825010000_expand_source_artifact_projection');
+    expect(drill).toContain('prisma/postgres/legacy/20260825_pre_saas201.prisma');
+    expect(drill).toContain('migrate:source-artifact-report');
+    expect(drill).toContain('migrate:source-artifact-apply');
+    expect(drill).toContain('migrate:source-artifact-verify');
+    expect(drill).toContain("key = 'SAAS-201-source-artifact-projection-v1'");
+    expect(drill).toContain("'{integrityChecksum}'");
+    expect(drill).toContain("column_name IN ('content','contentEnc','body','payload')");
+  });
+});
