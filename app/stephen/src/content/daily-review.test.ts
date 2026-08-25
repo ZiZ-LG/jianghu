@@ -289,7 +289,7 @@ describe('SAAS-606 deterministic owner-review boundary', () => {
 
   it.each([
     'https://openai.com/index/safe>\n\n# injected-heading',
-    'https://user:password@openai.com/index/credential-leak',
+    'https://credential_user@localhost/credential-leak',
   ])('rejects a proposed URL that can escape or expose data in PR Markdown: %s', (canonicalUrl) => {
     const report = dailyReport();
     report.scans[0].records[0] = intakeRecord({
