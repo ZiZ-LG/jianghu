@@ -577,6 +577,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   review:
+    if: github.event_name != 'schedule' || vars.STEPHEN_DAILY_SCHEDULE_ENABLED == '1'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -640,6 +641,14 @@ describe('SAAS-606 GitHub workflow safety contract', () => {
       label: 'wrong Beijing schedule',
       workflow: validWorkflowContract.replace("'30 23 * * *'", "'30 7 * * *'"),
       error: 'workflow schedules must represent Beijing 07:30 and 16:30',
+    },
+    {
+      label: 'scheduled production runs enabled by default',
+      workflow: validWorkflowContract.replace(
+        "    if: github.event_name != 'schedule' || vars.STEPHEN_DAILY_SCHEDULE_ENABLED == '1'\n",
+        '',
+      ),
+      error: 'scheduled production runs must require explicit opt-in',
     },
     {
       label: 'untrusted pull request target',

@@ -254,7 +254,7 @@ permissions:
 
 只使用 GitHub 自带 `GITHUB_TOKEN`、`actions/checkout@v4`、`actions/setup-node@v4` 和 runner 中的 GitHub CLI，不使用 PAT、第三方 PR Action、`pull_request_target` 或 artifact。候选分支使用普通 push，不 force-push。复用候选分支前，工作流会在受信任 checkout 上确认该分支相对目标 base 只修改当天的 `review-manifest.json` 和 `discovery-ledger.json`，并确认两者都存在且为 `100644 blob`；删除整文件、symlink、可执行文件以及任何脚本、依赖、workflow 或其他路径变化，都会在执行候选分支代码前失败关闭。
 
-定时任务只有在本工作流合并到默认分支后才会正式生效；功能分支期间只允许人工 dispatch。定时和人工 live 运行都必须从仓库默认分支执行并以默认分支为 base，只有这一路径会读取 AI Secrets；fixture 模式强制以被 dispatch 的非默认功能分支为 base，不能指向 `main`，也不会注入 AI Secrets。
+两个 cron 会随工作流进入默认分支而被 GitHub 登记，但 `review` job 默认失败关闭：只有仓库变量 `STEPHEN_DAILY_SCHEDULE_ENABLED` 被项目所有者显式设为字符串 `1`，schedule 事件才会执行。变量缺失、为空或为其他值时，定时运行只显示为 skipped，不扫描来源、不读取 AI Secrets、不写分支或 PR；`workflow_dispatch` 不受该开关影响。定时和人工 live 运行都必须从仓库默认分支执行并以默认分支为 base，只有实际执行的 live 路径会读取 AI Secrets；fixture 模式强制以被 dispatch 的非默认功能分支为 base，不能指向 `main`，也不会注入 AI Secrets。
 
 ### 12.2 同日复用与项目所有者删除
 

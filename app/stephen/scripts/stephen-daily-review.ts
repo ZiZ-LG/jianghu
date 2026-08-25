@@ -862,6 +862,10 @@ export function validateDailyIntakeWorkflow(workflow: string) {
     || expectedSchedules.some((schedule) => !schedules.includes(schedule))) {
     throw new Error('workflow schedules must represent Beijing 07:30 and 16:30');
   }
+  if (!/^\s{2}review:\s*\n\s{4}if:\s*github\.event_name != 'schedule' \|\| vars\.STEPHEN_DAILY_SCHEDULE_ENABLED == '1'\s*\n\s{4}runs-on:/m
+    .test(workflow)) {
+    throw new Error('scheduled production runs must require explicit opt-in');
+  }
   const runners = [...workflow.matchAll(/^\s*runs-on:\s*([^\s#]+).*$/gm)]
     .map((match) => match[1]);
   if (runners.length !== 1 || runners[0] !== 'ubuntu-latest') {

@@ -175,17 +175,19 @@ Diff must contain only `app/stephen/**`, `docs/content/stephen-*`, this plan and
 
 Commit message: `feat(SAAS-606): add daily candidate Draft PR gate`.
 
-- [ ] **Step 5: Wait for exact-head remote CI**
+- [x] **Step 5: Wait for exact-head remote CI**
 
 Both `CI` and `Stephen checks` triggered for the feature branch must be successful before fixture dispatch.
 
+Feature commit `da3b9572b278315c45ae1c42d31e40a5487ede51` passed both remote workflows before fixture acceptance.
+
 ### Task 6: Real fixture Draft PR acceptance
 
-- [ ] **Step 1: Confirm the test head branch and PR do not already exist**
+- [x] **Step 1: Confirm the test head branch and PR do not already exist**
 
 Check `codex/stephen-daily-test-2026-08-24` and exact head/base PR state without deleting or overwriting anything.
 
-- [ ] **Step 2: Dispatch the workflow from the feature branch**
+- [x] **Step 2: Execute the equivalent fixture acceptance path from the feature branch**
 
 ```bash
 gh workflow run stephen-daily-intake.yml \
@@ -195,10 +197,14 @@ gh workflow run stephen-daily-intake.yml \
   -f target_base=codex/stephen-daily-candidate-pr
 ```
 
-- [ ] **Step 3: Wait for workflow success and inspect the Draft PR**
+GitHub does not register a newly added workflow for `workflow_dispatch` until it exists on the default branch. After the feature SHA passed CI, acceptance therefore used the same fixture CLI, stable branch naming, exact head/base resolver, PR body and regular-push mutation steps manually; PR #40 records this controlled exception.
+
+- [x] **Step 3: Wait for acceptance-branch CI success and inspect the Draft PR**
 
 Verify Draft state, exact base/head, required statistics, every proposed source link/risk warning, fixture/no-publication warning, editable manifest and absence of secrets/artifacts.
 
-- [ ] **Step 4: Stop at the owner review gate**
+- [x] **Step 4: Stop at and complete the owner review gate**
 
-Leave the test Draft PR open for project-owner review. Do not merge `main`, deploy, change traffic, or start SAAS-607.
+PR #40 was presented for project-owner review with the required fixture and no-publication warnings. It was later merged only into the temporary SAAS-606 feature branch. The formal closure branch was rebuilt from `main` and intentionally excludes that test-branch ancestry, so neither generated candidate JSON file enters the formal PR or `main` history. No deployment, traffic change, public-collection mutation or SAAS-607 work occurred.
+
+The cron expressions remain defined, but scheduled production execution is fail-closed behind repository variable `STEPHEN_DAILY_SCHEDULE_ENABLED=1`. The variable is intentionally not configured during SAAS-606 closure, so merge to `main` does not scan sources or write candidate branches on schedule; manual dispatch remains available.
