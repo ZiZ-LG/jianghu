@@ -395,6 +395,7 @@ describe('SAAS-606 same-day Draft PR review state', () => {
     expect(second.ledger.seenCandidateIds).toContain('ED-HIGH');
     expect(second.ledger.seenCandidateIds).toContain('ED-NEW');
     expect(second.ledger.runs).toHaveLength(2);
+    expect(second.summary.newDiscoveries).toBe(1);
     expect(second.summary.proposed).toBe(2);
   });
 
@@ -414,6 +415,7 @@ describe('SAAS-606 same-day Draft PR review state', () => {
 
     expect(retry.manifest).toEqual(first.manifest);
     expect(retry.ledger).toEqual(first.ledger);
+    expect(retry.summary.newDiscoveries).toBe(0);
   });
 
   it('renders the complete review summary, safe source links and risk warnings', () => {
@@ -446,47 +448,82 @@ describe('SAAS-606 same-day Draft PR review state', () => {
   });
 
   it('creates once, updates the same open Draft, and skips a closed same-day PR', () => {
-    expect(resolveDraftPrAction([])).toEqual({ action: 'create' });
-    expect(resolveDraftPrAction([{
+    const identity = {
+      repository: 'ZiZ-LG/jianghu',
+      headRef: 'codex/stephen-daily-2026-08-24',
+      baseRef: 'main',
+    };
+    const matchingPr = (overrides: Record<string, unknown> = {}) => ({
       number: 42,
       state: 'OPEN',
       isDraft: true,
       url: 'https://github.com/ZiZ-LG/jianghu/pull/42',
-    }])).toEqual({
+      headRepository: 'ZiZ-LG/jianghu',
+      headRef: 'codex/stephen-daily-2026-08-24',
+      baseRef: 'main',
+      isCrossRepository: false,
+      ...overrides,
+    });
+
+    expect(resolveDraftPrAction([], identity)).toEqual({ action: 'create' });
+    expect(resolveDraftPrAction([{
+      ...matchingPr(),
+    }], identity)).toEqual({
       action: 'update',
       number: 42,
       url: 'https://github.com/ZiZ-LG/jianghu/pull/42',
     });
     expect(resolveDraftPrAction([{
-      number: 42,
-      state: 'MERGED',
-      isDraft: false,
-      url: 'https://github.com/ZiZ-LG/jianghu/pull/42',
-    }])).toEqual({
+      ...matchingPr({ state: 'MERGED', isDraft: false }),
+    }], identity)).toEqual({
       action: 'skip_closed',
       number: 42,
       url: 'https://github.com/ZiZ-LG/jianghu/pull/42',
     });
   });
 
-  it('fails closed for a non-Draft or ambiguous matching PR', () => {
-    expect(() => resolveDraftPrAction([{
-      number: 42,
-      state: 'OPEN',
-      isDraft: false,
-      url: 'https://github.com/ZiZ-LG/jianghu/pull/42',
-    }])).toThrow('existing review PR is no longer a Draft');
-    expect(() => resolveDraftPrAction([{
+  it('fails closed for a non-Draft, cross-repository or ambiguous matching PR', () => {
+    const identity = {
+      repository: 'ZiZ-LG/jianghu',
+      headRef: 'codex/stephen-daily-2026-08-24',
+      baseRef: 'main',
+    };
+    const matchingPr = (overrides: Record<string, unknown> = {}) => ({
       number: 42,
       state: 'OPEN',
       isDraft: true,
       url: 'https://github.com/ZiZ-LG/jianghu/pull/42',
+      headRepository: 'ZiZ-LG/jianghu',
+      headRef: 'codex/stephen-daily-2026-08-24',
+      baseRef: 'main',
+      isCrossRepository: false,
+      ...overrides,
+    });
+
+    expect(() => resolveDraftPrAction([{
+      ...matchingPr({ isDraft: false }),
+    }], identity)).toThrow('existing review PR is no longer a Draft');
+    expect(() => resolveDraftPrAction([{
+      ...matchingPr({
+        headRepository: 'attacker/jianghu',
+        isCrossRepository: true,
+      }),
+    }], identity)).toThrow('review PR identity does not match');
+    expect(() => resolveDraftPrAction([{
+      ...matchingPr({ headRef: 'codex/stephen-daily-2026-08-23' }),
+    }], identity)).toThrow('review PR identity does not match');
+    expect(() => resolveDraftPrAction([{
+      ...matchingPr({ baseRef: 'release' }),
+    }], identity)).toThrow('review PR identity does not match');
+    expect(() => resolveDraftPrAction([{
+      ...matchingPr(),
     }, {
-      number: 43,
-      state: 'CLOSED',
-      isDraft: true,
-      url: 'https://github.com/ZiZ-LG/jianghu/pull/43',
-    }])).toThrow('multiple review PRs match the same head and base');
+      ...matchingPr({
+        number: 43,
+        state: 'CLOSED',
+        url: 'https://github.com/ZiZ-LG/jianghu/pull/43',
+      }),
+    }], identity)).toThrow('multiple review PRs match the same head and base');
   });
 });
 
@@ -519,9 +556,15 @@ describe('SAAS-606 fixture CLI contract', () => {
     expect(parseDailyReviewCliArgs([
       'resolve-pr',
       '--prs-file', '/tmp/prs.json',
+      '--repository', 'ZiZ-LG/jianghu',
+      '--head', 'codex/stephen-daily-2026-08-24',
+      '--base', 'main',
     ])).toEqual({
       command: 'resolve-pr',
       prsFile: '/tmp/prs.json',
+      repository: 'ZiZ-LG/jianghu',
+      headRef: 'codex/stephen-daily-2026-08-24',
+      baseRef: 'main',
     });
     expect(parseDailyReviewCliArgs([
       'validate-workflow',
@@ -607,6 +650,27 @@ jobs:
       - run: npx vitest run --root stephen
       - run: npm run build:stephen
       - run: git add -- ":(top)$MANIFEST_PATH" ":(top)$LEDGER_PATH"
+      - run: |
+          gh api --method GET "repos/$GH_REPO/pulls" \
+            -f state=all \
+            -f head="$GH_REPO_OWNER:$CANDIDATE_BRANCH" \
+            -f base="$TARGET_BASE"
+          node --experimental-strip-types stephen/scripts/stephen-daily-review-cli.ts resolve-pr --prs-file "$RUNNER_TEMP/saas-606-prs.json" --repository "$GH_REPO" --head "$CANDIDATE_BRANCH" --base "$TARGET_BASE"
+          gh api --method GET "repos/$GH_REPO/pulls" \
+            -f head="$GH_REPO_OWNER:$CANDIDATE_BRANCH"
+          node --experimental-strip-types stephen/scripts/stephen-daily-review-cli.ts resolve-pr --prs-file "$RUNNER_TEMP/saas-606-prs.json" --repository "$GH_REPO" --head "$CANDIDATE_BRANCH" --base "$TARGET_BASE"
+          echo "review PR state changed before mutation"
+          gh api --method GET "repos/$GH_REPO/pulls" \
+            -f head="$GH_REPO_OWNER:$CANDIDATE_BRANCH"
+          node --experimental-strip-types stephen/scripts/stephen-daily-review-cli.ts resolve-pr --prs-file "$RUNNER_TEMP/saas-606-prs.json" --repository "$GH_REPO" --head "$CANDIDATE_BRANCH" --base "$TARGET_BASE"
+          echo "review PR state changed before mutation"
+          gh api --method GET "repos/$GH_REPO/pulls" \
+            -f head="$GH_REPO_OWNER:$CANDIDATE_BRANCH"
+          node --experimental-strip-types stephen/scripts/stephen-daily-review-cli.ts resolve-pr --prs-file "$RUNNER_TEMP/saas-606-prs.json" --repository "$GH_REPO" --head "$CANDIDATE_BRANCH" --base "$TARGET_BASE"
+          echo "review PR state changed before mutation"
+          if [[ "$actual_action" != "$EXPECTED_PR_ACTION" ]]; then
+            exit 1
+          fi
       - env:
           EDITORIAL_AI_BASE_URL: \${{ secrets.EDITORIAL_AI_BASE_URL }}
           EDITORIAL_AI_MODEL: \${{ secrets.EDITORIAL_AI_MODEL }}
@@ -704,6 +768,22 @@ describe('SAAS-606 GitHub workflow safety contract', () => {
         'git status --short',
       ),
       error: 'candidate review files must be regular non-executable blobs',
+    },
+    {
+      label: 'fork PRs allowed to match a predictable head name',
+      workflow: validWorkflowContract.replace(
+        '-f head="$GH_REPO_OWNER:$CANDIDATE_BRANCH"',
+        '-f head="$CANDIDATE_BRANCH"',
+      ),
+      error: 'workflow must scope review PRs to the current repository owner',
+    },
+    {
+      label: 'PR state checked only once before later mutations',
+      workflow: validWorkflowContract.replace(
+        'node --experimental-strip-types stephen/scripts/stephen-daily-review-cli.ts resolve-pr --prs-file "$RUNNER_TEMP/saas-606-prs.json" --repository "$GH_REPO" --head "$CANDIDATE_BRANCH" --base "$TARGET_BASE"',
+        'echo state-checked-once',
+      ),
+      error: 'workflow must revalidate the exact Draft PR before every mutation',
     },
     {
       label: 'partial source reports discarded after one RSS failure',

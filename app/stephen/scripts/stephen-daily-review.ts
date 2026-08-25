@@ -108,6 +108,12 @@ export type DraftPrAction =
     readonly url: string;
   };
 
+export interface DraftPrIdentity {
+  readonly repository: string;
+  readonly headRef: string;
+  readonly baseRef: string;
+}
+
 export type DailyReviewCliCommand =
   | {
     readonly command: 'context';
@@ -125,6 +131,9 @@ export type DailyReviewCliCommand =
   | {
     readonly command: 'resolve-pr';
     readonly prsFile: string;
+    readonly repository: string;
+    readonly headRef: string;
+    readonly baseRef: string;
   }
   | {
     readonly command: 'validate-workflow';
@@ -246,10 +255,24 @@ export function parseDailyReviewCliArgs(argv: readonly string[]): DailyReviewCli
     };
   }
   if (command === 'resolve-pr') {
-    requireExactOptions(options, ['--prs-file']);
+    requireExactOptions(options, [
+      '--prs-file',
+      '--repository',
+      '--head',
+      '--base',
+    ]);
     const prsFile = options.get('--prs-file')!;
-    if (!prsFile) invalidCliArguments();
-    return { command, prsFile };
+    const repository = options.get('--repository')!;
+    const headRef = options.get('--head')!;
+    const baseRef = options.get('--base')!;
+    if (!prsFile || !repository || !headRef || !baseRef) invalidCliArguments();
+    return {
+      command,
+      prsFile,
+      repository,
+      headRef,
+      baseRef,
+    };
   }
   if (command === 'validate-workflow') {
     requireExactOptions(options, ['--workflow']);
@@ -815,15 +838,27 @@ function renderPrBody(
   return body;
 }
 
-export function resolveDraftPrAction(value: readonly unknown[]): DraftPrAction {
+export function resolveDraftPrAction(
+  value: readonly unknown[],
+  identity: DraftPrIdentity,
+): DraftPrAction {
   if (value.length === 0) return { action: 'create' };
   if (value.length !== 1) {
     throw new Error('multiple review PRs match the same head and base');
   }
+  const repository = requireString(identity.repository, 'review repository');
+  const headRef = requireString(identity.headRef, 'review PR head');
+  const baseRef = requireString(identity.baseRef, 'review PR base');
   const pr = requireRecord(value[0], 'review PR');
   const number = requireNonNegativeInteger(pr.number, 'review PR number');
   const url = requireString(pr.url, 'review PR URL');
-  if (!url.startsWith('https://github.com/')) throw new Error('review PR URL is invalid');
+  if (pr.headRepository !== repository
+    || pr.headRef !== headRef
+    || pr.baseRef !== baseRef
+    || pr.isCrossRepository !== false
+    || url !== `https://github.com/${repository}/pull/${number}`) {
+    throw new Error('review PR identity does not match the current repository head and base');
+  }
   if (pr.state === 'OPEN') {
     if (pr.isDraft !== true) throw new Error('existing review PR is no longer a Draft');
     return { action: 'update', number, url };
@@ -971,6 +1006,18 @@ export function validateDailyIntakeWorkflow(workflow: string) {
   if (!/GITHUB_TOKEN:\s*\$\{\{\s*github\.token\s*\}\}/.test(workflow)) {
     throw new Error('workflow must use the repository GITHUB_TOKEN');
   }
+  const exactPrQuery = 'gh api --method GET "repos/$GH_REPO/pulls"';
+  const ownerScopedHead = '-f head="$GH_REPO_OWNER:$CANDIDATE_BRANCH"';
+  const resolveCommand = 'node --experimental-strip-types stephen/scripts/stephen-daily-review-cli.ts resolve-pr --prs-file "$RUNNER_TEMP/saas-606-prs.json" --repository "$GH_REPO" --head "$CANDIDATE_BRANCH" --base "$TARGET_BASE"';
+  const countOccurrences = (needle: string) => workflow.split(needle).length - 1;
+  if (countOccurrences(exactPrQuery) < 4
+    || countOccurrences(ownerScopedHead) < 4) {
+    throw new Error('workflow must scope review PRs to the current repository owner');
+  }
+  if (countOccurrences(resolveCommand) < 4
+    || countOccurrences('review PR state changed before mutation') < 3) {
+    throw new Error('workflow must revalidate the exact Draft PR before every mutation');
+  }
   if (/upload-artifact|actions:\s*write|write-all|GH_PAT|PERSONAL_ACCESS_TOKEN/i
     .test(workflow)) {
     throw new Error('workflow permissions must be minimal');
@@ -1040,7 +1087,9 @@ export function buildDailyReviewArtifacts(
     .filter((record) => record.disposition === 'duplicate')
     .map((record) => record.candidateId));
   const newIds = uniqueIds(report.records
-    .filter((record) => record.disposition !== 'duplicate')
+    .filter((record) => (
+      record.disposition !== 'duplicate' && !previouslySeen.has(record.candidateId)
+    ))
     .map((record) => record.candidateId));
   const rejectedIds = uniqueIds(report.decisions
     .filter((decision) => decision.disposition === 'rejected')

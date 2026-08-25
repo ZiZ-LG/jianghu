@@ -65,7 +65,7 @@
 
 每次扫描只创建“发现记录”，至少包含：稳定候选 ID、`sourceId`、规范原文 URL、原文标题、发布时间、抓取时间、短摘要、短证据摘录、事件键、内容指纹、规则版本和 provenance。页面不可访问、发布时间不明、非 HTTPS、链接主机越界、来源不在登记表或证据冲突时进入 `manual_review`，不进入拟发布候选。
 
-SAAS-606 的机器节奏固定为北京时间 `07:30` 和 `16:30`，GitHub Actions 分别使用 UTC cron `30 23 * * *` 和 `30 8 * * *`。同一天两次运行由全局 concurrency 串行执行，并复用同一个 `codex/stephen-daily-YYYY-MM-DD` 分支和同一个 Draft PR。
+SAAS-606 的机器节奏固定为北京时间 `07:30` 和 `16:30`，GitHub Actions 分别使用 UTC cron `30 23 * * *` 和 `30 8 * * *`。同一天两次运行由全局 concurrency 串行执行，并复用同一个 `codex/stephen-daily-YYYY-MM-DD` 分支和同一个 Draft PR。日内第二次扫描的“新发现数”只统计尚未进入当日 discovery ledger 的非重复 ID，重试同一份报告时该值为 `0`。
 
 ### 3.2 形成候选
 
@@ -268,6 +268,8 @@ permissions:
 `review-manifest.json` 只包含拟发布候选，状态固定为 `pending_owner_review / not_published`，不会被 `publicItems.ts` 导入。`discovery-ledger.json` 记录当天已经出现过的候选 ID 和每次扫描统计。项目所有者可在 PR 分支中删除 manifest 内不合格条目的完整 JSON 对象；由于该 ID 仍在 ledger 中，当天下一次运行不会把它重新加回。
 
 如果同 head/base 已有 open Draft PR，工作流只更新该 PR；如果 PR 已转为非 Draft，工作流失败关闭；如果同一 head/base 出现多个 PR，工作流因状态歧义失败；如果同日 PR 已关闭或合并，工作流不重新创建。没有拟发布条目且不存在既有 Draft PR 时，运行正常成功但不创建空 PR。
+
+PR 查询必须使用当前仓库 owner 限定的 `owner:branch` head，并校验返回的 head repository、head ref、base ref 和是否跨仓库；同名 fork 分支不得被识别为当日审核 PR。初次判定后，工作流在推送候选分支、创建 PR 和编辑 PR 之前都重新获取并校验该精确身份与状态；发现变化立即失败关闭。GitHub API 不提供跨“校验—修改”两次请求的通用原子条件更新，因此仍保留一个极窄的 API 竞态窗口；工作流串行化、普通非 force push、GitHub 的同 head/base PR 约束与临近修改的重新校验共同将其限制为失败关闭路径。
 
 ### 12.3 PR 审核信息
 

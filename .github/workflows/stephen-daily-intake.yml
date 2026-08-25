@@ -201,21 +201,19 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          GH_REPO_OWNER: ${{ github.repository_owner }}
           CANDIDATE_BRANCH: ${{ steps.context.outputs.branch_name }}
           TARGET_BASE: ${{ steps.context.outputs.target_base }}
         run: |
           set -euo pipefail
-          gh pr list \
-            --repo "$GH_REPO" \
-            --head "$CANDIDATE_BRANCH" \
-            --base "$TARGET_BASE" \
-            --state all \
-            --limit 10 \
-            --json number,state,isDraft,url \
+          gh api --method GET "repos/$GH_REPO/pulls" \
+            -f state=all \
+            -f head="$GH_REPO_OWNER:$CANDIDATE_BRANCH" \
+            -f base="$TARGET_BASE" \
+            -F per_page=10 \
+            | jq --arg repo "$GH_REPO" '[.[] | {number, state: (if .merged_at != null then "MERGED" else (.state | ascii_upcase) end), isDraft: .draft, url: .html_url, headRepository: .head.repo.full_name, headRef: .head.ref, baseRef: .base.ref, isCrossRepository: (.head.repo.full_name != $repo)}]' \
             > "$RUNNER_TEMP/saas-606-prs.json"
-          node --experimental-strip-types stephen/scripts/stephen-daily-review-cli.ts resolve-pr \
-            --prs-file "$RUNNER_TEMP/saas-606-prs.json" \
-            > "$RUNNER_TEMP/saas-606-pr-action.json"
+          node --experimental-strip-types stephen/scripts/stephen-daily-review-cli.ts resolve-pr --prs-file "$RUNNER_TEMP/saas-606-prs.json" --repository "$GH_REPO" --head "$CANDIDATE_BRANCH" --base "$TARGET_BASE" > "$RUNNER_TEMP/saas-606-pr-action.json"
           action=$(jq -r .action "$RUNNER_TEMP/saas-606-pr-action.json")
           number=$(jq -r '.number // ""' "$RUNNER_TEMP/saas-606-pr-action.json")
           url=$(jq -r '.url // ""' "$RUNNER_TEMP/saas-606-pr-action.json")
@@ -229,12 +227,33 @@ jobs:
         id: push
         if: steps.pr_state.outputs.action != 'skip_closed' && (steps.generate.outputs.proposed_count != '0' || steps.pr_state.outputs.action == 'update')
         env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          GH_REPO_OWNER: ${{ github.repository_owner }}
+          TARGET_BASE: ${{ steps.context.outputs.target_base }}
           CANDIDATE_BRANCH: ${{ steps.context.outputs.branch_name }}
           EDITORIAL_DATE: ${{ steps.context.outputs.editorial_date }}
           MANIFEST_PATH: ${{ steps.generate.outputs.manifest_path }}
           LEDGER_PATH: ${{ steps.generate.outputs.ledger_path }}
+          EXPECTED_PR_ACTION: ${{ steps.pr_state.outputs.action }}
+          EXPECTED_PR_NUMBER: ${{ steps.pr_state.outputs.number }}
         run: |
           set -euo pipefail
+          gh api --method GET "repos/$GH_REPO/pulls" \
+            -f state=all \
+            -f head="$GH_REPO_OWNER:$CANDIDATE_BRANCH" \
+            -f base="$TARGET_BASE" \
+            -F per_page=10 \
+            | jq --arg repo "$GH_REPO" '[.[] | {number, state: (if .merged_at != null then "MERGED" else (.state | ascii_upcase) end), isDraft: .draft, url: .html_url, headRepository: .head.repo.full_name, headRef: .head.ref, baseRef: .base.ref, isCrossRepository: (.head.repo.full_name != $repo)}]' \
+            > "$RUNNER_TEMP/saas-606-prs.json"
+          node --experimental-strip-types stephen/scripts/stephen-daily-review-cli.ts resolve-pr --prs-file "$RUNNER_TEMP/saas-606-prs.json" --repository "$GH_REPO" --head "$CANDIDATE_BRANCH" --base "$TARGET_BASE" > "$RUNNER_TEMP/saas-606-pr-action.json"
+          actual_action=$(jq -r .action "$RUNNER_TEMP/saas-606-pr-action.json")
+          actual_number=$(jq -r '.number // ""' "$RUNNER_TEMP/saas-606-pr-action.json")
+          if [[ "$actual_action" != "$EXPECTED_PR_ACTION" \
+            || ( "$actual_action" == "update" && "$actual_number" != "$EXPECTED_PR_NUMBER" ) ]]; then
+            echo "review PR state changed before mutation" >&2
+            exit 1
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -- ":(top)$MANIFEST_PATH" ":(top)$LEDGER_PATH"
@@ -252,12 +271,26 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          GH_REPO_OWNER: ${{ github.repository_owner }}
           CANDIDATE_BRANCH: ${{ steps.context.outputs.branch_name }}
           TARGET_BASE: ${{ steps.context.outputs.target_base }}
           PR_TITLE: ${{ steps.context.outputs.pr_title }}
           BODY_PATH: ${{ steps.generate.outputs.body_path }}
         run: |
           set -euo pipefail
+          gh api --method GET "repos/$GH_REPO/pulls" \
+            -f state=all \
+            -f head="$GH_REPO_OWNER:$CANDIDATE_BRANCH" \
+            -f base="$TARGET_BASE" \
+            -F per_page=10 \
+            | jq --arg repo "$GH_REPO" '[.[] | {number, state: (if .merged_at != null then "MERGED" else (.state | ascii_upcase) end), isDraft: .draft, url: .html_url, headRepository: .head.repo.full_name, headRef: .head.ref, baseRef: .base.ref, isCrossRepository: (.head.repo.full_name != $repo)}]' \
+            > "$RUNNER_TEMP/saas-606-prs.json"
+          node --experimental-strip-types stephen/scripts/stephen-daily-review-cli.ts resolve-pr --prs-file "$RUNNER_TEMP/saas-606-prs.json" --repository "$GH_REPO" --head "$CANDIDATE_BRANCH" --base "$TARGET_BASE" > "$RUNNER_TEMP/saas-606-pr-action.json"
+          actual_action=$(jq -r .action "$RUNNER_TEMP/saas-606-pr-action.json")
+          if [[ "$actual_action" != "create" ]]; then
+            echo "review PR state changed before mutation" >&2
+            exit 1
+          fi
           pr_url=$(gh pr create --draft --repo "$GH_REPO" --base "$TARGET_BASE" --head "$CANDIDATE_BRANCH" --title "$PR_TITLE" --body-file "$BODY_PATH")
           echo "url=$pr_url" >> "$GITHUB_OUTPUT"
 
@@ -266,11 +299,28 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          GH_REPO_OWNER: ${{ github.repository_owner }}
+          CANDIDATE_BRANCH: ${{ steps.context.outputs.branch_name }}
+          TARGET_BASE: ${{ steps.context.outputs.target_base }}
           PR_NUMBER: ${{ steps.pr_state.outputs.number }}
           PR_TITLE: ${{ steps.context.outputs.pr_title }}
           BODY_PATH: ${{ steps.generate.outputs.body_path }}
         run: |
           set -euo pipefail
+          gh api --method GET "repos/$GH_REPO/pulls" \
+            -f state=all \
+            -f head="$GH_REPO_OWNER:$CANDIDATE_BRANCH" \
+            -f base="$TARGET_BASE" \
+            -F per_page=10 \
+            | jq --arg repo "$GH_REPO" '[.[] | {number, state: (if .merged_at != null then "MERGED" else (.state | ascii_upcase) end), isDraft: .draft, url: .html_url, headRepository: .head.repo.full_name, headRef: .head.ref, baseRef: .base.ref, isCrossRepository: (.head.repo.full_name != $repo)}]' \
+            > "$RUNNER_TEMP/saas-606-prs.json"
+          node --experimental-strip-types stephen/scripts/stephen-daily-review-cli.ts resolve-pr --prs-file "$RUNNER_TEMP/saas-606-prs.json" --repository "$GH_REPO" --head "$CANDIDATE_BRANCH" --base "$TARGET_BASE" > "$RUNNER_TEMP/saas-606-pr-action.json"
+          actual_action=$(jq -r .action "$RUNNER_TEMP/saas-606-pr-action.json")
+          actual_number=$(jq -r '.number // ""' "$RUNNER_TEMP/saas-606-pr-action.json")
+          if [[ "$actual_action" != "update" || "$actual_number" != "$PR_NUMBER" ]]; then
+            echo "review PR state changed before mutation" >&2
+            exit 1
+          fi
           gh pr edit "$PR_NUMBER" --repo "$GH_REPO" --title "$PR_TITLE" --body-file "$BODY_PATH"
 
       - name: Record the owner-review gate

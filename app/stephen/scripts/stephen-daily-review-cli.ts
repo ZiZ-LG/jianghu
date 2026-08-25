@@ -53,7 +53,11 @@ async function main() {
   if (command.command === 'resolve-pr') {
     const value = await readJson(command.prsFile);
     if (!Array.isArray(value)) throw new Error('PR query result must be an array');
-    process.stdout.write(`${JSON.stringify(resolveDraftPrAction(value))}\n`);
+    process.stdout.write(`${JSON.stringify(resolveDraftPrAction(value, {
+      repository: command.repository,
+      headRef: command.headRef,
+      baseRef: command.baseRef,
+    }))}\n`);
     return;
   }
   if (command.command === 'validate-workflow') {
