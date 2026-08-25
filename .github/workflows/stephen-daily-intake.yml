@@ -1,0 +1,301 @@
+name: Stephen daily candidate review
+
+on:
+  schedule:
+    # Beijing 07:30 (UTC 23:30 on the previous calendar day)
+    - cron: '30 23 * * *'
+    # Beijing 16:30 (UTC 08:30)
+    - cron: '30 8 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Use fixture for acceptance; live scans approved RSS sources
+        required: true
+        default: fixture
+        type: choice
+        options:
+          - fixture
+          - live
+      editorial_date:
+        description: Optional Beijing date in YYYY-MM-DD form
+        required: false
+        type: string
+      target_base:
+        description: Optional review PR base; fixture mode must use the dispatched feature branch
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: stephen-daily-candidate-review
+  cancel-in-progress: false
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - name: Check out workflow ref
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Resolve Beijing review context
+        id: context
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          CURRENT_REF: ${{ github.ref_name }}
+          DISPATCH_MODE: ${{ inputs.mode }}
+          REQUESTED_DATE: ${{ inputs.editorial_date }}
+          REQUESTED_BASE: ${{ inputs.target_base }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "schedule" ]]; then
+            mode="live"
+            target_base="$DEFAULT_BRANCH"
+          else
+            mode="${DISPATCH_MODE:-fixture}"
+            target_base="${REQUESTED_BASE:-$CURRENT_REF}"
+          fi
+          editorial_date="${REQUESTED_DATE:-$(TZ=Asia/Shanghai date +%F)}"
+          git check-ref-format --branch "$target_base" >/dev/null
+          if [[ "$mode" == "fixture" ]]; then
+            if [[ "$target_base" == "$DEFAULT_BRANCH" || "$target_base" != "$CURRENT_REF" ]]; then
+              echo "fixture mode must target the dispatched non-default feature branch" >&2
+              exit 1
+            fi
+          fi
+          if [[ "$mode" == "live" && ( "$target_base" != "$DEFAULT_BRANCH" || "$CURRENT_REF" != "$DEFAULT_BRANCH" ) ]]; then
+            echo "live mode must run from and target the default branch" >&2
+            exit 1
+          fi
+          context_json=$(node --experimental-strip-types stephen/scripts/stephen-daily-review-cli.ts context --date "$editorial_date" --mode "$mode")
+          branch_name=$(jq -r .branchName <<<"$context_json")
+          pr_title=$(jq -r .prTitle <<<"$context_json")
+          {
+            echo "mode=$mode"
+            echo "editorial_date=$editorial_date"
+            echo "target_base=$target_base"
+            echo "branch_name=$branch_name"
+            echo "pr_title=$pr_title"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Reuse or create the same-day candidate branch
+        env:
+          TARGET_BASE: ${{ steps.context.outputs.target_base }}
+          CANDIDATE_BRANCH: ${{ steps.context.outputs.branch_name }}
+          EDITORIAL_DATE: ${{ steps.context.outputs.editorial_date }}
+        run: |
+          set -euo pipefail
+          git fetch origin "refs/heads/$TARGET_BASE:refs/remotes/origin/$TARGET_BASE"
+          if git ls-remote --exit-code --heads origin "refs/heads/$CANDIDATE_BRANCH" >/dev/null 2>&1; then
+            git fetch origin "refs/heads/$CANDIDATE_BRANCH:refs/remotes/origin/$CANDIDATE_BRANCH"
+            git merge-base "origin/$TARGET_BASE" "origin/$CANDIDATE_BRANCH" >/dev/null
+            allowed_manifest="app/stephen/review-candidates/$EDITORIAL_DATE/review-manifest.json"
+            allowed_ledger="app/stephen/review-candidates/$EDITORIAL_DATE/discovery-ledger.json"
+            for saas606_allowed_file in "$allowed_manifest" "$allowed_ledger"; do
+              saas606_tree_entry=$(git ls-tree "origin/$CANDIDATE_BRANCH" -- "$saas606_allowed_file")
+              IFS=$' \t' read -r saas606_mode saas606_type saas606_object saas606_tree_path \
+                <<< "$saas606_tree_entry"
+              if [[ "$saas606_mode" != "100644" || "$saas606_type" != "blob" \
+                || "$saas606_tree_path" != "$saas606_allowed_file" ]]; then
+                echo "candidate review files must both be regular non-executable JSON blobs" >&2
+                exit 1
+              fi
+            done
+            unexpected_candidate_change=0
+            git diff --name-only -z "origin/$TARGET_BASE...origin/$CANDIDATE_BRANCH" \
+              > "$RUNNER_TEMP/saas-606-candidate-paths"
+            while IFS= read -r -d '' changed_path; do
+              if [[ "$changed_path" != "$allowed_manifest" && "$changed_path" != "$allowed_ledger" ]]; then
+                unexpected_candidate_change=1
+                break
+              fi
+            done < "$RUNNER_TEMP/saas-606-candidate-paths"
+            if [[ "$unexpected_candidate_change" -ne 0 ]]; then
+              echo "candidate branch contains changes outside its review manifest and ledger" >&2
+              exit 1
+            fi
+            git switch --create "$CANDIDATE_BRANCH" --track "origin/$CANDIDATE_BRANCH"
+            git merge --no-edit "origin/$TARGET_BASE"
+          else
+            git switch --create "$CANDIDATE_BRANCH" "origin/$TARGET_BASE"
+          fi
+
+      - name: Install dependencies
+        run: npm ci --install-links
+
+      - name: Collect live allowlisted RSS candidates
+        if: steps.context.outputs.mode == 'live'
+        env:
+          EDITORIAL_AI_BASE_URL: ${{ secrets.EDITORIAL_AI_BASE_URL }}
+          EDITORIAL_AI_MODEL: ${{ secrets.EDITORIAL_AI_MODEL }}
+          EDITORIAL_AI_API_KEY: ${{ secrets.EDITORIAL_AI_API_KEY }}
+        run: |
+          set -euo pipefail
+          if ! node --experimental-strip-types stephen/scripts/stephen-editorial-intake.ts > "$RUNNER_TEMP/saas-605-report.json"; then
+            echo "one or more sources failed; continuing with the bounded partial report" >&2
+          fi
+
+      - name: Generate the non-public review manifest
+        id: generate
+        env:
+          REVIEW_MODE: ${{ steps.context.outputs.mode }}
+          EDITORIAL_DATE: ${{ steps.context.outputs.editorial_date }}
+        run: |
+          set -euo pipefail
+          if [[ "$REVIEW_MODE" == "fixture" ]]; then
+            report_path="stephen/scripts/fixtures/saas-606-intake-report.json"
+          else
+            report_path="$RUNNER_TEMP/saas-605-report.json"
+          fi
+          node --experimental-strip-types stephen/scripts/stephen-daily-review-cli.ts generate \
+            --report "$report_path" \
+            --date "$EDITORIAL_DATE" \
+            --mode "$REVIEW_MODE" \
+            --output-root "$GITHUB_WORKSPACE" \
+            --body-file .saas-606/pr-body.md \
+            > "$RUNNER_TEMP/saas-606-result.json"
+          manifest_path=$(jq -r .manifestPath "$RUNNER_TEMP/saas-606-result.json")
+          ledger_path=$(jq -r .ledgerPath "$RUNNER_TEMP/saas-606-result.json")
+          proposed_count=$(jq -r .proposedCount "$RUNNER_TEMP/saas-606-result.json")
+          {
+            echo "manifest_path=$manifest_path"
+            echo "ledger_path=$ledger_path"
+            echo "proposed_count=$proposed_count"
+            echo "body_path=$GITHUB_WORKSPACE/.saas-606/pr-body.md"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Validate workflow safety contract
+        run: node --experimental-strip-types stephen/scripts/stephen-daily-review-cli.ts validate-workflow --workflow ../.github/workflows/stephen-daily-intake.yml
+
+      - name: Type-check Stephen site
+        run: npx tsc --noEmit -p stephen/tsconfig.json
+
+      - name: Type-check editorial automation
+        run: npx tsc --noEmit -p stephen/tsconfig.editorial.json
+
+      - name: Test Stephen site and editorial automation
+        run: npx vitest run --root stephen
+
+      - name: Build Stephen site
+        run: npm run build:stephen
+
+      - name: Resolve the exact head/base Draft PR state
+        id: pr_state
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CANDIDATE_BRANCH: ${{ steps.context.outputs.branch_name }}
+          TARGET_BASE: ${{ steps.context.outputs.target_base }}
+        run: |
+          set -euo pipefail
+          gh pr list \
+            --repo "$GH_REPO" \
+            --head "$CANDIDATE_BRANCH" \
+            --base "$TARGET_BASE" \
+            --state all \
+            --limit 10 \
+            --json number,state,isDraft,url \
+            > "$RUNNER_TEMP/saas-606-prs.json"
+          node --experimental-strip-types stephen/scripts/stephen-daily-review-cli.ts resolve-pr \
+            --prs-file "$RUNNER_TEMP/saas-606-prs.json" \
+            > "$RUNNER_TEMP/saas-606-pr-action.json"
+          action=$(jq -r .action "$RUNNER_TEMP/saas-606-pr-action.json")
+          number=$(jq -r '.number // ""' "$RUNNER_TEMP/saas-606-pr-action.json")
+          url=$(jq -r '.url // ""' "$RUNNER_TEMP/saas-606-pr-action.json")
+          {
+            echo "action=$action"
+            echo "number=$number"
+            echo "url=$url"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Commit and push the review files
+        id: push
+        if: steps.pr_state.outputs.action != 'skip_closed' && (steps.generate.outputs.proposed_count != '0' || steps.pr_state.outputs.action == 'update')
+        env:
+          CANDIDATE_BRANCH: ${{ steps.context.outputs.branch_name }}
+          EDITORIAL_DATE: ${{ steps.context.outputs.editorial_date }}
+          MANIFEST_PATH: ${{ steps.generate.outputs.manifest_path }}
+          LEDGER_PATH: ${{ steps.generate.outputs.ledger_path }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- ":(top)$MANIFEST_PATH" ":(top)$LEDGER_PATH"
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            git commit -m "content(stephen): update $EDITORIAL_DATE review candidates"
+            git push origin "HEAD:refs/heads/$CANDIDATE_BRANCH"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create the testable Draft PR
+        id: create_pr
+        if: steps.pr_state.outputs.action == 'create' && steps.generate.outputs.proposed_count != '0'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CANDIDATE_BRANCH: ${{ steps.context.outputs.branch_name }}
+          TARGET_BASE: ${{ steps.context.outputs.target_base }}
+          PR_TITLE: ${{ steps.context.outputs.pr_title }}
+          BODY_PATH: ${{ steps.generate.outputs.body_path }}
+        run: |
+          set -euo pipefail
+          pr_url=$(gh pr create --draft --repo "$GH_REPO" --base "$TARGET_BASE" --head "$CANDIDATE_BRANCH" --title "$PR_TITLE" --body-file "$BODY_PATH")
+          echo "url=$pr_url" >> "$GITHUB_OUTPUT"
+
+      - name: Update the same-day Draft PR
+        if: steps.pr_state.outputs.action == 'update'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.pr_state.outputs.number }}
+          PR_TITLE: ${{ steps.context.outputs.pr_title }}
+          BODY_PATH: ${{ steps.generate.outputs.body_path }}
+        run: |
+          set -euo pipefail
+          gh pr edit "$PR_NUMBER" --repo "$GH_REPO" --title "$PR_TITLE" --body-file "$BODY_PATH"
+
+      - name: Record the owner-review gate
+        if: always() && steps.generate.outcome == 'success'
+        env:
+          MODE: ${{ steps.context.outputs.mode }}
+          DATE: ${{ steps.context.outputs.editorial_date }}
+          ACTION: ${{ steps.pr_state.outputs.action }}
+          EXISTING_URL: ${{ steps.pr_state.outputs.url }}
+          CREATED_URL: ${{ steps.create_pr.outputs.url }}
+          PROPOSED_COUNT: ${{ steps.generate.outputs.proposed_count }}
+        run: |
+          set -euo pipefail
+          review_url="${CREATED_URL:-$EXISTING_URL}"
+          {
+            echo "## SAAS-606 owner-review gate"
+            echo ""
+            echo "- mode: \`$MODE\`"
+            echo "- Beijing date: \`$DATE\`"
+            echo "- proposed candidates: \`$PROPOSED_COUNT\`"
+            echo "- PR action: \`${ACTION:-not-created}\`"
+            if [[ -n "$review_url" ]]; then
+              echo "- Draft PR: $review_url"
+            else
+              echo "- Draft PR: not created because there are no proposed candidates"
+            fi
+            echo "- production publication: disabled"
+          } >> "$GITHUB_STEP_SUMMARY"
+          rm -rf "$GITHUB_WORKSPACE/.saas-606"
