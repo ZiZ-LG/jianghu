@@ -92,3 +92,30 @@ CORE-201 是 expand-only 且没有在线切换，首选回滚是应用前向修�
 - 最终精确 SHA CI：`05ae8b3bc99a15740aa67064e3d0a7454d2c1876`，12/12 jobs 成功。
 
 本任务未修改共享高冲突文件或“自我修养”专属路径，未创建生产构建产物，未部署。
+
+## 7. CORE-202 人物/关系候选写入切换
+
+CORE-202 已完成应用层 write-cutover，但仍未部署生产：
+
+- 对 CORE-202 之后新建或首次触碰的 `person_create` / `relation_create`，统一 `Candidate` 是写入权威；
+- `PersonSuggestion` 与 `RelSuggestion` 只由 `server/src/candidates/personRelation.ts` 在同一事务内维护为兼容物化投影，供尚未切换的旧 API 与 Inbox 读取；
+- voice、enrich、graph suggest、MCP sync/direct producer，以及人物/关系采纳、拒绝和人物合并引用改写，不得绕过该 helper；
+- 存量 legacy-only 行在第一次变更时通过稳定 legacy identity 惰性纳入 Candidate；CORE-202 不执行五类存量全量回填；
+- 人审前正式 Person、Edge、阶段、预测或关键人状态保持零变化；AI 候选继续要求来源、证据与置信度。
+
+CORE-202 的应用回滚边界如下：
+
+1. 回退 `6ada51060286aec6285e9d4d6a45d8b2e226521e` 的应用代码即可恢复旧 producer/consumer 行为；
+2. 不删除、回退或逆写已创建的 Candidate、旧兼容投影、审计记录或 migration history；
+3. 由于 Candidate 与旧投影在同一事务提交，回退后的旧应用仍可读取兼容投影；若发现两者不一致，应停止切换并以前向修复恢复一致性，不得择一覆盖；
+4. 回滚后重新验证租户边界、旧 Inbox、人物/关系采纳与拒绝，以及正式 Person/Edge 在未采纳候选下保持不变；
+5. 生产部署、数据库替换、main 合并仍需单独批准，本次没有连接或修改阿里云生产。
+
+CORE-203 的强制交接顺序：
+
+1. 先对 PersonSuggestion、RelSuggestion、ChangeProposal、Reminder、pending-review EvidenceEvent 五类来源执行逐租户校验与可重入回填；
+2. 确认 source/count/checksum 与 Candidate 投影闭合后，才可把 Inbox 切换为 Candidate 单表读取；
+3. 切换后将旧五表冻结为只读兼容数据，不再接受独立写入；
+4. CORE-203 cutover 不得删除旧表、旧行、Candidate、审计或 migration 记录，任何收缩删除必须等待后续独立阶段门。
+
+CORE-202 业务提交为 `6ada51060286aec6285e9d4d6a45d8b2e226521e`；[GitHub Actions 32810333868](https://github.com/ZiZ-LG/jianghu/actions/runs/32810333868) 对应精确 SHA 12/12 jobs 成功。

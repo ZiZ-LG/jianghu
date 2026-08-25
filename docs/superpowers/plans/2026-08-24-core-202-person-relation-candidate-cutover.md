@@ -74,19 +74,19 @@ rejectRelationCandidate(db, input): Promise<boolean>
 redirectCandidatePersonReferences(db, input): Promise<RedirectCounts>
 ```
 
-- [ ] **Step 1: Add RED portable helper tests**
+- [x] **Step 1: Add RED portable helper tests**
 
 Cover Candidate + compatibility projection atomic create, canonical payload parity, same-key replay, conflicting-key refusal, same key across tenants, missing/cross-tenant/archived Customer/Matter/Person refusal, candidate endpoint parentage and non-empty source/evidence/confidence validation.
 
-- [ ] **Step 2: Add RED CAS/adoption tests**
+- [x] **Step 2: Add RED CAS/adoption tests**
 
 Cover legacy-only lazy adoption, Candidate `pending@version` claim, terminal finalize, reject, stale/double decision conflict, transaction fault rollback, terminal dedupe release and exact Candidate/legacy status parity.
 
-- [ ] **Step 3: Add RED no-bypass inventory test**
+- [x] **Step 3: Add RED no-bypass inventory test**
 
 Scan production `server/src` and allow PersonSuggestion/RelSuggestion mutations only in `candidates/personRelation.ts`; CORE-201 mapper and other consumers may read but not write. Test fixtures remain free to seed legacy rows directly.
 
-- [ ] **Step 4: Run RED tests**
+- [x] **Step 4: Run RED tests**
 
 Run: `cd server && DATABASE_URL=file:./test.db npx vitest run tests/candidate-person-relation.test.ts tests/candidate-migration.test.ts tests/tenant-parentage.test.ts tests/suggestion-role-validation.test.ts`
 
@@ -101,23 +101,23 @@ Expected: fail only because the CORE-202 helper/cutover does not exist.
 - Modify: `server/src/candidates/migration.ts`
 - Modify: `server/tests/candidate-person-relation.test.ts`
 
-- [ ] **Step 1: Reuse the CORE-201 canonical identity and JSON rules**
+- [x] **Step 1: Reuse the CORE-201 canonical identity and JSON rules**
 
 Export only the pure legacy identity/canonical projection primitives needed by the runtime helper; do not duplicate hashing, payload fields or status mapping.
 
-- [ ] **Step 2: Implement transaction-safe create/update**
+- [x] **Step 2: Implement transaction-safe create/update**
 
 When given a root Prisma client, open one transaction; when given an existing transaction client, reuse it. Validate tenant-local parents and actor, then create/update Candidate and materialized legacy projection atomically. Handle `P2002` by reading the same tenant/key and returning the existing compatible receipt; never accept a mismatched collision.
 
-- [ ] **Step 3: Implement CAS review transitions**
+- [x] **Step 3: Implement CAS review transitions**
 
 Adopt a legacy-only row when necessary, CAS Candidate on tenant/id/status/version, update the old projection in the same transaction, refresh canonical payload and fail the transaction if either count is not exactly one.
 
-- [ ] **Step 4: Implement reference redirects**
+- [x] **Step 4: Implement reference redirects**
 
 When an accepted Person is merged or a candidate endpoint materializes, update Candidate payload/target references and legacy projections through the same helper. Revalidate every affected Matter/Customer endpoint before mutation.
 
-- [ ] **Step 5: Run focused helper GREEN tests**
+- [x] **Step 5: Run focused helper GREEN tests**
 
 Run: `cd server && DATABASE_URL=file:./test.db npx vitest run tests/candidate-person-relation.test.ts tests/candidate-migration.test.ts`
 
@@ -139,23 +139,23 @@ Expected: helper invariants, lazy adoption, CAS, replay and rollback green on SQ
 - Modify: `server/tests/mcpBoundary.test.ts`
 - Modify: `server/tests/tenant-parentage.test.ts`
 
-- [ ] **Step 1: Cut voice producers**
+- [x] **Step 1: Cut voice producers**
 
 Route AI person/relation extraction through the helper with actor, origin, evidence, confidence and extraction-local source refs. Keep authenticated explicit manual Person/Edge writes unchanged.
 
-- [ ] **Step 2: Cut enrich and suggest producers**
+- [x] **Step 2: Cut enrich and suggest producers**
 
 Route enrich person create/pending merge and graph/LLM relation creation through the helper. Preserve capacity limits, existing pair filtering and job completion atomicity.
 
-- [ ] **Step 3: Cut MCP producers**
+- [x] **Step 3: Cut MCP producers**
 
 Route both atomic sync-bundle and direct MCP propose tools through the helper. Preserve SyncRun idempotency, pending capacity, same-name/pair dedupe and existing receipt shapes.
 
-- [ ] **Step 4: Prove producer coverage**
+- [x] **Step 4: Prove producer coverage**
 
 For voice, enrich, suggest, MCP sync and MCP direct tool fixtures, assert one Candidate and one compatibility row, exact tenant/parents/source/evidence/confidence, replay count parity and zero formal Person/Edge before acceptance.
 
-- [ ] **Step 5: Run producer GREEN tests**
+- [x] **Step 5: Run producer GREEN tests**
 
 Run: `cd server && DATABASE_URL=file:./test.db npx vitest run tests/voiceContext.test.ts tests/jobs-recovery.test.ts tests/mcp-sync-idempotency.test.ts tests/mcpBoundary.test.ts tests/tenant-parentage.test.ts`
 
@@ -172,23 +172,23 @@ Run: `cd server && DATABASE_URL=file:./test.db npx vitest run tests/voiceContext
 - Modify: `server/tests/suggestion-role-validation.test.ts`
 - Modify: `server/tests/tenant-parentage.test.ts`
 
-- [ ] **Step 1: Preserve acceptance transaction boundaries**
+- [x] **Step 1: Preserve acceptance transaction boundaries**
 
 Person and relation acceptance must claim Candidate before any formal write; Person/participant/role/Edge creation, compatibility projection finalize and Candidate finalize stay in the caller's existing transaction. Any parent/CAS/formal write failure rolls everything back.
 
-- [ ] **Step 2: Preserve reject and batch behavior**
+- [x] **Step 2: Preserve reject and batch behavior**
 
 Single reject and existing compound Inbox batch route use helper CAS. CORE-202 does not redesign batch semantics or add ReviewBatch; that remains CORE-203/205.
 
-- [ ] **Step 3: Preserve merge referential closure**
+- [x] **Step 3: Preserve merge referential closure**
 
 Person merge redirects Candidate and compatibility projection references together, validates tenant/Customer/Matter closure and leaves unrelated candidate kinds untouched.
 
-- [ ] **Step 4: Prove old API receipt parity**
+- [x] **Step 4: Prove old API receipt parity**
 
 Run existing person/relationship list, generate, accept, reject, compound and MCP list fixtures. Assert DTO/status/ID/created Person/Edge receipts match pre-cutover behavior and viewer remains write-denied.
 
-- [ ] **Step 5: Run review GREEN tests**
+- [x] **Step 5: Run review GREEN tests**
 
 Run: `cd server && DATABASE_URL=file:./test.db npx vitest run tests/candidate-person-relation.test.ts tests/compound-commands.test.ts tests/person-merge.test.ts tests/suggestion-role-validation.test.ts tests/tenant-parentage.test.ts tests/effective-scope-routes.test.ts`
 
@@ -200,7 +200,7 @@ Run: `cd server && DATABASE_URL=file:./test.db npx vitest run tests/candidate-pe
 - Modify: `docs/CORE-201-Candidate迁移与回滚说明.md`
 - Modify: `docs/商业版开发待办清单v1.md`
 
-- [ ] **Step 1: Run focused and full server verification**
+- [x] **Step 1: Run focused and full server verification**
 
 Run: `cd server && npm run generate && npm run schema:postgres:check && npm run typecheck`
 
@@ -208,7 +208,7 @@ Run: `cd server && npm test`
 
 Run: `bash scripts/test-postgres-ops-integration.sh`
 
-- [ ] **Step 2: Run unchanged cross-workspace gates**
+- [x] **Step 2: Run unchanged cross-workspace gates**
 
 Run: `cd packages/domain-contracts && npm run typecheck && npm test`
 
@@ -220,17 +220,17 @@ Run: `cd app && npx tsc --noEmit && npm test`
 
 Do not run a local App production build because it writes shared/high-conflict `app/dist/**`; exact-SHA remote CI retains the build gate on an isolated runner.
 
-- [ ] **Step 3: Verify change boundaries**
+- [x] **Step 3: Verify change boundaries**
 
 Run: `git diff --check`
 
 Run the no-bypass inventory, protected-path diff check and secret-pattern scan. Assert no schema/migration/Action/App/shared/self-cultivation/production file changed.
 
-- [ ] **Step 4: Document rollback and CORE-203 handoff**
+- [x] **Step 4: Document rollback and CORE-203 handoff**
 
 Record that reverting CORE-202 application code is safe because old projections were committed atomically; Candidate rows and migration history remain. Record that CORE-203 must first verify/backfill all five source types, switch Inbox to Candidate, then freeze old tables—never delete them as part of cutover.
 
-- [ ] **Step 5: Commit, push and require exact-SHA CI**
+- [x] **Step 5: Commit, push and require exact-SHA CI**
 
 Create one independent CORE-202 business commit, push the feature branch and wait for all exact-head CI jobs to pass. Only then create a separate governance close commit marking CORE-202 DONE and CORE-203 READY; wait for that exact SHA CI before starting CORE-203.
 
