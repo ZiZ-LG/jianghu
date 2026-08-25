@@ -20,6 +20,17 @@ import { activePersonWhere } from './activePerson.js';
 import type { DbClient } from './mutation/scopeGuards.js';
 import { businessYmd } from './businessDate.js';
 import { resolveEffectiveResourceScope } from './resourceScope.js';
+import {
+  claimPersonCandidate,
+  claimRelationCandidate,
+  createRelationCandidate,
+  finalizePersonCandidate,
+  finalizeRelationCandidate,
+  redirectCandidatePersonReferences,
+  rejectPersonCandidate,
+  rejectRelationCandidate,
+  relationCandidateDedupeKey,
+} from './candidates/personRelation.js';
 
 const pairKey = (a: string, b: string) => [a, b].sort().join('|');
 const LAYER_COLOR: Record<string, string> = { L1: '#2563eb', L2: '#9333ea', L3: '#16a34a', L4: '#ef4444' };
@@ -138,16 +149,12 @@ export async function materializePerson(
   }
 
   // 原子 claim 必须先于任何正式写入。事务失败会把临时 accepted 自动回滚为 pending，外部不可见半完成状态。
-  const claim = await tx.personSuggestion.updateMany({
-    where: { id: ps.id, tenantId, status: 'pending', resolvedPersonId: null },
-    data: {
-      status: 'accepted',
-      ...(options.override?.name !== undefined ? { name: options.override.name } : {}),
-      ...(options.override?.title !== undefined ? { title: options.override.title } : {}),
-    },
+  const claimed = await claimPersonCandidate(tx, {
+    tenantId,
+    id: ps.id,
+    override: options.override,
   });
-  if (claim.count !== 1) throw new SuggestionConflictError();
-  const candidate = { ...ps, ...options.override };
+  const candidate = claimed.row;
 
   const others = await tx.person.findMany({ where: { tenantId, accountId: candidate.accountId, isCompetitor: false, ...activePersonWhere }, select: { x: true, y: true } });
   const { x, y } = nextFreeSlot(others);
@@ -187,21 +194,19 @@ export async function materializePerson(
       });
     }
   }
-  const finalized = await tx.personSuggestion.updateMany({
-    where: { id: ps.id, tenantId, status: 'accepted', resolvedPersonId: null },
-    data: { resolvedPersonId: personId },
+  await finalizePersonCandidate(tx, {
+    tenantId,
+    id: ps.id,
+    expectedVersion: claimed.candidateVersion,
+    resolvedPersonId: personId,
   });
-  if (finalized.count !== 1) throw new SuggestionConflictError();
   // key 收敛：把仍 pending、引用该候选的其它关系端点改写为 person/resolvedPersonId（防重复边）
-  const accountOpportunities = await tx.opportunity.findMany({
-    where: { tenantId, accountId: candidate.accountId },
-    select: { id: true },
+  await redirectCandidatePersonReferences(tx, {
+    tenantId,
+    accountId: candidate.accountId,
+    from: { kind: 'suggestion', id: suggId },
+    toPersonId: personId,
   });
-  const opportunityIds = accountOpportunities.map((opportunity: { id: string }) => opportunity.id);
-  if (opportunityIds.length) {
-    await tx.relSuggestion.updateMany({ where: { tenantId, opportunityId: { in: opportunityIds }, status: 'pending', sourceKind: 'suggestion', sourcePersonId: suggId }, data: { sourceKind: 'person', sourcePersonId: personId } });
-    await tx.relSuggestion.updateMany({ where: { tenantId, opportunityId: { in: opportunityIds }, status: 'pending', targetKind: 'suggestion', targetPersonId: suggId }, data: { targetKind: 'person', targetPersonId: personId } });
-  }
   const createdPerson = { id: personId, name: candidate.name, title: candidate.title, orgLevel: candidate.orgLevel, isCompetitor: false, x, y, form: { family: '', occupation: '', recreation: '', moneyMotivation: '', family7: {} }, logs };
   return { personId, accountId: candidate.accountId, createdPerson };
 }
@@ -219,8 +224,7 @@ export async function acceptRelationSuggestionInTransaction(
   if (!opportunity) throw new ScopedNotFoundError();
   await requireAccount(tx, tenantId, opportunity.accountId);
   await requireOpportunity(tx, tenantId, opportunity.accountId, suggestion.opportunityId);
-  const claim = await tx.relSuggestion.updateMany({ where: { id, tenantId, status: 'pending' }, data: { status: 'accepted' } });
-  if (claim.count !== 1) throw new SuggestionConflictError();
+  const claimed = await claimRelationCandidate(tx, { id, tenantId });
 
   const createdPersons: any[] = [];
   const resolveEnd = async (kind: string, endpointId: string) => {
@@ -244,11 +248,15 @@ export async function acceptRelationSuggestionInTransaction(
     id: edgeId, tenantId, accountId: opportunity.accountId, opportunityId: suggestion.opportunityId,
     source, target, layer, label, color, style: 'solid', width: null, directed: false, origin: 'ai',
   } });
-  const finalized = await tx.relSuggestion.updateMany({
-    where: { id, tenantId, status: 'accepted' },
-    data: { layer, label, sourceKind: 'person', sourcePersonId: source, targetKind: 'person', targetPersonId: target },
+  await finalizeRelationCandidate(tx, {
+    id,
+    tenantId,
+    expectedVersion: claimed.candidateVersion,
+    sourcePersonId: source,
+    targetPersonId: target,
+    layer,
+    label,
   });
-  if (finalized.count !== 1) throw new SuggestionConflictError();
   return { edge: { id: edgeId, source, target, layer, label, color, style: 'solid', directed: false, origin: 'ai' }, createdPersons };
 }
 
@@ -350,6 +358,7 @@ export async function generateRelSuggestions(
   tenantId: string,
   opportunityId: string,
   commitWrite?: <T>(write: (db: DbClient) => Promise<T>) => Promise<T>,
+  createdByUserId: string | null = null,
 ): Promise<{ added: number; total: number } | null> {
   const g = await loadGraph(tenantId, opportunityId);
   if (!g) return null;
@@ -366,11 +375,33 @@ export async function generateRelSuggestions(
     if (cfg) cands = cands.concat(cfg.provider === 'mock' || !cfg.baseUrl || !cfg.model ? mockLlmCandidates(g.persons, connected) : await llmCandidates(cfg, g.persons, g.edges, nameOf));
     const fresh = cands.filter((c) => { const k = pairKey(c.source, c.target); if (c.source === c.target || seen.has(k)) return false; seen.add(k); return true; });
     if (fresh.length) {
-      const write = (db: DbClient) => db.relSuggestion.createMany({ data: fresh.map((c) => ({ id: 'rs_' + randomUUID().replaceAll('-', ''), tenantId, opportunityId, sourcePersonId: c.source, targetPersonId: c.target, layer: c.layer, label: c.label, confidence: c.confidence, origin: c.origin, evidence: c.evidence })) });
-      if (commitWrite) await commitWrite(write);
-      else await write(prisma);
+      const write = async (db: DbClient) => {
+        let created = 0;
+        for (const c of fresh) {
+          const source = { kind: 'person' as const, id: c.source };
+          const target = { kind: 'person' as const, id: c.target };
+          const dedupeKey = relationCandidateDedupeKey(opportunityId, source, target);
+          const receipt = await createRelationCandidate(db, {
+            id: 'rs_' + randomUUID().replaceAll('-', ''),
+            tenantId,
+            matterId: opportunityId,
+            source,
+            target,
+            layer: c.layer,
+            label: c.label,
+            sourceType: c.origin,
+            sourceRef: `suggest:${c.origin}:${dedupeKey}`,
+            evidence: c.evidence || '关系推断未返回具体依据，必须由人工核实',
+            confidence: c.confidence,
+            createdByUserId,
+            dedupeKey,
+          });
+          if (receipt.created) created += 1;
+        }
+        return created;
+      };
+      added = commitWrite ? await commitWrite(write) : await write(prisma);
     }
-    added = fresh.length;
   }
   const total = await prisma.relSuggestion.count({ where: { opportunityId, tenantId, status: 'pending' } });
   return { added, total };
@@ -412,7 +443,7 @@ export function suggestRoutes(app: FastifyInstance) {
     const p = z.object({ opportunityId: z.string() }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: '缺少 opportunityId' });
     const tenantId = req.user.tenantId;
-    const r = await generateRelSuggestions(tenantId, p.data.opportunityId);
+    const r = await generateRelSuggestions(tenantId, p.data.opportunityId, undefined, req.user.userId ?? null);
     if (!r) return reply.code(404).send({ error: '商机不存在' });
     const all = await prisma.relSuggestion.findMany({ where: { opportunityId: p.data.opportunityId, tenantId, status: 'pending' }, orderBy: { confidence: 'desc' } });
     return { added: r.added, suggestions: await withNames(tenantId, all) };
@@ -432,15 +463,15 @@ export function suggestRoutes(app: FastifyInstance) {
       return result;
     } catch (e: any) {
       if (e instanceof ScopedNotFoundError || e?.scopedNotFound) return reply.code(404).send({ error: '资源不存在' });
-      if (e instanceof SuggestionConflictError || e?.suggestionConflict) return reply.code(409).send({ error: '该候选已被处理，请刷新后重试' });
+      if (e instanceof SuggestionConflictError || e?.suggestionConflict || e?.candidateConflict) return reply.code(409).send({ error: '该候选已被处理，请刷新后重试' });
       return reply.code(400).send({ error: e?.message || '采纳失败' });
     }
   });
 
   app.post('/api/suggest/:id/reject', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (denyViewer(req, reply)) return; // viewer 只读，不可拍板/操作
-    const r = await prisma.relSuggestion.updateMany({ where: { id: req.params.id, tenantId: req.user.tenantId, status: 'pending' }, data: { status: 'rejected' } });
-    if (!r.count) return reply.code(404).send({ error: '资源不存在' });
+    const rejected = await rejectRelationCandidate(prisma, { id: req.params.id, tenantId: req.user.tenantId });
+    if (!rejected) return reply.code(404).send({ error: '资源不存在' });
     return { ok: true };
   });
 
@@ -476,15 +507,15 @@ export function suggestRoutes(app: FastifyInstance) {
       return result;
     } catch (e: any) {
       if (e instanceof ScopedNotFoundError || e?.scopedNotFound) return reply.code(404).send({ error: '资源不存在' });
-      if (e instanceof SuggestionConflictError || e?.suggestionConflict) return reply.code(409).send({ error: '该候选已被处理，请刷新后重试' });
+      if (e instanceof SuggestionConflictError || e?.suggestionConflict || e?.candidateConflict) return reply.code(409).send({ error: '该候选已被处理，请刷新后重试' });
       return reply.code(400).send({ error: e?.message || '采纳失败' });
     }
   });
 
   app.post('/api/suggest/persons/:id/reject', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (denyViewer(req, reply)) return; // viewer 只读，不可拍板/操作
-    const r = await prisma.personSuggestion.updateMany({ where: { id: req.params.id, tenantId: req.user.tenantId, status: 'pending' }, data: { status: 'rejected' } });
-    if (!r.count) return reply.code(404).send({ error: '资源不存在' });
+    const rejected = await rejectPersonCandidate(prisma, { id: req.params.id, tenantId: req.user.tenantId });
+    if (!rejected) return reply.code(404).send({ error: '资源不存在' });
     return { ok: true };
   });
 

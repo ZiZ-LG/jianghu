@@ -12,6 +12,12 @@ import { activePersonWhere } from '../activePerson.js';
 import { mapLegacyOpportunityStatus } from '../matter/lifecycle.js';
 import { createPdeDecisionContext } from '../pde/context.js';
 import { requireSalesCustomerType } from '../salesClassification.js';
+import {
+  createPersonCandidate,
+  createRelationCandidate,
+  personCandidateDedupeKey,
+  relationCandidateDedupeKey,
+} from '../candidates/personRelation.js';
 
 const OPAQUE_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:#/-]*$/;
 const OpaqueRefSchema = z.string().trim().min(1).max(80).regex(OPAQUE_REF_PATTERN, 'ref must be an opaque identifier without names or free text');
@@ -396,12 +402,22 @@ async function executeBundle(
       tenantId: ctx.tenantId, accountId: account.id, name: candidate.name, status: 'pending',
     } });
     if (!row) {
-      row = await db.personSuggestion.create({ data: {
-        id: 'ps_' + randomUUID().replaceAll('-', ''), tenantId: ctx.tenantId, accountId: account.id,
-        opportunityId: opportunity?.id ?? null, name: candidate.name, title: candidate.title,
-        orgLevel: candidate.orgLevel, evidence: candidate.evidence, confidence: candidate.confidence,
-        origin: 'mcp', status: 'pending', proposedBy: ctx.actorId,
-      } });
+      const created = await createPersonCandidate(db, {
+        id: 'ps_' + randomUUID().replaceAll('-', ''),
+        tenantId: ctx.tenantId,
+        accountId: account.id,
+        matterId: opportunity?.id ?? null,
+        name: candidate.name,
+        title: candidate.title,
+        orgLevel: candidate.orgLevel,
+        source: 'mcp',
+        sourceRef: `mcp-sync:${syncRunId}:person:${candidate.ref}`,
+        evidence: candidate.evidence || 'MCP 同步未提供人物依据，必须由人工核实',
+        confidence: candidate.confidence,
+        createdByUserId: ctx.actorId,
+        dedupeKey: personCandidateDedupeKey(account.id, candidate.name),
+      });
+      row = created.row;
     }
     candidateIds.set(candidate.ref, row.id);
     receipt.proposed.push(`person:${candidate.ref}`);
@@ -424,12 +440,25 @@ async function executeBundle(
         { sourceKind: 'suggestion', sourcePersonId: targetPersonId, targetKind: 'suggestion', targetPersonId: sourcePersonId },
       ],
     } });
-    if (!existing) await db.relSuggestion.create({ data: {
-      id: 'rs_' + randomUUID().replaceAll('-', ''), tenantId: ctx.tenantId, opportunityId: opportunity!.id,
-      sourceKind: 'suggestion', sourcePersonId, targetKind: 'suggestion', targetPersonId,
-      layer: relation.layer, label: relation.label, evidence: relation.evidence,
-      confidence: relation.confidence, origin: 'mcp', status: 'pending',
-    } });
+    if (!existing) {
+      const source = { kind: 'suggestion' as const, id: sourcePersonId };
+      const target = { kind: 'suggestion' as const, id: targetPersonId };
+      await createRelationCandidate(db, {
+        id: 'rs_' + randomUUID().replaceAll('-', ''),
+        tenantId: ctx.tenantId,
+        matterId: opportunity!.id,
+        source,
+        target,
+        layer: relation.layer,
+        label: relation.label,
+        sourceType: 'mcp',
+        sourceRef: `mcp-sync:${syncRunId}:relation:${relation.ref}`,
+        evidence: relation.evidence || 'MCP 同步未提供关系依据，必须由人工核实',
+        confidence: relation.confidence,
+        createdByUserId: ctx.actorId,
+        dedupeKey: relationCandidateDedupeKey(opportunity!.id, source, target),
+      });
+    }
     receipt.proposed.push(`relationship:${relation.ref}`);
   }
 

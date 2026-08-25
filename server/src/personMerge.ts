@@ -8,6 +8,7 @@ import { runCommand } from './mutation/commandRunner.js';
 import { activePersonWhere } from './activePerson.js';
 import { resolveScopedRelSuggestions } from './suggestionScope.js';
 import { resolveEffectiveResourceScope } from './resourceScope.js';
+import { redirectCandidatePersonReferences } from './candidates/personRelation.js';
 
 const roleDecisionSchema = z.enum(['keep_target', 'keep_source']);
 export const PersonMergeDecisionSchema = z.object({
@@ -478,6 +479,12 @@ export async function executePersonMerge(
     claimedProposalKeys.add(key);
     await tx.changeProposal.update({ where: { id: proposal.id }, data: { entityId: target.id, dedupeKey } });
   }
+  const candidateRedirects = await redirectCandidatePersonReferences(tx, {
+    tenantId: ctx.tenantId,
+    accountId: account.id,
+    from: { kind: 'person', id: source.id },
+    toPersonId: target.id,
+  });
   const redirected: RedirectCounts = {
     oppRoles: redirectedOppRoles,
     opportunityMembers: redirectedMembers,
@@ -493,9 +500,9 @@ export async function executePersonMerge(
     strategyCards: await updateMany(tx.strategyCard, { tenantId: ctx.tenantId, personId: source.id }, { personId: target.id }),
     transcripts: await updateMany(tx.transcript, { tenantId: ctx.tenantId, personId: source.id }, { personId: target.id }),
     advisorMsgs: await updateMany(tx.advisorMsg, { tenantId: ctx.tenantId, personId: source.id }, { personId: target.id }),
-    relSuggestionSources: await updateMany(tx.relSuggestion, { tenantId: ctx.tenantId, sourceKind: 'person', sourcePersonId: source.id }, { sourcePersonId: target.id }),
-    relSuggestionTargets: await updateMany(tx.relSuggestion, { tenantId: ctx.tenantId, targetKind: 'person', targetPersonId: source.id }, { targetPersonId: target.id }),
-    personSuggestions: await updateMany(tx.personSuggestion, { tenantId: ctx.tenantId, resolvedPersonId: source.id }, { resolvedPersonId: target.id }),
+    relSuggestionSources: candidateRedirects.relationSources,
+    relSuggestionTargets: candidateRedirects.relationTargets,
+    personSuggestions: candidateRedirects.resolvedPersons,
     changeProposals: redirectedChangeProposals,
     staleRoleProposalsRejected: rejectedStaleRoleProposals,
     reminders: redirectedReminders,

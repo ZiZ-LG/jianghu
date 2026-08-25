@@ -21,6 +21,11 @@ import type { DbClient } from './mutation/scopeGuards.js';
 import { activePersonWhere } from './activePerson.js';
 import { BUSINESS_TIME_ZONE } from './businessDate.js';
 import { resolveEffectiveResourceScope } from './resourceScope.js';
+import {
+  createPersonCandidate,
+  personCandidateDedupeKey,
+  updatePendingPersonCandidate,
+} from './candidates/personRelation.js';
 
 // 江湖自算 · 轻量后台任务队列（DB-backed）。
 // 设计取舍（对齐架构纲领「加轻量 job 队列」）：单实例 setInterval 消费，原子 claim；
@@ -159,7 +164,7 @@ export async function enqueuePullRecordingJob(tenantId: string, source: string, 
 }
 
 /** 把发现的关键人写入 PersonSuggestion 候选（带去重 + 容量上限）。返回 {created, deduped, skipped}。 */
-async function writeCandidates(
+export async function writeEnrichCandidates(
   job: ClaimedJob,
   source: string,
   persons: { name: string; title: string }[],
@@ -177,25 +182,31 @@ async function writeCandidates(
     // 去重：同租户+同客户+同名+pending → 更新（取高 confidence、补 title），不新增
     const dup = await db.personSuggestion.findFirst({ where: { tenantId: job.tenantId, accountId: job.accountId, name, status: 'pending' } });
     if (dup) {
-      await db.personSuggestion.update({
-        where: { id: dup.id },
-        data: { title: (p.title || '').trim() || dup.title, confidence: Math.max(dup.confidence, confidence) },
+      await updatePendingPersonCandidate(db, {
+        tenantId: job.tenantId,
+        id: dup.id,
+        dedupeKey: personCandidateDedupeKey(job.accountId, name),
+        patch: { title: (p.title || '').trim() || dup.title, confidence: Math.max(dup.confidence, confidence) },
       });
       deduped++;
       continue;
     }
-    await db.personSuggestion.create({
-      data: {
-        id: 'ps_' + randomUUID().replaceAll('-', ''),
-        tenantId: job.tenantId, accountId: job.accountId,
-        name, title: (p.title || '').trim(),
-        orgLevel: 3,
-        origin,
-        evidence: `江湖自算·${source === 'qcc' ? '企查查' : 'AI'} 发现，待核实`,
-        confidence,
-        status: 'pending',
-        proposedBy: '',
-      },
+    const id = 'ps_' + randomUUID().replaceAll('-', '');
+    const sourceRef = `enrich:${job.id}:${source}:${name.normalize('NFKC').trim()}`;
+    await createPersonCandidate(db, {
+      id,
+      tenantId: job.tenantId,
+      accountId: job.accountId,
+      matterId: job.opportunityId,
+      name,
+      title: (p.title || '').trim(),
+      orgLevel: 3,
+      source: origin,
+      sourceRef,
+      evidence: `江湖自算·${source === 'qcc' ? '企查查' : 'AI'} 发现，待核实`,
+      confidence,
+      createdByUserId: null,
+      dedupeKey: personCandidateDedupeKey(job.accountId, name),
     });
     created++;
   }
@@ -215,7 +226,7 @@ async function runEnrichJob(job: ClaimedJob): Promise<void> {
     await finish(job, 'done', JSON.stringify({ source: 'mock', created: 0, deduped: 0, note: r.note }), '');
     return;
   }
-  await writeCandidates(job, r.source, r.persons, r.note);
+  await writeEnrichCandidates(job, r.source, r.persons, r.note);
 }
 
 /** 执行一个 suggest_relations 任务：图算法 + LLM 推断商机内关系 → RelSuggestion 候选。 */

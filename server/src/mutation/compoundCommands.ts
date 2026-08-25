@@ -28,6 +28,7 @@ import { syncCommitmentToWeCom } from '../wecom.js';
 import { resolveEffectiveResourceScope } from '../resourceScope.js';
 import { executeCustomerCommand, parseCustomerCommandReceiptForCommand } from './customers.js';
 import { executeCommitmentCommand } from './commitments.js';
+import { rejectPersonCandidate, rejectRelationCandidate } from '../candidates/personRelation.js';
 
 class ActionAlreadyCompletedError extends Error {
   readonly statusCode = 409;
@@ -282,13 +283,13 @@ export async function executeInboxBatch(
       if (item.decision === 'accept') {
         await materializePerson(db, ctx.tenantId, item.id, { override: item.personOverride, allowAcceptedReuse: false });
       } else {
-        const changed = await db.personSuggestion.updateMany({ where: { id: item.id, tenantId: ctx.tenantId, status: 'pending' }, data: { status: 'rejected' } });
-        if (!changed.count) throw new Error('候选干系人不存在或已处理');
+        const rejected = await rejectPersonCandidate(db, { id: item.id, tenantId: ctx.tenantId });
+        if (!rejected) throw new Error('候选干系人不存在或已处理');
       }
     } else if (item.kind === 'rel') {
       if (item.decision === 'reject') {
-        const changed = await db.relSuggestion.updateMany({ where: { id: item.id, tenantId: ctx.tenantId, status: 'pending' }, data: { status: 'rejected' } });
-        if (!changed.count) throw new Error('候选关系不存在或已处理');
+        const rejected = await rejectRelationCandidate(db, { id: item.id, tenantId: ctx.tenantId });
+        if (!rejected) throw new Error('候选关系不存在或已处理');
       } else {
         await acceptRelationSuggestionInTransaction(db as any, ctx.tenantId, item.id, item.relOverride);
       }

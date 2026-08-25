@@ -30,6 +30,13 @@ import { syncIntelBundle } from './mcp/syncBundle.js';
 import { ALL_ACCESS_SCOPES, scopesForCurrentRole, type AccessScope } from './accessToken.js';
 import { resolveEffectiveResourceScope } from './resourceScope.js';
 import { requireSalesCustomerType } from './salesClassification.js';
+import {
+  createPersonCandidate,
+  createRelationCandidate,
+  personCandidateDedupeKey,
+  relationCandidateDedupeKey,
+  updatePendingPersonCandidate,
+} from './candidates/personRelation.js';
 
 // 每租户 pending 候选容量上限（防外部 agent 刷爆）
 const MAX_PENDING_PERSON_SUGG = 200;
@@ -790,9 +797,18 @@ async function proposePerson(tenantId: string, userId: string, args: Record<stri
       const duplicateOpportunity = await prisma.opportunity.findFirst({ where: { id: dup.opportunityId, tenantId, accountId } });
       if (!duplicateOpportunity) throw new Error('现有同名候选的商机关联不属于该客户，已拒绝自动更新');
     }
-    await prisma.personSuggestion.update({
-      where: { id: dup.id },
-      data: { title: title || dup.title, evidence: evidence || dup.evidence, sourceUrl: sourceUrl ?? dup.sourceUrl, confidence: Math.max(dup.confidence, confidence), suggestedRole: suggestedRole ?? dup.suggestedRole, suggestedSentiment: suggestedSentiment ?? dup.suggestedSentiment },
+    await updatePendingPersonCandidate(prisma, {
+      tenantId,
+      id: dup.id,
+      dedupeKey: personCandidateDedupeKey(accountId, name),
+      patch: {
+        title: title || dup.title,
+        ...(evidence ? { evidence } : {}),
+        sourceUrl: sourceUrl ?? dup.sourceUrl,
+        confidence: Math.max(dup.confidence, confidence),
+        suggestedRole: suggestedRole ?? dup.suggestedRole,
+        suggestedSentiment: suggestedSentiment ?? dup.suggestedSentiment,
+      },
     });
     return { suggestionId: dup.id, deduped: true, note: '已存在同名候选干系人（pending），已更新其依据而非新增。' };
   }
@@ -801,11 +817,27 @@ async function proposePerson(tenantId: string, userId: string, args: Record<stri
   const existingPerson = await prisma.person.findFirst({ where: { tenantId, accountId, name, ...activePersonWhere } });
 
   const id = 'ps_' + randomUUID().replaceAll('-', '');
-  await prisma.personSuggestion.create({
-    data: { id, tenantId, accountId, opportunityId, name, title, orgLevel, origin: 'mcp', evidence, sourceUrl, confidence, status: 'pending', proposedBy: userId, suggestedRole, suggestedSentiment },
+  const dedupeKey = personCandidateDedupeKey(accountId, name);
+  const created = await createPersonCandidate(prisma, {
+    id,
+    tenantId,
+    accountId,
+    matterId: opportunityId,
+    name,
+    title,
+    orgLevel,
+    source: 'mcp',
+    sourceRef: `mcp:propose-person:${createHash('sha256').update(dedupeKey).digest('hex').slice(0, 24)}`,
+    evidence: evidence || 'MCP 未提供人物依据，必须由人工核实',
+    sourceUrl,
+    confidence,
+    createdByUserId: userId,
+    dedupeKey,
+    suggestedRole,
+    suggestedSentiment,
   });
   return {
-    suggestionId: id,
+    suggestionId: created.row.id,
     note: existingPerson
       ? `⚠️ 该客户下已存在同名正式干系人（id=${existingPerson.id}）。候选已提交，请人审时判断是合并到现有还是新建，AI 不自动合并。`
       : '候选干系人已提交，等待用户人审采纳后才会出现在关系地图上。',
@@ -868,10 +900,25 @@ async function proposeRelationship(tenantId: string, _userId: string, args: Reco
   }
 
   const id = 'rs_' + randomUUID().replaceAll('-', '');
-  await prisma.relSuggestion.create({
-    data: { id, tenantId, opportunityId, sourcePersonId: source.id, sourceKind: source.kind, targetPersonId: target.id, targetKind: target.kind, layer, label, confidence, origin: 'mcp', evidence, status: 'pending' },
+  const typedSource = { kind: source.kind as 'person' | 'suggestion', id: source.id };
+  const typedTarget = { kind: target.kind as 'person' | 'suggestion', id: target.id };
+  const dedupeKey = relationCandidateDedupeKey(opportunityId, typedSource, typedTarget);
+  const created = await createRelationCandidate(prisma, {
+    id,
+    tenantId,
+    matterId: opportunityId,
+    source: typedSource,
+    target: typedTarget,
+    layer,
+    label,
+    sourceType: 'mcp',
+    sourceRef: `mcp:propose-relation:${createHash('sha256').update(dedupeKey).digest('hex').slice(0, 24)}`,
+    evidence: evidence || 'MCP 未提供关系依据，必须由人工核实',
+    confidence,
+    createdByUserId: _userId,
+    dedupeKey,
   });
-  return { suggestionId: id, note: '候选关系已提交，等待用户人审采纳后才会画到关系地图上。' };
+  return { suggestionId: created.row.id, note: '候选关系已提交，等待用户人审采纳后才会画到关系地图上。' };
 }
 
 /** list_pending：列本租户待人审候选（只读）。 */

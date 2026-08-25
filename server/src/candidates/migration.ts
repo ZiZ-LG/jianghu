@@ -130,7 +130,11 @@ function sha256(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');
 }
 
-function candidateIdentity(tenantId: string, sourceKind: LegacyCandidateSourceKind, sourceId: string) {
+export function candidateIdentityForLegacy(
+  tenantId: string,
+  sourceKind: LegacyCandidateSourceKind,
+  sourceId: string,
+) {
   return {
     id: `cand_${sha256(`${tenantId}\u0000${sourceKind}\u0000${sourceId}`).slice(0, 32)}`,
     dedupeKey: `legacy-v1:${sourceKind}:${sourceId}`,
@@ -180,7 +184,7 @@ function projectionBase(args: {
   creator: ReturnType<typeof creatorScope>;
   createdAt: Date;
 }): CandidateProjection {
-  const identity = candidateIdentity(args.tenantId, args.sourceKind, args.sourceId);
+  const identity = candidateIdentityForLegacy(args.tenantId, args.sourceKind, args.sourceId);
   return {
     id: identity.id,
     tenantId: args.tenantId,
