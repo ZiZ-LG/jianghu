@@ -145,6 +145,19 @@ async function createLegacyFixture(databasePath: string, databaseUrl: string): P
     // Reconstruct the actual pre-CORE-115 Account contract. Dropping only the
     // two new fields would leave customerType nullable and create a false
     // legacy fixture that never proves the constraint release.
+    // Explicitly remove global SQLite index names before replacing the table.
+    // A slow CI run once retained one of these names after DROP TABLE, so the
+    // fixture clears its exact namespace instead of relying on implicit cleanup.
+    for (const indexName of [
+      'Account_tenantId_id_key',
+      'Account_tenantId_externalRef_key',
+      'Account_tenantId_unifiedCreditCode_key',
+      'Account_tenantId_idx',
+      'Account_tenantId_primaryOwnerUserId_idx',
+      'Account_tenantId_archivedAt_idx',
+    ]) {
+      await client.$executeRawUnsafe(`DROP INDEX IF EXISTS "${indexName}"`);
+    }
     await client.$executeRawUnsafe('DROP TABLE "Account"');
     await client.$executeRawUnsafe(`CREATE TABLE "Account" (
       "id" TEXT NOT NULL PRIMARY KEY,

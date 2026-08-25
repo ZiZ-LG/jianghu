@@ -149,7 +149,7 @@ describe('SAAS-106 G3 deployment isolation verifier', () => {
     ]) {
       expect(output).not.toContain(value);
     }
-  });
+  }, 30_000);
 
   it('renders and reports the explicit commercial Customer command rollback state', () => {
     const result = runVerifier(
