@@ -5,7 +5,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -23,7 +23,6 @@ model Tenant {
   aiConfig           AiConfig?
   qccConfig          QccConfig?
   wecomConfig        WeComConfig?
-  candidates         Candidate[]
 }
 
 // 工作区自配的企查查 OpenAPI 凭证（BYO-key）。secretKey 加密存储。
@@ -605,47 +604,6 @@ model DataMigrationState {
   key         String   @id
   completedAt DateTime @default(now())
   details     String   @default("{}")
-}
-
-// G4 统一候选层。CORE-201 只建立跨库可移植的物理基座；旧候选表仍是在线权威，
-// 不双写、不回填、不切换收件箱。机器结果继续经过人审后才能进入正式业务表。
-model Candidate {
-  id               String   @id
-  tenantId         String
-  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  kind             String
-  status           String   @default("pending")
-  accountId        String
-  matterId         String?
-  targetKind       String
-  targetId         String?
-  fieldKey         String?
-  oldValue         String?
-  newValue         String?
-  payload          String   @default("{}")
-  source           String
-  sourceRef        String
-  evidence         String   @default("")
-  confidence       Float    @default(0.5)
-  sourceArtifactId String?
-  reviewBatchId    String?
-  createdByUserId  String?
-  visibility       String   @default("private")
-  dedupeKey        String
-  legacySourceKind String?
-  legacySourceId   String?
-  version          Int      @default(0)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  @@unique([tenantId, dedupeKey])
-  @@unique([tenantId, legacySourceKind, legacySourceId])
-  @@index([tenantId, status, createdAt])
-  @@index([tenantId, accountId, status, createdAt])
-  @@index([tenantId, matterId, status, createdAt])
-  @@index([tenantId, sourceArtifactId])
-  @@index([tenantId, reviewBatchId])
-  @@index([tenantId, createdByUserId, visibility])
 }
 
 // WorkBuddy 原子同步执行记录：保存非敏感引用回执，支持同 key 安全重放。

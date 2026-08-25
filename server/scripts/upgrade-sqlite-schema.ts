@@ -1,6 +1,7 @@
 import { mkdir, readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import type { CandidateSchemaState } from '../src/candidates/migration.js';
 
 type MatterSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
 type ParticipantSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
@@ -262,6 +263,7 @@ let methodologyState: MethodologySchemaState;
 let methodologyDataState: MethodologyDataSchemaState;
 let pdeDecisionContextState: PdeDecisionContextSchemaState;
 let customerState: CustomerSchemaState;
+let candidateState: CandidateSchemaState;
 let backupPath: string | null = null;
 let schemaChanges = false;
 let matterBackfillRequired = false;
@@ -272,6 +274,7 @@ let methodologyDataExpansionRequired = false;
 let pdeDecisionContextExpansionRequired = false;
 let pdeDecisionContextBackfillRequired = false;
 let customerExpansionRequired = false;
+let candidateExpansionRequired = false;
 
 try {
   state = await inspectSchemaState(prisma);
@@ -281,6 +284,8 @@ try {
   methodologyDataState = await inspectMethodologyDataSchemaState(prisma);
   pdeDecisionContextState = await inspectPdeDecisionContextSchemaState(prisma);
   customerState = await inspectCustomerSchemaState(prisma);
+  const { inspectCandidateSchemaState } = await import('../src/candidates/migration.js');
+  candidateState = await inspectCandidateSchemaState(prisma);
   if (state === 'partial') {
     throw new Error('partial Matter column expansion detected; restore the latest backup before retrying');
   }
@@ -302,7 +307,17 @@ try {
   if (customerState === 'partial') {
     throw new Error('partial Customer category expansion detected; restore the latest backup before retrying');
   }
+  if (candidateState === 'partial') {
+    throw new Error('partial Candidate foundation detected; restore the latest backup before retrying');
+  }
   customerExpansionRequired = customerState === 'uninitialized' || customerState === 'legacy';
+  candidateExpansionRequired = candidateState === 'uninitialized' || candidateState === 'legacy';
+  if (candidateState === 'legacy') {
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:candidate-report'], url);
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:candidate-verify'], url);
+  } else if (candidateState === 'expanded') {
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:candidate-verify'], url);
+  }
   if (state === 'legacy') {
     run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-matter-fields.ts', '--dry-run'], url);
     matterBackfillRequired = true;
@@ -393,7 +408,7 @@ try {
     }
   }
   schemaChanges = state === 'uninitialized' ? true : schemaHasChanges(url);
-  if (state !== 'uninitialized' && (schemaChanges || matterBackfillRequired || participantBackfillRequired || commitmentBackfillRequired || methodologyExpansionRequired || methodologyDataExpansionRequired || pdeDecisionContextExpansionRequired || pdeDecisionContextBackfillRequired || customerExpansionRequired)) {
+  if (state !== 'uninitialized' && (schemaChanges || matterBackfillRequired || participantBackfillRequired || commitmentBackfillRequired || methodologyExpansionRequired || methodologyDataExpansionRequired || pdeDecisionContextExpansionRequired || pdeDecisionContextBackfillRequired || customerExpansionRequired || candidateExpansionRequired)) {
     backupPath = await createConsistentBackup(prisma, databasePath);
   }
 } finally {
@@ -408,6 +423,10 @@ const postPushPrisma = new PrismaClient();
 try {
   if (await inspectCustomerSchemaState(postPushPrisma) !== 'expanded') {
     throw new Error('Customer category expansion verification failed');
+  }
+  const { inspectCandidateSchemaState } = await import('../src/candidates/migration.js');
+  if (await inspectCandidateSchemaState(postPushPrisma) !== 'expanded') {
+    throw new Error('Candidate foundation expansion verification failed');
   }
 } finally {
   await postPushPrisma.$disconnect();
@@ -435,6 +454,7 @@ if (pdeDecisionContextBackfillRequired) {
   run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-pde-decision-context.ts', '--apply'], url);
 }
 run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-pde-decision-context.ts', '--verify'], url);
+run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:candidate-verify'], url);
 
 console.log(JSON.stringify({
   ok: true,
@@ -445,6 +465,7 @@ console.log(JSON.stringify({
   methodologyDataStateBefore: methodologyDataState,
   pdeDecisionContextStateBefore: pdeDecisionContextState,
   customerStateBefore: customerState,
+  candidateStateBefore: candidateState,
   schemaChanges,
   matterBackfillRequired,
   participantBackfillRequired,
@@ -454,5 +475,6 @@ console.log(JSON.stringify({
   pdeDecisionContextExpansionRequired,
   pdeDecisionContextBackfillRequired,
   customerExpansionRequired,
+  candidateExpansionRequired,
   backupPath,
 }, null, 2));

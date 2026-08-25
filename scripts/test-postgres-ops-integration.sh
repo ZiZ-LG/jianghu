@@ -99,7 +99,31 @@ docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U 
    INSERT INTO \"PlanAction\"
      (id,\"tenantId\",\"accountId\",\"opportunityId\",title,\"ownerId\",\"startDate\",\"endDate\",half,done,origin,\"createdBy\")
      VALUES ('legacy-plan-action','legacy-owner-tenant','legacy-owner-account','legacy-matter-active',
-       'Legacy customer visit','legacy-owner-user','2026-10-07','2026-10-08','am',false,'workbuddy','legacy-owner-user');" >/dev/null
+       'Legacy customer visit','legacy-owner-user','2026-10-07','2026-10-08','am',false,'workbuddy','legacy-owner-user');
+   INSERT INTO \"Person\" (id,\"tenantId\",\"accountId\",name,title) VALUES
+     ('legacy-candidate-person-one','legacy-owner-tenant','legacy-owner-account','Candidate Person One','Sponsor'),
+     ('legacy-candidate-person-two','legacy-owner-tenant','legacy-owner-account','Candidate Person Two','User');
+   INSERT INTO \"PersonSuggestion\"
+     (id,\"tenantId\",\"accountId\",\"opportunityId\",name,origin,evidence,confidence,status,\"proposedBy\") VALUES
+     ('legacy-person-suggestion','legacy-owner-tenant','legacy-owner-account','legacy-matter-active',
+      'Suggested Person','mcp','legacy person evidence',0.8,'pending','legacy-owner-user');
+   INSERT INTO \"RelSuggestion\"
+     (id,\"tenantId\",\"opportunityId\",\"sourcePersonId\",\"targetPersonId\",\"sourceKind\",\"targetKind\",layer,label,confidence,origin,evidence,status) VALUES
+     ('legacy-rel-suggestion','legacy-owner-tenant','legacy-matter-active','legacy-candidate-person-one',
+      'legacy-candidate-person-two','person','person','L2','influences',0.7,'graph','legacy relation evidence','pending');
+   INSERT INTO \"ChangeProposal\"
+     (id,\"tenantId\",\"accountId\",\"opportunityId\",\"entityKind\",\"entityId\",field,\"oldValue\",\"newValue\",origin,evidence,confidence,status,\"proposedBy\") VALUES
+     ('legacy-change-proposal','legacy-owner-tenant','legacy-owner-account','legacy-matter-active','person',
+      'legacy-candidate-person-one','title','Sponsor','Champion','voice','legacy change evidence',0.75,'pending','legacy-owner-user');
+   INSERT INTO \"Reminder\"
+     (id,\"tenantId\",\"accountId\",\"accountName\",\"opportunityId\",\"oppName\",kind,title,detail,severity,\"dedupeKey\",status) VALUES
+     ('legacy-reminder','legacy-owner-tenant','legacy-owner-account','Legacy Account','legacy-matter-active',
+      'Active Matter','stalled','Follow up','legacy reminder detail','warn','legacy-reminder-key','pending');
+   INSERT INTO \"EvidenceEvent\"
+     (id,\"tenantId\",\"accountId\",\"opportunityId\",\"personId\",\"signalKey\",direction,tier,\"rawContent\",\"occurredAt\",status,origin,\"createdBy\") VALUES
+     ('legacy-evidence-event','legacy-owner-tenant','legacy-owner-account','legacy-matter-active',
+      'legacy-candidate-person-one','intro_referral',1,'strong','legacy evidence raw','2026-08-24',
+      'pending_review','voice','legacy-owner-user');" >/dev/null
 # Simulate a process kill after the first of the three adoption resolves. The
 # next server start must recognize and complete this partial history.
 docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint npx server \
@@ -163,6 +187,26 @@ legacy_commitment_mapping_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec
      AND source = 'workbuddy'
      AND version = 0" | tr -d '[:space:]')
 [[ "$legacy_commitment_mapping_count" == 1 ]]
+docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npm run migrate:candidate-report >/dev/null && npm run migrate:candidate-verify >/dev/null'
+legacy_candidate_source_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+  'SELECT
+     (SELECT count(*) FROM "PersonSuggestion")
+     + (SELECT count(*) FROM "RelSuggestion")
+     + (SELECT count(*) FROM "ChangeProposal")
+     + (SELECT count(*) FROM "Reminder")
+     + (SELECT count(*) FROM "EvidenceEvent" WHERE status = '\''pending_review'\'')' | tr -d '[:space:]')
+legacy_candidate_target_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+  'SELECT count(*) FROM "Candidate"' | tr -d '[:space:]')
+candidate_migration_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+  "SELECT count(*) FROM \"_prisma_migrations\"
+   WHERE migration_name = '20260824000000_expand_candidate_foundation'
+     AND finished_at IS NOT NULL AND rolled_back_at IS NULL" | tr -d '[:space:]')
+[[ "$legacy_candidate_source_count" == 5 ]]
+[[ "$legacy_candidate_target_count" == 0 ]]
+[[ "$candidate_migration_count" == 1 ]]
+echo "LEGACY_CANDIDATE_REPORT_OK=1"
+echo "CANDIDATE_SOURCE_ROWS_UNCHANGED_OK=1"
 echo "LEGACY_ACCOUNT_OWNER_BACKFILL_OK=1"
 echo "LEGACY_SCHEMA_MIGRATION_PREFLIGHT_OK=1"
 echo "LEGACY_MATTER_STATUS_BACKFILL_OK=1"
@@ -523,12 +567,12 @@ echo "INTERRUPTED_PDE_CONTEXT_AFTER_COMMIT_ADOPTION_OK=1"
 customer_migration_db=jianghu_customer_migration
 docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$customer_migration_db"
 POSTGRES_DB="$customer_migration_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
-  'npx tsx scripts/render-pre-customer-schema.ts prisma/postgres/schema.prisma /tmp/pre-customer.prisma
+  'npx tsx scripts/render-pre-customer-schema.ts prisma/postgres/legacy/20260824_pre_core201.prisma /tmp/pre-customer.prisma
    npx prisma db push --schema /tmp/pre-customer.prisma --skip-generate >/dev/null
    for path in prisma/postgres/migrations/20*; do
      [ -d "$path" ] || continue
      migration=$(basename "$path")
-     [ "$migration" = 20260823000000_expand_customer_fields ] && continue
+     [ "$migration" = 20260823000000_expand_customer_fields ] && break
      npx prisma migrate resolve --applied "$migration" --schema prisma/postgres/schema.prisma >/dev/null
    done' >/dev/null
 docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$customer_migration_db" -c \
@@ -567,6 +611,126 @@ customer_after_commit_adoption=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec 
                 AND finished_at IS NULL AND rolled_back_at IS NULL) = 0)::int" | tr -d '[:space:]')
 [[ "$customer_after_commit_adoption" == 1 ]]
 echo "INTERRUPTED_CUSTOMER_AFTER_COMMIT_ADOPTION_OK=1"
+
+# CORE-201 Candidate is a schema-only expansion. Exercise rollback-before-
+# commit, commit-before-journal adoption, partial-schema refusal, and an
+# authenticated pre-expansion restore without ever writing projected rows.
+candidate_migration_db=jianghu_candidate_migration
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$candidate_migration_db"
+POSTGRES_DB="$candidate_migration_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npx prisma db push --schema prisma/postgres/legacy/20260824_pre_core201.prisma --skip-generate >/dev/null
+   for path in prisma/postgres/migrations/20*; do
+     [ -d "$path" ] || continue
+     migration=$(basename "$path")
+     [ "$migration" = 20260824000000_expand_candidate_foundation ] && break
+     npx prisma migrate resolve --applied "$migration" --schema prisma/postgres/schema.prisma >/dev/null
+   done' >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$candidate_migration_db" -c \
+  "INSERT INTO \"Tenant\" (id,name) VALUES ('candidate-migration-tenant','Candidate Migration Tenant');
+   INSERT INTO \"User\" (id,\"tenantId\",email,\"passwordHash\",name,role)
+     VALUES ('candidate-migration-user','candidate-migration-tenant','candidate-migration@example.test','unused','Owner','owner');
+   INSERT INTO \"Account\" (id,\"tenantId\",name,\"customerType\")
+     VALUES ('candidate-migration-account','candidate-migration-tenant','Candidate Account',1);
+   INSERT INTO \"Opportunity\"
+     (id,\"tenantId\",\"accountId\",name,\"customerType\",\"pipelineStage\",\"engageStage\")
+     VALUES ('candidate-migration-matter','candidate-migration-tenant','candidate-migration-account',
+       'Candidate Matter',1,'qualify','discover');
+   INSERT INTO \"PersonSuggestion\"
+     (id,\"tenantId\",\"accountId\",\"opportunityId\",name,origin,evidence,confidence,status,\"proposedBy\")
+     VALUES ('candidate-migration-suggestion','candidate-migration-tenant','candidate-migration-account',
+       'candidate-migration-matter','Suggested Person','mcp','pre-candidate evidence',0.8,'pending',
+       'candidate-migration-user');" >/dev/null
+
+candidate_backup_root="$BACKUP_DIR/core201-pre"
+mkdir -p "$candidate_backup_root"
+derive_backup_keys "$BACKUP_MASTER_SECRET"
+candidate_backup_work=$(mktemp -d "$candidate_backup_root/.candidate-work.XXXXXX")
+candidate_backup="$candidate_backup_root/jianghu-core201-$(openssl rand -hex 8).backup"
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db \
+  pg_dump -U "$POSTGRES_USER" -d "$candidate_migration_db" -Fc \
+  | backup_encrypt_payload "$candidate_backup_work/payload.enc"
+{
+  backup_cipher_metadata
+  printf 'source_database=%s\n' "$candidate_migration_db"
+  printf 'created_at=%s\n' "$(date -u +%Y%m%dT%H%M%SZ)"
+} > "$candidate_backup_work/metadata"
+write_artifact_integrity "$candidate_backup_work"
+verify_artifact_auth "$candidate_backup_work"
+mv "$candidate_backup_work" "$candidate_backup"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$candidate_migration_db" -c \
+  "INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+   VALUES ('int-candidate-before-commit', repeat('0', 64),
+     '20260824000000_expand_candidate_foundation', CURRENT_TIMESTAMP, 0);" >/dev/null
+POSTGRES_DB="$candidate_migration_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+candidate_before_commit_parity=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$candidate_migration_db" -tAc \
+  "SELECT ((to_regclass('public.\"Candidate\"') IS NOT NULL)
+       AND (SELECT count(*) FROM \"Candidate\") = 0
+       AND (SELECT count(*) FROM \"PersonSuggestion\" WHERE id = 'candidate-migration-suggestion') = 1
+       AND (SELECT count(*) FROM \"_prisma_migrations\"
+              WHERE migration_name = '20260824000000_expand_candidate_foundation'
+                AND rolled_back_at IS NOT NULL) = 1)::int" | tr -d '[:space:]')
+[[ "$candidate_before_commit_parity" == 1 ]]
+echo "INTERRUPTED_CANDIDATE_BEFORE_COMMIT_RETRY_OK=1"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$candidate_migration_db" -c \
+  "DELETE FROM \"_prisma_migrations\"
+    WHERE migration_name = '20260824000000_expand_candidate_foundation' AND finished_at IS NOT NULL;
+   INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+   VALUES ('int-candidate-after-commit', repeat('0', 64),
+     '20260824000000_expand_candidate_foundation', CURRENT_TIMESTAMP, 0);" >/dev/null
+POSTGRES_DB="$candidate_migration_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+candidate_after_commit_adoption=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$candidate_migration_db" -tAc \
+  "SELECT ((SELECT count(*) FROM \"_prisma_migrations\"
+              WHERE migration_name = '20260824000000_expand_candidate_foundation'
+                AND finished_at IS NOT NULL AND rolled_back_at IS NULL) = 1
+       AND (SELECT count(*) FROM \"_prisma_migrations\"
+              WHERE migration_name = '20260824000000_expand_candidate_foundation'
+                AND finished_at IS NULL AND rolled_back_at IS NULL) = 0
+       AND (SELECT count(*) FROM \"Candidate\") = 0)::int" | tr -d '[:space:]')
+[[ "$candidate_after_commit_adoption" == 1 ]]
+echo "INTERRUPTED_CANDIDATE_AFTER_COMMIT_ADOPTION_OK=1"
+
+candidate_partial_db=jianghu_candidate_partial
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$candidate_partial_db"
+POSTGRES_DB="$candidate_partial_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npx prisma db push --schema prisma/postgres/legacy/20260824_pre_core201.prisma --skip-generate >/dev/null
+   for path in prisma/postgres/migrations/20*; do
+     [ -d "$path" ] || continue
+     migration=$(basename "$path")
+     [ "$migration" = 20260824000000_expand_candidate_foundation ] && break
+     npx prisma migrate resolve --applied "$migration" --schema prisma/postgres/schema.prisma >/dev/null
+   done' >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$candidate_partial_db" -c \
+  "CREATE TABLE \"Candidate\" (id TEXT NOT NULL PRIMARY KEY);
+   INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+   VALUES ('int-candidate-partial', repeat('0', 64),
+     '20260824000000_expand_candidate_foundation', CURRENT_TIMESTAMP, 0);" >/dev/null
+if POSTGRES_DB="$candidate_partial_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "partial Candidate schema unexpectedly migrated" >&2; exit 1
+fi
+candidate_partial_columns=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$candidate_partial_db" -tAc \
+  "SELECT count(*) FROM information_schema.columns
+   WHERE table_schema = 'public' AND table_name = 'Candidate'" | tr -d '[:space:]')
+candidate_partial_applied=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$candidate_partial_db" -tAc \
+  "SELECT count(*) FROM \"_prisma_migrations\"
+   WHERE migration_name = '20260824000000_expand_candidate_foundation'
+     AND finished_at IS NOT NULL AND rolled_back_at IS NULL" | tr -d '[:space:]')
+[[ "$candidate_partial_columns" == 1 ]]
+[[ "$candidate_partial_applied" == 0 ]]
+echo "PARTIAL_CANDIDATE_SCHEMA_FAIL_CLOSED_OK=1"
+
+candidate_restore_db=jianghu_restore_candidate_core201
+bash scripts/restore-postgres.sh "$candidate_backup" --database "$candidate_restore_db" >/dev/null
+candidate_restore_parity=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$candidate_restore_db" -tAc \
+  "SELECT ((to_regclass('public.\"Candidate\"') IS NULL)
+       AND (SELECT count(*) FROM \"PersonSuggestion\" WHERE id = 'candidate-migration-suggestion') = 1)::int" | tr -d '[:space:]')
+[[ "$candidate_restore_parity" == 1 ]]
+echo "CANDIDATE_RESTORE_ROLLBACK_OK=1"
+echo "CORE_201_CANDIDATE_MIGRATION_OK=1"
 
 # A duplicate tenant-local owner name must roll the bridge transaction back.
 # After data repair, the same database must resume and complete safely.

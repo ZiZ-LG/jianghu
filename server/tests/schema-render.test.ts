@@ -531,4 +531,87 @@ describe('PostgreSQL schema delivery', () => {
     expect(integrationDrill).toContain('[ -d "$path" ] || continue');
     expect(integrationDrill).not.toContain('for path in prisma/postgres/migrations/*; do');
   });
+
+  it('delivers CORE-201 Candidate as one portable, atomic, read-only foundation expansion', async () => {
+    const sqliteSchema = await read('prisma/schema.prisma');
+    const postgresSchema = await read('prisma/postgres/schema.prisma');
+    const preCandidateSchema = await read('prisma/postgres/legacy/20260824_pre_core201.prisma').catch(() => '');
+    const migration = await read(
+      'prisma/postgres/migrations/20260824000000_expand_candidate_foundation/migration.sql',
+    ).catch(() => '');
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const sqliteUpgrade = await read('scripts/upgrade-sqlite-schema.ts');
+    const schemaState = await read('scripts/postgres-candidate-schema-state.ts').catch(() => '');
+    const packageJson = JSON.parse(await read('package.json')) as {
+      scripts?: Record<string, string>;
+    };
+
+    for (const schema of [sqliteSchema, postgresSchema]) {
+      expect(schema).toMatch(/model Tenant \{[\s\S]*?candidates\s+Candidate\[\]/);
+      expect(schema).toMatch(/model Candidate \{[\s\S]*?tenant\s+Tenant\s+@relation\(fields: \[tenantId\], references: \[id\], onDelete: Cascade\)/);
+      for (const field of [
+        'kind', 'status', 'accountId', 'matterId', 'targetKind', 'targetId', 'fieldKey',
+        'oldValue', 'newValue', 'payload', 'source', 'sourceRef', 'evidence', 'confidence',
+        'sourceArtifactId', 'reviewBatchId', 'createdByUserId', 'visibility', 'dedupeKey',
+        'legacySourceKind', 'legacySourceId', 'version', 'createdAt', 'updatedAt',
+      ]) expect(schema).toMatch(new RegExp(`model Candidate \\{[\\s\\S]*?\\b${field}\\s+`));
+      expect(schema).toMatch(/model Candidate \{[\s\S]*?@@unique\(\[tenantId, dedupeKey\]\)/);
+      expect(schema).toMatch(/model Candidate \{[\s\S]*?@@unique\(\[tenantId, legacySourceKind, legacySourceId\]\)/);
+      for (const index of [
+        '@@index([tenantId, status, createdAt])',
+        '@@index([tenantId, accountId, status, createdAt])',
+        '@@index([tenantId, matterId, status, createdAt])',
+        '@@index([tenantId, sourceArtifactId])',
+        '@@index([tenantId, reviewBatchId])',
+        '@@index([tenantId, createdByUserId, visibility])',
+      ]) expect(schema).toContain(index);
+      expect(schema).not.toMatch(/^\s*\w+\s+Json[?\[\]]*/m);
+      expect(schema).not.toMatch(/^enum\s+/m);
+    }
+
+    expect(preCandidateSchema).not.toContain('model Candidate');
+    expect(migration.trimStart().startsWith('BEGIN;')).toBe(true);
+    expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(migration).toContain("SET LOCAL lock_timeout = '30s'");
+    expect(migration).toContain("SET LOCAL statement_timeout = '15min'");
+    expect(migration).toContain('CREATE TABLE "Candidate"');
+    expect(migration).toContain('FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id")');
+    for (const identity of [
+      'Candidate_tenantId_dedupeKey_key',
+      'Candidate_tenantId_legacySourceKind_legacySourceId_key',
+      'Candidate_tenantId_status_createdAt_idx',
+      'Candidate_tenantId_accountId_status_createdAt_idx',
+      'Candidate_tenantId_matterId_status_createdAt_idx',
+      'Candidate_tenantId_sourceArtifactId_idx',
+      'Candidate_tenantId_reviewBatchId_idx',
+      'Candidate_tenantId_createdByUserId_visibility_idx',
+    ]) expect(migration).toContain(`"${identity}"`);
+    expect(migration).not.toMatch(
+      /(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+"(?:PersonSuggestion|RelSuggestion|ChangeProposal|Reminder|EvidenceEvent|Candidate)"/i,
+    );
+
+    expect(packageJson.scripts?.['migrate:candidate-report']).toBe(
+      'tsx scripts/migrate-candidates.ts --dry-run',
+    );
+    expect(packageJson.scripts?.['migrate:candidate-verify']).toBe(
+      'tsx scripts/migrate-candidates.ts --verify',
+    );
+    expect(packageJson.scripts?.['migrate:candidate-apply']).toBeUndefined();
+    expect(deployScript).toContain('CANDIDATE_MIGRATION=20260824000000_expand_candidate_foundation');
+    expect(deployScript).toContain('PRE_CANDIDATE_SCHEMA=prisma/postgres/legacy/20260824_pre_core201.prisma');
+    expect(deployScript).toContain('recover_incomplete_candidate_migration');
+    expect(deployScript).toContain('adopt_existing_candidate_schema_if_safe');
+    expect(deployScript).toContain('postgres-candidate-schema-state.ts');
+    expect(deployScript).toContain('npm run migrate:candidate-report');
+    expect(deployScript).toContain('npm run migrate:candidate-verify');
+    expect(deployScript).toContain('uninitialized|legacy) return 0 ;;');
+    expect(schemaState).toContain("process.stdout.write('uninitialized')");
+    expect(schemaState).toContain("process.stdout.write('legacy')");
+    expect(schemaState).toContain("process.stdout.write('expanded')");
+    expect(schemaState).toContain("process.stdout.write('partial')");
+    expect(schemaState).not.toMatch(/\bAS\s+constraint\b/i);
+    expect(schemaState).toContain('FROM pg_constraint AS candidate_constraint');
+    expect(sqliteUpgrade).toContain('inspectCandidateSchemaState');
+    expect(sqliteUpgrade).toContain('partial Candidate foundation detected');
+  });
 });

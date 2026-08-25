@@ -66,6 +66,7 @@ async function createLegacyFixture(databasePath: string, databaseUrl: string): P
 
   const client = new PrismaClient({ datasourceUrl: databaseUrl });
   try {
+    await client.$executeRawUnsafe('DROP TABLE IF EXISTS "Candidate"');
     await client.$executeRawUnsafe('DROP TABLE "PdeDecisionContext"');
     for (const table of [...methodologyTables].reverse()) {
       await client.$executeRawUnsafe(`DROP TABLE "${table}"`);
@@ -197,6 +198,14 @@ async function createLegacyFixture(databasePath: string, databaseUrl: string): P
          ('sqlite-upgrade-person-two', 'sqlite-upgrade-tenant', 'sqlite-upgrade-account', 'Two', 'Two')`,
     );
     await client.$executeRawUnsafe(
+      `INSERT INTO "PersonSuggestion"
+         (id, "tenantId", "accountId", "opportunityId", name, origin, evidence, confidence, status, "proposedBy")
+       VALUES
+         ('sqlite-upgrade-person-suggestion', 'sqlite-upgrade-tenant', 'sqlite-upgrade-account',
+          'sqlite-upgrade-active', 'Legacy candidate', 'mcp', 'legacy evidence stays in source', 0.8,
+          'pending', 'sqlite-upgrade-user')`,
+    );
+    await client.$executeRawUnsafe(
       `INSERT INTO "OppRole" (id, "tenantId", "opportunityId", "personId", role, sentiment, confidence)
        VALUES ('sqlite-upgrade-role-one', 'sqlite-upgrade-tenant', 'sqlite-upgrade-active', 'sqlite-upgrade-person-one', 'R', 'plus', '明确')`,
     );
@@ -272,6 +281,16 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       await expect(client.methodologyBinding.count()).resolves.toBe(0);
       await expect(client.methodologyPilotAssignment.count()).resolves.toBe(0);
       await expect(client.pdeDecisionContext.count()).resolves.toBe(0);
+      const candidateColumns = await client.$queryRawUnsafe<Array<{ name: string }>>(
+        'PRAGMA table_info("Candidate")',
+      );
+      expect(candidateColumns.map((column) => column.name)).toEqual(expect.arrayContaining([
+        'id', 'tenantId', 'kind', 'status', 'accountId', 'matterId', 'targetKind', 'targetId',
+        'fieldKey', 'oldValue', 'newValue', 'payload', 'source', 'sourceRef', 'evidence',
+        'confidence', 'sourceArtifactId', 'reviewBatchId', 'createdByUserId', 'visibility',
+        'dedupeKey', 'legacySourceKind', 'legacySourceId', 'version', 'createdAt', 'updatedAt',
+      ]));
+      await expect(client.candidate.count()).resolves.toBe(0);
       await expect(client.dataMigrationState.findUnique({
         where: { key: 'CORE-113-pde-decision-context-shadow-v1' },
       })).resolves.toMatchObject({ key: 'CORE-113-pde-decision-context-shadow-v1' });
@@ -366,6 +385,11 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
         { opportunityId: 'sqlite-upgrade-paused', stageKey: 'initiation', decisionProfileRef: null, source: 'legacy_shadow' },
         { opportunityId: 'sqlite-upgrade-won', stageKey: 'initiation', decisionProfileRef: null, source: 'legacy_shadow' },
       ]);
+      await expect(upgradedClient.candidate.count()).resolves.toBe(0);
+      await expect(upgradedClient.personSuggestion.findUniqueOrThrow({
+        where: { id: 'sqlite-upgrade-person-suggestion' },
+        select: { status: true, evidence: true },
+      })).resolves.toEqual({ status: 'pending', evidence: 'legacy evidence stays in source' });
       const upgradedPlanColumns = await upgradedClient.$queryRawUnsafe<Array<{ name: string; notnull: number }>>(
         'PRAGMA table_info("PlanAction")',
       );
@@ -425,6 +449,14 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
         `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'PdeDecisionContext'`,
       );
       expect(restoredPdeContextTables).toEqual([]);
+      const restoredCandidateTables = await restoredClient.$queryRawUnsafe<Array<{ name: string }>>(
+        `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'Candidate'`,
+      );
+      expect(restoredCandidateTables).toEqual([]);
+      await expect(restoredClient.personSuggestion.findUniqueOrThrow({
+        where: { id: 'sqlite-upgrade-person-suggestion' },
+        select: { status: true, evidence: true },
+      })).resolves.toEqual({ status: 'pending', evidence: 'legacy evidence stays in source' });
       const restoredStatuses = await restoredClient.$queryRawUnsafe<Array<{ status: string }>>(
         'SELECT status FROM "Opportunity" ORDER BY status',
       );
@@ -721,6 +753,33 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       expect(failed.status).not.toBe(0);
       expect(`${failed.stdout}\n${failed.stderr}`).toContain(
         'partial PDE decision context detected; restore the latest backup before retrying',
+      );
+    } finally {
+      await client?.$disconnect();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('fails closed when only part of the Candidate foundation exists', async () => {
+    const directory = await mkdtemp(resolve('prisma/.candidate-partial-test-'));
+    const relativeDirectory = basename(directory);
+    const databaseUrl = `file:./${relativeDirectory}/partial.db`;
+    let client: PrismaClient | null = null;
+    try {
+      run(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], databaseUrl);
+      client = new PrismaClient({ datasourceUrl: databaseUrl });
+      await client.$executeRawUnsafe('ALTER TABLE "Candidate" DROP COLUMN "sourceRef"');
+      await client.$disconnect();
+      client = null;
+
+      const failed = spawnSync(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], {
+        cwd: serverRoot,
+        encoding: 'utf8',
+        env: { ...process.env, DATABASE_URL: databaseUrl, JIANGHU_SKIP_PRISMA_GENERATE: '1' },
+      });
+      expect(failed.status).not.toBe(0);
+      expect(`${failed.stdout}\n${failed.stderr}`).toContain(
+        'partial Candidate foundation detected; restore the latest backup before retrying',
       );
     } finally {
       await client?.$disconnect();

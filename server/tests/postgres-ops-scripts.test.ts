@@ -670,3 +670,33 @@ describe('backup artifacts stay outside source and Docker contexts', () => {
     }
   });
 });
+
+describe('CORE-201 Candidate migration operations', () => {
+  it('failure-injects legacy, interrupted, partial, adoption, and restore paths', async () => {
+    const deploy = await read('server/scripts/deploy-postgres-migrations.sh');
+    const drill = await read('scripts/test-postgres-ops-integration.sh');
+
+    expect(deploy).toContain('CANDIDATE_MIGRATION=20260824000000_expand_candidate_foundation');
+    expect(deploy).toContain('recover_incomplete_candidate_migration');
+    expect(deploy).toContain('adopt_existing_candidate_schema_if_safe');
+    expect(deploy).toContain('candidate_schema_matches_known_state');
+    expect(deploy.indexOf('npm run migrate:candidate-report'))
+      .toBeLessThan(deploy.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deploy.lastIndexOf('npm run migrate:candidate-verify'))
+      .toBeGreaterThan(deploy.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+
+    for (const marker of [
+      'LEGACY_CANDIDATE_REPORT_OK=1',
+      'CANDIDATE_SOURCE_ROWS_UNCHANGED_OK=1',
+      'INTERRUPTED_CANDIDATE_BEFORE_COMMIT_RETRY_OK=1',
+      'INTERRUPTED_CANDIDATE_AFTER_COMMIT_ADOPTION_OK=1',
+      'PARTIAL_CANDIDATE_SCHEMA_FAIL_CLOSED_OK=1',
+      'CANDIDATE_RESTORE_ROLLBACK_OK=1',
+      'CORE_201_CANDIDATE_MIGRATION_OK=1',
+    ]) expect(drill).toContain(marker);
+    expect(drill).toContain('20260824000000_expand_candidate_foundation');
+    expect(drill).toContain('prisma/postgres/legacy/20260824_pre_core201.prisma');
+    expect(drill).toContain('migrate:candidate-report');
+    expect(drill).toContain('migrate:candidate-verify');
+  });
+});
