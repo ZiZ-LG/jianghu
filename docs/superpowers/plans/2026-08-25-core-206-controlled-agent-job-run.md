@@ -4,7 +4,9 @@
 > **Branch:** `codex/g4-candidate-review-intelligence`
 > **Worktree:** `/Volumes/PowerData/江湖APP/.worktrees/g4-candidate-review-intelligence`
 > **Base:** `a02b91a4bddf339ad94ca14d757181feb9db8b91`
-> **Status:** IN_PROGRESS
+> **Business commits:** `2a1901c92b3b31ef6e4aaee3fff0dd8b0270b90f`, `d70a6b3e0a683159e457d5d96d0d84ebde84840c`
+> **Remote evidence:** [GitHub Actions 32921909448](https://github.com/ZiZ-LG/jianghu/actions/runs/32921909448), exact SHA `d70a6b3e0a683159e457d5d96d0d84ebde84840c`, 12/12 jobs successful
+> **Status:** DONE
 
 ## Goal
 
@@ -67,12 +69,12 @@ Production starts with no business handler registered in CORE-206, so all three 
 - Add: `server/tests/agent-job-migration.test.ts`
 - Modify: schema/static/SQLite/PostgreSQL operation tests
 
-- [ ] Prove strict versioned Job Cards accept only the three built-in keys, fixed trigger/action modes, bounded scope/evidence/output references, safe cost/timeout/attempt limits and no body/token fields.
-- [ ] Prove missing rows default disabled; a DB row cannot widen registry authority; unavailable handlers cannot be enabled or triggered; viewer and out-of-scope callers produce zero AgentRun/CommandRun/AuditEvent side effects.
-- [ ] Prove Job disablement, role/capability/scope revocation, Matter transfer and sensitive ACL/tombstone changes are effective before every attempt and before output commit.
-- [ ] Prove timeout aborts without commit, budget overrun aborts without commit, only declared retryable failures retry, max attempts is bounded, stale leases reauthorize and concurrent/idempotent replays do not duplicate runs.
-- [ ] Prove read_only/draft reject formal/candidate/external outputs, candidate rejects direct Candidate/formal refs and accepts only a currently valid ReviewBatch trace.
-- [ ] Prove list/detail are tenant/resource/ACL filtered, cursor bounded, body-free and hidden/missing same-shape.
+- [x] Prove strict versioned Job Cards accept only the three built-in keys, fixed trigger/action modes, bounded scope/evidence/output references, safe cost/timeout/attempt limits and no body/token fields.
+- [x] Prove missing rows default disabled; a DB row cannot widen registry authority; unavailable handlers cannot be enabled or triggered; viewer and out-of-scope callers produce zero AgentRun/CommandRun/AuditEvent side effects.
+- [x] Prove Job disablement, role/capability/scope revocation, Matter transfer and sensitive ACL/tombstone changes are effective before every attempt and before output commit.
+- [x] Prove timeout aborts without commit, budget overrun aborts without commit, only declared retryable failures retry, max attempts is bounded, stale leases reauthorize and concurrent/idempotent replays do not duplicate runs.
+- [x] Prove read_only/draft reject formal/candidate/external outputs, candidate rejects direct Candidate/formal refs and accepts only a currently valid ReviewBatch trace.
+- [x] Prove list/detail are tenant/resource/ACL filtered, cursor bounded, body-free and hidden/missing same-shape.
 
 ## Task 2: Publish the shared Agent contract and fixed server registry
 
@@ -83,10 +85,10 @@ Production starts with no business handler registered in CORE-206, so all three 
 - Add: `server/src/agents/registry.ts`
 - Add/modify: focused tests from Task 1
 
-- [ ] Define strict shared Job Card, scope manifest, evidence policy, input/evidence/output reference and AgentRun view schemas without changing Action.
-- [ ] Register exactly the three approved Job keys with immutable version/hash, triggers, modes, safe output kinds, default-disabled availability and bounded execution policy.
-- [ ] Canonicalize and hash only body-free contract metadata; reject unknown keys/fields, secret-looking references, oversized identities and non-integer/unsafe budget/time values.
-- [ ] Make database snapshots provably equal to or narrower than the registry; never use DB JSON as executable policy.
+- [x] Define strict shared Job Card, scope manifest, evidence policy, input/evidence/output reference and AgentRun view schemas without changing Action.
+- [x] Register exactly the three approved Job keys with immutable version/hash, triggers, modes, safe output kinds, default-disabled availability and bounded execution policy.
+- [x] Canonicalize and hash only body-free contract metadata; reject unknown keys/fields, secret-looking references, oversized identities and non-integer/unsafe budget/time values.
+- [x] Make database snapshots provably equal to or narrower than the registry; never use DB JSON as executable policy.
 
 ## Task 3: Add portable schema, versioned migration and recovery gates
 
@@ -101,10 +103,10 @@ Production starts with no business handler registered in CORE-206, so all three 
 - Modify: predecessor schema inspectors, `server/scripts/upgrade-sqlite-schema.ts`, `server/scripts/deploy-postgres-migrations.sh`, `server/package.json`, `scripts/test-postgres-ops-integration.sh`
 - Modify: migration/schema tests from Task 1
 
-- [ ] Add only portable expand tables/indexes and retain EnrichJob, Candidate, ReviewBatch, SourceArtifact, CommandRun, AuditEvent and every formal table unchanged.
-- [ ] Make predecessor inspectors accept only the exact registered CORE-206 successor shape and reject partial/unknown drift before any DDL/data write.
-- [ ] Implement `--dry-run | --apply | --verify` with tenant-first enumeration, strict canonical row validation, marker-last contract receipt and no body reads/logging.
-- [ ] Cover SQLite pre-DDL report-before-backup/db-push and PostgreSQL migrate-deploy interruption, committed-DDL adoption, partial schema, semantic/hash conflict, marker drift, authenticated restore and fresh install/update.
+- [x] Add only portable expand tables/indexes and retain EnrichJob, Candidate, ReviewBatch, SourceArtifact, CommandRun, AuditEvent and every formal table unchanged.
+- [x] Make predecessor inspectors accept only the exact registered CORE-206 successor shape and reject partial/unknown drift before any DDL/data write.
+- [x] Implement `--dry-run | --apply | --verify` with tenant-first enumeration, strict canonical row validation, marker-last contract receipt and no body reads/logging.
+- [x] Cover SQLite pre-DDL report-before-backup/db-push and PostgreSQL migrate-deploy interruption, committed-DDL adoption, partial schema, semantic/hash conflict, marker drift, authenticated restore and fresh install/update.
 
 ## Task 4: Implement the control repository, policy runner and routes
 
@@ -117,12 +119,12 @@ Production starts with no business handler registered in CORE-206, so all three 
 - Modify: `server/src/app.ts`
 - Add/modify: focused tests from Task 1
 
-- [ ] List cards without writes; create/update tenant control snapshots only through current owner/admin CAS, idempotency and body-free audit.
-- [ ] Resolve current role, deployment capability, EffectiveResourceScope, Customer/Matter revisions and SourceArtifact sensitive ACL in one authorization snapshot at trigger, every attempt, replay and pre-commit.
-- [ ] Create/reclaim exactly one tenant/actor/idempotency AgentRun with lease/CAS; store hashed request identity and safe metadata only.
-- [ ] Execute injected preparation with AbortSignal, timeout, integer budget and bounded retry policy; never expose Prisma or formal mutation functions to preparation.
-- [ ] Validate final action-mode outputs against registry, reauthorize, then invoke only the injected mode-specific commit adapter. Persist final body-free refs/cost/status and AuditEvent atomically where database writes are involved.
-- [ ] Filter run history by current scope/ACL and preserve same-shape hidden/missing behavior.
+- [x] List cards without writes; create/update tenant control snapshots only through current owner/admin CAS, idempotency and body-free audit.
+- [x] Resolve current role, deployment capability, EffectiveResourceScope, Customer/Matter revisions and SourceArtifact sensitive ACL in one authorization snapshot at trigger, every attempt, replay and pre-commit.
+- [x] Create/reclaim exactly one tenant/actor/idempotency AgentRun with lease/CAS; store hashed request identity and safe metadata only.
+- [x] Execute injected preparation with AbortSignal, timeout, integer budget and bounded retry policy; never expose Prisma or formal mutation functions to preparation.
+- [x] Validate final action-mode outputs against registry, reauthorize, then invoke only the injected mode-specific commit adapter. Persist final body-free refs/cost/status and AuditEvent atomically where database writes are involved.
+- [x] Filter run history by current scope/ACL and preserve same-shape hidden/missing behavior.
 
 ## Task 5: Verify recovery and close CORE-206
 
@@ -131,13 +133,13 @@ Production starts with no business handler registered in CORE-206, so all three 
 - Modify: this plan
 - Modify: `docs/商业版开发待办清单v1.md`
 
-- [ ] Refresh `file:` package copies with `npm ci --install-links` in App and Server after domain-contract changes.
-- [ ] Run Domain contract, focused Agent/policy/route/migration tests, then Server generate/schema check/typecheck/full tests and PostgreSQL operations integration.
-- [ ] Run G64111, PDE kernel and App typecheck/tests. Do not run a local App production build because it writes shared `app/dist/**`; exact-SHA CI retains that isolated gate.
-- [ ] Run static registry/route/legacy-queue/formal-writer inventory, `git diff --check`, protected-path check, high-confidence secret scan and inline security/API/performance/migration/red-team review.
-- [ ] Assert no Action/App/product-allocation/shared/self-cultivation/production change, no arbitrary handler/network path, no body-bearing Agent table and no Agent formal write.
-- [ ] Commit business code independently, push and require every exact-head CI job green.
-- [ ] In a separate governance commit, document migration/apply/verify/rollback, mark CORE-206 DONE and only SAAS-202 READY, then require exact-head CI green before SAAS-202 starts.
+- [x] Refresh `file:` package copies with `npm ci --install-links` in App and Server after domain-contract changes.
+- [x] Run Domain contract, focused Agent/policy/route/migration tests, then Server generate/schema check/typecheck/full tests and PostgreSQL operations integration.
+- [x] Run G64111, PDE kernel and App typecheck/tests. Do not run a local App production build because it writes shared `app/dist/**`; exact-SHA CI retains that isolated gate.
+- [x] Run static registry/route/legacy-queue/formal-writer inventory, `git diff --check`, protected-path check, high-confidence secret scan and inline security/API/performance/migration/red-team review.
+- [x] Assert no Action/App/product-allocation/shared/self-cultivation/production change, no arbitrary handler/network path, no body-bearing Agent table and no Agent formal write.
+- [x] Commit business code independently, push and require every exact-head CI job green.
+- [x] In a separate governance commit, document migration/apply/verify/rollback, mark CORE-206 DONE and only SAAS-202 READY, then require exact-head CI green before SAAS-202 starts.
 
 ## Local verification commands
 
