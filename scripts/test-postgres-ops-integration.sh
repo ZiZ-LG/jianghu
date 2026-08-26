@@ -39,7 +39,7 @@ cleanup() {
   [[ -z "${fresh_root:-}" ]] || rm -rf "$fresh_root" "$fresh_root-backups" "$fresh_root-rollbacks"
 }
 trap cleanup EXIT
-trap 'rc=$?; printf "POSTGRES_OPS_FAILURE rc=%s stage=%s line=%s\n" "$rc" "$POSTGRES_OPS_STAGE" "$LINENO" >&2; exit "$rc"' ERR
+trap 'rc=$?; if [[ $- == *e* ]]; then printf "POSTGRES_OPS_FAILURE rc=%s stage=%s line=%s\n" "$rc" "$POSTGRES_OPS_STAGE" "$LINENO" >&2; fi' ERR
 
 postgres_query_database_presence() {
   local database=$1
