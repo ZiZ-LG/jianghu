@@ -281,9 +281,12 @@ describe('Stephen self-cultivation site', () => {
     expect(nginx).toContain('server_name stephen.lake2ocean.top;');
     expect(nginx).toContain('return 301 https://stephen.lake2ocean.top$request_uri;');
     expect(nginx).toContain('/etc/letsencrypt/live/stephen.lake2ocean.top/fullchain.pem');
-    expect(nginx).toContain('root /usr/share/nginx/jianghu/stephen;');
+    expect(nginx).toContain('root /srv/stephen/current;');
+    expect(nginx).toMatch(/location = \/release-id\.json\s*\{[^}]*\.stephen-release\.json/s);
+    expect(nginx).toMatch(/location ~ \/\\\.\(\?!well-known\)/);
     expect(nginx).toMatch(/location \^~ \/api\/\s*\{\s*return 404;/);
-    expect(nginx).toMatch(/location \^~ \/assets\/\s*\{[^}]*max-age=31536000, immutable/s);
+    expect(nginx).not.toMatch(/location \^~ \/assets\//);
+    expect(nginx).toMatch(/location \/assets\/\s*\{[^}]*max-age=31536000, immutable/s);
     expect(nginx).toMatch(/location = \/index\.html\s*\{[^}]*no-store, no-cache, must-revalidate/s);
     expect(nginx).toMatch(/location = \/fieldbook\/index\.html\s*\{[^}]*no-store, no-cache, must-revalidate/s);
     expect(nginx).toMatch(/location \/\s*\{\s*try_files \$uri \$uri\/ \/index\.html;/);
@@ -301,7 +304,8 @@ describe('Stephen self-cultivation site', () => {
     expect(sitemap).toContain('<loc>https://stephen.lake2ocean.top/</loc>');
     expect(sitemap).toContain('<loc>https://stephen.lake2ocean.top/fieldbook/</loc>');
     expect(sitemap).toContain('<loc>https://stephen.lake2ocean.top/policy/</loc>');
-    expect(sitemap).not.toContain('/items/');
+    expect(sitemap.match(/<loc>https:\/\/stephen\.lake2ocean\.top\/items\/[a-z0-9-]+\/<\/loc>/g))
+      .toHaveLength(30);
   });
 
   it('publishes privacy, copyright and correction entry points without adding a forum', () => {
