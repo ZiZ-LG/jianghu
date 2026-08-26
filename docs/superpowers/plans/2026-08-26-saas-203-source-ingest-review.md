@@ -6,13 +6,25 @@
 **Branch:** `codex/g4-candidate-review-intelligence`
 **Worktree:** `/Volumes/PowerData/江湖APP/.worktrees/g4-candidate-review-intelligence`
 **Base:** `402e119c2981a6e9547d48ed9f7cd8a8f5ae8abd`
-**Status:** IN_PROGRESS
+**Approved configuration commit:** `3f387fa8212f74cb9da2f1d2fb1aef06dbb43eb1`
+**Business commit:** `9c4887fa72b96516bd4235cbf991b7e3f7d52625`
+**Remote evidence:** [GitHub Actions 32977229083](https://github.com/ZiZ-LG/jianghu/actions/runs/32977229083), exact SHA `9c4887fa72b96516bd4235cbf991b7e3f7d52625`, 12/12 jobs successful
+**Status:** DONE
 
 **Goal:** Connect one Feishu Minutes link/OAuth authorization or one uploaded text-bearing file to an exact encrypted Transcript-backed SourceArtifact, then run the existing controlled `post_meeting_extract@core-206.v1` Job into a human ReviewBatch while formal CRM state remains unchanged until explicit review acceptance.
 
 **Architecture:** Preserve Transcript as the encrypted body authority and SourceArtifact as its body-free projection. Add one focused two-phase import service: provider/file parsing runs outside a database transaction; a tenant-, creator-, mount- and idempotency-scoped command commits exactly one Transcript plus its deterministic SourceArtifact projection. The receipt contains only the exact authorized SourceArtifact metadata. The lightweight UI passes that receipt to the existing Agent Job route; it never calls the legacy `/api/recording/extract` route. Existing SourceArtifact lifecycle commands remain the only degrade/delete authority. Feishu configuration and per-user OAuth credentials continue using encrypted existing tables, with strict bounded contracts, short-lived authenticated state and injectable providers for tests.
 
 **Tech Stack:** TypeScript, Fastify, Prisma, Zod, `@fastify/multipart`, Mammoth, unpdf, React 18, Vite/Vitest, SQLite development verification and generated PostgreSQL schema parity.
+
+## Completion evidence
+
+- The project owner explicitly approved the only four configuration/shared-file changes: `.env.production.example`, `docker-compose.yml`, `scripts/test-postgres-ops-integration.sh` and `server/.env.example`. They were isolated in `3f387fa8212f74cb9da2f1d2fb1aef06dbb43eb1`; the 29-file implementation/test change was isolated in `9c4887fa72b96516bd4235cbf991b7e3f7d52625`.
+- The exact business SHA passed all 12 GitHub Actions jobs in run 32977229083. Local verification passed Domain 11 files / 107 tests, App 46 / 353, Server 89 / 782, G64111 2 / 32 and PDE 3 / 25; the focused SAAS-203 Server set passed 9 / 131, the focused App set 3 / 16, Feishu import 1 / 23 and the dedicated SQLite upgrade gate 1 / 16.
+- PostgreSQL operations passed `FRESH_INSTALL_FIRST_RUN_OK=1`, `FRESH_INSTALL_SECOND_UPDATE_OK=1` and `POSTGRES_OPS_INTEGRATION_OK=1`. Prisma PostgreSQL render parity and the existing SQLite upgrade path passed. SAAS-203 changed no schema or migration.
+- Static and runtime tests prove tenant/current-role/capability/effective-scope/Customer-Matter closure/creator ACL enforcement, viewer denial, encrypted Transcript authority, body-free SourceArtifact receipts, bounded upload/provider failures, OAuth state TTL/binding, idempotent replay, ReviewBatch-only candidate output and zero formal CRM writes before human acceptance.
+- Read-only public checks found `https://lake2ocean.top/` returning 200 as the public homepage without redirect, retaining “首页｜自我修养｜江湖 CRM｜卧虎藏龙”, linking CRM explicitly to `https://crm.lake2ocean.top/`, and showing ICP `京ICP备2026046195号-2` plus `京公网安备11010802049879号`; the CRM login page and `/api/health` both returned 200. These checks were diagnostics only, not a deployment.
+- Production remains the `lake2ocean.top` three-site ecosystem. Mac mini is not a release target and is retained only as an optional pre-release test environment. No production or Mac mini deployment, main merge, public navigation change, self-cultivation change, secret exposure or destructive legacy deletion occurred.
 
 ## Non-goals and hard boundaries
 
