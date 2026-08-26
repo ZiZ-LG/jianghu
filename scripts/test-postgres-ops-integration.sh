@@ -26,6 +26,7 @@ expected_migration_count=$(find server/prisma/postgres/migrations -mindepth 1 -m
 
 fresh_project=''
 fresh_root=''
+POSTGRES_OPS_STAGE='bootstrap'
 cleanup() {
   set +e
   POSTGRES_PASSWORD=x JWT_SECRET=x AI_KEY_SECRET=x OUTBOUND_ALLOWED_HOSTS=example.com \
@@ -38,6 +39,7 @@ cleanup() {
   [[ -z "${fresh_root:-}" ]] || rm -rf "$fresh_root" "$fresh_root-backups" "$fresh_root-rollbacks"
 }
 trap cleanup EXIT
+trap 'rc=$?; printf "POSTGRES_OPS_FAILURE rc=%s stage=%s line=%s\n" "$rc" "$POSTGRES_OPS_STAGE" "$LINENO" >&2; exit "$rc"' ERR
 
 postgres_query_database_presence() {
   local database=$1
@@ -79,14 +81,19 @@ wait_for_server_healthy() {
   return 1
 }
 
+POSTGRES_OPS_STAGE='build-server-image'
 docker compose -p "$COMPOSE_PROJECT_NAME" build server >/dev/null
+POSTGRES_OPS_STAGE='start-legacy-database'
 docker compose -p "$COMPOSE_PROJECT_NAME" up -d db >/dev/null
 wait_for_postgres_ready
+POSTGRES_OPS_STAGE='seed-legacy-schema'
 docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
   'npx prisma db push --schema prisma/postgres/legacy/20260712_pre_int501.prisma --skip-generate' >/dev/null
+POSTGRES_OPS_STAGE='verify-legacy-schema'
 legacy_table_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
   "SELECT count(*) FROM pg_catalog.pg_tables WHERE schemaname = 'public'" | tr -d '[:space:]')
 [[ "$legacy_table_count" == 41 ]]
+POSTGRES_OPS_STAGE='seed-legacy-fixtures'
 docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
   "INSERT INTO \"Tenant\" (id,name) VALUES ('legacy-owner-tenant','Legacy Owner Tenant');
    INSERT INTO \"User\" (id,\"tenantId\",email,\"passwordHash\",name) VALUES ('legacy-owner-user','legacy-owner-tenant','legacy-owner@example.test','unused','Legacy Owner');
@@ -138,29 +145,36 @@ docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U 
       'manual','legacy-transcript-quarantine','Unknown creator','ciphertext-unknown','');" >/dev/null
 # Simulate a process kill after the first of the three adoption resolves. The
 # next server start must recognize and complete this partial history.
+POSTGRES_OPS_STAGE='simulate-interrupted-bridge'
 docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint npx server \
   prisma migrate resolve --applied 20260715000000_baseline \
   --schema prisma/postgres/schema.prisma >/dev/null
 docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
   "INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
    VALUES ('interrupted-bridge-fixture', repeat('0', 64), '20260715030000_adopt_pre_int501_schema', CURRENT_TIMESTAMP, 0);" >/dev/null
+POSTGRES_OPS_STAGE='start-migration-server'
 docker compose -p "$COMPOSE_PROJECT_NAME" up -d server >/dev/null
+POSTGRES_OPS_STAGE='wait-migration-server'
 wait_for_server_healthy
+POSTGRES_OPS_STAGE='verify-migration-history'
 migration_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
   'SELECT count(*) FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL' | tr -d '[:space:]')
 [[ "$migration_count" == "$expected_migration_count" ]]
 rolled_back_bridge_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
   "SELECT count(*) FROM \"_prisma_migrations\" WHERE migration_name = '20260715030000_adopt_pre_int501_schema' AND rolled_back_at IS NOT NULL" | tr -d '[:space:]')
 [[ "$rolled_back_bridge_count" == 1 ]]
+POSTGRES_OPS_STAGE='verify-legacy-bridge'
 legacy_bridge_ready=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
   'SELECT (to_regclass('\''public."AuditEvent"'\'') IS NOT NULL
        AND to_regclass('\''public."CommandRun"'\'') IS NOT NULL
        AND to_regclass('\''public."SyncRun"'\'') IS NOT NULL
        AND to_regclass('\''public."WeComOAuthState"'\'') IS NOT NULL)::int' | tr -d '[:space:]')
 [[ "$legacy_bridge_ready" == 1 ]]
+POSTGRES_OPS_STAGE='verify-owner-backfill'
 legacy_owner_id=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
   "SELECT \"primaryOwnerUserId\" FROM \"Account\" WHERE id = 'legacy-owner-account'" | tr -d '[:space:]')
 [[ "$legacy_owner_id" == legacy-owner-user ]]
+POSTGRES_OPS_STAGE='verify-customer-expansion'
 legacy_customer_expansion=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
   "SELECT ((SELECT count(*) FROM \"Account\"
               WHERE id = 'legacy-owner-account'
@@ -171,6 +185,7 @@ legacy_customer_expansion=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db
               WHERE table_schema = 'public' AND table_name = 'Account'
                 AND column_name = 'customerType') = 'YES')::int" | tr -d '[:space:]')
 [[ "$legacy_customer_expansion" == 1 ]]
+POSTGRES_OPS_STAGE='verify-matter-backfill'
 legacy_matter_total=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
   "SELECT count(*) FROM \"Opportunity\" WHERE \"tenantId\" = 'legacy-owner-tenant'" | tr -d '[:space:]')
 legacy_matter_mapping_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
@@ -183,6 +198,7 @@ legacy_matter_mapping_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T 
        OR (status = 'lost' AND \"lifecycleStatus\" = 'completed' AND \"outcomeKey\" = 'lost'))" | tr -d '[:space:]')
 [[ "$legacy_matter_total" == 4 ]]
 [[ "$legacy_matter_mapping_count" == 4 ]]
+POSTGRES_OPS_STAGE='verify-commitment-backfill'
 legacy_commitment_mapping_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
   "SELECT count(*) FROM \"PlanAction\"
    WHERE id = 'legacy-plan-action'
@@ -199,12 +215,16 @@ legacy_commitment_mapping_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec
      AND source = 'workbuddy'
      AND version = 0" | tr -d '[:space:]')
 [[ "$legacy_commitment_mapping_count" == 1 ]]
+POSTGRES_OPS_STAGE='backfill-candidates'
 docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
   'npm run migrate:candidate-report >/dev/null && npm run migrate:candidate-apply >/dev/null && npm run migrate:candidate-verify >/dev/null'
+POSTGRES_OPS_STAGE='backfill-sensitive-acl'
 docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
   'npm run migrate:sensitive-acl-report >/dev/null && npm run migrate:sensitive-acl-apply >/dev/null && npm run migrate:sensitive-acl-verify >/dev/null'
+POSTGRES_OPS_STAGE='backfill-source-artifacts'
 docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
   'npm run migrate:source-artifact-report >/dev/null && npm run migrate:source-artifact-apply >/dev/null && npm run migrate:source-artifact-verify >/dev/null'
+POSTGRES_OPS_STAGE='verify-legacy-backfills'
 legacy_candidate_source_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
   'SELECT
      (SELECT count(*) FROM "PersonSuggestion")
