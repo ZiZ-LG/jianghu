@@ -21,7 +21,7 @@ import {
   verifyStephenArtifactDirectory,
   type StephenArtifactEntry,
 } from '../../scripts/stephen-release.ts';
-import { approvedSeedItems } from './items';
+import { approvedKnowledgeItems } from './publicItems';
 
 const SOURCE_SHA = '1234567890abcdef1234567890abcdef12345678';
 const PREVIOUS_SHA = 'abcdef1234567890abcdef1234567890abcdef12';
@@ -38,6 +38,9 @@ const workflowPath = decodeURIComponent(
 );
 const checksWorkflowPath = decodeURIComponent(
   new URL('../../../../.github/workflows/stephen-checks.yml', import.meta.url).pathname,
+);
+const releaseRunbookPath = decodeURIComponent(
+  new URL('../../../../docs/content/stephen-release-runbook.md', import.meta.url).pathname,
 );
 const recoveryServicePath = decodeURIComponent(
   new URL('../../../../deploy/stephen-release-recover.service', import.meta.url).pathname,
@@ -94,6 +97,21 @@ function validArtifact(): StephenArtifactEntry[] {
       ].join('')),
     },
   ];
+}
+
+function publishedItemLocationsFromSitemap(sitemap: string) {
+  const locations: string[] = [];
+  for (const match of sitemap.matchAll(/<loc>\s*([^<]+?)\s*<\/loc>/g)) {
+    const location = new URL(match[1]);
+    if (location.pathname.startsWith('/items/')) locations.push(location.href);
+  }
+  return locations.sort();
+}
+
+function replaceLastOccurrence(value: string, search: string, replacement: string) {
+  const offset = value.lastIndexOf(search);
+  if (offset < 0) throw new Error(`test fixture is missing: ${search}`);
+  return `${value.slice(0, offset)}${replacement}${value.slice(offset + search.length)}`;
 }
 
 describe('SAAS-607 exact-SHA artifact contract', () => {
@@ -231,16 +249,27 @@ describe('SAAS-607 exact-SHA artifact contract', () => {
       .toThrow(`artifact contains non-public editorial state: ${state}`);
   });
 
-  it('keeps every owner-approved seed detail in the production sitemap', async () => {
+  it('publishes exactly the explicit owner-approved detail allowlist in the production sitemap', async () => {
     const sitemapPath = decodeURIComponent(
       new URL('../../public/sitemap.xml', import.meta.url).pathname,
     );
     const sitemap = await readFile(sitemapPath, 'utf8');
 
-    for (const item of approvedSeedItems) {
-      expect(sitemap).toContain(
-        `<loc>https://stephen.lake2ocean.top/items/${item.slug}/</loc>`,
-      );
+    const approvedItemLocations = approvedKnowledgeItems
+      .map((item) => `https://stephen.lake2ocean.top/items/${item.slug}/`)
+      .sort();
+
+    expect(publishedItemLocationsFromSitemap(sitemap)).toEqual(approvedItemLocations);
+    for (const unapprovedLocation of [
+      'https://stephen.lake2ocean.top/items/not-owner-approved',
+      '  https://stephen.lake2ocean.top/items/not-owner-approved/  ',
+      approvedItemLocations[0]!,
+      'https://unapproved.example/items/not-owner-approved/',
+    ]) {
+      expect(publishedItemLocationsFromSitemap([
+        sitemap,
+        `<url><loc>${unapprovedLocation}</loc></url>`,
+      ].join('\n'))).not.toEqual(approvedItemLocations);
     }
   });
 });
@@ -430,6 +459,10 @@ describe('SAAS-607 remote release helper', () => {
     expect(helper).toContain('/usr/bin/docker exec "$EDGE_CONTAINER" nginx -t');
     expect(helper).toContain('https://stephen.lake2ocean.top/release-id.json');
     expect(helper).toContain('runtime_identity_matches "$expected_sha"');
+    expect(helper).toContain('runtime_ready "$restore_current"');
+    expect(helper).toContain('runtime_ready "$activation_restore_current"');
+    expect(helper).toContain('fsync_release_root');
+    expect(helper).toContain('os.fsync(directory)');
     expect(helper).toContain("--on-active='30m'");
     expect(helper).toContain('stephen-release-helper expire');
     expect(helper).toContain('--property=Restart=on-failure');
@@ -589,6 +622,12 @@ describe('SAAS-607 remote release helper', () => {
       await mkdir(join(releaseRoot, 'test-control'), { recursive: true });
       await writeFile(join(releaseRoot, 'test-control', 'runtime-ready'), 'yes\n', 'utf8');
       await writeFile(join(releaseRoot, 'test-control', 'nginx-check'), 'fail\n', 'utf8');
+
+      await symlink(`releases/${OLDER_SHA}`, join(releaseRoot, 'previous'));
+      const missingPrevious = runReleaseHelper(releaseRoot, 'activate', SOURCE_SHA, LEASE_ID);
+      expect(missingPrevious.status).not.toBe(0);
+      expect(missingPrevious.stderr).toContain('previous points to an unstaged release');
+      await rm(join(releaseRoot, 'previous'), { recursive: true, force: true });
 
       const rejected = runReleaseHelper(releaseRoot, 'activate', SOURCE_SHA, LEASE_ID);
       expect(rejected.status).not.toBe(0);
@@ -827,10 +866,221 @@ describe('SAAS-607 GitHub release workflow contract', () => {
 
     expect(workflow).not.toContain("git fetch --no-tags origin");
     expect(validateStephenReleaseWorkflow(workflow)).toEqual({
-      runners: ['ubuntu-latest', 'ubuntu-latest'],
+      runners: ['ubuntu-latest', 'ubuntu-latest', 'ubuntu-latest'],
       permissions: ['actions: read', 'contents: read'],
       environment: 'production-stephen',
     });
+  });
+
+  it('coalesces a superseded Stephen change into every exact-green current main release', async () => {
+    const workflow = await readFile(workflowPath, 'utf8');
+    const checksWorkflow = await readFile(checksWorkflowPath, 'utf8');
+    const pushBlock = checksWorkflow.slice(
+      checksWorkflow.indexOf('  push:'),
+      checksWorkflow.indexOf('  pull_request:'),
+    );
+
+    expect(workflow).toContain('          release_allowed=true');
+    expect(workflow).not.toContain('release_allowed=false');
+    expect(pushBlock).toContain('      - main');
+    expect(pushBlock).not.toContain('    paths:');
+    expect(() => validateStephenReleaseWorkflow(
+      workflow.replace('          release_allowed=true', '          release_allowed=false'),
+    )).toThrow('release eligibility must coalesce every exact green current main');
+  });
+
+  it('documents a verified human-approval Environment before the production switch', async () => {
+    const runbook = await readFile(releaseRunbookPath, 'utf8');
+
+    expect(runbook).toContain('required_reviewers');
+    expect(runbook).toContain('protected_branches');
+    expect(runbook).toContain('deployment_branch_policy');
+    expect(runbook).toContain('STEPHEN_RELEASE_ENABLED=1` 之前');
+  });
+
+  it('fails authorization explicitly when the stop switch changes inside an if condition', async () => {
+    const workflow = await readFile(workflowPath, 'utf8');
+    const lines = workflow.split(/\r?\n/);
+    const start = lines.findIndex((line) => line.trim() === 'confirm_current_release_authorization() {');
+    const end = lines.findIndex((line, index) => index > start && line === '          }');
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const functionSource = lines.slice(start, end + 1)
+      .map((line) => line.startsWith('          ') ? line.slice(10) : line)
+      .join('\n');
+    const probe = spawnSync('bash', ['-c', [
+      'set -euo pipefail',
+      `SOURCE_SHA=${SOURCE_SHA}`,
+      'RELEASE_CONTROL_TOKEN=test-only',
+      'GH_REPO=ZiZ-LG/jianghu',
+      'gh() {',
+      '  if [[ "$*" == *actions/variables/STEPHEN_RELEASE_ENABLED* ]]; then',
+      '    printf "0\\n"',
+      '  else',
+      '    printf "%s\\n" "$SOURCE_SHA"',
+      '  fi',
+      '}',
+      functionSource,
+      'if confirm_current_release_authorization; then exit 0; fi',
+      'exit 42',
+    ].join('\n')], { encoding: 'utf8' });
+
+    expect(probe.status, probe.stderr).toBe(42);
+  });
+
+  it('fails HTTP smoke when curl returns an expected status string with a transport error', async () => {
+    const workflow = await readFile(workflowPath, 'utf8');
+    const lines = workflow.split(/\r?\n/);
+    const start = lines.findIndex((line) => line.trim() === 'fetch_status() {');
+    const end = lines.findIndex((line, index) => index > start && line === '          }');
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const functionSource = lines.slice(start, end + 1)
+      .map((line) => line.startsWith('          ') ? line.slice(10) : line)
+      .join('\n');
+    const probe = spawnSync('bash', ['-c', [
+      'set -euo pipefail',
+      'smoke_headers=/tmp/unused-headers',
+      'smoke_body=/tmp/unused-body',
+      'curl() { printf "200"; return 28; }',
+      functionSource,
+      'if fetch_status 200 https://example.invalid/; then exit 0; fi',
+      'exit 42',
+    ].join('\n')], { encoding: 'utf8' });
+
+    expect(probe.status, probe.stderr).toBe(42);
+  });
+
+  it('isolates repository build code from production secrets with a bound private artifact', async () => {
+    const workflow = await readFile(workflowPath, 'utf8');
+
+    expect(workflow).toContain('            -o GlobalKnownHostsFile=/dev/null');
+    expect(workflow).toContain('          merge-multiple: true');
+    expect(() => validateStephenReleaseWorkflow(
+      workflow.replace('            -o GlobalKnownHostsFile=/dev/null\n', ''),
+    )).toThrow('SSH host verification must fail closed against the environment trust anchor');
+    expect(() => validateStephenReleaseWorkflow(
+      workflow.replace(
+        'permissions:\n',
+        'env:\n  LEAKED_TO_ALL_JOBS: ${{ secrets.STEPHEN_SSH_PRIVATE_KEY }}\n\npermissions:\n',
+      ),
+    )).toThrow('production secrets must be isolated to the deploy job');
+    expect(() => validateStephenReleaseWorkflow(
+      workflow.replace(
+        '  build:\n',
+        '  build:\n    environment: production-stephen\n',
+      ),
+    )).toThrow('the build job must not receive a production environment or secrets');
+    expect(() => validateStephenReleaseWorkflow(
+      workflow.replace('needs: [eligibility, build]', 'needs: eligibility'),
+    )).toThrow('the deploy job must consume the exact build artifact');
+    expect(() => validateStephenReleaseWorkflow(
+      workflow.replace('          merge-multiple: true\n', ''),
+    )).toThrow('the deploy job must download the exact artifact into the verified bundle root');
+    expect(() => validateStephenReleaseWorkflow(
+      workflow.replace('retention-days: 1', 'retention-days: 30'),
+    )).toThrow('the build artifact must be private, short-lived, and checksum-bound');
+    expect(() => validateStephenReleaseWorkflow(
+      workflow.replace('BASH_ENV: /dev/null', 'BASH_ENV: /tmp/repository-profile'),
+    )).toThrow('the deploy runner must use a fixed clean shell environment');
+    expect(() => validateStephenReleaseWorkflow(
+      workflow.replace('            -F /dev/null\n', ''),
+    )).toThrow('SSH must ignore runner and repository configuration');
+    expect(() => validateStephenReleaseWorkflow(
+      workflow.replace(
+        '  deploy:\n',
+        '  deploy:\n    run: npm run repository-controlled-code\n',
+      ),
+    )).toThrow('the deploy job must not execute repository code');
+  });
+
+  it('requires content identities for every shared site instead of accepting generic HTTP 200', async () => {
+    const workflow = await readFile(workflowPath, 'utf8');
+    const sharedSiteCall = '            smoke_shared_sites || return 1';
+
+    expect(() => validateStephenReleaseWorkflow(
+      workflow.replace(
+        '            grep -Fq \'江湖 CRM｜自在江湖客户管理\' "$smoke_body" || return 1',
+        '            true # grep -Fq \'江湖 CRM｜自在江湖客户管理\' "$smoke_body" || return 1',
+      ),
+    )).toThrow('shared-site smoke must execute stable site identity checks');
+    expect(() => validateStephenReleaseWorkflow(
+      workflow.replace(
+        '            jq -e \'type == "object" and .ok == true\' "$smoke_body" >/dev/null || return 1',
+        '            true # jq -e \'type == "object" and .ok == true\' "$smoke_body" >/dev/null || return 1',
+      ),
+    )).toThrow('CRM health smoke must execute its JSON identity check');
+    expect(() => validateStephenReleaseWorkflow(
+      workflow.replace(sharedSiteCall, `            true # ${sharedSiteCall.trim()}`),
+    )).toThrow('normal and rollback smoke must execute shared-site identity checks');
+    expect(() => validateStephenReleaseWorkflow(
+      replaceLastOccurrence(
+        workflow,
+        sharedSiteCall,
+        `            true # ${sharedSiteCall.trim()}`,
+      ),
+    )).toThrow('normal and rollback smoke must execute shared-site identity checks');
+    expect(() => validateStephenReleaseWorkflow(
+      workflow.replace('江湖 CRM｜自在江湖客户管理', '任意静态页'),
+    )).toThrow('shared-site smoke must assert stable site identities');
+    expect(() => validateStephenReleaseWorkflow(
+      workflow.replace('江湖 · Game of JiangHu', '任意静态页'),
+    )).toThrow('shared-site smoke must assert stable site identities');
+    expect(() => validateStephenReleaseWorkflow(
+      workflow.replace('https://zizai.tech/', 'https://default.invalid/'),
+    )).toThrow('release smoke surface is missing: https://zizai.tech/');
+    expect(() => validateStephenReleaseWorkflow(
+      workflow.replace('https://bjj.zizai.tech/', 'https://default.invalid/'),
+    )).toThrow('release smoke surface is missing: https://bjj.zizai.tech/');
+    expect(() => validateStephenReleaseWorkflow(
+      workflow.replace('ZiZ 记事本', '任意静态页'),
+    )).toThrow('shared-site smoke must assert stable site identities');
+    expect(() => validateStephenReleaseWorkflow(
+      workflow.replace('application/json', 'text/html'),
+    )).toThrow('CRM health smoke must require its JSON identity');
+  });
+
+  it('requires executable checksum verification instead of accepting commented no-ops', async () => {
+    const workflow = await readFile(workflowPath, 'utf8');
+    const checksumBlock = '          (\n            cd "$bundle_dir"\n            sha256sum --check --strict release-bundle.sha256\n          )';
+
+    expect(() => validateStephenReleaseWorkflow(
+      workflow.replace(
+        checksumBlock,
+        '          (\n            cd "$bundle_dir"\n            true # sha256sum --check --strict release-bundle.sha256\n          )',
+      ),
+    )).toThrow('the deploy job must execute checksum verification');
+    expect(() => validateStephenReleaseWorkflow(
+      workflow.replace(
+        checksumBlock,
+        `          if false; then\n${checksumBlock}\n          fi`,
+      ),
+    )).toThrow('the deploy job must execute checksum verification');
+  });
+
+  it('fails closed when release metadata cannot enumerate bounded sitemap smoke paths', async () => {
+    const workflow = await readFile(workflowPath, 'utf8');
+
+    expect(workflow).not.toContain('done < <(jq -r \'.smokePaths[]\' "$metadata")');
+    expect(() => validateStephenReleaseWorkflow(
+      workflow.replace(
+        'smoke_paths=$(jq -er \'.smokePaths[]\' "$metadata") || return 1',
+        'true # smoke_paths=$(jq -er \'.smokePaths[]\' "$metadata") || return 1',
+      ),
+    )).toThrow('release smoke must fail closed on invalid or unsafe metadata paths');
+  });
+
+  it('binds rollback smoke to the exact restored release identity', async () => {
+    const workflow = await readFile(workflowPath, 'utf8');
+
+    expect(workflow).toContain('rollback_current_sha=');
+    expect(workflow).toContain('--arg source_sha "$rollback_current_sha"');
+    expect(() => validateStephenReleaseWorkflow(
+      workflow.replace(
+        '--arg source_sha "$rollback_current_sha"',
+        '--arg source_sha "$SOURCE_SHA"',
+      ),
+    )).toThrow('rollback smoke must bind to the exact restored release identity');
   });
 
   it('rejects unsafe runner, permissions, SSH, enablement, or rollback mutations', async () => {
@@ -864,7 +1114,7 @@ describe('SAAS-607 GitHub release workflow contract', () => {
       ),
     )).toThrow('release job must re-read authorization after waiting and before finalize');
     expect(() => validateStephenReleaseWorkflow(
-      workflow.replace('/release-id.json', '/healthz-stephen'),
+      workflow.split('/release-id.json').join('/healthz-stephen'),
     )).toThrow('release smoke surface is missing: /release-id.json');
     expect(() => validateStephenReleaseWorkflow(
       workflow.replace('stephen-helper finalize', 'stephen-helper status'),

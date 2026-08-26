@@ -4,7 +4,7 @@
 
 **Goal:** Build the Stephen static site from an exact green `main` SHA, produce a checksummed release bundle, stage it on Aliyun, and provide a fail-closed atomic activation/rollback path without changing the current production runtime during SAAS-607 acceptance.
 
-**Architecture:** A dedicated GitHub `workflow_run` pipeline follows a successful `CI` run for an exact `main` SHA, independently confirms `Stephen checks`, relevant-path scope, repository identity, and that the SHA is still the current `origin/main`. A repository variable keeps the production job disabled by default; once separately enabled, environment-scoped SSH credentials use a forced-command dispatcher to upload a versioned archive. A root-owned, fixed-path remote helper validates an immutable copy, then performs a leased two-phase activation: persist the exact restore state, arm a server-side expiry rollback, atomically switch `current`, and expose exact release identity. External smoke and a fresh authorization check must pass before `finalize`; explicit rollback, timer expiry, and boot recovery close runner-loss paths.
+**Architecture:** A dedicated GitHub `workflow_run` pipeline follows a successful `CI` run for an exact `main` SHA, independently confirms `Stephen checks`, records relevant-path scope for observability, verifies repository identity, and proves that the SHA is still the current `origin/main`. Once enabled, every exact-green current `main` is rebuilt and released so a later unrelated commit cannot strand an earlier Stephen change; pending candidate manifests remain excluded by the public allowlist. A repository variable keeps the production job disabled by default; once separately enabled, environment-scoped SSH credentials use a forced-command dispatcher to upload a versioned archive. A root-owned, fixed-path remote helper validates an immutable copy, then performs a leased two-phase activation: persist the exact restore state, arm a server-side expiry rollback, atomically switch `current`, and expose exact release identity. External smoke and a fresh authorization check must pass before `finalize`; explicit rollback, timer expiry, and boot recovery close runner-loss paths.
 
 **Tech stack:** GitHub Actions (`ubuntu-latest`), Node.js 22/TypeScript, Vitest, Bash, OpenSSH, GNU tar, SHA-256, existing Dockerized Nginx.
 
@@ -62,12 +62,12 @@ Steps:
 
 Steps:
 
-1. Write failing executable workflow-contract tests for `ubuntu-latest`, `workflow_run` after `CI`, exact repository/main/SHA checks, independent `Stephen checks` success, relevant paths, minimal `actions: read` and `contents: read`, concurrency, timeout, environment use, opt-in variable, known-host verification, and forbidden unsafe SSH settings.
-2. Implement an eligibility job that never reads production secrets and skips stale or irrelevant SHAs.
+1. Write failing executable workflow-contract tests for `ubuntu-latest`, `workflow_run` after `CI`, exact repository/main/SHA checks, independent `Stephen checks` success on every main push, relevant-path observability, coalescing of superseded Stephen changes, minimal `actions: read` and `contents: read`, concurrency, timeout, environment use, opt-in variable, known-host verification, and forbidden unsafe SSH settings.
+2. Implement an eligibility job that never reads production secrets, rejects stale SHAs, and releases every exact-green current `main` SHA; the first-parent path scan is summary-only and cannot skip a release.
 3. Revalidate the repository variable and current `origin/main` with an Environment-scoped, fine-grained read-only control token after Environment wait, before activation, and before finalize so approvals or queued runs cannot release a stale SHA. The built-in `GITHUB_TOKEN` cannot read the repository Variables API and must not be treated as proof of this permission.
-4. Implement the environment-scoped release job: `npm ci --install-links`, both Stephen TypeScript checks, Stephen Vitest, `build:stephen`, artifact validation, archive/checksum creation, forced-command SSH upload/stage, leased activation, exact `/release-id.json` verification, and required public/shared-host smoke checks.
+4. Implement a secret-free build job for `npm ci --install-links`, both Stephen TypeScript checks, Stephen Vitest, `build:stephen`, artifact validation, and archive/checksum creation. Pass only the exact-SHA/checksum-bound bundle through a private one-day GitHub Actions artifact into a fresh Environment-scoped deploy job; verify it before reading production Secrets, then perform forced-command SSH upload/stage with repository and global SSH config disabled, leased activation, exact `/release-id.json` verification, and required public/shared-host identity smoke checks without checkout or repository-code execution on the deploy runner.
 5. On any post-activation smoke or authorization failure, call the fixed leased rollback command and verify the restored Stephen and shared-host surfaces before failing the run. If the runner disappears, rely on the armed server timer rather than treating SSH response loss as success.
-6. Do not upload GitHub artifacts or print secrets; remove temporary private-key files with a trap.
+6. Do not publish or retain release artifacts beyond one day and do not print secrets; remove temporary private-key files with a trap.
 
 ## Task 4: Runbook and manual first-enable prerequisites
 
@@ -78,7 +78,7 @@ Steps:
 
 Steps:
 
-1. Document the exact GitHub variable and `production-stephen` secret names without values.
+1. Document the exact GitHub variable and `production-stephen` secret names without values, plus the required-reviewer and main-only deployment-branch protections that must be verified by API before enablement.
 2. Document generation of a dedicated Actions SSH key, known-host capture from a trusted console, forced-command authorized key, dedicated user creation, root-owned helper/dispatcher/recovery-service installation, narrow sudoers rule, directory ownership, and parent bind-mount/Nginx-root migration.
 3. Keep the first production gate explicit: repository variable off, no live mount/root change, no `current` switch, and no automatic release until the owner says `批准首次生产启用`.
 4. Record the candidate-to-public-content gap as a separate prerequisite rather than weakening the two-fact content gate.

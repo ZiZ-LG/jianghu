@@ -341,6 +341,27 @@ function topLevelWorkflowBlock(workflow: string, key: string) {
   return block;
 }
 
+function workflowJobBlock(workflow: string, key: string) {
+  const lines = workflow.split(/\r?\n/);
+  const start = lines.findIndex((line) => line === `  ${key}:`);
+  if (start < 0) return '';
+  const block = [lines[start]];
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (/^  [A-Za-z0-9_-]+:\s*$/.test(line)) break;
+    block.push(line);
+  }
+  return block.join('\n');
+}
+
+function hasExecutableWorkflowLine(block: string, command: string) {
+  return block.split(/\r?\n/).some((line) => line.trim() === command);
+}
+
+function executableWorkflowLineCount(block: string, command: string) {
+  return block.split(/\r?\n/).filter((line) => line.trim() === command).length;
+}
+
 export function validateStephenReleaseWorkflow(workflow: string) {
   if (!/^\s{2}workflow_run:\s*$/m.test(workflow)
     || !/^\s{4}workflows:\s*\[['"]CI['"]\]\s*$/m.test(workflow)
@@ -353,7 +374,7 @@ export function validateStephenReleaseWorkflow(workflow: string) {
   }
   const runners = [...workflow.matchAll(/^\s*runs-on:\s*([^\s#]+).*$/gm)]
     .map((match) => match[1]);
-  if (runners.length !== 2 || runners.some((runner) => runner !== 'ubuntu-latest')) {
+  if (runners.length !== 3 || runners.some((runner) => runner !== 'ubuntu-latest')) {
     throw new Error('release workflow runners must be ubuntu-latest');
   }
   const permissions = topLevelWorkflowBlock(workflow, 'permissions')
@@ -371,7 +392,7 @@ export function validateStephenReleaseWorkflow(workflow: string) {
   }
   const timeouts = [...workflow.matchAll(/^\s+timeout-minutes:\s*(\d+)\s*$/gm)]
     .map((match) => Number(match[1]));
-  if (timeouts.length !== 2
+  if (timeouts.length !== 3
     || timeouts.some((timeout) => timeout < 1 || timeout > 60)) {
     throw new Error('release jobs need bounded timeouts');
   }
@@ -396,7 +417,8 @@ export function validateStephenReleaseWorkflow(workflow: string) {
       throw new Error('release eligibility must bind to a successful main CI run in this repository');
     }
   }
-  if ((workflow.split('ref: ${{ github.event.workflow_run.head_sha }}').length - 1) !== 2
+  if ((workflow.split('ref: ${{ github.event.workflow_run.head_sha }}').length - 1) !== 1
+    || (workflow.split('ref: ${{ needs.eligibility.outputs.source_sha }}').length - 1) !== 1
     || (workflow.split('repos/$GH_REPO/git/ref/heads/main').length - 1) < 3
     || !workflow.includes('git rev-parse HEAD')
     || !workflow.includes('"$remote_main_sha" == "$SOURCE_SHA"')
@@ -406,7 +428,11 @@ export function validateStephenReleaseWorkflow(workflow: string) {
   }
   if (!workflow.includes('git diff --name-only -z "$SOURCE_SHA^1" "$SOURCE_SHA"')
     || !workflow.includes('app/stephen/review-candidates/')) {
-    throw new Error('release eligibility must inspect relevant first-parent paths');
+    throw new Error('release eligibility must report relevant first-parent paths');
+  }
+  if (!hasExecutableWorkflowLine(workflow, 'release_allowed=true')
+    || workflow.includes('release_allowed=false')) {
+    throw new Error('release eligibility must coalesce every exact green current main');
   }
   if (!workflow.includes('actions/workflows/stephen-checks.yml/runs')
     || !workflow.includes('--arg source_sha "$SOURCE_SHA"')
@@ -417,10 +443,26 @@ export function validateStephenReleaseWorkflow(workflow: string) {
     .map((match) => match[1]);
   const checkoutAction = 'actions/checkout@11d5960a326750d5838078e36cf38b85af677262';
   const setupNodeAction = 'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020';
-  if (actions.length !== 3
+  const uploadArtifactAction = 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02';
+  const downloadArtifactAction = 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093';
+  if (actions.length !== 5
     || actions.filter((action) => action === checkoutAction).length !== 2
-    || actions.filter((action) => action === setupNodeAction).length !== 1) {
-    throw new Error('release workflow actions must be pinned checkout and setup-node commits');
+    || actions.filter((action) => action === setupNodeAction).length !== 1
+    || actions.filter((action) => action === uploadArtifactAction).length !== 1
+    || actions.filter((action) => action === downloadArtifactAction).length !== 1) {
+    throw new Error('release workflow actions must be pinned build and artifact-transfer commits');
+  }
+  const buildJob = workflowJobBlock(workflow, 'build');
+  const deployJob = workflowJobBlock(workflow, 'deploy');
+  if (!buildJob || /^\s{4}environment:/m.test(buildJob) || buildJob.includes('secrets.')) {
+    throw new Error('the build job must not receive a production environment or secrets');
+  }
+  const deployJobOffset = workflow.indexOf(deployJob);
+  const workflowOutsideDeploy = deployJobOffset < 0
+    ? workflow
+    : `${workflow.slice(0, deployJobOffset)}${workflow.slice(deployJobOffset + deployJob.length)}`;
+  if (/\$\{\{[^}]*\bsecrets\b[^}]*\}\}/.test(workflowOutsideDeploy)) {
+    throw new Error('production secrets must be isolated to the deploy job');
   }
   for (const command of [
     'npm ci --install-links',
@@ -430,11 +472,46 @@ export function validateStephenReleaseWorkflow(workflow: string) {
     'npm run build:stephen',
     'stephen/scripts/stephen-release-cli.ts verify',
   ]) {
-    if (!workflow.includes(command)) {
+    if (!buildJob.includes(command)) {
       throw new Error(`release validation command is missing: ${command}`);
     }
   }
-  if (!/^\s{4}environment:\s*production-stephen\s*$/m.test(workflow)) {
+  if (!deployJob
+    || !deployJob.includes('needs: [eligibility, build]')
+    || !deployJob.includes('artifact-ids: ${{ needs.build.outputs.artifact_id }}')) {
+    throw new Error('the deploy job must consume the exact build artifact');
+  }
+  if (!deployJob.includes('merge-multiple: true')) {
+    throw new Error('the deploy job must download the exact artifact into the verified bundle root');
+  }
+  if (!buildJob.includes('retention-days: 1')
+    || !buildJob.includes('if-no-files-found: error')
+    || !buildJob.includes('overwrite: false')
+    || !buildJob.includes('release-bundle.sha256')
+    || !buildJob.includes('archiveChecksum: $archive_checksum')
+    || !buildJob.includes('contentChecksum: $content_checksum')
+    || !deployJob.includes('sha256sum --check --strict release-bundle.sha256')
+    || !deployJob.includes('.sourceSha == $source_sha')
+    || !deployJob.includes('.archiveChecksum == $archive_checksum')) {
+    throw new Error('the build artifact must be private, short-lived, and checksum-bound');
+  }
+  if (!hasExecutableWorkflowLine(
+    deployJob,
+    'sha256sum --check --strict release-bundle.sha256',
+  ) || /^\s*if\s+false\s*;\s*then\s*$/m.test(deployJob)) {
+    throw new Error('the deploy job must execute checksum verification');
+  }
+  if (!deployJob.includes('BASH_ENV: /dev/null')
+    || !deployJob.includes('PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin')) {
+    throw new Error('the deploy runner must use a fixed clean shell environment');
+  }
+  if (/\b(?:npm|npx|node)\b/.test(deployJob)
+    || /app\/stephen\/scripts|working-directory:|actions\/checkout|actions\/setup-node/.test(deployJob)
+    || /\bgit\s+(?:rev-parse|show|diff|checkout|fetch)\b/.test(deployJob)) {
+    throw new Error('the deploy job must not execute repository code');
+  }
+  if (!/^\s{4}environment:\s*production-stephen\s*$/m.test(deployJob)
+    || (workflow.match(/^\s{4}environment:\s*production-stephen\s*$/gm) ?? []).length !== 1) {
     throw new Error('production secrets must be scoped to production-stephen');
   }
   for (const secret of [
@@ -451,10 +528,14 @@ export function validateStephenReleaseWorkflow(workflow: string) {
   }
   if (!workflow.includes('StrictHostKeyChecking=yes')
     || !workflow.includes('UserKnownHostsFile=')
+    || !workflow.includes('GlobalKnownHostsFile=/dev/null')
     || !workflow.includes('IdentitiesOnly=yes')
     || !workflow.includes('ssh-keygen -F')
     || /StrictHostKeyChecking=no/.test(workflow)) {
-    throw new Error('SSH host verification must fail closed');
+    throw new Error('SSH host verification must fail closed against the environment trust anchor');
+  }
+  if (!deployJob.includes('            -F /dev/null')) {
+    throw new Error('SSH must ignore runner and repository configuration');
   }
   if (!workflow.includes('"stephen-upload $SOURCE_SHA" < "$archive"')
     || /\bscp\b/.test(workflow)
@@ -482,10 +563,47 @@ export function validateStephenReleaseWorkflow(workflow: string) {
     'https://crm.lake2ocean.top/',
     'https://crm.lake2ocean.top/api/health',
     'https://zizai.tech/',
+    'https://bjj.zizai.tech/',
   ]) {
     if (!workflow.includes(surface)) {
       throw new Error(`release smoke surface is missing: ${surface}`);
     }
+  }
+  for (const identity of [
+    '江湖 CRM｜自在江湖客户管理',
+    '江湖 · Game of JiangHu',
+    'ZiZai 自在创造',
+    'ZiZ 记事本',
+  ]) {
+    if (!workflow.includes(identity)) {
+      throw new Error('shared-site smoke must assert stable site identities');
+    }
+  }
+  for (const command of [
+    `grep -Fq '江湖 CRM｜自在江湖客户管理' "$smoke_body" || return 1`,
+    `grep -Fq '江湖 · Game of JiangHu' "$smoke_body" || return 1`,
+    `grep -Fq 'ZiZai 自在创造' "$smoke_body" || return 1`,
+    `grep -Fq 'ZiZ 记事本' "$smoke_body" || return 1`,
+  ]) {
+    if (!hasExecutableWorkflowLine(deployJob, command)) {
+      throw new Error('shared-site smoke must execute stable site identity checks');
+    }
+  }
+  if (executableWorkflowLineCount(deployJob, 'smoke_shared_sites || return 1') !== 2) {
+    throw new Error('normal and rollback smoke must execute shared-site identity checks');
+  }
+  if (!workflow.includes('application/json*')
+    || !workflow.includes('type == "object" and .ok == true')) {
+    throw new Error('CRM health smoke must require its JSON identity');
+  }
+  if (!hasExecutableWorkflowLine(
+    deployJob,
+    '[[ "$content_type" == application/json* ]] || return 1',
+  ) || !hasExecutableWorkflowLine(
+    deployJob,
+    `jq -e 'type == "object" and .ok == true' "$smoke_body" >/dev/null || return 1`,
+  )) {
+    throw new Error('CRM health smoke must execute its JSON identity check');
   }
   if (!workflow.includes('.sourceSha == $source_sha')
     || !workflow.includes('.contentChecksum == $checksum')
@@ -493,10 +611,36 @@ export function validateStephenReleaseWorkflow(workflow: string) {
     || /curl[^\n]*--location/.test(workflow)) {
     throw new Error('release smoke must bind the HTTPS response to the exact artifact identity');
   }
+  if (workflow.includes('done < <(jq -r \'.smokePaths[]\' "$metadata")')
+    || !hasExecutableWorkflowLine(
+      deployJob,
+      `smoke_paths=$(jq -er '.smokePaths[]' "$metadata") || return 1`,
+    )
+    || !hasExecutableWorkflowLine(deployJob, '[[ -n "$smoke_paths" ]] || return 1')
+    || !hasExecutableWorkflowLine(
+      deployJob,
+      '[[ "$smoke_path" =~ ^/($|digest/$|policy/$|fieldbook/$|items/[a-z0-9-]+/$) ]] || return 1',
+    )
+    || !hasExecutableWorkflowLine(deployJob, 'done <<< "$smoke_paths"')
+    || !deployJob.includes('and ((.smokePaths | type) == "array" and (.smokePaths | length) >= 5)')
+    || !deployJob.includes('and any(.smokePaths[]; startswith("/items/"))')) {
+    throw new Error('release smoke must fail closed on invalid or unsafe metadata paths');
+  }
+  if (!deployJob.includes("rollback_current_sha=''")
+    || !hasExecutableWorkflowLine(
+      deployJob,
+      `fetch_status 200 'https://stephen.lake2ocean.top/release-id.json' || return 1`,
+    )
+    || !hasExecutableWorkflowLine(
+      deployJob,
+      `jq -e --arg source_sha "$rollback_current_sha" \\`,
+    )) {
+    throw new Error('rollback smoke must bind to the exact restored release identity');
+  }
   if (!workflow.includes('trap cleanup EXIT')
     || /\bset\s+(?:-x|-o\s+xtrace)\b/.test(workflow)
     || /^\s*(?:env|printenv)(?:\s|$)/m.test(workflow)
-    || /upload-artifact|StrictHostKeyChecking=no|write-all|contents:\s*write/i.test(workflow)) {
+    || /StrictHostKeyChecking=no|write-all|contents:\s*write/i.test(workflow)) {
     throw new Error('release workflow must not expose credentials or broaden permissions');
   }
   return { runners, permissions, environment: 'production-stephen' as const };

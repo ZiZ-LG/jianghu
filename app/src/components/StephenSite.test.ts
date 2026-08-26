@@ -285,7 +285,8 @@ describe('Stephen self-cultivation site', () => {
     expect(nginx).toMatch(/location = \/release-id\.json\s*\{[^}]*\.stephen-release\.json/s);
     expect(nginx).toMatch(/location ~ \/\\\.\(\?!well-known\)/);
     expect(nginx).toMatch(/location \^~ \/api\/\s*\{\s*return 404;/);
-    expect(nginx).toMatch(/location \^~ \/assets\/\s*\{[^}]*max-age=31536000, immutable/s);
+    expect(nginx).not.toMatch(/location \^~ \/assets\//);
+    expect(nginx).toMatch(/location \/assets\/\s*\{[^}]*max-age=31536000, immutable/s);
     expect(nginx).toMatch(/location = \/index\.html\s*\{[^}]*no-store, no-cache, must-revalidate/s);
     expect(nginx).toMatch(/location = \/fieldbook\/index\.html\s*\{[^}]*no-store, no-cache, must-revalidate/s);
     expect(nginx).toMatch(/location \/\s*\{\s*try_files \$uri \$uri\/ \/index\.html;/);

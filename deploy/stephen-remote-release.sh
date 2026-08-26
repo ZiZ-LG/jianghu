@@ -100,6 +100,23 @@ sha256_file() {
   fi
 }
 
+fsync_release_root() {
+  python3 -I - "$release_root" <<'PY' \
+    || fail 'release root directory sync failed'
+import os
+import sys
+
+directory = os.open(
+    sys.argv[1],
+    os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0),
+)
+try:
+    os.fsync(directory)
+finally:
+    os.close(directory)
+PY
+}
+
 copy_incoming_archive() {
   local source=$1
   local destination=$2
@@ -525,7 +542,7 @@ link_sha() {
   local name=$1
   local source_sha
   source_sha=$(link_target_sha_unverified "$name")
-  release_is_staged "$source_sha"
+  release_is_staged "$source_sha" || fail "$name points to an unstaged release"
   printf '%s' "$source_sha"
 }
 
@@ -543,6 +560,7 @@ import sys
 
 os.replace(sys.argv[1], sys.argv[2])
 PY
+  fsync_release_root
 }
 
 remove_link_if_present() {
@@ -550,6 +568,7 @@ remove_link_if_present() {
   local link_path="$release_root/$name"
   if [[ -L "$link_path" ]]; then
     unlink -- "$link_path"
+    fsync_release_root
   elif [[ -e "$link_path" ]]; then
     fail "$name exists but is not a symbolic link"
   fi
@@ -716,6 +735,7 @@ remove_pending() {
   fi
   if [[ -f "$marker" ]]; then
     unlink -- "$marker"
+    fsync_release_root
   elif [[ -e "$marker" ]]; then
     fail 'pending activation marker is unsafe'
   fi
@@ -756,7 +776,8 @@ best_effort_restore_activation() {
   set +e
   if (restore_links "$activation_restore_current" "$activation_restore_previous") \
     && nginx_check >/dev/null 2>&1 \
-    && nginx_reload >/dev/null 2>&1; then
+    && nginx_reload >/dev/null 2>&1 \
+    && runtime_ready "$activation_restore_current" >/dev/null 2>&1; then
     remove_pending
     cancel_expiry "$activation_lease_id"
   else
@@ -788,6 +809,8 @@ rollback_pending_locked() {
   if ! nginx_check || ! nginx_reload; then
     fail 'pending rollback restored links but Nginx validation or reload failed'
   fi
+  runtime_ready "$restore_current" \
+    || fail 'pending rollback did not expose the exact restored release'
   remove_pending
   if [[ "$cancel_timer" -eq 1 ]]; then cancel_expiry "$lease_id"; fi
 }
