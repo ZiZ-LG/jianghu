@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   ActorRoleSchema,
+  capabilityPolicyAllows,
   type CapabilityPolicy,
   type CommandContext,
 } from '@jianghu/domain-contracts';
@@ -44,6 +45,12 @@ export interface CreateReviewBatchInput {
   sourceArtifactId: string;
   expectedSourceAclVersion: number;
   candidates: CandidateAttachmentInput[];
+}
+
+export interface CreateReviewBatchAuthorization {
+  /** Public/manual creation requires manage; the trusted Agent port may use current read ACL. */
+  sourceIntent: 'manage' | 'read';
+  grantActorReviewer: boolean;
 }
 
 const sourceSelect = {
@@ -267,10 +274,15 @@ export async function createReviewBatch(
   ctx: ReviewBatchContext,
   policy: CapabilityPolicy,
   input: CreateReviewBatchInput,
+  authorization: CreateReviewBatchAuthorization = {
+    sourceIntent: 'manage',
+    grantActorReviewer: false,
+  },
 ) {
   assertAttachmentInput(input);
   const source = await loadSource(db, ctx.tenantId, input.sourceArtifactId);
-  await authorizeSource(db, ctx, policy, source, 'manage');
+  const actorRole = await authorizeSource(db, ctx, policy, source, authorization.sourceIntent);
+  if (actorRole === 'viewer') throw new ReviewBatchError('viewer_write_denied', 403);
   if (source.aclVersion !== input.expectedSourceAclVersion
     || source.retentionState === 'deleted'
     || !source.accountId) {
@@ -284,7 +296,10 @@ export async function createReviewBatch(
     userId: ctx.actorId,
     role: await currentActorRole(db, ctx),
   }, policy);
-  const decisions = await evaluator.authorizeMany(rows.map(candidateDescriptor), 'manage');
+  const decisions = await evaluator.authorizeMany(
+    rows.map(candidateDescriptor),
+    authorization.sourceIntent === 'manage' ? 'manage' : 'read',
+  );
   if (decisions.some((decision) => !decision.allowed)) notFound();
   for (const row of rows) {
     const expected = expectedById.get(row.id)!;
@@ -336,6 +351,42 @@ export async function createReviewBatch(
     });
     if (changed.count !== 1) candidateConflict(`review_batch_candidate_conflict:${row.id}`);
   }
+  const needsReviewerGrant = authorization.grantActorReviewer
+    && source.visibility === 'matter_shared'
+    && source.createdByUserId !== ctx.actorId;
+  if (needsReviewerGrant) {
+    if (!capabilityPolicyAllows(policy, { permission: 'candidate.review_shared' })) {
+      throw new ReviewBatchError('review_batch_reviewer_permission_required', 403);
+    }
+    for (const row of rows) {
+      await db.sensitiveResourceGrant.upsert({
+        where: { tenantId_resourceKind_resourceId_granteeUserId_grantKind: {
+          tenantId: ctx.tenantId,
+          resourceKind: 'candidate',
+          resourceId: row.id,
+          granteeUserId: ctx.actorId,
+          grantKind: 'reviewer',
+        } },
+        update: {
+          grantedByUserId: ctx.actorId,
+          resourceAclVersion: source.aclVersion,
+          grantedAt: new Date(),
+          revokedAt: null,
+          revokedByUserId: null,
+        },
+        create: {
+          id: `srg_${randomUUID().replaceAll('-', '')}`,
+          tenantId: ctx.tenantId,
+          resourceKind: 'candidate',
+          resourceId: row.id,
+          granteeUserId: ctx.actorId,
+          grantedByUserId: ctx.actorId,
+          grantKind: 'reviewer',
+          resourceAclVersion: source.aclVersion,
+        },
+      });
+    }
+  }
   await db.auditEvent.create({ data: {
     id: `audit_${randomUUID()}`,
     tenantId: ctx.tenantId,
@@ -347,7 +398,11 @@ export async function createReviewBatch(
     requestId: ctx.requestId ?? null,
     sourceRef: source.id,
     changedFields: JSON.stringify(['sourceArtifactId', 'candidateCount', 'aclVersion']),
-    metadata: JSON.stringify({ candidateCount: rows.length, aclVersion: source.aclVersion }),
+    metadata: JSON.stringify({
+      candidateCount: rows.length,
+      aclVersion: source.aclVersion,
+      reviewerGrantCount: needsReviewerGrant ? rows.length : 0,
+    }),
   } });
   const [batch, attached] = await Promise.all([
     db.reviewBatch.findFirstOrThrow({ where: { id, tenantId: ctx.tenantId }, select: batchMetadataSelect }),

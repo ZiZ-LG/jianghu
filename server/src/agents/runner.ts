@@ -1,16 +1,20 @@
 import { randomUUID } from 'node:crypto';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import {
+  AgentOutputRefSchema,
   AgentPreparedAuditSchema,
   AgentRunReceiptSchema,
   AgentRunViewSchema,
+  PostMeetingCandidateBatchSchema,
   type AgentJobDefinition,
   type AgentManualRunRequest,
+  type AgentOutputRef,
   type AgentPreparedAudit,
   type AgentRunReceipt,
   type AgentRunView,
   type CapabilityPolicy,
   type CommandContext,
+  type PostMeetingCandidateBatch,
 } from '@jianghu/domain-contracts';
 import { hashIdempotencyKey } from '../idempotency.js';
 import {
@@ -30,8 +34,10 @@ import { AgentJobError } from './errors.js';
 import {
   AgentPreparationError,
   registeredAgentHandler,
+  type AgentCandidateCommitAdapter,
   type AgentJobHandler,
   type AgentJobHandlers,
+  type AgentPreparationResult,
 } from './model.js';
 import { validatePreparedAgentAudit } from './policy.js';
 import { hashAgentDefinition } from './registry.js';
@@ -380,7 +386,7 @@ async function prepareWithTimeout(
   handler: AgentJobHandler,
   context: Omit<Parameters<AgentJobHandler['prepare']>[0], 'signal'>,
   timeoutMs: number,
-): Promise<AgentPreparedAudit> {
+): Promise<AgentPreparationResult> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const preparation = Promise.resolve().then(() => handler.prepare({ ...context, signal: controller.signal }));
@@ -400,14 +406,36 @@ async function prepareWithTimeout(
   }
 }
 
+interface ParsedPreparation {
+  audit: AgentPreparedAudit;
+  privateState?: unknown;
+}
+
+function parsePreparation(raw: AgentPreparationResult): ParsedPreparation | null {
+  const legacy = AgentPreparedAuditSchema.safeParse(raw);
+  if (legacy.success) return { audit: legacy.data };
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  if (keys.length !== 2 || keys[0] !== 'audit' || keys[1] !== 'privateState'
+    || record.privateState === undefined) return null;
+  const audit = AgentPreparedAuditSchema.safeParse(record.audit);
+  return audit.success ? { audit: audit.data, privateState: record.privateState } : null;
+}
+
 function samePrepared(left: AgentPreparedAudit, right: AgentPreparedAudit): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function sameOutputRef(left: AgentOutputRef, right: AgentOutputRef): boolean {
+  return left.kind === right.kind && left.id === right.id && left.version === right.version;
 }
 
 async function commitWithDeadline(
   handler: AgentJobHandler,
   context: Omit<Parameters<AgentJobHandler['commit']>[0], 'signal'>,
   prepared: AgentPreparedAudit,
+  privateState: unknown,
   deadlineAt: number,
 ): Promise<AgentPreparedAudit> {
   const remainingMs = deadlineAt - Date.now();
@@ -417,7 +445,7 @@ async function commitWithDeadline(
   const committing = Promise.resolve().then(() => handler.commit({
     ...context,
     signal: controller.signal,
-  }, prepared));
+  }, prepared, privateState));
   committing.catch(() => undefined);
   try {
     return await Promise.race([
@@ -470,8 +498,10 @@ async function commitPrepared(
   run: AgentRunRow,
   leaseToken: string,
   prepared: AgentPreparedAudit,
+  privateState: unknown,
   totalCost: number,
   deadlineAt: number,
+  candidateCommitAdapter?: AgentCandidateCommitAdapter,
 ): Promise<AgentRunRow> {
   return db.$transaction(async (tx) => {
     const authorization = await authorizeAgentRequest(
@@ -487,8 +517,11 @@ async function commitPrepared(
     const policyResult = validatePreparedAgentAudit(definition, normalized, authorization.limits);
     if (!policyResult.ok) throw new AgentJobError(policyResult.code, 409);
     validatePreparedEvidence(authorization, normalized);
-    await validateOutputs(tx, ctx, policy, authorization, request, normalized);
-    const committedRaw = await commitWithDeadline(handler, {
+    if (definition.actionMode !== 'candidate') {
+      await validateOutputs(tx, ctx, policy, authorization, request, normalized);
+    }
+
+    const commitIdentity = {
       tenantId: ctx.tenantId,
       actorId: ctx.actorId,
       requestId: ctx.requestId ?? null,
@@ -499,10 +532,66 @@ async function commitPrepared(
       sourceArtifactId: request.sourceArtifactId,
       inputRefs: request.inputRefs,
       authorizationFingerprint: authorization.fingerprint,
-    }, normalized, deadlineAt);
+    };
+    let candidateCommitCalls = 0;
+    let candidatePortMisused = false;
+    let candidatePortOutput: AgentOutputRef | null = null;
+    const commitCandidateBatch = async (raw: PostMeetingCandidateBatch): Promise<AgentOutputRef> => {
+      if (definition.actionMode !== 'candidate' || candidateCommitCalls !== 0) {
+        candidatePortMisused = true;
+        throw new AgentJobError('agent_candidate_port_misuse', 409);
+      }
+      candidateCommitCalls += 1;
+      if (!candidateCommitAdapter) {
+        throw new AgentJobError('agent_candidate_commit_unavailable', 409);
+      }
+      if (Date.now() > deadlineAt) throw new AgentJobError('agent_timeout', 409);
+      const batch = PostMeetingCandidateBatchSchema.safeParse(raw);
+      if (!batch.success
+        || batch.data.customerId !== request.customerId
+        || batch.data.matterId !== request.matterId
+        || batch.data.sourceArtifactId !== request.sourceArtifactId) {
+        throw new AgentJobError('agent_candidate_batch_invalid', 409);
+      }
+      const currentSource = request.sourceArtifactId
+        ? authorization.sources.get(request.sourceArtifactId)
+        : undefined;
+      const evidenceByLocator = new Map(normalized.evidenceRefs.map((ref) => [ref.locatorId, ref]));
+      if (!currentSource
+        || normalized.evidenceRefs.length !== batch.data.items.length
+        || evidenceByLocator.size !== normalized.evidenceRefs.length
+        || normalized.evidenceRefs.some((ref) => (
+          ref.sourceArtifactId !== request.sourceArtifactId
+          || ref.sourceFingerprint !== currentSource.sourceFingerprint
+        ))
+        || batch.data.items.some((item) => !evidenceByLocator.has(item.sourceLocator))) {
+        throw new AgentJobError('agent_candidate_evidence_mismatch', 409);
+      }
+      const output = AgentOutputRefSchema.safeParse(await candidateCommitAdapter({
+        tx,
+        ...commitIdentity,
+        sourceFingerprint: currentSource.sourceFingerprint,
+        sourceAclVersion: currentSource.aclVersion,
+      }, batch.data));
+      if (!output.success || output.data.kind !== 'review_batch'
+        || normalized.outputRefs.length !== 1
+        || !sameOutputRef(output.data, normalized.outputRefs[0]!)) {
+        throw new AgentJobError('agent_candidate_output_mismatch', 409);
+      }
+      candidatePortOutput = output.data;
+      return output.data;
+    };
+
+    const committedRaw = await commitWithDeadline(handler, {
+      ...commitIdentity,
+      ...(definition.actionMode === 'candidate' ? { commitCandidateBatch } : {}),
+    }, normalized, privateState, deadlineAt);
     if (Date.now() > deadlineAt) throw new AgentJobError('agent_timeout', 409);
     const committed = AgentPreparedAuditSchema.parse(committedRaw);
     if (!samePrepared(normalized, committed)) throw new AgentJobError('agent_commit_contract_invalid', 409);
+    if (candidatePortMisused || (candidateCommitCalls > 0 && candidatePortOutput === null)) {
+      throw new AgentJobError('agent_candidate_port_misuse', 409);
+    }
     await validateOutputs(tx, ctx, policy, authorization, request, committed);
     const changed = await tx.agentRun.updateMany({
       where: {
@@ -561,6 +650,7 @@ async function executeAgentRun(
   request: AgentManualRunRequest,
   initial: AgentRunRow,
   leaseToken: string,
+  candidateCommitAdapter?: AgentCandidateCommitAdapter,
 ): Promise<AgentRunRow> {
   const handler = registeredAgentHandler(handlers, definition);
   if (!handler) return terminalRun(db, ctx, initial, leaseToken, 'discarded', 'agent_job_unavailable');
@@ -575,7 +665,7 @@ async function executeAgentRun(
     }
 
     const deadlineAt = Date.now() + run.timeoutMs;
-    let prepared: AgentPreparedAudit;
+    let prepared: AgentPreparationResult;
     try {
       prepared = await prepareWithTimeout(handler, {
         tenantId: ctx.tenantId,
@@ -603,18 +693,19 @@ async function executeAgentRun(
       return terminalRun(db, ctx, run, leaseToken, 'failed', safe.code, run.costUsed);
     }
 
-    const parsed = AgentPreparedAuditSchema.safeParse(prepared);
-    if (!parsed.success) {
+    const parsed = parsePreparation(prepared);
+    if (!parsed) {
       return terminalRun(db, ctx, run, leaseToken, 'failed', 'agent_output_invalid', run.costUsed);
     }
-    const totalCost = run.costUsed + parsed.data.costUnits;
+    const totalCost = run.costUsed + parsed.audit.costUnits;
     if (!Number.isSafeInteger(totalCost) || totalCost > run.budgetLimit) {
       return terminalRun(db, ctx, run, leaseToken, 'failed', 'agent_budget_exceeded', run.costUsed);
     }
     try {
       return await commitPrepared(
         db, ctx, policy, handlers, definition, request, handler,
-        run, leaseToken, parsed.data, totalCost, deadlineAt,
+        run, leaseToken, parsed.audit, parsed.privateState, totalCost, deadlineAt,
+        candidateCommitAdapter,
       );
     } catch (error) {
       if (authorizationFailure(error)) {
@@ -635,6 +726,7 @@ export async function runManualAgentJob(
   definition: AgentJobDefinition,
   request: AgentManualRunRequest,
   idempotencyKey: string,
+  candidateCommitAdapter?: AgentCandidateCommitAdapter,
 ): Promise<AgentRunReceipt> {
   const commandInput = {
     kind: `agent-job-run:${definition.jobKey}:${definition.jobVersion}`,
@@ -666,6 +758,7 @@ export async function runManualAgentJob(
     ? reserved.row
     : await executeAgentRun(
         db, ctx, policy, handlers, definition, request, reserved.row, reserved.leaseToken,
+        candidateCommitAdapter,
       );
   const receipt = AgentRunReceiptSchema.parse({ run: agentRunView(finalRow), replayed: false });
   const completed = await runCommand(ctx, {

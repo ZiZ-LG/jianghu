@@ -26,7 +26,10 @@ interface RegistrationBody {
 }
 
 export async function createTestContext(
-  options: Pick<BuildAppOptions, 'productAccess' | 'agentHandlers'> = {},
+  options: Pick<
+    BuildAppOptions,
+    'productAccess' | 'agentHandlers' | 'agentCandidateCommitAdapter'
+  > = {},
 ): Promise<TestContext> {
   assertTestDatabaseUrl();
   await assertDevDbUnchanged(devDbBaseline);
@@ -39,6 +42,9 @@ export async function createTestContext(
     logger: false,
     productAccess: options.productAccess ?? { edition: 'internal' },
     ...(options.agentHandlers ? { agentHandlers: options.agentHandlers } : {}),
+    ...(options.agentCandidateCommitAdapter
+      ? { agentCandidateCommitAdapter: options.agentCandidateCommitAdapter }
+      : {}),
   });
   try {
     const suffix = randomUUID();

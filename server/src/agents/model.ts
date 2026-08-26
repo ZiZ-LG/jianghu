@@ -1,8 +1,11 @@
+import type { Prisma } from '@prisma/client';
 import type {
   AgentInputRef,
   AgentJobControlLimits,
   AgentJobDefinition,
+  AgentOutputRef,
   AgentPreparedAudit,
+  PostMeetingCandidateBatch,
 } from '@jianghu/domain-contracts';
 
 export interface AgentPreparationContext {
@@ -32,8 +35,37 @@ export interface AgentCommitContext {
   sourceArtifactId: string | null;
   inputRefs: readonly AgentInputRef[];
   authorizationFingerprint: string;
+  commitCandidateBatch?: (batch: PostMeetingCandidateBatch) => Promise<AgentOutputRef>;
   signal: AbortSignal;
 }
+
+export interface AgentCandidateCommitAdapterContext extends Omit<
+  AgentCommitContext,
+  'commitCandidateBatch' | 'signal'
+> {
+  tx: Prisma.TransactionClient;
+  /** Current body-free SourceArtifact authority from the commit authorization snapshot. */
+  sourceFingerprint: string | null;
+  sourceAclVersion: number | null;
+}
+
+/** Trusted infrastructure adapter; handlers receive only the narrow callback above. */
+export type AgentCandidateCommitAdapter = (
+  context: AgentCandidateCommitAdapterContext,
+  batch: PostMeetingCandidateBatch,
+) => Promise<AgentOutputRef>;
+
+/**
+ * Request-local preparation data may contain authorized source bodies or raw
+ * provider output. Only `audit` is eligible for persistence; `privateState`
+ * exists solely for the matching in-process commit call.
+ */
+export interface AgentPreparationEnvelope {
+  audit: AgentPreparedAudit;
+  privateState: unknown;
+}
+
+export type AgentPreparationResult = AgentPreparedAudit | AgentPreparationEnvelope;
 
 /**
  * Preparation receives only a body-free context and AbortSignal. The trusted,
@@ -42,10 +74,11 @@ export interface AgentCommitContext {
  * than exposing a generic transaction here.
  */
 export interface AgentJobHandler {
-  prepare(context: AgentPreparationContext): Promise<AgentPreparedAudit>;
+  prepare(context: AgentPreparationContext): Promise<AgentPreparationResult>;
   commit(
     context: AgentCommitContext,
     prepared: AgentPreparedAudit,
+    privateState?: unknown,
   ): Promise<AgentPreparedAudit>;
 }
 

@@ -19,6 +19,7 @@ const renderShell = (pathname: string, enabledEntitlements?: string[], readonly 
   accounts: [],
   crmContextState: { status: 'loading' },
   actorUserId: 'user-cao',
+  actorRole: readonly ? 'viewer' : 'owner',
   readonly,
   onNavigate: () => undefined,
   onOpenLegacy: () => undefined,
@@ -92,6 +93,7 @@ describe('CommercialShell', () => {
         },
       },
       actorUserId: 'user-cao',
+      actorRole: 'owner',
       readonly: false,
       onNavigate: () => undefined,
       onOpenLegacy: () => undefined,
@@ -118,6 +120,7 @@ describe('CommercialShell', () => {
       accounts: [],
       crmContextState: { status: 'ready', snapshot: context, refreshing: false, refreshError: null },
       actorUserId: 'user-cao',
+      actorRole: 'owner',
       readonly: false,
       onNavigate: () => undefined,
       onOpenLegacy: () => undefined,
@@ -129,5 +132,48 @@ describe('CommercialShell', () => {
     expect(html).toContain('共享上下文客户');
     expect(html).toContain('data-crm-context-state="ready"');
     expect(html).not.toContain('data-crm-context-state="loading"');
+  });
+
+  it('places the post-meeting review surface before the frozen legacy sales entry and hides it for viewer', () => {
+    const enabled = ['sales.workspace'];
+    const owner = renderToStaticMarkup(createElement(CommercialShell, {
+      access: assembleProductAccess({ edition: 'commercial', enabledEntitlements: enabled }),
+      pathname: '/sales',
+      accounts: [],
+      crmContextState: {
+        status: 'ready', refreshing: false, refreshError: null,
+        snapshot: EMPTY_CRM_CONTEXT,
+      },
+      actorUserId: 'user-cao',
+      actorRole: 'owner',
+      readonly: false,
+      onNavigate: () => undefined,
+      onOpenLegacy: () => undefined,
+      onOpenTeam: () => undefined,
+      onQuickCaptureSaved: async () => undefined,
+      onLogout: () => undefined,
+    }));
+    const viewer = renderToStaticMarkup(createElement(CommercialShell, {
+      access: assembleProductAccess({ edition: 'commercial', enabledEntitlements: enabled }),
+      pathname: '/sales',
+      accounts: [],
+      crmContextState: {
+        status: 'ready', refreshing: false, refreshError: null,
+        snapshot: EMPTY_CRM_CONTEXT,
+      },
+      actorUserId: 'viewer-cao',
+      actorRole: 'viewer',
+      readonly: true,
+      onNavigate: () => undefined,
+      onOpenLegacy: () => undefined,
+      onOpenTeam: () => undefined,
+      onQuickCaptureSaved: async () => undefined,
+      onLogout: () => undefined,
+    }));
+
+    expect(owner).toContain('data-post-meeting-review="loading"');
+    expect(owner.indexOf('data-post-meeting-review')).toBeLessThan(owner.indexOf('还没有可打开的客户'));
+    expect(viewer).not.toContain('data-post-meeting-review');
+    expect(viewer).toContain('还没有可打开的客户');
   });
 });

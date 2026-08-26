@@ -947,15 +947,19 @@ describe('CORE-206 Agent Job control and run audit expansion', () => {
       .toBeLessThan(sqliteUpgrade.indexOf("const dbPushArgs = ['prisma', 'db', 'push'"));
   });
 
-  it('keeps production handlers unavailable and the executor outside formal CRM writers', async () => {
+  it('registers only the approved post-meeting handler while keeping handlers outside formal CRM writers', async () => {
     const app = await read('src/app.ts');
     const routes = await read('src/agents/routes.ts');
     const model = await read('src/agents/model.ts');
     const runner = await read('src/agents/runner.ts');
     const registry = await read('src/agents/registry.ts');
+    const handler = await read('src/postMeeting/handler.ts');
+    const candidateCommit = await read('src/postMeeting/commit.ts');
 
-    expect(app).toContain('agentJobRoutes(app, product.policy, agentHandlers)');
-    expect(app).toContain('options.agentHandlers ?? {}');
+    expect(app).toContain('productionPostMeetingHandlers(prisma, product.policy)');
+    expect(app).toContain('createPostMeetingCandidateCommitAdapter({ policy: product.policy })');
+    expect(app).toContain('agentJobRoutes(app, product.policy, agentHandlers, agentCandidateCommitAdapter)');
+    expect(app).toContain('...(options.agentHandlers ?? {})');
     expect(routes).toContain("app.get('/api/agent-jobs'");
     expect(routes).toContain("app.put('/api/agent-jobs/:jobKey/control'");
     expect(routes).toContain("app.post('/api/agent-jobs/:jobKey/runs'");
@@ -964,8 +968,14 @@ describe('CORE-206 Agent Job control and run audit expansion', () => {
     expect(registry).toContain("jobKey: 'pre_meeting_brief'");
     expect(registry).toContain("jobKey: 'post_meeting_extract'");
     expect(registry).toContain("jobKey: 'relationship_radar'");
-    expect(model).not.toContain("from '@prisma/client'");
-    expect(model).not.toContain('TransactionClient');
+    const handlerCommitContext = model.slice(
+      model.indexOf('export interface AgentCommitContext'),
+      model.indexOf('export interface AgentCandidateCommitAdapterContext'),
+    );
+    expect(handlerCommitContext).not.toContain('tx:');
+    expect(handler).toContain("'post_meeting_extract@core-206.v1'");
+    expect(handler).not.toMatch(/\.(?:account|opportunity|person|edge|planAction|interaction)\.(?:create|update|upsert|delete)/);
+    expect(candidateCommit).not.toMatch(/\.(?:account|opportunity|person|edge|planAction|interaction)\.(?:create|update|upsert|delete)/);
     expect(runner).not.toMatch(/\.(?:account|opportunity|person|edge|planAction|interaction|candidate)\.(?:create|update|upsert|delete)/);
     expect(runner).not.toContain('../jobs.js');
     expect(runner).not.toContain('../enrich.js');

@@ -1,8 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AgentPreparationError, type AgentJobHandler } from '../src/agents/model.js';
+import { assembleProductAccess } from '@jianghu/domain-contracts';
+import {
+  AgentPreparationError,
+  type AgentCandidateCommitAdapter,
+  type AgentJobHandler,
+} from '../src/agents/model.js';
 import { reportAgentJobMigration } from '../src/agents/migration.js';
 import { createPersonCandidate } from '../src/candidates/personRelation.js';
+import { createReviewBatch } from '../src/reviewBatches/service.js';
 import { ensureSourceArtifactForTranscript } from '../src/sourceArtifacts/service.js';
 import type { TestContext } from './helpers/testApp.js';
 import { createTestContext } from './helpers/testApp.js';
@@ -20,9 +26,14 @@ describe('CORE-206 controlled Agent Job routes', () => {
 
   afterEach(async () => test?.cleanup());
 
-  async function setup(handler?: unknown, registrationKey = handlerKey) {
+  async function setup(
+    handler?: unknown,
+    registrationKey = handlerKey,
+    candidateCommitAdapter?: AgentCandidateCommitAdapter,
+  ) {
     test = await createTestContext({
       ...(handler ? { agentHandlers: { [registrationKey]: handler as AgentJobHandler } } : {}),
+      ...(candidateCommitAdapter ? { agentCandidateCommitAdapter: candidateCommitAdapter } : {}),
     });
     await test.prisma.account.create({ data: {
       id: 'agent-account', tenantId: test.tenant.id, name: 'Agent account',
@@ -80,7 +91,7 @@ describe('CORE-206 controlled Agent Job routes', () => {
     expect(response.statusCode, response.body).toBe(200);
     expect(response.json<{ items: Array<Record<string, unknown>> }>().items).toMatchObject([
       { jobKey: 'pre_meeting_brief', available: false, enabled: false, controlState: 'missing', controlVersion: 0 },
-      { jobKey: 'post_meeting_extract', available: false, enabled: false, controlState: 'missing', controlVersion: 0 },
+      { jobKey: 'post_meeting_extract', available: true, enabled: false, controlState: 'missing', controlVersion: 0 },
       { jobKey: 'relationship_radar', available: false, enabled: false, controlState: 'missing', controlVersion: 0 },
     ]);
     await expect(test!.prisma.agentJobDefinition.count()).resolves.toBe(0);
@@ -518,7 +529,7 @@ describe('CORE-206 controlled Agent Job routes', () => {
     expect(missing.json()).toMatchObject({
       run: { status: 'failed', failureCode: 'agent_output_invalid' },
     });
-    expect(commitCalls).toBe(0);
+    expect(commitCalls).toBe(1);
 
     await test!.prisma.transcript.create({ data: {
       id: 'agent-other-transcript',
@@ -601,7 +612,7 @@ describe('CORE-206 controlled Agent Job routes', () => {
     expect(wrongAnchor.json()).toMatchObject({
       run: { status: 'failed', failureCode: 'agent_output_invalid' },
     });
-    expect(commitCalls).toBe(0);
+    expect(commitCalls).toBe(2);
 
     const candidate = await createPersonCandidate(test!.prisma, {
       id: 'agent-candidate-person',
@@ -653,7 +664,7 @@ describe('CORE-206 controlled Agent Job routes', () => {
         outputRefs: [{ kind: 'review_batch', id: batch.id, version: batch.version }],
       },
     });
-    expect(commitCalls).toBe(1);
+    expect(commitCalls).toBe(3);
     await expect(Promise.all([
       test!.prisma.person.count(), test!.prisma.edge.count(),
       test!.prisma.planAction.count(), test!.prisma.interaction.count(),
@@ -783,6 +794,389 @@ describe('CORE-206 controlled Agent Job routes', () => {
       run: { status: 'failed', failureCode: 'agent_timeout', attemptCount: 1 },
     });
     expect(commitCalls).toBe(1);
+  });
+
+  it('passes request-local private preparation state to commit without persisting, returning, auditing, or logging it', async () => {
+    const privateMarker = 'PRIVATE_SOURCE_BODY_MUST_NEVER_ESCAPE';
+    let sourceId = '';
+    let sourceFingerprint = '';
+    let committedPrivateState: unknown;
+    const consoleOutput: string[] = [];
+    const spies = (['log', 'warn', 'error'] as const).map((method) => (
+      vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
+        consoleOutput.push(args.map(String).join(' '));
+      })
+    ));
+    try {
+      const { source } = await setup({
+        prepare: async () => ({
+          audit: {
+            costUnits: 3,
+            evidenceRefs: [{
+              sourceArtifactId: sourceId,
+              locatorId: 'segment-private-envelope',
+              sourceFingerprint,
+              observedAt: '2026-08-25T18:00:00.000Z',
+            }],
+            outputRefs: [{ kind: 'research_brief', id: 'brief-private-envelope', version: 0 }],
+          },
+          privateState: { sourceBody: privateMarker, providerToken: `${privateMarker}-token` },
+        }),
+        commit: async (_context: unknown, prepared: unknown, privateState: unknown) => {
+          committedPrivateState = privateState;
+          return prepared;
+        },
+      });
+      sourceId = source.id;
+      sourceFingerprint = source.sourceFingerprint;
+      await enable();
+
+      const response = await test!.app.inject({
+        method: 'POST', url: `/api/agent-jobs/${jobKey}/runs`,
+        headers: auth(test!.token, 'agent-private-envelope-run'),
+        payload: runPayload(source.id, source.aclVersion),
+      });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json()).toMatchObject({ run: { status: 'succeeded', costUsed: 3 } });
+      expect(committedPrivateState).toEqual({
+        sourceBody: privateMarker,
+        providerToken: `${privateMarker}-token`,
+      });
+
+      const [run, audits] = await Promise.all([
+        test!.prisma.agentRun.findFirstOrThrow({ where: { tenantId: test!.tenant.id } }),
+        test!.prisma.auditEvent.findMany({ where: { tenantId: test!.tenant.id } }),
+      ]);
+      expect(JSON.stringify({ response: response.json(), run, audits })).not.toContain(privateMarker);
+      expect(consoleOutput.join('\n')).not.toContain(privateMarker);
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+  });
+
+  it('fails closed on malformed private envelopes and commit-time audit mutation', async () => {
+    let sourceId = '';
+    let sourceFingerprint = '';
+    let mode: 'malformed' | 'mutated' = 'malformed';
+    let commitCalls = 0;
+    const { source } = await setup({
+      prepare: async () => {
+        const audit = {
+          costUnits: 1,
+          evidenceRefs: [{
+            sourceArtifactId: sourceId,
+            locatorId: 'segment-envelope-fail-closed',
+            sourceFingerprint,
+            observedAt: '2026-08-25T18:00:00.000Z',
+          }],
+          outputRefs: [{ kind: 'research_brief', id: 'brief-envelope-fail-closed', version: 0 }],
+        };
+        return mode === 'malformed'
+          ? { audit, privateState: { sourceBody: 'private' }, unexpected: true }
+          : { audit, privateState: { sourceBody: 'private' } };
+      },
+      commit: async (_context: unknown, prepared: any) => {
+        commitCalls += 1;
+        return { ...prepared, costUnits: prepared.costUnits + 1 };
+      },
+    });
+    sourceId = source.id;
+    sourceFingerprint = source.sourceFingerprint;
+    await enable();
+
+    const malformed = await test!.app.inject({
+      method: 'POST', url: `/api/agent-jobs/${jobKey}/runs`,
+      headers: auth(test!.token, 'agent-malformed-envelope-run'),
+      payload: runPayload(source.id, source.aclVersion),
+    });
+    expect(malformed.statusCode, malformed.body).toBe(200);
+    expect(malformed.json()).toMatchObject({
+      run: { status: 'failed', failureCode: 'agent_output_invalid' },
+    });
+    expect(commitCalls).toBe(0);
+
+    mode = 'mutated';
+    const mutated = await test!.app.inject({
+      method: 'POST', url: `/api/agent-jobs/${jobKey}/runs`,
+      headers: auth(test!.token, 'agent-mutated-envelope-run'),
+      payload: runPayload(source.id, source.aclVersion),
+    });
+    expect(mutated.statusCode, mutated.body).toBe(200);
+    expect(mutated.json()).toMatchObject({
+      run: { status: 'failed', failureCode: 'agent_commit_contract_invalid' },
+    });
+    expect(commitCalls).toBe(1);
+  });
+
+  it('fails closed on malformed, mismatched, or multiply-used candidate commit ports', async () => {
+    const candidateJobKey = 'post_meeting_extract';
+    const candidateHandlerKey = `${candidateJobKey}@${jobVersion}`;
+    const outputBatchId = 'review-batch-port-negative';
+    let sourceId = '';
+    let sourceFingerprint = '';
+    let mode: 'malformed' | 'evidence' | 'mismatch' | 'twice' = 'malformed';
+    let adapterCalls = 0;
+    const adapter: AgentCandidateCommitAdapter = async () => {
+      adapterCalls += 1;
+      return mode === 'mismatch'
+        ? { kind: 'review_batch', id: 'wrong-review-batch', version: 0 }
+        : { kind: 'review_batch', id: outputBatchId, version: 0 };
+    };
+    await setup({
+      prepare: async () => ({
+        audit: {
+          costUnits: 1,
+          evidenceRefs: [{
+            sourceArtifactId: sourceId,
+            locatorId: 'segment-port-negative',
+            sourceFingerprint,
+            observedAt: '2026-08-25T18:00:00.000Z',
+          }],
+          outputRefs: [{ kind: 'review_batch', id: outputBatchId, version: 0 }],
+        },
+        privateState: mode === 'malformed'
+          ? { customerId: 'other-customer', matterId: 'agent-matter', sourceArtifactId: sourceId, items: [] }
+          : {
+              customerId: 'agent-account',
+              matterId: 'agent-matter',
+              sourceArtifactId: sourceId,
+              items: [{
+                kind: 'person', itemRef: 'person-port-negative',
+                sourceLocator: mode === 'evidence' ? 'different-segment' : 'segment-port-negative',
+                sourceQuote: '候选原句', confidence: 0.8,
+                person: { name: '候选人物', title: null },
+              }],
+            },
+      }),
+      commit: async (context: any, prepared: any, privateState: unknown) => {
+        await context.commitCandidateBatch(privateState);
+        if (mode === 'twice') await context.commitCandidateBatch(privateState);
+        return prepared;
+      },
+    }, candidateHandlerKey, adapter);
+    await test!.prisma.transcript.create({ data: {
+      id: 'agent-port-negative-transcript',
+      tenantId: test!.tenant.id,
+      accountId: 'agent-account',
+      opportunityId: 'agent-matter',
+      source: 'manual',
+      externalRef: 'agent-port-negative-transcript',
+      idempotencyDomain: `creator-private-v1:${JSON.stringify(test!.owner.id)}`,
+      title: 'Negative port source',
+      contentEnc: 'encrypted-negative-port-body',
+      status: 'active',
+      createdBy: test!.owner.id,
+      createdByUserId: test!.owner.id,
+      visibility: 'private',
+      aclVersion: 1,
+    } });
+    const source = await ensureSourceArtifactForTranscript(
+      test!.prisma, test!.tenant.id, 'agent-port-negative-transcript',
+    );
+    sourceId = source.id;
+    sourceFingerprint = source.sourceFingerprint;
+    const enabled = await test!.app.inject({
+      method: 'PUT', url: `/api/agent-jobs/${candidateJobKey}/control`,
+      headers: auth(test!.token, 'agent-port-negative-control'),
+      payload: { jobVersion, enabled: true, expectedVersion: 0 },
+    });
+    expect(enabled.statusCode, enabled.body).toBe(200);
+    const payload = {
+      jobVersion,
+      customerId: 'agent-account',
+      matterId: 'agent-matter',
+      sourceArtifactId: source.id,
+      inputRefs: [
+        { kind: 'customer', id: 'agent-account', version: 0 },
+        { kind: 'matter', id: 'agent-matter', version: 0 },
+        { kind: 'source_artifact', id: source.id, version: source.aclVersion },
+      ],
+    };
+    for (const scenario of [
+      ['malformed', 'agent_candidate_batch_invalid'],
+      ['evidence', 'agent_candidate_evidence_mismatch'],
+      ['mismatch', 'agent_candidate_output_mismatch'],
+      ['twice', 'agent_candidate_port_misuse'],
+    ] as const) {
+      mode = scenario[0];
+      const response = await test!.app.inject({
+        method: 'POST', url: `/api/agent-jobs/${candidateJobKey}/runs`,
+        headers: auth(test!.token, `agent-port-negative-${mode}`), payload,
+      });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json()).toMatchObject({
+        run: { status: 'failed', failureCode: scenario[1] },
+      });
+    }
+    expect(adapterCalls).toBe(2);
+    await expect(test!.prisma.reviewBatch.count()).resolves.toBe(0);
+    await expect(test!.prisma.candidate.count()).resolves.toBe(0);
+  });
+
+  it('creates candidate output only through the transaction-bound narrow port after preparation', async () => {
+    const candidateJobKey = 'post_meeting_extract';
+    const candidateHandlerKey = `${candidateJobKey}@${jobVersion}`;
+    const outputBatchId = 'review-batch-narrow-port';
+    const sourceQuote = '李经理负责技术评估。';
+    const policy = assembleProductAccess({ edition: 'internal' }).policy;
+    let sourceId = '';
+    let sourceFingerprint = '';
+    let commitCalls = 0;
+    let adapterCalls = 0;
+
+    const candidateCommitAdapter: AgentCandidateCommitAdapter = async (context, batch) => {
+      adapterCalls += 1;
+      expect(batch).toMatchObject({
+        customerId: 'agent-account', matterId: 'agent-matter', sourceArtifactId: sourceId,
+      });
+      const item = batch.items[0];
+      if (!item || item.kind !== 'person') throw new Error('expected one Person candidate');
+      const person = await createPersonCandidate(context.tx, {
+        id: 'agent-port-person',
+        tenantId: context.tenantId,
+        accountId: batch.customerId,
+        matterId: batch.matterId,
+        name: item.person.name,
+        title: item.person.title ?? undefined,
+        source: 'post_meeting_extract',
+        sourceRef: `${context.runId}:${item.itemRef}`,
+        evidence: item.sourceQuote,
+        confidence: item.confidence,
+        createdByUserId: context.actorId,
+        dedupeKey: `${context.runId}:${item.itemRef}`,
+      });
+      await context.tx.candidate.update({
+        where: { id: person.candidateId },
+        data: { sourceArtifactId: batch.sourceArtifactId },
+      });
+      const source = await context.tx.sourceArtifact.findUniqueOrThrow({
+        where: { id: batch.sourceArtifactId },
+      });
+      const view = await createReviewBatch(context.tx, {
+        tenantId: context.tenantId,
+        actorId: context.actorId,
+        actorRole: 'owner',
+        channel: 'web',
+        requestId: context.requestId ?? context.runId,
+        assertionMode: 'user_asserted',
+      }, policy, {
+        id: outputBatchId,
+        sourceArtifactId: batch.sourceArtifactId,
+        expectedSourceAclVersion: source.aclVersion,
+        candidates: [{
+          id: person.candidateId,
+          expectedVersion: person.candidateVersion,
+          expectedAclVersion: source.aclVersion,
+        }],
+      });
+      return { kind: 'review_batch', id: view.id, version: view.version };
+    };
+
+    await setup({
+      prepare: async () => ({
+        audit: {
+          costUnits: 5,
+          evidenceRefs: [{
+            sourceArtifactId: sourceId,
+            locatorId: 'meeting-segment-port',
+            sourceFingerprint,
+            observedAt: '2026-08-25T18:00:00.000Z',
+          }],
+          outputRefs: [{ kind: 'review_batch', id: outputBatchId, version: 0 }],
+        },
+        privateState: {
+          customerId: 'agent-account',
+          matterId: 'agent-matter',
+          sourceArtifactId: sourceId,
+          items: [{
+            kind: 'person',
+            itemRef: 'person-li',
+            sourceLocator: 'meeting-segment-port',
+            sourceQuote,
+            confidence: 0.9,
+            person: { name: '李经理', title: '技术负责人' },
+          }],
+        },
+      }),
+      commit: async (context: any, prepared: any, privateState: unknown) => {
+        commitCalls += 1;
+        expect(context).not.toHaveProperty('tx');
+        expect(context).not.toHaveProperty('db');
+        expect(context).not.toHaveProperty('prisma');
+        const output = await context.commitCandidateBatch(privateState);
+        expect(output).toEqual(prepared.outputRefs[0]);
+        return prepared;
+      },
+    }, candidateHandlerKey, candidateCommitAdapter);
+
+    await test!.prisma.transcript.create({ data: {
+      id: 'agent-port-transcript',
+      tenantId: test!.tenant.id,
+      accountId: 'agent-account',
+      opportunityId: 'agent-matter',
+      source: 'manual',
+      externalRef: 'agent-port-transcript',
+      idempotencyDomain: `creator-private-v1:${JSON.stringify(test!.owner.id)}`,
+      title: 'Port source',
+      contentEnc: 'encrypted-port-source-body',
+      status: 'active',
+      createdBy: test!.owner.id,
+      createdByUserId: test!.owner.id,
+      visibility: 'private',
+      aclVersion: 1,
+    } });
+    const source = await ensureSourceArtifactForTranscript(
+      test!.prisma, test!.tenant.id, 'agent-port-transcript',
+    );
+    sourceId = source.id;
+    sourceFingerprint = source.sourceFingerprint;
+    const enabled = await test!.app.inject({
+      method: 'PUT', url: `/api/agent-jobs/${candidateJobKey}/control`,
+      headers: auth(test!.token, 'agent-port-control'),
+      payload: { jobVersion, enabled: true, expectedVersion: 0 },
+    });
+    expect(enabled.statusCode, enabled.body).toBe(200);
+
+    const formalBefore = await Promise.all([
+      test!.prisma.person.count(), test!.prisma.edge.count(),
+      test!.prisma.evidenceEvent.count(), test!.prisma.planAction.count(),
+      test!.prisma.interaction.count(),
+    ]);
+    const request = {
+      method: 'POST', url: `/api/agent-jobs/${candidateJobKey}/runs`,
+      headers: auth(test!.token, 'agent-narrow-port-run'),
+      payload: {
+        jobVersion,
+        customerId: 'agent-account',
+        matterId: 'agent-matter',
+        sourceArtifactId: source.id,
+        inputRefs: [
+          { kind: 'customer', id: 'agent-account', version: 0 },
+          { kind: 'matter', id: 'agent-matter', version: 0 },
+          { kind: 'source_artifact', id: source.id, version: source.aclVersion },
+        ],
+      },
+    } as const;
+    const response = await test!.app.inject(request);
+    const replay = await test!.app.inject(request);
+    expect(response.statusCode, response.body).toBe(200);
+    expect(replay.statusCode, replay.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      run: {
+        status: 'succeeded',
+        outputRefs: [{ kind: 'review_batch', id: outputBatchId, version: 0 }],
+      },
+    });
+    expect(replay.json()).toMatchObject({ replayed: true, run: { status: 'succeeded' } });
+    expect(commitCalls).toBe(1);
+    expect(adapterCalls).toBe(1);
+    await expect(test!.prisma.reviewBatch.count()).resolves.toBe(1);
+    await expect(test!.prisma.candidate.count()).resolves.toBe(1);
+    await expect(Promise.all([
+      test!.prisma.person.count(), test!.prisma.edge.count(),
+      test!.prisma.evidenceEvent.count(), test!.prisma.planAction.count(),
+      test!.prisma.interaction.count(),
+    ])).resolves.toEqual(formalBefore);
   });
 
   it('discards prepared output when the current role is revoked before commit', async () => {

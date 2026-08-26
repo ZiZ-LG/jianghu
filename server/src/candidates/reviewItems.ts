@@ -32,6 +32,7 @@ import {
   requireCandidateReviewAccess,
   type CandidateReviewAccessContext,
 } from '../sensitiveAccess.js';
+import { personIdForReviewCandidate } from '../reviewBatches/model.js';
 
 type CandidateTx = Prisma.TransactionClient;
 const FIELD_SOURCE_KIND = 'ChangeProposal' as const;
@@ -136,6 +137,7 @@ const candidateAccessSelect = {
   legacySourceId: true,
   version: true,
   sourceRef: true,
+  payload: true,
 } as const;
 type CandidateAccessMetadata = Prisma.CandidateGetPayload<{ select: typeof candidateAccessSelect }>;
 
@@ -166,6 +168,14 @@ async function validateFieldParent(tx: CandidateTx, row: Pick<
   'tenantId' | 'accountId' | 'opportunityId' | 'entityKind' | 'entityId'
 >): Promise<void> {
   await requireMatterAccount(tx, row.tenantId, row.accountId, row.opportunityId);
+  if (row.entityKind === 'customer') {
+    if (row.entityId !== row.accountId) throw new ScopedNotFoundError();
+    return;
+  }
+  if (row.entityKind === 'matter') {
+    if (!row.opportunityId || row.entityId !== row.opportunityId) throw new ScopedNotFoundError();
+    return;
+  }
   if (row.entityKind === 'person' || row.entityKind === 'personLog') {
     await requirePerson(tx, row.tenantId, row.accountId, row.entityId);
     return;
@@ -280,6 +290,8 @@ export interface CreateFieldCandidateInput {
   evidence: string;
   confidence: number;
   createdByUserId: string | null;
+  /** Optional producer-owned semantic identity for an immutable source/run item. */
+  dedupeKey?: string;
 }
 
 export interface FieldCandidateReceipt {
@@ -303,7 +315,9 @@ export async function createFieldCandidate(
     requiredText(input.evidence, 'evidence');
     validConfidence(input.confidence);
     const matterId = input.matterId ?? null;
-    const semanticKey = fieldCandidateDedupeKey(input);
+    const semanticKey = input.dedupeKey
+      ? requiredText(input.dedupeKey, 'dedupeKey')
+      : fieldCandidateDedupeKey(input);
     const parent = {
       tenantId: input.tenantId,
       accountId: input.accountId,
@@ -842,11 +856,12 @@ export async function resolveReminderCandidate(
   return terminateReminderCandidate(db, input, 'done');
 }
 
-function evidencePayload(row: EvidenceEvent): string {
+function evidencePayload(row: EvidenceEvent, pendingPersonCandidateId: string | null = null): string {
   return canonicalCandidateJson({
     direction: row.direction,
     legacyStatus: row.status,
     occurredAt: row.occurredAt,
+    ...(pendingPersonCandidateId ? { pendingPersonCandidateId } : {}),
     signalKey: row.signalKey,
     tier: row.tier,
   });
@@ -855,17 +870,56 @@ function evidencePayload(row: EvidenceEvent): string {
 async function validateEvidenceParent(tx: CandidateTx, row: Pick<
   EvidenceEvent,
   'tenantId' | 'accountId' | 'opportunityId' | 'personId'
->): Promise<void> {
+>, pendingPersonCandidateId: string | null = null): Promise<void> {
   await requireOpportunity(tx, row.tenantId, row.accountId, row.opportunityId);
-  await requirePerson(tx, row.tenantId, row.accountId, row.personId);
+  const person = await tx.person.findFirst({ where: {
+    id: row.personId,
+    tenantId: row.tenantId,
+    accountId: row.accountId,
+    archivedAt: null,
+    mergedIntoPersonId: null,
+  }, select: { id: true } });
+  if (person) return;
+  if (!pendingPersonCandidateId
+    || personIdForReviewCandidate(row.tenantId, pendingPersonCandidateId) !== row.personId) {
+    throw new ScopedNotFoundError();
+  }
+  const pending = await tx.candidate.findFirst({ where: {
+    id: pendingPersonCandidateId,
+    tenantId: row.tenantId,
+    accountId: row.accountId,
+    matterId: row.opportunityId,
+    kind: 'person_create',
+    status: 'pending',
+  }, select: { id: true } });
+  if (!pending) throw new ScopedNotFoundError();
+}
+
+function pendingEvidencePersonCandidate(payload: string): string | null {
+  try {
+    const parsed = JSON.parse(payload) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const value = (parsed as { pendingPersonCandidateId?: unknown }).pendingPersonCandidateId;
+    return typeof value === 'string' && value.trim() ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 async function createCandidateForEvidence(
   tx: CandidateTx,
   row: EvidenceEvent,
-  metadata?: { sourceRef: string; dedupeKey: string; confidence: number; createdByUserId: string | null; visibility: string },
+  metadata?: {
+    sourceRef: string;
+    dedupeKey: string;
+    confidence: number;
+    createdByUserId: string | null;
+    visibility: string;
+    pendingPersonCandidateId?: string | null;
+  },
 ): Promise<Candidate> {
-  await validateEvidenceParent(tx, row);
+  const pendingPersonCandidateId = metadata?.pendingPersonCandidateId ?? null;
+  await validateEvidenceParent(tx, row, pendingPersonCandidateId);
   const identity = candidateIdentityForLegacy(row.tenantId, EVIDENCE_SOURCE_KIND, row.id);
   const legacyScope = metadata ? null : await creatorScope(tx, row.tenantId, row.createdBy || null);
   const scope = metadata ?? {
@@ -883,7 +937,7 @@ async function createCandidateForEvidence(
     matterId: row.opportunityId,
     targetKind: 'person',
     targetId: row.personId,
-    payload: evidencePayload(row),
+    payload: evidencePayload(row, pendingPersonCandidateId),
     source: row.origin,
     sourceRef: scope.sourceRef,
     evidence: row.rawContent,
@@ -899,9 +953,10 @@ async function createCandidateForEvidence(
 }
 
 async function ensureEvidenceCandidate(tx: CandidateTx, row: EvidenceEvent): Promise<Candidate> {
-  await validateEvidenceParent(tx, row);
   const candidate = await findLinkedCandidate(tx, row.tenantId, EVIDENCE_SOURCE_KIND, row.id);
   if (!candidate) return createCandidateForEvidence(tx, row);
+  const pendingPersonCandidateId = pendingEvidencePersonCandidate(candidate.payload);
+  await validateEvidenceParent(tx, row, pendingPersonCandidateId);
   assertLinkedCandidate(candidate, {
     tenantId: row.tenantId, kind: 'evidence_create', accountId: row.accountId,
     matterId: row.opportunityId, sourceKind: EVIDENCE_SOURCE_KIND, sourceId: row.id,
@@ -911,7 +966,7 @@ async function ensureEvidenceCandidate(tx: CandidateTx, row: EvidenceEvent): Pro
   if (candidate.status !== expectedStatus
     || candidate.targetKind !== 'person'
     || candidate.targetId !== row.personId
-    || candidate.payload !== evidencePayload(row)
+    || candidate.payload !== evidencePayload(row, pendingPersonCandidateId)
     || candidate.source !== row.origin
     || candidate.evidence !== row.rawContent) {
     throw new CandidateWriteConflictError();
@@ -934,6 +989,7 @@ export interface CreateEvidenceCandidateInput {
   sourceRef: string;
   confidence: number;
   createdByUserId: string | null;
+  pendingPersonCandidateId?: string | null;
 }
 
 export interface EvidenceCandidateReceipt {
@@ -957,7 +1013,7 @@ export async function createEvidenceCandidate(
     await validateEvidenceParent(tx, {
       tenantId: input.tenantId, accountId: input.accountId,
       opportunityId: input.matterId, personId: input.personId,
-    });
+    }, input.pendingPersonCandidateId ?? null);
     const scope = await creatorScope(tx, input.tenantId, input.createdByUserId);
     await requireCandidateProducerAccess(tx, candidateDescriptor({
       id: input.id,
@@ -1003,6 +1059,10 @@ export async function createEvidenceCandidate(
         || row.personId !== input.personId || row.signalKey !== input.signalKey
         || row.rawContent !== input.rawContent || row.occurredAt !== input.occurredAt
         || row.origin !== input.source) {
+        throw new CandidateWriteConflictError();
+      }
+      if (pendingEvidencePersonCandidate(existingCandidate.payload)
+        !== (input.pendingPersonCandidateId ?? null)) {
         throw new CandidateWriteConflictError();
       }
       const legacySourceRef = candidateIdentityForLegacy(
@@ -1055,7 +1115,11 @@ export async function createEvidenceCandidate(
       createdBy: input.createdByUserId ?? '',
     } });
     const candidate = await createCandidateForEvidence(tx, row, {
-      sourceRef: input.sourceRef, dedupeKey, confidence: input.confidence, ...scope,
+      sourceRef: input.sourceRef,
+      dedupeKey,
+      confidence: input.confidence,
+      pendingPersonCandidateId: input.pendingPersonCandidateId ?? null,
+      ...scope,
     });
     return { row, candidateId: candidate.id, candidateVersion: candidate.version, created: true };
   });

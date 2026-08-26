@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { assembleProductAccess } from '@jianghu/domain-contracts';
+import {
+  assembleProductAccess,
+  type AgentManualRunRequest,
+  type PostMeetingReviewRequest,
+} from '@jianghu/domain-contracts';
 import { ApiError, api, isConfirmedAuthFailure, request } from './api';
 
 const response = (status: number, body: unknown) => ({
@@ -615,5 +619,153 @@ describe('typed API failures', () => {
     expect(url).toBe('http://localhost:3001/api/access-tokens');
     expect((init as RequestInit).method).toBe('POST');
     expect(JSON.parse(String((init as RequestInit).body))).toEqual({ name: 'Research', preset: 'research_proposal' });
+  });
+
+  it('uses strict post-meeting endpoints and keeps command idempotency keys stable across network retry', async () => {
+    const job = {
+      jobKey: 'post_meeting_extract', jobVersion: 'core-206.v1', purpose: '会后候选提取',
+      triggers: ['manual'],
+      scopeManifest: {
+        customer: 'required', matter: 'required', sourceArtifact: 'required',
+        allowedSourceKinds: ['transcript', 'uploaded_file', 'note'],
+        allowedInputRefKinds: ['customer', 'matter', 'source_artifact'],
+      },
+      actionMode: 'candidate',
+      evidencePolicy: { required: true, minimumRefs: 1, maximumRefs: 20, requireSourceFingerprint: true },
+      outputRefKinds: ['review_batch'], modelRef: 'tenant_byo_model', connectorRefs: [],
+      budget: { maxInputRefs: 3, maxEvidenceRefs: 20, maxOutputRefs: 1, maxCostUnits: 2_000 },
+      timeoutMs: 45_000, maxAttempts: 2, available: true, enabled: true,
+      controlState: 'valid', controlVersion: 1,
+      limits: { maxCostUnits: 2_000, timeoutMs: 45_000, maxAttempts: 2 },
+    };
+    const run = {
+      id: 'agent_run_1', jobKey: 'post_meeting_extract', jobVersion: 'core-206.v1',
+      actionMode: 'candidate', trigger: 'manual', status: 'succeeded',
+      customerId: 'customer/1', matterId: 'matter/1', sourceArtifactId: 'source/1', actorId: 'user-1',
+      attemptCount: 1, maxAttempts: 2, budgetLimit: 2_000, costUsed: 5, timeoutMs: 45_000,
+      authorizationFingerprint: 'a'.repeat(64), modelRef: 'tenant_byo_model', connectorRefs: [],
+      inputRefs: [
+        { kind: 'customer', id: 'customer/1', version: 2 },
+        { kind: 'matter', id: 'matter/1', version: 3 },
+        { kind: 'source_artifact', id: 'source/1', version: 4 },
+      ],
+      evidenceRefs: [{
+        sourceArtifactId: 'source/1', locatorId: 'item-001:chars:0-4',
+        sourceFingerprint: 'b'.repeat(64), observedAt: '2026-08-25T18:00:00.000Z',
+      }],
+      outputRefs: [{ kind: 'review_batch', id: 'review/batch-1', version: 0 }], failureCode: '',
+      createdAt: '2026-08-25T18:00:00.000Z', startedAt: '2026-08-25T18:00:00.000Z',
+      completedAt: '2026-08-25T18:00:01.000Z', version: 1,
+    };
+    const source = {
+      id: 'source/1', accountId: 'customer/1', matterId: 'matter/1', personId: null,
+      backingKind: 'note', artifactKind: 'note', source: 'manual', externalRef: null,
+      title: '会谈', occurredAt: '2026-08-25T18:00:00.000Z', fingerprintKind: 'content_sha256_v1',
+      sourceFingerprint: 'b'.repeat(64), retentionState: 'available',
+      retentionUpdatedAt: '2026-08-25T18:00:00.000Z', createdByUserId: 'user-1', visibility: 'private',
+      aclVersion: 4, createdAt: '2026-08-25T18:00:00.000Z', updatedAt: '2026-08-25T18:00:00.000Z',
+      backingPresent: true, contentAvailable: true, canDegrade: false, canDelete: true,
+      explanation: 'local_body_available',
+    };
+    const detail = {
+      id: 'review/batch-1',
+      source: { id: 'source/1', title: '会谈', kind: 'note', fingerprint: 'b'.repeat(64), occurredAt: '2026-08-25T18:00:00.000Z' },
+      customerId: 'customer/1', matterId: 'matter/1', status: 'pending', activityKind: null,
+      occurredAt: null, interactionId: null, acceptanceVersion: 0, version: 0,
+      createdAt: '2026-08-25T18:00:01.000Z', updatedAt: '2026-08-25T18:00:01.000Z',
+      items: [{
+        kind: 'field', candidateId: 'candidate-field', status: 'pending', itemRef: 'item-001',
+        expectedVersion: 1, expectedAclVersion: 4, sourceLocator: 'item-001:chars:0-4',
+        sourceQuote: '优先级 high', confidence: 0.8, defaultSelected: false,
+        target: { kind: 'matter', field: 'priority' }, before: 'normal', after: 'high',
+      }],
+    };
+    const reviewRequest: PostMeetingReviewRequest = {
+      expectedVersion: 0, expectedAcceptanceVersion: 0,
+      customerId: 'customer/1', matterId: 'matter/1', activityKind: 'customer_meeting',
+      occurredAt: '2026-08-25T18:00:00.000Z', existingInteractionId: null,
+      decisions: [{
+        kind: 'field', candidateId: 'candidate-field', expectedVersion: 1,
+        expectedAclVersion: 4, decision: 'accept', edit: { value: 'high' },
+      }],
+    };
+    const success = {
+      batchId: 'review/batch-1', status: 'accepted', interactionId: 'interaction-1',
+      version: 1, acceptanceVersion: 1, items: [{
+        candidateId: 'candidate-field', decision: 'accept', status: 'accepted',
+        formalKind: 'matter', formalId: 'matter/1',
+      }], businessReplayed: false, replayed: false,
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(200, { items: [job] }))
+      .mockResolvedValueOnce(response(200, { items: [run], nextCursor: null }))
+      .mockResolvedValueOnce(response(200, { items: [source], nextCursor: null }))
+      .mockResolvedValueOnce(response(200, detail))
+      .mockResolvedValueOnce(response(200, { ...job, enabled: false, controlVersion: 2, replayed: false }))
+      .mockRejectedValueOnce(new TypeError('run response lost'))
+      .mockResolvedValueOnce(response(200, { run, replayed: true }))
+      .mockRejectedValueOnce(new TypeError('review response lost'))
+      .mockResolvedValueOnce(response(200, { ...success, replayed: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.postMeetingJobCards()).resolves.toEqual({ items: [job] });
+    await expect(api.postMeetingRuns()).resolves.toEqual({ items: [run], nextCursor: null });
+    await expect(api.postMeetingSources('customer/1', 'matter/1')).resolves.toHaveLength(1);
+    await expect(api.postMeetingReview('review/batch-1')).resolves.toEqual(detail);
+    await expect(api.postMeetingControl('core-206.v1', false, 1, 'control-key'))
+      .resolves.toMatchObject({ card: { enabled: false, controlVersion: 2 }, replayed: false });
+    const runRequest: AgentManualRunRequest = {
+      jobVersion: 'core-206.v1', customerId: 'customer/1', matterId: 'matter/1',
+      sourceArtifactId: 'source/1', inputRefs: [
+        { kind: 'customer', id: 'customer/1', version: 2 },
+        { kind: 'matter', id: 'matter/1', version: 3 },
+        { kind: 'source_artifact', id: 'source/1', version: 4 },
+      ],
+    };
+    await expect(api.postMeetingRun(runRequest, 'run-key'))
+      .resolves.toMatchObject({ replayed: true, run: { id: 'agent_run_1' } });
+    await expect(api.postMeetingAccept('review/batch-1', reviewRequest, 'review-key'))
+      .resolves.toMatchObject({ replayed: true, batchId: 'review/batch-1' });
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'http://localhost:3001/api/agent-jobs',
+      'http://localhost:3001/api/agent-runs?limit=50',
+      'http://localhost:3001/api/source-artifacts?accountId=customer%2F1&matterId=matter%2F1&limit=100',
+      'http://localhost:3001/api/review-batches/review%2Fbatch-1',
+      'http://localhost:3001/api/agent-jobs/post_meeting_extract/control',
+      'http://localhost:3001/api/agent-jobs/post_meeting_extract/runs',
+      'http://localhost:3001/api/agent-jobs/post_meeting_extract/runs',
+      'http://localhost:3001/api/review-batches/review%2Fbatch-1/accept',
+      'http://localhost:3001/api/review-batches/review%2Fbatch-1/accept',
+    ]);
+    for (const index of [5, 6]) {
+      expect(((fetchMock.mock.calls[index]![1] as RequestInit).headers as Headers).get('Idempotency-Key')).toBe('run-key');
+    }
+    for (const index of [7, 8]) {
+      expect(((fetchMock.mock.calls[index]![1] as RequestInit).headers as Headers).get('Idempotency-Key')).toBe('review-key');
+    }
+  });
+
+  it('fails closed on malformed post-meeting responses and preserves typed 409 item conflicts', async () => {
+    const conflict = {
+      code: 'review_batch_conflict',
+      items: [{ candidateId: 'candidate-field', status: 'conflict', reason: 'candidate_version_conflict' }],
+    };
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(response(200, { items: [], rawResponse: 'private' }))
+      .mockResolvedValueOnce(response(409, conflict)));
+    await expect(api.postMeetingJobCards()).rejects.toMatchObject({ code: 'invalid_response' });
+    await expect(api.postMeetingAccept('review-1', {
+      expectedVersion: 0, expectedAcceptanceVersion: 0, customerId: 'customer-1', matterId: null,
+      activityKind: 'meeting', occurredAt: '2026-08-25T18:00:00.000Z', existingInteractionId: null,
+      decisions: [{
+        kind: 'field', candidateId: 'candidate-field', expectedVersion: 1,
+        expectedAclVersion: 1, decision: 'accept', edit: { value: 'high' },
+      }],
+    }, 'conflict-key')).rejects.toMatchObject({
+      status: 409,
+      code: 'review_batch_conflict',
+      cause: conflict,
+    });
   });
 });

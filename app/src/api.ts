@@ -3,18 +3,37 @@ import type { AccountState, CommitmentCommand, CommitmentCommandReceipt, Pipelin
 import type { AiContextOptions, ContextManifest } from './aiContext';
 import { toWireAction } from './wireAction';
 import {
+  parsePostMeetingJobCards,
+  parsePostMeetingReviewDetail,
+  parsePostMeetingReviewReceipt,
+  parsePostMeetingRuns,
+  parsePostMeetingSourceOptions,
+} from './lib/postMeetingReview';
+import {
   ActorRoleSchema,
+  AgentJobCardSchema,
+  AgentJobControlRequestSchema,
+  AgentManualRunRequestSchema,
+  AgentRunReceiptSchema,
   CommitmentCommandReceiptSchema,
   commitmentReceiptMatchesCommand,
   CrmContextSnapshotSchema,
+  PostMeetingReviewRequestSchema,
   ProductAccessSchema,
   QuickCaptureCommandReceiptSchema,
   TodayReadModelSchema,
   TodaySourceViewSchema,
+  type AgentJobCard,
+  type AgentManualRunRequest,
+  type AgentRunReceipt,
   type InterventionSourceRef,
   type CrmContextSnapshot,
   type CommandContext,
   type ProductAccess,
+  type PostMeetingReviewBatchDetail,
+  type PostMeetingReviewReceipt,
+  type PostMeetingReviewRequest,
+  type PostMeetingSourceOption,
   type QuickCaptureCommand,
   type QuickCaptureCommandReceipt,
   type TodayReadModel,
@@ -107,6 +126,7 @@ export async function request<T = unknown>(
         code: data.code ?? (res.status === 409 ? 'version_conflict' : `http_${res.status}`),
         message: data.error || data.message || `请求失败（HTTP ${res.status}）`,
         retryable: res.status === 408 || res.status === 429 || res.status >= 500,
+        cause: data,
       });
       if (res.status === 401 && requestBearerToken === token && requestTokenGeneration === tokenGeneration) {
         unauthorizedListeners.forEach((listener) => listener(error));
@@ -169,6 +189,17 @@ const invalidCrmContextResponse = (cause?: unknown): ApiError => new ApiError({
   retryable: false,
   cause,
 });
+
+const invalidPostMeetingResponse = (cause?: unknown): ApiError => new ApiError({
+  code: 'invalid_response',
+  message: '服务返回的会后速审数据无效，请刷新后重试。',
+  retryable: false,
+  cause,
+});
+
+function postMeetingParse<T>(parse: () => T): T {
+  try { return parse(); } catch (cause) { throw invalidPostMeetingResponse(cause); }
+}
 
 function parseCrmContextResponse(raw: unknown): CrmContextSnapshot {
   const parsed = CrmContextSnapshotSchema.safeParse(raw);
@@ -422,6 +453,115 @@ export const api = {
   crmContext: async (): Promise<CrmContextSnapshot> => parseCrmContextResponse(
     await req<unknown>('/api/crm/context'),
   ),
+  postMeetingJobCards: async (): Promise<{ items: AgentJobCard[] }> => {
+    const raw = await req<unknown>('/api/agent-jobs');
+    return postMeetingParse(() => parsePostMeetingJobCards(raw));
+  },
+  postMeetingRuns: async (): Promise<{ items: AgentRunReceipt['run'][]; nextCursor: string | null }> => {
+    const raw = await req<unknown>('/api/agent-runs?limit=50');
+    const page = postMeetingParse(() => parsePostMeetingRuns(raw));
+    return {
+      items: page.items.filter((run) => run.jobKey === 'post_meeting_extract'),
+      nextCursor: page.nextCursor,
+    };
+  },
+  postMeetingSources: async (
+    customerId: string,
+    matterId: string,
+  ): Promise<PostMeetingSourceOption[]> => {
+    const raw = await req<unknown>(`/api/source-artifacts?accountId=${encodeURIComponent(customerId)}&matterId=${encodeURIComponent(matterId)}&limit=100`);
+    return postMeetingParse(() => parsePostMeetingSourceOptions(raw, { customerId, matterId }));
+  },
+  postMeetingReview: async (batchId: string): Promise<PostMeetingReviewBatchDetail> => {
+    const raw = await req<unknown>(`/api/review-batches/${encodeURIComponent(batchId)}`);
+    return postMeetingParse(() => parsePostMeetingReviewDetail(raw, batchId));
+  },
+  postMeetingControl: async (
+    jobVersion: string,
+    enabled: boolean,
+    expectedVersion: number,
+    idempotencyKey: string,
+  ): Promise<{ card: AgentJobCard; replayed: boolean }> => {
+    const payload = AgentJobControlRequestSchema.parse({ jobVersion, enabled, expectedVersion });
+    const raw = await commandReq<unknown>('/api/agent-jobs/post_meeting_extract/control', {
+      method: 'PUT',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(payload),
+    });
+    return postMeetingParse(() => {
+      if (!isRecord(raw) || typeof raw.replayed !== 'boolean') throw new Error('control envelope');
+      const { replayed, ...cardValue } = raw;
+      const card = AgentJobCardSchema.safeParse(cardValue);
+      if (!card.success
+        || card.data.jobKey !== 'post_meeting_extract'
+        || card.data.jobVersion !== jobVersion) throw new Error('control card');
+      return { card: card.data, replayed };
+    });
+  },
+  postMeetingRun: async (
+    input: AgentManualRunRequest,
+    idempotencyKey: string,
+  ): Promise<AgentRunReceipt> => {
+    const payload = AgentManualRunRequestSchema.parse(input);
+    const raw = await commandReq<unknown>('/api/agent-jobs/post_meeting_extract/runs', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(payload),
+    }, { timeoutMs: 120_000 });
+    return postMeetingParse(() => {
+      const parsed = AgentRunReceiptSchema.safeParse(raw);
+      if (!parsed.success
+        || parsed.data.run.jobKey !== 'post_meeting_extract'
+        || parsed.data.run.jobVersion !== payload.jobVersion
+        || parsed.data.run.customerId !== payload.customerId
+        || parsed.data.run.matterId !== payload.matterId
+        || parsed.data.run.sourceArtifactId !== payload.sourceArtifactId
+        || JSON.stringify(parsed.data.run.inputRefs) !== JSON.stringify(payload.inputRefs)) {
+        throw new Error('run receipt mismatch');
+      }
+      return parsed.data;
+    });
+  },
+  postMeetingAccept: async (
+    batchId: string,
+    input: PostMeetingReviewRequest,
+    idempotencyKey: string,
+  ): Promise<Exclude<PostMeetingReviewReceipt, { code: 'review_batch_conflict' }>> => {
+    const payload = PostMeetingReviewRequestSchema.parse(input);
+    let raw: unknown;
+    try {
+      raw = await commandReq<unknown>(`/api/review-batches/${encodeURIComponent(batchId)}/accept`, {
+        method: 'POST',
+        headers: { 'Idempotency-Key': idempotencyKey },
+        body: JSON.stringify(payload),
+      });
+    } catch (cause) {
+      const error = toApiError(cause);
+      if (error.status === 409) {
+        const conflict = postMeetingParse(() => parsePostMeetingReviewReceipt(error.cause));
+        if ('code' in conflict) {
+          throw new ApiError({
+            status: 409,
+            code: conflict.code,
+            message: '会后速审项已变化，请刷新后重试。',
+            retryable: false,
+            cause: conflict,
+          });
+        }
+      }
+      throw error;
+    }
+    return postMeetingParse(() => {
+      const receipt = parsePostMeetingReviewReceipt(raw);
+      if ('code' in receipt || receipt.batchId !== batchId) throw new Error('review receipt mismatch');
+      const expected = new Map(payload.decisions.map((decision) => [decision.candidateId, decision.decision]));
+      if (receipt.items.length !== expected.size
+        || receipt.items.some((item) => expected.get(item.candidateId) !== item.decision)) {
+        throw new Error('review item receipt mismatch');
+      }
+      return receipt;
+    });
+  },
   today: async (): Promise<TodayReadModel> => parseTodayResponse(await req<unknown>('/api/today')),
   todaySource: async (source: InterventionSourceRef): Promise<TodaySourceView> => parseTodaySourceResponse(
     await req<unknown>('/api/today/source', { method: 'POST', body: JSON.stringify(source) }),

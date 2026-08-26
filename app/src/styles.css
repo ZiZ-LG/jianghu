@@ -230,6 +230,46 @@ button.commercial-shell-row:hover { background: var(--hover); }
 .quick-capture-message.error { color: var(--danger); border: 1px solid var(--danger); background: var(--panel); }
 .quick-capture-message.success { color: var(--accent-ink); border: 1px solid var(--accent); background: var(--accent-soft); }
 .quick-capture .btn { min-height: 44px; }
+.post-meeting-review { margin-bottom: 24px; padding: 20px; border: 1px solid var(--line); border-radius: 14px; display: grid; gap: 16px; background: var(--panel-2); }
+.post-meeting-heading, .post-meeting-item-head, .post-meeting-source-meta, .commercial-legacy-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.post-meeting-heading h2, .commercial-legacy-heading h2 { margin: 2px 0 0; font-size: 19px; }
+.post-meeting-heading .eyebrow { color: var(--accent-ink); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.post-meeting-job-state { padding: 5px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); background: var(--panel); font-size: 12px; font-weight: 700; }
+.post-meeting-job-state.enabled { border-color: var(--accent); color: var(--accent-ink); background: var(--accent-soft); }
+.post-meeting-lede { color: var(--ink-2); line-height: 1.65; }
+.post-meeting-toolbar { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; align-items: end; }
+.post-meeting-toolbar label, .post-meeting-submit label, .post-meeting-edit-grid label, .post-meeting-edit-field, .post-meeting-decision-row label { min-width: 0; display: grid; gap: 5px; color: var(--ink-2); font-size: 12px; font-weight: 700; }
+.post-meeting-toolbar input, .post-meeting-toolbar select, .post-meeting-submit input, .post-meeting-submit select, .post-meeting-edit-grid input, .post-meeting-edit-grid select, .post-meeting-edit-field input, .post-meeting-decision-row select { width: 100%; min-height: 42px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--panel); font: inherit; font-size: 14px; }
+.post-meeting-toolbar .btn { min-height: 42px; }
+.post-meeting-message { padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); overflow-wrap: anywhere; }
+.post-meeting-message.error, .post-meeting-conflict { color: var(--danger); }
+.post-meeting-message.error { border-color: var(--danger); }
+.post-meeting-message.success { border-color: var(--accent); color: var(--accent-ink); background: var(--accent-soft); }
+.post-meeting-runs { display: flex; gap: 8px; overflow-x: auto; }
+.post-meeting-runs button { min-width: 150px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 9px; display: grid; gap: 3px; color: var(--ink); background: var(--panel); text-align: left; }
+.post-meeting-runs button:not(:disabled):hover { background: var(--hover); }
+.post-meeting-runs small { color: var(--muted); }
+.post-meeting-sheet { display: grid; gap: 14px; }
+.post-meeting-source-meta { padding: 11px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); }
+.post-meeting-source-meta span { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.post-meeting-items { display: grid; gap: 10px; }
+.post-meeting-item { padding: 14px; border: 1px solid var(--line); border-radius: 11px; display: grid; gap: 11px; background: var(--panel); }
+.post-meeting-item.accepted, .post-meeting-item.rejected { opacity: .72; }
+.post-meeting-item-head > span { color: var(--muted); font-size: 12px; }
+.post-meeting-select { min-height: 32px; display: flex; align-items: center; gap: 9px; }
+.post-meeting-select input { width: 18px; height: 18px; accent-color: var(--accent); }
+.post-meeting-item blockquote { padding: 10px 12px; border-left: 3px solid var(--accent); color: var(--ink-2); background: var(--accent-soft); line-height: 1.6; overflow-wrap: anywhere; }
+.post-meeting-diff { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 10px; }
+.post-meeting-diff > div:not([aria-hidden]) { min-width: 0; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; display: grid; gap: 3px; background: var(--panel-2); }
+.post-meeting-diff small { color: var(--muted); }
+.post-meeting-diff span { overflow-wrap: anywhere; }
+.post-meeting-edit-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.post-meeting-decision-row { display: grid; grid-template-columns: minmax(130px, 220px); }
+.post-meeting-conflict { font-size: 12px; font-weight: 700; }
+.post-meeting-submit { padding-top: 14px; border-top: 1px solid var(--line); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: end; gap: 10px; }
+.post-meeting-submit .btn { min-height: 42px; }
+.commercial-legacy-entry { padding-top: 22px; border-top: 1px solid var(--line); display: grid; gap: 12px; }
+.commercial-legacy-heading span { color: var(--muted); font-size: 12px; }
 @media (max-width: 640px) {
   .commercial-shell-header, .commercial-shell-nav { padding-left: 14px; padding-right: 14px; }
   .commercial-shell-panel { margin-top: 14px; padding: 18px; }
@@ -254,6 +294,12 @@ button.commercial-shell-row:hover { background: var(--hover); }
   .crm-context-section header > span, .crm-context-compact-list span { text-align: left; }
   .crm-relation-canvas svg { min-height: 210px; }
   .crm-relation-list li { grid-template-columns: 1fr; }
+  .post-meeting-review { padding: 14px; }
+  .post-meeting-heading, .post-meeting-item-head, .post-meeting-source-meta, .commercial-legacy-heading { align-items: stretch; flex-direction: column; }
+  .post-meeting-toolbar, .post-meeting-edit-grid, .post-meeting-submit { grid-template-columns: 1fr; }
+  .post-meeting-toolbar .btn, .post-meeting-submit .btn { width: 100%; }
+  .post-meeting-diff { grid-template-columns: 1fr; }
+  .post-meeting-diff > div[aria-hidden] { display: none; }
 }
 .app-upper { display: flex; flex: 1; min-height: 0; position: relative; } /* 上半区：侧栏 + 画布并排；坞提出后列①落在左栏正下方。relative=右栏面板(.drawer)的定位锚——面板底边天然止于坞顶（第9刀） */
 

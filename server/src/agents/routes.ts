@@ -12,7 +12,7 @@ import { prisma } from '../prisma.js';
 import { runCommand } from '../mutation/commandRunner.js';
 import { AgentJobError } from './errors.js';
 import { readableAgentRunById, readableAgentRuns } from './history.js';
-import type { AgentJobHandlers } from './model.js';
+import type { AgentCandidateCommitAdapter, AgentJobHandlers } from './model.js';
 import {
   assertAgentControlReplay,
   exactAgentDefinition,
@@ -84,6 +84,7 @@ export function agentJobRoutes(
   app: FastifyInstance,
   policy: CapabilityPolicy,
   handlers: AgentJobHandlers,
+  candidateCommitAdapter?: AgentCandidateCommitAdapter,
 ): void {
   app.get('/api/agent-jobs', { preHandler: [app.authenticate] }, async (req: any) => ({
     items: await listAgentJobCards(prisma, req.user.tenantId, handlers),
@@ -126,7 +127,9 @@ export function agentJobRoutes(
     }
     try {
       const definition = exactAgentDefinition(params.data.jobKey, body.data.jobVersion);
-      return await runManualAgentJob(prisma, context(req), policy, handlers, definition, body.data, key);
+      return await runManualAgentJob(
+        prisma, context(req), policy, handlers, definition, body.data, key, candidateCommitAdapter,
+      );
     } catch (error) {
       return failure(reply, error);
     }

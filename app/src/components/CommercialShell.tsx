@@ -1,10 +1,11 @@
-import type { CrmContextSnapshot, ProductAccess, ProductEntryId } from '@jianghu/domain-contracts';
+import type { CommandContext, CrmContextSnapshot, ProductAccess, ProductEntryId } from '@jianghu/domain-contracts';
 import type { Account } from '../types';
 import { resolveProductRoute } from '../lib/productRoutes';
 import { QuickCapture } from './QuickCapture';
 import { TodayPanel } from './TodayPanel';
 import { CrmContextPanel, type CrmContextPanelState } from './CrmContextPages';
 import { toQuickCaptureAccounts, type QuickCaptureAccountOption } from '../lib/crmContext';
+import { PostMeetingReviewPanel } from './PostMeetingReviewPanel';
 
 function EmptyState({ children }: { children: string }) {
   return <div className="commercial-shell-empty">{children}</div>;
@@ -24,13 +25,14 @@ function LegacyAccountList({ accounts, onOpenLegacy }: { accounts: Account[]; on
 }
 
 function ProductPanel({
-  id, accounts, crmContextState, quickCaptureAccounts, actorUserId, readonly, onNavigate, onOpenLegacy, onOpenTeam, onQuickCaptureSaved,
+  id, accounts, crmContextState, quickCaptureAccounts, actorUserId, actorRole, readonly, onNavigate, onOpenLegacy, onOpenTeam, onQuickCaptureSaved,
 }: {
   id: ProductEntryId;
   accounts: Account[];
   crmContextState: CrmContextPanelState;
   quickCaptureAccounts: QuickCaptureAccountOption[];
   actorUserId: string;
+  actorRole: CommandContext['actorRole'];
   readonly: boolean;
   onNavigate: (path: string) => void;
   onOpenLegacy: (accountId: string) => void;
@@ -70,7 +72,19 @@ function ProductPanel({
     );
   }
   if (id === 'sales-workspace') {
-    return <div data-capability-surface="sales-workspace"><LegacyAccountList accounts={accounts} onOpenLegacy={onOpenLegacy} /></div>;
+    const crmContext = crmContextState.status === 'ready' ? crmContextState.snapshot : null;
+    return <div data-capability-surface="sales-workspace">
+      <PostMeetingReviewPanel
+        crmContext={crmContext}
+        actorRole={actorRole}
+        readonly={readonly}
+        onDataChanged={onQuickCaptureSaved}
+      />
+      <section className="commercial-legacy-entry" data-legacy-sales-entry="frozen">
+        <div className="commercial-legacy-heading"><h2>原复杂销售工作台</h2><span>遗留入口 · 冻结新功能</span></div>
+        <LegacyAccountList accounts={accounts} onOpenLegacy={onOpenLegacy} />
+      </section>
+    </div>;
   }
   if (id === 'g64111') {
     return (
@@ -95,13 +109,14 @@ function ProductPanel({
 }
 
 export function CommercialShell({
-  access, pathname, accounts, crmContextState, actorUserId, readonly, onNavigate, onOpenLegacy, onOpenTeam, onQuickCaptureSaved, onLogout,
+  access, pathname, accounts, crmContextState, actorUserId, actorRole, readonly, onNavigate, onOpenLegacy, onOpenTeam, onQuickCaptureSaved, onLogout,
 }: {
   access: ProductAccess;
   pathname: string;
   accounts: Account[];
   crmContextState: CrmContextPanelState;
   actorUserId: string;
+  actorRole: CommandContext['actorRole'];
   readonly: boolean;
   onNavigate: (path: string) => void;
   onOpenLegacy: (accountId: string) => void;
@@ -141,6 +156,7 @@ export function CommercialShell({
           crmContextState={crmContextState}
           quickCaptureAccounts={quickCaptureAccounts}
           actorUserId={actorUserId}
+          actorRole={actorRole}
           readonly={readonly}
           onNavigate={onNavigate}
           onOpenLegacy={onOpenLegacy}

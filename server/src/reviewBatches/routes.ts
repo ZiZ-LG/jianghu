@@ -2,8 +2,11 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
   ActorRoleSchema,
+  PostMeetingReviewReceiptSchema,
+  PostMeetingReviewRequestSchema,
   type CapabilityPolicy,
   type CommandContext,
+  type PostMeetingReviewRequest,
 } from '@jianghu/domain-contracts';
 import { prisma } from '../prisma.js';
 import { runCommand } from '../mutation/commandRunner.js';
@@ -11,15 +14,16 @@ import { runPostCommitEffect } from '../mutate.js';
 import {
   acceptReviewBatch,
   ReviewBatchConflictError,
+  type AcceptReviewBatchInput,
 } from './acceptance.js';
 import {
   assertReviewBatchCreateReplayAccess,
   assertReviewBatchReplayAccess,
   createReviewBatch,
-  readableReviewBatchById,
   readableReviewBatches,
   ReviewBatchError,
 } from './service.js';
+import { readableReviewBatchTransport } from '../postMeeting/review.js';
 
 const id = z.string().trim().min(1).max(200);
 const expectedVersion = z.number().int().min(0);
@@ -119,6 +123,61 @@ function mutationFailure(reply: any, error: unknown) {
   throw error;
 }
 
+function postMeetingAcceptanceInput(input: PostMeetingReviewRequest): AcceptReviewBatchInput {
+  return {
+    expectedVersion: input.expectedVersion,
+    expectedAcceptanceVersion: input.expectedAcceptanceVersion,
+    accountId: input.customerId,
+    matterId: input.matterId,
+    activityKind: input.activityKind,
+    occurredAt: new Date(input.occurredAt),
+    existingInteractionId: input.existingInteractionId,
+    decisions: input.decisions.map((decision) => {
+      const common = {
+        candidateId: decision.candidateId,
+        expectedVersion: decision.expectedVersion,
+        expectedAclVersion: decision.expectedAclVersion,
+        decision: decision.decision,
+      };
+      if (decision.kind === 'person') {
+        return {
+          ...common,
+          kind: 'person' as const,
+          person: decision.edit ? {
+            ...(decision.edit.name !== undefined ? { name: decision.edit.name } : {}),
+            ...(decision.edit.title !== undefined ? { title: decision.edit.title ?? '' } : {}),
+          } : undefined,
+        };
+      }
+      if (decision.kind === 'relation') {
+        return {
+          ...common,
+          kind: 'relation' as const,
+          relation: decision.edit ? {
+            ...(decision.edit.layer !== undefined ? { layer: decision.edit.layer } : {}),
+            ...(decision.edit.label !== undefined ? { label: decision.edit.label ?? '' } : {}),
+          } : undefined,
+        };
+      }
+      if (decision.kind === 'field') {
+        return {
+          ...common,
+          kind: 'field' as const,
+          ...(decision.edit ? { newValue: JSON.stringify(decision.edit.value) } : {}),
+        };
+      }
+      if (decision.kind === 'evidence') {
+        return { ...common, kind: 'evidence' as const, evidence: decision.edit };
+      }
+      return {
+        ...common,
+        kind: 'commitment' as const,
+        commitmentCommand: decision.edit?.command,
+      };
+    }),
+  };
+}
+
 export function reviewBatchRoutes(app: FastifyInstance, policy: CapabilityPolicy): void {
   app.get('/api/review-batches', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     const query = listSchema.safeParse(req.query);
@@ -132,7 +191,7 @@ export function reviewBatchRoutes(app: FastifyInstance, policy: CapabilityPolicy
     const params = paramsSchema.safeParse(req.params);
     if (!params.success) return reply.code(400).send({ error: '会后速审参数无效' });
     const readable = await prisma.$transaction(
-      (tx) => readableReviewBatchById(tx, context(req), policy, params.data.id),
+      (tx) => readableReviewBatchTransport(tx, context(req), policy, params.data.id),
       { isolationLevel: 'Serializable', maxWait: 5_000, timeout: 30_000 },
     );
     return readable?.view ?? reply.code(404).send({
@@ -162,29 +221,50 @@ export function reviewBatchRoutes(app: FastifyInstance, policy: CapabilityPolicy
     const key = mutationPreflight(req, reply);
     if (!key) return;
     const params = paramsSchema.safeParse(req.params);
-    const body = acceptSchema.safeParse(req.body);
-    if (!params.success || !body.success) {
+    const postMeetingBody = PostMeetingReviewRequestSchema.safeParse(req.body);
+    const legacyBody = acceptSchema.safeParse(req.body);
+    if (!params.success || (!postMeetingBody.success && !legacyBody.success)) {
       return reply.code(400).send({ error: '会后速审采纳参数无效' });
     }
-    const payload = { id: params.data.id, ...body.data };
+    const isPostMeetingRequest = postMeetingBody.success;
+    let commandInput: AcceptReviewBatchInput;
+    let commandPayload: unknown;
+    if (postMeetingBody.success) {
+      commandInput = postMeetingAcceptanceInput(postMeetingBody.data);
+      commandPayload = {
+        id: params.data.id,
+        transport: 'post_meeting_review_v1',
+        ...postMeetingBody.data,
+      };
+    } else {
+      if (!legacyBody.success) {
+        return reply.code(400).send({ error: '会后速审采纳参数无效' });
+      }
+      commandInput = {
+        ...legacyBody.data,
+        occurredAt: new Date(legacyBody.data.occurredAt),
+      };
+      commandPayload = { id: params.data.id, ...legacyBody.data };
+    }
     try {
       const command = await runCommand(context(req), {
-        kind: `review-batch-accept:${params.data.id}:${body.data.expectedAcceptanceVersion}`,
+        kind: `review-batch-accept:${params.data.id}:${commandInput.expectedAcceptanceVersion}`,
         idempotencyKey: key,
-        payload,
+        payload: commandPayload,
         authorizeReplay: (tx) => assertReviewBatchReplayAccess(
           tx, context(req), policy, params.data.id,
         ),
-      }, (tx) => acceptReviewBatch(tx, context(req), policy, params.data.id, {
-        ...body.data,
-        occurredAt: new Date(body.data.occurredAt),
-      }));
+      }, (tx) => acceptReviewBatch(tx, context(req), policy, params.data.id, commandInput));
       const { effects, ...result } = command.result;
       if (!command.replayed && !result.businessReplayed) {
         for (const effect of effects) await runPostCommitEffect(effect);
       }
-      return { ...result, replayed: command.replayed };
+      const response = { ...result, replayed: command.replayed };
+      return isPostMeetingRequest ? PostMeetingReviewReceiptSchema.parse(response) : response;
     } catch (error) {
+      if (isPostMeetingRequest && error instanceof ReviewBatchConflictError) {
+        return reply.code(409).send({ code: error.code, items: error.items });
+      }
       return mutationFailure(reply, error);
     }
   });

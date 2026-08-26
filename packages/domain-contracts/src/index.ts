@@ -7,3 +7,4 @@ export * from './crm.js';
 export * from './ids.js';
 export * from './interventions.js';
 export * from './methodology.js';
+export * from './postMeeting.js';

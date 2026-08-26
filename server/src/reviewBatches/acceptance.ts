@@ -13,10 +13,16 @@ import {
   rejectRelationCandidate,
 } from '../candidates/personRelation.js';
 import {
+  claimFieldCandidate,
+  finalizeFieldCandidate,
   rejectFieldCandidate,
   reviewEvidenceCandidate,
 } from '../candidates/reviewItems.js';
 import { executeCommitmentCommand } from '../mutation/commitments.js';
+import {
+  applyReviewedFieldUpdate,
+  prepareReviewedFieldUpdate,
+} from '../mutation/reviewedFields.js';
 import type { PostCommitEffect } from '../mutate.js';
 import {
   acceptProposalInTransaction,
@@ -43,6 +49,7 @@ import {
 } from './service.js';
 
 export interface ReviewDecisionInput {
+  kind?: 'person' | 'relation' | 'field' | 'evidence' | 'commitment';
   candidateId: string;
   expectedVersion: number;
   expectedAclVersion: number;
@@ -51,6 +58,7 @@ export interface ReviewDecisionInput {
   relation?: { layer?: 'L1' | 'L2' | 'L3' | 'L4'; label?: string };
   newValue?: string;
   evidence?: { direction?: -1 | 0 | 1; tier?: 'weak' | 'mid' | 'strong' };
+  commitmentCommand?: unknown;
 }
 
 export interface AcceptReviewBatchInput {
@@ -114,12 +122,14 @@ const fullCandidateSelect = {
   oldValue: true,
   newValue: true,
   payload: true,
+  source: true,
+  sourceRef: true,
+  dedupeKey: true,
   sourceArtifactId: true,
   reviewBatchId: true,
   createdByUserId: true,
   visibility: true,
   aclVersion: true,
-  dedupeKey: true,
   legacySourceKind: true,
   legacySourceId: true,
   version: true,
@@ -230,21 +240,65 @@ async function preflightRelation(
   }
 }
 
-async function preflightEvidence(tx: Prisma.TransactionClient, candidate: FullCandidate): Promise<void> {
+function pendingEvidencePersonCandidate(payload: string): string | null {
+  try {
+    const parsed = JSON.parse(payload) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const value = (parsed as { pendingPersonCandidateId?: unknown }).pendingPersonCandidateId;
+    return typeof value === 'string' && value.trim() ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+async function preflightEvidence(
+  tx: Prisma.TransactionClient,
+  candidate: FullCandidate,
+  acceptedCandidateIds: ReadonlySet<string>,
+): Promise<void> {
   const id = legacyIdentity(candidate, 'EvidenceEvent');
   const row = await tx.evidenceEvent.findFirst({ where: {
     id, tenantId: candidate.tenantId, accountId: candidate.accountId,
     opportunityId: candidate.matterId ?? undefined, status: 'pending_review',
-  }, select: { id: true } });
+  }, select: { id: true, personId: true } });
   if (!row) throw new ReviewBatchError('evidence_candidate_changed');
+  const existingPerson = await tx.person.findFirst({ where: {
+    id: row.personId,
+    tenantId: candidate.tenantId,
+    accountId: candidate.accountId,
+    archivedAt: null,
+    mergedIntoPersonId: null,
+  }, select: { id: true } });
+  if (existingPerson) return;
+  const pendingCandidateId = pendingEvidencePersonCandidate(candidate.payload);
+  if (!pendingCandidateId
+    || !acceptedCandidateIds.has(pendingCandidateId)
+    || personIdForReviewCandidate(candidate.tenantId, pendingCandidateId) !== row.personId) {
+    throw new ReviewBatchError('evidence_person_not_selected');
+  }
+  const pending = await tx.candidate.findFirst({ where: {
+    id: pendingCandidateId,
+    tenantId: candidate.tenantId,
+    accountId: candidate.accountId,
+    matterId: candidate.matterId,
+    reviewBatchId: candidate.reviewBatchId,
+    kind: 'person_create',
+    status: 'pending',
+  }, select: { id: true } });
+  if (!pending) throw new ReviewBatchError('evidence_person_not_selected');
 }
 
-function commitmentCommand(candidate: FullCandidate, interactionId: string | null = null) {
+function commitmentCommand(
+  candidate: FullCandidate,
+  interactionId: string | null = null,
+  override?: unknown,
+) {
   let raw: unknown;
   try { raw = JSON.parse(candidate.payload); } catch { throw new ReviewBatchError('commitment_candidate_invalid'); }
-  const command = raw && typeof raw === 'object' && !Array.isArray(raw)
+  const stored = raw && typeof raw === 'object' && !Array.isArray(raw)
     ? (raw as { command?: unknown }).command
     : undefined;
+  const command = override ?? stored;
   const parsed = CreateCommitmentCommandSchema.safeParse(command);
   if (!parsed.success
     || parsed.data.commitment.customerId !== candidate.accountId
@@ -275,12 +329,18 @@ async function preflightCandidate(
   if (candidate.kind === 'relation_create') return preflightRelation(tx, candidate, acceptedCandidateIds);
   if (candidate.kind === 'field_change') {
     const id = legacyIdentity(candidate, 'ChangeProposal');
+    if (candidate.targetKind === 'customer' || candidate.targetKind === 'matter') {
+      await prepareReviewedFieldUpdate(tx, ctx, policy, id, decision.newValue);
+      return;
+    }
     await assertProposalAcceptancePreflight(ctx, id, decision.newValue, tx, policy);
     return;
   }
-  if (candidate.kind === 'evidence_create') return preflightEvidence(tx, candidate);
+  if (candidate.kind === 'evidence_create') {
+    return preflightEvidence(tx, candidate, acceptedCandidateIds);
+  }
   if (candidate.kind === 'commitment_create') {
-    commitmentCommand(candidate);
+    commitmentCommand(candidate, null, decision.commitmentCommand);
     const deterministicId = commitmentIdForReviewCandidate(candidate.tenantId, candidate.id);
     const existing = await tx.planAction.findFirst({
       where: { id: deterministicId, tenantId: candidate.tenantId }, select: { id: true },
@@ -427,9 +487,38 @@ async function acceptCandidate(
     };
   }
   if (candidate.kind === 'field_change') {
+    const proposalId = legacyIdentity(candidate, 'ChangeProposal');
+    if (candidate.targetKind === 'customer' || candidate.targetKind === 'matter') {
+      const prepared = await prepareReviewedFieldUpdate(
+        tx, ctx, policy, proposalId, decision.newValue,
+      );
+      const claim = await claimFieldCandidate(tx, {
+        tenantId: ctx.tenantId,
+        id: proposalId,
+        review,
+      });
+      if (!claim) throw new ReviewBatchError('candidate_apply_conflict');
+      const formal = await applyReviewedFieldUpdate(tx, ctx, prepared);
+      await finalizeFieldCandidate(tx, {
+        tenantId: ctx.tenantId,
+        id: proposalId,
+        expectedVersion: claim.candidateVersion,
+        newValue: prepared.encodedValue,
+      });
+      return {
+        result: {
+          candidateId: candidate.id,
+          decision: 'accept',
+          status: 'accepted',
+          formalKind: formal.formalKind,
+          formalId: formal.formalId,
+        },
+        effect: undefined,
+      };
+    }
     const accepted = await acceptProposalInTransaction(
       ctx,
-      legacyIdentity(candidate, 'ChangeProposal'),
+      proposalId,
       decision.newValue,
       tx,
       policy,
@@ -467,7 +556,7 @@ async function acceptCandidate(
     };
   }
   if (candidate.kind === 'commitment_create') {
-    const command = commitmentCommand(candidate, interactionId);
+    const command = commitmentCommand(candidate, interactionId, decision.commitmentCommand);
     const receipt = await executeCommitmentCommand(ctx, command, tx);
     await terminalizeCommitmentCandidate(tx, candidate, 'accepted');
     return {
@@ -555,8 +644,25 @@ export async function acceptReviewBatch(
   for (const decision of input.decisions) {
     const candidate = fullById.get(decision.candidateId);
     const metadata = metadataById.get(decision.candidateId);
+    const expectedKind = candidate?.kind === 'person_create' ? 'person'
+      : candidate?.kind === 'relation_create' ? 'relation'
+        : candidate?.kind === 'field_change' ? 'field'
+          : candidate?.kind === 'evidence_create' ? 'evidence'
+            : candidate?.kind === 'commitment_create' ? 'commitment'
+              : null;
+    const hasPostMeetingIdentity = candidate?.source === 'post_meeting_extract'
+      && /^post-meeting:[a-zA-Z0-9][a-zA-Z0-9._:-]*@item-\d{3}:chars:\d+-\d+$/.test(candidate.sourceRef);
+    // CORE-205 fixtures and legacy producers already used the source label. The
+    // immutable semantic key distinguishes SAAS-202 rows even if sourceRef drifts.
+    const hasPostMeetingDedupeIdentity = candidate?.source === 'post_meeting_extract'
+      && /(?:post-meeting-run-v1:|post-meeting:[a-zA-Z0-9][a-zA-Z0-9._:-]*@item-\d{3}:chars:\d+-\d+)/
+        .test(candidate.dedupeKey);
     if (!candidate || !metadata) {
       conflicts.set(decision.candidateId, 'candidate_not_in_batch');
+    } else if ((decision.kind !== undefined && decision.kind !== expectedKind)
+      || ((hasPostMeetingIdentity || hasPostMeetingDedupeIdentity)
+        && (!hasPostMeetingIdentity || decision.kind !== expectedKind))) {
+      conflicts.set(decision.candidateId, 'candidate_kind_conflict');
     } else if (candidate.status !== 'pending') {
       conflicts.set(decision.candidateId, 'candidate_already_processed');
     } else if (candidate.version !== decision.expectedVersion) {
