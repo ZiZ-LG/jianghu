@@ -38,6 +38,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-jianghu}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-jianghu}?schema=public
       JWT_SECRET: ${JWT_SECRET:?请在 .env 设置强随机 JWT_SECRET}
       AI_KEY_SECRET: ${AI_KEY_SECRET:?请在 .env 设置强随机 AI_KEY_SECRET}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
       OUTBOUND_ALLOWED_HOSTS: ${OUTBOUND_ALLOWED_HOSTS:?请在 .env 设置服务端出站主机白名单}
       OUTBOUND_ALLOWED_PRIVATE_HOSTS: ${OUTBOUND_ALLOWED_PRIVATE_HOSTS:-}
       CORS_ORIGIN: ${CORS_ORIGIN:-}

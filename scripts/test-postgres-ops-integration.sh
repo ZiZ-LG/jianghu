@@ -17,6 +17,7 @@ export POSTGRES_DB=jianghu_ops
 export JWT_SECRET=$(openssl rand -hex 32)
 export AI_KEY_SECRET=$(openssl rand -hex 32)
 export OUTBOUND_ALLOWED_HOSTS=example.com
+export PUBLIC_BASE_URL=https://crm.example.test
 export BACKUP_MASTER_SECRET=$(openssl rand -hex 32)
 export BACKUP_DIR="/tmp/jianghu-int501-ops-${$}"
 export BACKUP_RETENTION_DAYS=14
@@ -1679,6 +1680,7 @@ POSTGRES_DB=$POSTGRES_DB
 JWT_SECRET=$JWT_SECRET
 AI_KEY_SECRET=$AI_KEY_SECRET
 OUTBOUND_ALLOWED_HOSTS=$OUTBOUND_ALLOWED_HOSTS
+PUBLIC_BASE_URL=$PUBLIC_BASE_URL
 EOF
 deployment_git_in_dir "$bootstrap_root" init -q
 deployment_git_in_dir "$bootstrap_root" -c user.name=CI -c user.email=ci@example.invalid add .dockerignore docker-compose.yml server packages
@@ -1815,11 +1817,12 @@ deployment_git_in_dir "$fresh_root/repo" switch -q -C "$fresh_branch"
 deployment_git_in_dir "$fresh_root/repo" remote set-url origin "file://$fresh_origin"
 deployment_git_in_dir "$fresh_root/repo" push -qu -u origin "$fresh_branch"
 [[ "$(deployment_git_in_dir "$fresh_root/repo" rev-parse --abbrev-ref '@{upstream}')" == "origin/$fresh_branch" ]]
-# Local pre-commit runs clone HEAD, so overlay the current server and workspace
-# package snapshots to exercise their exact cross-package contract. CI normally has no overlay diff.
+# Local pre-commit runs clone HEAD, so overlay the current Compose, server and
+# workspace package snapshots to exercise their exact runtime contract. CI normally has no overlay diff.
+cp docker-compose.yml "$fresh_root/repo/docker-compose.yml"
 tar -cf - --exclude='node_modules' --exclude='dist' --exclude='*.db' server packages \
   | tar -xf - -C "$fresh_root/repo"
-deployment_git_in_dir "$fresh_root/repo" -c user.name=CI -c user.email=ci@example.invalid add server packages
+deployment_git_in_dir "$fresh_root/repo" -c user.name=CI -c user.email=ci@example.invalid add docker-compose.yml server packages
 if ! deployment_git_in_dir "$fresh_root/repo" diff --cached --quiet; then
   deployment_git_in_dir "$fresh_root/repo" -c user.name=CI -c user.email=ci@example.invalid commit -qm 'current server snapshot'
 fi
@@ -1831,13 +1834,14 @@ POSTGRES_DB=jianghu_fresh
 JWT_SECRET=$(openssl rand -hex 32)
 AI_KEY_SECRET=$(openssl rand -hex 32)
 OUTBOUND_ALLOWED_HOSTS=example.com
+PUBLIC_BASE_URL=https://crm.example.test
 BACKUP_MASTER_SECRET=$(openssl rand -hex 32)
 BACKUP_DIR=$fresh_backups
 WEB_PORT=$fresh_port
 EOF
 # 清空外层测试环境变量，让临时仓的 .env 成为唯一配置来源（等价公司服务器现场）。
 fresh_env=(env -u COMPOSE_PROJECT_NAME -u POSTGRES_USER -u POSTGRES_PASSWORD -u POSTGRES_DB \
-  -u JWT_SECRET -u AI_KEY_SECRET -u OUTBOUND_ALLOWED_HOSTS -u BACKUP_MASTER_SECRET \
+  -u JWT_SECRET -u AI_KEY_SECRET -u OUTBOUND_ALLOWED_HOSTS -u PUBLIC_BASE_URL -u BACKUP_MASTER_SECRET \
   -u BACKUP_DIR -u BACKUP_RETENTION_DAYS \
   JIANGHU_ROOT="$fresh_root/repo" ROLLBACK_ROOT="$fresh_rollbacks")
 "${fresh_env[@]}" bash "$fresh_root/repo/deploy-company-update.sh" >/dev/null
