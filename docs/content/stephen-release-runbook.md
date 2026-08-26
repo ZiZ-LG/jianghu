@@ -36,7 +36,7 @@
 13. 冒烟通过后、`finalize` 前再次确认开关与 `origin/main`；只有 finalize 成功才撤销自动回滚计时器；
 14. 任一检查失败都会调用带同一 SHA 和 lease 的 `rollback`，恢复 pending 事务记录的精确旧版本后再次检查核心站点；runner 失联时则由服务器计时器回滚，服务器重启时由 recovery service 收口未完成事务。
 
-工作流 runner 固定 `ubuntu-latest`；权限只有 `actions: read` 和 `contents: read`。`Stephen checks` 还会在无生产 Secrets 的 runner 上只读探测仓库变量 API，证明 `GITHUB_TOKEN` 可以执行运行中授权复核。不使用 PAT、第三方 SSH Action、GitHub artifact、`pull_request_target` 或 `StrictHostKeyChecking=no`。
+发布工作流 runner 固定 `ubuntu-latest`；内置 `GITHUB_TOKEN` 权限只有 `actions: read` 和 `contents: read`，只用于读取 main ref 和精确 SHA 的检查结果。GitHub 远程实测表明，内置 token 调用仓库 Variables API 会返回 `403 Resource not accessible by integration`；该端点要求独立的 repository `Variables: read` 权限。因此运行中的开关复核使用仅存在于 `production-stephen` Environment 的细粒度控制 token，普通 `Stephen checks` 不读取生产 Secret，也不申请无效的 `actions: read`。不使用第三方 SSH Action、GitHub artifact、`pull_request_target` 或 `StrictHostKeyChecking=no`。
 
 ## 3. GitHub 配置清单（只列名称，不记录值）
 
@@ -46,6 +46,7 @@
 
 Environment Secrets：
 
+- `STEPHEN_RELEASE_CONTROL_TOKEN`：细粒度 token，仅授权当前 `ZiZ-LG/jianghu` 仓库的 `Variables: read`；用于 Environment 等待后、切换前及 finalize 前重新读取停止开关，不得授予内容或变量写权限；当前 main 仍由内置 `GITHUB_TOKEN` 的 `Contents: read` 独立核对；
 - `STEPHEN_SSH_HOST`：正式服务器地址；
 - `STEPHEN_SSH_PORT`：SSH 端口；
 - `STEPHEN_SSH_USER`：专用部署用户，建议 `stephen-deploy`；
@@ -56,7 +57,7 @@ Repository Variable：
 
 - `STEPHEN_RELEASE_ENABLED`：首次启用前不创建或保持非 `1`；收到项目所有者批准后才设为字符串 `1`。
 
-不得复用 Mac 上的 `lake2ocean_aliyun_ed25519` 私钥，不得把任何私钥、口令或 Secret 值写入聊天、仓库、PR、日志或 artifact。
+控制 token 采用短有效期并在到期前轮换；权限或 Secret 缺失时工作流会在上传、切换之前失败关闭。不得复用 Mac 上的 `lake2ocean_aliyun_ed25519` 私钥，不得把任何 token、私钥、口令或 Secret 值写入聊天、仓库、PR、日志或 artifact。
 
 ## 4. 专用 SSH 身份与服务器最小权限（首次启用时人工执行）
 

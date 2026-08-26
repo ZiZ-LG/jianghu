@@ -173,11 +173,13 @@ jobs:
       - name: Reconfirm current release authorization after Environment wait
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_CONTROL_TOKEN: ${{ secrets.STEPHEN_RELEASE_CONTROL_TOKEN }}
           GH_REPO: ${{ github.repository }}
           SOURCE_SHA: ${{ needs.eligibility.outputs.source_sha }}
         run: |
           set -euo pipefail
-          release_enabled=$(gh api --method GET \
+          [[ -n "$RELEASE_CONTROL_TOKEN" ]]
+          release_enabled=$(GH_TOKEN="$RELEASE_CONTROL_TOKEN" gh api --method GET \
             "repos/$GH_REPO/actions/variables/STEPHEN_RELEASE_ENABLED" \
             --jq '.value')
           [[ "$release_enabled" == '1' ]]
@@ -201,6 +203,7 @@ jobs:
       - name: Package, stage, activate, smoke, and roll back on failure
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_CONTROL_TOKEN: ${{ secrets.STEPHEN_RELEASE_CONTROL_TOKEN }}
           GH_REPO: ${{ github.repository }}
           SOURCE_SHA: ${{ needs.eligibility.outputs.source_sha }}
           SSH_HOST: ${{ secrets.STEPHEN_SSH_HOST }}
@@ -228,11 +231,12 @@ jobs:
           [[ "$SSH_PORT" =~ ^[0-9]{1,5}$ ]]
           (( SSH_PORT >= 1 && SSH_PORT <= 65535 ))
           [[ "$SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ -n "$RELEASE_CONTROL_TOKEN" ]]
           [[ -n "$SSH_PRIVATE_KEY" && -n "$SSH_KNOWN_HOSTS" ]]
 
           confirm_current_release_authorization() {
             local release_enabled remote_main_sha
-            release_enabled=$(gh api --method GET \
+            release_enabled=$(GH_TOKEN="$RELEASE_CONTROL_TOKEN" gh api --method GET \
               "repos/$GH_REPO/actions/variables/STEPHEN_RELEASE_ENABLED" \
               --jq '.value')
             [[ "$release_enabled" == '1' ]]

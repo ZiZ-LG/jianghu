@@ -382,6 +382,10 @@ export function validateStephenReleaseWorkflow(workflow: string) {
     || (workflow.split('confirm_current_release_authorization').length - 1) < 4) {
     throw new Error('release job must re-read authorization after waiting and before finalize');
   }
+  if ((workflow.split('RELEASE_CONTROL_TOKEN: ${{ secrets.STEPHEN_RELEASE_CONTROL_TOKEN }}').length - 1) !== 2
+    || (workflow.split('GH_TOKEN="$RELEASE_CONTROL_TOKEN" gh api').length - 1) !== 2) {
+    throw new Error('release authorization checks require the environment-scoped control token');
+  }
   for (const condition of [
     "github.event.workflow_run.conclusion == 'success'",
     "github.event.workflow_run.event == 'push'",

@@ -813,8 +813,9 @@ describe('SAAS-607 GitHub release workflow contract', () => {
     const productionProbe = await readFile(productionStageTestPath, 'utf8');
 
     expect(checksWorkflow).toContain('runs-on: ubuntu-latest');
-    expect(checksWorkflow).toContain('actions: read');
-    expect(checksWorkflow).toContain('repos/$GH_REPO/actions/variables');
+    expect(checksWorkflow).toContain('contents: read');
+    expect(checksWorkflow).not.toContain('actions: read');
+    expect(checksWorkflow).not.toContain('repos/$GH_REPO/actions/variables');
     expect(checksWorkflow).toContain('stephen-production-stage-test.sh');
     expect(checksWorkflow).toContain('RUNNER_ENVIRONMENT=github-hosted');
     expect(productionProbe).toContain('SAAS607_PRODUCTION_LOCK_PROBE=1');
@@ -841,6 +842,12 @@ describe('SAAS-607 GitHub release workflow contract', () => {
     expect(() => validateStephenReleaseWorkflow(
       workflow.replace('contents: read', 'contents: write'),
     )).toThrow('release workflow permissions must be minimal');
+    expect(() => validateStephenReleaseWorkflow(
+      workflow.split('secrets.STEPHEN_RELEASE_CONTROL_TOKEN').join('github.token'),
+    )).toThrow('release authorization checks require the environment-scoped control token');
+    expect(() => validateStephenReleaseWorkflow(
+      workflow.split('GH_TOKEN="$RELEASE_CONTROL_TOKEN" gh api').join('gh api'),
+    )).toThrow('release authorization checks require the environment-scoped control token');
     expect(() => validateStephenReleaseWorkflow(
       workflow.replace("vars.STEPHEN_RELEASE_ENABLED == '1'", 'true'),
     )).toThrow('production release must require explicit repository opt-in');

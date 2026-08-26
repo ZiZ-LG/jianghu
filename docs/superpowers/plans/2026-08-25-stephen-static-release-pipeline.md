@@ -16,7 +16,7 @@
 - Existing version root is `/home/admin/jianghu/deployments`, but `/home/admin` is mode `0700`; it cannot be reused safely by a dedicated deploy user.
 - Proposed future runtime root is `/srv/jianghu/stephen`, mounted as the parent directory into the Nginx container so the container resolves `current` after every atomic switch. Creating that mount and switching the live Nginx root are **not** authorized in SAAS-607.
 - No CRM, server, shared package, lockfile, `app/package.json`, `docker-compose.yml`, `ci.yml`, DNS, Nginx runtime, schedule enablement, or production traffic mutation.
-- `STEPHEN_RELEASE_ENABLED` remains absent/off. `production-stephen` secrets are documented but not created by code.
+- `STEPHEN_RELEASE_ENABLED` remains absent/off. `production-stephen` secrets, including the fine-grained read-only release-control token required by GitHub's Variables API, are documented but not created by code.
 - A non-`current` version-directory upload dry-run is authorized; no `current` or `previous` link may be created or changed.
 - SAAS-606 review manifests are not yet equivalent to the public content contract: they remain `pending_owner_review / not_published` and do not contain the full two-fact approval payload. SAAS-607 must not silently promote them or claim candidate-only merges publish content.
 
@@ -64,7 +64,7 @@ Steps:
 
 1. Write failing executable workflow-contract tests for `ubuntu-latest`, `workflow_run` after `CI`, exact repository/main/SHA checks, independent `Stephen checks` success, relevant paths, minimal `actions: read` and `contents: read`, concurrency, timeout, environment use, opt-in variable, known-host verification, and forbidden unsafe SSH settings.
 2. Implement an eligibility job that never reads production secrets and skips stale or irrelevant SHAs.
-3. Revalidate the repository variable and current `origin/main` after Environment wait, before activation, and before finalize so approvals or queued runs cannot release a stale SHA.
+3. Revalidate the repository variable and current `origin/main` with an Environment-scoped, fine-grained read-only control token after Environment wait, before activation, and before finalize so approvals or queued runs cannot release a stale SHA. The built-in `GITHUB_TOKEN` cannot read the repository Variables API and must not be treated as proof of this permission.
 4. Implement the environment-scoped release job: `npm ci --install-links`, both Stephen TypeScript checks, Stephen Vitest, `build:stephen`, artifact validation, archive/checksum creation, forced-command SSH upload/stage, leased activation, exact `/release-id.json` verification, and required public/shared-host smoke checks.
 5. On any post-activation smoke or authorization failure, call the fixed leased rollback command and verify the restored Stephen and shared-host surfaces before failing the run. If the runner disappears, rely on the armed server timer rather than treating SSH response loss as success.
 6. Do not upload GitHub artifacts or print secrets; remove temporary private-key files with a trap.
