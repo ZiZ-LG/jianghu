@@ -227,13 +227,20 @@ docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh ser
 POSTGRES_OPS_STAGE='verify-legacy-backfills'
 legacy_candidate_source_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
   'SELECT
-     (SELECT count(*) FROM "PersonSuggestion")
-     + (SELECT count(*) FROM "RelSuggestion")
-     + (SELECT count(*) FROM "ChangeProposal")
-     + (SELECT count(*) FROM "Reminder")
-     + (SELECT count(*) FROM "EvidenceEvent" WHERE status = '\''pending_review'\'')' | tr -d '[:space:]')
+     (SELECT count(*) FROM "PersonSuggestion" WHERE id = '\''legacy-person-suggestion'\'')
+     + (SELECT count(*) FROM "RelSuggestion" WHERE id = '\''legacy-rel-suggestion'\'')
+     + (SELECT count(*) FROM "ChangeProposal" WHERE id = '\''legacy-change-proposal'\'')
+     + (SELECT count(*) FROM "Reminder" WHERE id = '\''legacy-reminder'\'')
+     + (SELECT count(*) FROM "EvidenceEvent"
+          WHERE id = '\''legacy-evidence-event'\'' AND status = '\''pending_review'\'')' | tr -d '[:space:]')
 legacy_candidate_target_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
-  'SELECT count(*) FROM "Candidate"' | tr -d '[:space:]')
+  'SELECT count(*) FROM "Candidate"
+   WHERE ("legacySourceKind", "legacySourceId") IN (
+     ('\''PersonSuggestion'\'', '\''legacy-person-suggestion'\''),
+     ('\''RelSuggestion'\'', '\''legacy-rel-suggestion'\''),
+     ('\''ChangeProposal'\'', '\''legacy-change-proposal'\''),
+     ('\''Reminder'\'', '\''legacy-reminder'\''),
+     ('\''EvidenceEvent'\'', '\''legacy-evidence-event'\''))' | tr -d '[:space:]')
 candidate_migration_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
   "SELECT count(*) FROM \"_prisma_migrations\"
    WHERE migration_name = '20260824000000_expand_candidate_foundation'
