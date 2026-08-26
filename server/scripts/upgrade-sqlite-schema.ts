@@ -5,6 +5,7 @@ import type { CandidateSchemaState } from '../src/candidates/migration.js';
 import type { SensitiveAclSchemaState } from '../src/sensitiveAcl/migration.js';
 import type { SourceArtifactSchemaState } from '../src/sourceArtifacts/migration.js';
 import type { ReviewBatchSchemaState } from '../src/reviewBatches/migration.js';
+import type { AgentJobSchemaState } from '../src/agents/migration.js';
 
 type MatterSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
 type ParticipantSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
@@ -270,6 +271,7 @@ let candidateState: CandidateSchemaState;
 let sensitiveAclState: SensitiveAclSchemaState;
 let sourceArtifactState: SourceArtifactSchemaState;
 let reviewBatchState: ReviewBatchSchemaState;
+let agentJobState: AgentJobSchemaState;
 let backupPath: string | null = null;
 let schemaChanges = false;
 let matterBackfillRequired = false;
@@ -288,6 +290,8 @@ let sourceArtifactExpansionRequired = false;
 let sourceArtifactBackfillRequired = false;
 let reviewBatchExpansionRequired = false;
 let reviewBatchBackfillRequired = false;
+let agentJobExpansionRequired = false;
+let agentJobBackfillRequired = false;
 
 try {
   state = await inspectSchemaState(prisma);
@@ -305,6 +309,8 @@ try {
   sourceArtifactState = await inspectSourceArtifactSchemaState(prisma);
   const { inspectReviewBatchSchemaState } = await import('../src/reviewBatches/migration.js');
   reviewBatchState = await inspectReviewBatchSchemaState(prisma);
+  const { inspectAgentJobSchemaState } = await import('../src/agents/migration.js');
+  agentJobState = await inspectAgentJobSchemaState(prisma);
   if (state === 'partial') {
     throw new Error('partial Matter column expansion detected; restore the latest backup before retrying');
   }
@@ -338,6 +344,9 @@ try {
   if (reviewBatchState === 'partial') {
     throw new Error('partial ReviewBatch/Interaction expansion detected; restore the latest backup before retrying');
   }
+  if (agentJobState === 'partial') {
+    throw new Error('partial AgentJobDefinition/AgentRun expansion detected; restore the latest backup before retrying');
+  }
   customerExpansionRequired = customerState === 'uninitialized' || customerState === 'legacy';
   candidateExpansionRequired = candidateState === 'uninitialized' || candidateState === 'legacy';
   candidateBackfillRequired = candidateState !== 'expanded';
@@ -347,6 +356,8 @@ try {
   sourceArtifactBackfillRequired = sourceArtifactState !== 'expanded';
   reviewBatchExpansionRequired = reviewBatchState === 'uninitialized' || reviewBatchState === 'legacy';
   reviewBatchBackfillRequired = reviewBatchState !== 'expanded';
+  agentJobExpansionRequired = agentJobState === 'uninitialized' || agentJobState === 'legacy';
+  agentJobBackfillRequired = agentJobState !== 'expanded';
   if (candidateState === 'legacy') {
     run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:candidate-report'], url);
   } else if (candidateState === 'expanded') {
@@ -387,6 +398,19 @@ try {
     reviewBatchBackfillRequired = !marker;
     run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
       'run', marker ? 'migrate:review-batch-verify' : 'migrate:review-batch-report',
+    ], url);
+  }
+  if (agentJobState === 'legacy') {
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
+      'run', 'migrate:agent-job-report',
+    ], url);
+  } else if (agentJobState === 'expanded') {
+    const marker = await prisma.dataMigrationState.findUnique({
+      where: { key: 'CORE-206-agent-job-run-v1' }, select: { key: true },
+    });
+    agentJobBackfillRequired = !marker;
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
+      'run', marker ? 'migrate:agent-job-verify' : 'migrate:agent-job-report',
     ], url);
   }
   if (state === 'legacy') {
@@ -479,7 +503,7 @@ try {
     }
   }
   schemaChanges = state === 'uninitialized' ? true : schemaHasChanges(url);
-  if (state !== 'uninitialized' && (schemaChanges || matterBackfillRequired || participantBackfillRequired || commitmentBackfillRequired || methodologyExpansionRequired || methodologyDataExpansionRequired || pdeDecisionContextExpansionRequired || pdeDecisionContextBackfillRequired || customerExpansionRequired || candidateExpansionRequired || candidateBackfillRequired || sensitiveAclExpansionRequired || sensitiveAclBackfillRequired || sourceArtifactExpansionRequired || sourceArtifactBackfillRequired || reviewBatchExpansionRequired || reviewBatchBackfillRequired)) {
+  if (state !== 'uninitialized' && (schemaChanges || matterBackfillRequired || participantBackfillRequired || commitmentBackfillRequired || methodologyExpansionRequired || methodologyDataExpansionRequired || pdeDecisionContextExpansionRequired || pdeDecisionContextBackfillRequired || customerExpansionRequired || candidateExpansionRequired || candidateBackfillRequired || sensitiveAclExpansionRequired || sensitiveAclBackfillRequired || sourceArtifactExpansionRequired || sourceArtifactBackfillRequired || reviewBatchExpansionRequired || reviewBatchBackfillRequired || agentJobExpansionRequired || agentJobBackfillRequired)) {
     backupPath = await createConsistentBackup(prisma, databasePath);
   }
 } finally {
@@ -510,6 +534,10 @@ try {
   const { inspectReviewBatchSchemaState } = await import('../src/reviewBatches/migration.js');
   if (await inspectReviewBatchSchemaState(postPushPrisma) !== 'expanded') {
     throw new Error('ReviewBatch/Interaction expansion verification failed');
+  }
+  const { inspectAgentJobSchemaState } = await import('../src/agents/migration.js');
+  if (await inspectAgentJobSchemaState(postPushPrisma) !== 'expanded') {
+    throw new Error('AgentJobDefinition/AgentRun expansion verification failed');
   }
 } finally {
   await postPushPrisma.$disconnect();
@@ -553,6 +581,10 @@ if (reviewBatchBackfillRequired) {
   run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:review-batch-apply'], url);
 }
 run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:review-batch-verify'], url);
+if (agentJobBackfillRequired) {
+  run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:agent-job-apply'], url);
+}
+run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:agent-job-verify'], url);
 
 console.log(JSON.stringify({
   ok: true,
@@ -584,5 +616,8 @@ console.log(JSON.stringify({
   reviewBatchStateBefore: reviewBatchState,
   reviewBatchExpansionRequired,
   reviewBatchBackfillRequired,
+  agentJobStateBefore: agentJobState,
+  agentJobExpansionRequired,
+  agentJobBackfillRequired,
   backupPath,
 }, null, 2));

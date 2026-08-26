@@ -28,8 +28,6 @@ model Tenant {
   reviewBatches      ReviewBatch[]
   interactions       Interaction[]
   sensitiveGrants    SensitiveResourceGrant[]
-  agentJobDefinitions AgentJobDefinition[]
-  agentRuns           AgentRun[]
 }
 
 // 工作区自配的企查查 OpenAPI 凭证（BYO-key）。secretKey 加密存储。
@@ -767,78 +765,6 @@ model SensitiveResourceGrant {
   @@unique([tenantId, resourceKind, resourceId, granteeUserId, grantKind])
   @@index([tenantId, resourceKind, resourceId, resourceAclVersion])
   @@index([tenantId, granteeUserId, grantKind, revokedAt])
-}
-
-// 固定内置 Agent Job 的租户控制快照。definitionJson/hash 必须逐字匹配代码注册表；
-// 租户只能停用或收窄预算，不能扩展 trigger、scope、actionMode 或输出权限。
-model AgentJobDefinition {
-  id                String   @id
-  tenantId          String
-  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  jobKey            String
-  jobVersion        String
-  definitionJson    String
-  definitionHash    String
-  enabled           Boolean  @default(false)
-  tenantLimitsJson  String
-  version           Int      @default(1)
-  createdByUserId   String
-  updatedByUserId   String
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  @@unique([tenantId, jobKey, jobVersion])
-  @@index([tenantId, enabled, jobKey])
-  @@index([tenantId, updatedAt])
-}
-
-// Agent 运行审计只保存版本、授权指纹、预算计数与 body-free 引用；
-// 禁止写入 prompt、模型原文、Transcript/Note 正文、凭据、token 或错误堆栈。
-model AgentRun {
-  id                           String    @id
-  tenantId                     String
-  tenant                       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  definitionId                 String
-  jobKey                       String
-  jobVersion                   String
-  definitionHash               String
-  definitionControlVersion     Int
-  actionMode                   String
-  trigger                      String
-  status                       String    @default("running")
-  customerId                   String
-  matterId                     String?
-  sourceArtifactId             String?
-  actorId                      String
-  idempotencyKey               String
-  requestHash                  String
-  attemptCount                 Int       @default(0)
-  maxAttempts                  Int
-  leaseToken                   String    @default("")
-  leaseExpiresAt               DateTime?
-  budgetLimit                  Int
-  costUsed                     Int       @default(0)
-  timeoutMs                    Int
-  authorizationFingerprint     String
-  inputRefs                    String
-  evidenceRefs                 String    @default("[]")
-  outputRefs                   String    @default("[]")
-  modelRef                     String
-  connectorRefs                String    @default("[]")
-  failureCode                  String    @default("")
-  startedAt                    DateTime?
-  completedAt                  DateTime?
-  version                      Int       @default(0)
-  createdAt                    DateTime  @default(now())
-  updatedAt                    DateTime  @updatedAt
-
-  @@unique([tenantId, actorId, jobKey, jobVersion, idempotencyKey])
-  @@index([tenantId, status, createdAt])
-  @@index([tenantId, customerId, createdAt])
-  @@index([tenantId, matterId, createdAt])
-  @@index([tenantId, sourceArtifactId, createdAt])
-  @@index([tenantId, actorId, createdAt])
-  @@index([tenantId, definitionId])
 }
 
 // WorkBuddy 原子同步执行记录：保存非敏感引用回执，支持同 key 安全重放。

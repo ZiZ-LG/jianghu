@@ -1434,6 +1434,139 @@ review_batch_restore_parity=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T 
 echo "REVIEW_BATCH_RESTORE_ROLLBACK_OK=1"
 echo "CORE_205_REVIEW_BATCH_MIGRATION_OK=1"
 
+# CORE-206 adds only fixed Job Card control metadata and body-free AgentRun
+# audit rows. Exercise committed-DDL adoption, semantic and marker drift,
+# partial-schema refusal, and authenticated pre-cutover restore.
+agent_job_db=jianghu_agent_job_migration
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$agent_job_db"
+POSTGRES_DB="$agent_job_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npx prisma db push --schema prisma/postgres/legacy/20260825_pre_core206.prisma --skip-generate >/dev/null
+   for path in prisma/postgres/migrations/20*; do
+     [ -d "$path" ] || continue
+     migration=$(basename "$path")
+     [ "$migration" = 20260825030000_expand_agent_job_run ] && break
+     npx prisma migrate resolve --applied "$migration" --schema prisma/postgres/schema.prisma >/dev/null
+   done' >/dev/null
+
+agent_job_backup_root="$BACKUP_DIR/core206-pre"
+mkdir -p "$agent_job_backup_root"
+derive_backup_keys "$BACKUP_MASTER_SECRET"
+agent_job_backup_work=$(mktemp -d "$agent_job_backup_root/.agent-job-work.XXXXXX")
+agent_job_backup="$agent_job_backup_root/jianghu-core206-$(openssl rand -hex 8).backup"
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db \
+  pg_dump -U "$POSTGRES_USER" -d "$agent_job_db" -Fc \
+  | backup_encrypt_payload "$agent_job_backup_work/payload.enc"
+{
+  backup_cipher_metadata
+  printf 'source_database=%s\n' "$agent_job_db"
+  printf 'created_at=%s\n' "$(date -u +%Y%m%dT%H%M%SZ)"
+} > "$agent_job_backup_work/metadata"
+write_artifact_integrity "$agent_job_backup_work"
+verify_artifact_auth "$agent_job_backup_work"
+mv "$agent_job_backup_work" "$agent_job_backup"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db \
+  psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$agent_job_db" \
+  < server/prisma/postgres/migrations/20260825030000_expand_agent_job_run/migration.sql >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$agent_job_db" -c \
+  "INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+   VALUES ('int-agent-job-after-commit', repeat('0', 64),
+     '20260825030000_expand_agent_job_run', CURRENT_TIMESTAMP, 0);" >/dev/null
+POSTGRES_DB="$agent_job_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+agent_job_after_commit_adoption=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$agent_job_db" -tAc \
+  "SELECT ((SELECT count(*) FROM \"_prisma_migrations\"
+              WHERE migration_name = '20260825030000_expand_agent_job_run'
+                AND finished_at IS NOT NULL AND rolled_back_at IS NULL) = 1
+       AND (SELECT count(*) FROM \"_prisma_migrations\"
+              WHERE migration_name = '20260825030000_expand_agent_job_run'
+                AND finished_at IS NULL AND rolled_back_at IS NULL) = 0
+       AND (SELECT count(*) FROM \"DataMigrationState\"
+              WHERE key = 'CORE-206-agent-job-run-v1') = 1
+       AND to_regclass('public.\"AgentJobDefinition\"') IS NOT NULL
+       AND to_regclass('public.\"AgentRun\"') IS NOT NULL
+       AND (SELECT count(*) FROM \"AgentJobDefinition\") = 0
+       AND (SELECT count(*) FROM \"AgentRun\") = 0
+       AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND table_name IN ('AgentJobDefinition','AgentRun')
+                AND lower(column_name) IN ('content','contentenc','body','evidence','payload','prompt','response','secret','token')))::int" | tr -d '[:space:]')
+[[ "$agent_job_after_commit_adoption" == 1 ]]
+echo "INTERRUPTED_AGENT_JOB_AFTER_COMMIT_ADOPTION_OK=1"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$agent_job_db" -c \
+  "INSERT INTO \"Tenant\" (id,name) VALUES ('agent-job-tenant','Agent Job Tenant');
+   INSERT INTO \"User\" (id,\"tenantId\",email,\"passwordHash\",name,role)
+     VALUES ('agent-job-user','agent-job-tenant','agent-job@example.test','unused','Owner','owner');
+   INSERT INTO \"AgentJobDefinition\"
+     (id,\"tenantId\",\"jobKey\",\"jobVersion\",\"definitionJson\",\"definitionHash\",enabled,
+      \"tenantLimitsJson\",version,\"createdByUserId\",\"updatedByUserId\",\"updatedAt\")
+     VALUES ('agent-job-invalid','agent-job-tenant','tenant_script','v1','{}',repeat('0',64),true,
+       '{\"maxCostUnits\":999999,\"timeoutMs\":999999,\"maxAttempts\":99}',1,
+       'agent-job-user','agent-job-user',CURRENT_TIMESTAMP);" >/dev/null
+if POSTGRES_DB="$agent_job_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "invalid or widened Agent Job definition unexpectedly deployed" >&2; exit 1
+fi
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$agent_job_db" -c \
+  "DELETE FROM \"AgentJobDefinition\" WHERE id = 'agent-job-invalid';" >/dev/null
+POSTGRES_DB="$agent_job_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+echo "AGENT_JOB_SEMANTIC_CONFLICT_FAIL_CLOSED_OK=1"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$agent_job_db" -c \
+  "UPDATE \"DataMigrationState\"
+      SET details = jsonb_set(details::jsonb, '{integrityChecksum}', to_jsonb(repeat('0', 64)))::text
+    WHERE key = 'CORE-206-agent-job-run-v1';" >/dev/null
+if POSTGRES_DB="$agent_job_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "Agent Job marker checksum drift unexpectedly deployed" >&2; exit 1
+fi
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$agent_job_db" -c \
+  "DELETE FROM \"DataMigrationState\" WHERE key = 'CORE-206-agent-job-run-v1';" >/dev/null
+POSTGRES_DB="$agent_job_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+echo "AGENT_JOB_MARKER_CHECKSUM_FAIL_CLOSED_OK=1"
+
+agent_job_partial_db=jianghu_agent_job_partial
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$agent_job_partial_db"
+POSTGRES_DB="$agent_job_partial_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npx prisma db push --schema prisma/postgres/legacy/20260825_pre_core206.prisma --skip-generate >/dev/null
+   for path in prisma/postgres/migrations/20*; do
+     [ -d "$path" ] || continue
+     migration=$(basename "$path")
+     [ "$migration" = 20260825030000_expand_agent_job_run ] && break
+     npx prisma migrate resolve --applied "$migration" --schema prisma/postgres/schema.prisma >/dev/null
+   done' >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$agent_job_partial_db" -c \
+  "CREATE TABLE \"AgentJobDefinition\" (id TEXT PRIMARY KEY);
+   INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+   VALUES ('int-agent-job-partial', repeat('0', 64),
+     '20260825030000_expand_agent_job_run', CURRENT_TIMESTAMP, 0);" >/dev/null
+if POSTGRES_DB="$agent_job_partial_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "partial Agent Job schema unexpectedly migrated" >&2; exit 1
+fi
+agent_job_partial_state=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$agent_job_partial_db" -tAc \
+  "SELECT ((to_regclass('public.\"AgentJobDefinition\"') IS NOT NULL)
+       AND (to_regclass('public.\"AgentRun\"') IS NULL)
+       AND NOT EXISTS (SELECT 1 FROM \"_prisma_migrations\"
+         WHERE migration_name = '20260825030000_expand_agent_job_run'
+           AND finished_at IS NOT NULL AND rolled_back_at IS NULL))::int" | tr -d '[:space:]')
+[[ "$agent_job_partial_state" == 1 ]]
+echo "PARTIAL_AGENT_JOB_SCHEMA_FAIL_CLOSED_OK=1"
+
+agent_job_restore_db=jianghu_restore_agent_job_core206
+bash scripts/restore-postgres.sh "$agent_job_backup" --database "$agent_job_restore_db" >/dev/null
+agent_job_restore_parity=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$agent_job_restore_db" -tAc \
+  "SELECT ((to_regclass('public.\"AgentJobDefinition\"') IS NULL)
+       AND (to_regclass('public.\"AgentRun\"') IS NULL)
+       AND NOT EXISTS (SELECT 1 FROM \"DataMigrationState\"
+              WHERE key = 'CORE-206-agent-job-run-v1'))::int" | tr -d '[:space:]')
+[[ "$agent_job_restore_parity" == 1 ]]
+echo "AGENT_JOB_RESTORE_ROLLBACK_OK=1"
+echo "CORE_206_AGENT_JOB_MIGRATION_OK=1"
+
 # A duplicate tenant-local owner name must roll the bridge transaction back.
 # After data repair, the same database must resume and complete safely.
 ambiguous_db=jianghu_owner_ambiguous

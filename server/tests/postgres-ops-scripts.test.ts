@@ -814,3 +814,35 @@ describe('CORE-205 ReviewBatch migration operations', () => {
     expect(drill).toContain("column_name IN ('content','contentEnc','body','evidence','payload')");
   });
 });
+
+describe('CORE-206 Agent Job migration operations', () => {
+  it('failure-injects committed DDL adoption, semantic/marker drift, partial schema, and restore', async () => {
+    const deploy = await read('server/scripts/deploy-postgres-migrations.sh');
+    const drill = await read('scripts/test-postgres-ops-integration.sh');
+
+    expect(deploy).toContain('AGENT_JOB_MIGRATION=20260825030000_expand_agent_job_run');
+    expect(deploy).toContain('recover_incomplete_agent_job_migration');
+    expect(deploy).toContain('adopt_existing_agent_job_schema_if_safe');
+    expect(deploy).toContain('agent_job_schema_matches_known_state');
+    expect(deploy).toContain('review_batch_schema_matches_known_state');
+    expect(deploy.lastIndexOf('npm run migrate:agent-job-report'))
+      .toBeGreaterThan(deploy.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deploy.lastIndexOf('npm run migrate:agent-job-apply'))
+      .toBeGreaterThan(deploy.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deploy.lastIndexOf('npm run migrate:agent-job-verify'))
+      .toBeGreaterThan(deploy.lastIndexOf('npm run migrate:agent-job-apply'));
+
+    for (const marker of [
+      'INTERRUPTED_AGENT_JOB_AFTER_COMMIT_ADOPTION_OK=1',
+      'AGENT_JOB_SEMANTIC_CONFLICT_FAIL_CLOSED_OK=1',
+      'AGENT_JOB_MARKER_CHECKSUM_FAIL_CLOSED_OK=1',
+      'PARTIAL_AGENT_JOB_SCHEMA_FAIL_CLOSED_OK=1',
+      'AGENT_JOB_RESTORE_ROLLBACK_OK=1',
+      'CORE_206_AGENT_JOB_MIGRATION_OK=1',
+    ]) expect(drill).toContain(marker);
+    expect(drill).toContain('20260825030000_expand_agent_job_run');
+    expect(drill).toContain('prisma/postgres/legacy/20260825_pre_core206.prisma');
+    expect(drill).toContain("key = 'CORE-206-agent-job-run-v1'");
+    expect(drill).toContain("lower(column_name) IN ('content','contentenc','body','evidence','payload','prompt','response','secret','token')");
+  });
+});

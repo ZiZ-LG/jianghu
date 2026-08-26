@@ -14,6 +14,7 @@ PRE_CANDIDATE_SCHEMA=prisma/postgres/legacy/20260824_pre_core201.prisma
 PRE_SENSITIVE_SCHEMA=prisma/postgres/legacy/20260825_pre_core204.prisma
 PRE_SOURCE_ARTIFACT_SCHEMA=prisma/postgres/legacy/20260825_pre_saas201.prisma
 PRE_REVIEW_BATCH_SCHEMA=prisma/postgres/legacy/20260825_pre_core205.prisma
+PRE_AGENT_JOB_SCHEMA=prisma/postgres/legacy/20260825_pre_core206.prisma
 PRE_CUSTOMER_SCHEMA=$(mktemp /tmp/jianghu-pre-core115.prisma.XXXXXX)
 cleanup_pre_customer_schema() {
   rm -f "$PRE_CUSTOMER_SCHEMA"
@@ -35,6 +36,7 @@ CANDIDATE_MIGRATION=20260824000000_expand_candidate_foundation
 SENSITIVE_ACL_MIGRATION=20260825000000_expand_sensitive_resource_acl
 SOURCE_ARTIFACT_MIGRATION=20260825010000_expand_source_artifact_projection
 REVIEW_BATCH_MIGRATION=20260825020000_expand_review_batch_interaction
+AGENT_JOB_MIGRATION=20260825030000_expand_agent_job_run
 
 npx tsx scripts/render-pre-customer-schema.ts "$PRE_CANDIDATE_SCHEMA" "$PRE_CUSTOMER_SCHEMA"
 
@@ -71,7 +73,7 @@ matter_schema_matches_known_state() {
     || schema_matches "$PRE_PDE_CONTEXT_SCHEMA" || schema_matches "$PRE_CUSTOMER_SCHEMA" \
     || schema_matches "$PRE_CANDIDATE_SCHEMA" || schema_matches "$PRE_SENSITIVE_SCHEMA" \
     || schema_matches "$PRE_SOURCE_ARTIFACT_SCHEMA" || schema_matches "$PRE_REVIEW_BATCH_SCHEMA" \
-    || schema_matches "$SCHEMA"
+    || schema_matches "$PRE_AGENT_JOB_SCHEMA" || schema_matches "$SCHEMA"
 }
 
 participant_schema_matches_known_state() {
@@ -80,7 +82,7 @@ participant_schema_matches_known_state() {
     || schema_matches "$PRE_METHODOLOGY_DATA_SCHEMA" || schema_matches "$PRE_PDE_CONTEXT_SCHEMA" \
     || schema_matches "$PRE_CUSTOMER_SCHEMA" || schema_matches "$PRE_CANDIDATE_SCHEMA" \
     || schema_matches "$PRE_SENSITIVE_SCHEMA" || schema_matches "$PRE_SOURCE_ARTIFACT_SCHEMA" \
-    || schema_matches "$PRE_REVIEW_BATCH_SCHEMA" \
+    || schema_matches "$PRE_REVIEW_BATCH_SCHEMA" || schema_matches "$PRE_AGENT_JOB_SCHEMA" \
     || schema_matches "$SCHEMA"
 }
 
@@ -89,7 +91,7 @@ commitment_cutover_schema_matches_known_state() {
     || schema_matches "$PRE_METHODOLOGY_DATA_SCHEMA" || schema_matches "$PRE_PDE_CONTEXT_SCHEMA" \
     || schema_matches "$PRE_CUSTOMER_SCHEMA" || schema_matches "$PRE_CANDIDATE_SCHEMA" \
     || schema_matches "$PRE_SENSITIVE_SCHEMA" || schema_matches "$PRE_SOURCE_ARTIFACT_SCHEMA" \
-    || schema_matches "$PRE_REVIEW_BATCH_SCHEMA" \
+    || schema_matches "$PRE_REVIEW_BATCH_SCHEMA" || schema_matches "$PRE_AGENT_JOB_SCHEMA" \
     || schema_matches "$SCHEMA"
 }
 
@@ -98,14 +100,14 @@ scope_schema_matches_known_state() {
     || schema_matches "$PRE_PDE_CONTEXT_SCHEMA" || schema_matches "$PRE_CUSTOMER_SCHEMA" \
     || schema_matches "$PRE_CANDIDATE_SCHEMA" || schema_matches "$PRE_SENSITIVE_SCHEMA" \
     || schema_matches "$PRE_SOURCE_ARTIFACT_SCHEMA" || schema_matches "$PRE_REVIEW_BATCH_SCHEMA" \
-    || schema_matches "$SCHEMA"
+    || schema_matches "$PRE_AGENT_JOB_SCHEMA" || schema_matches "$SCHEMA"
 }
 
 methodology_schema_matches_known_state() {
   schema_matches "$PRE_METHODOLOGY_DATA_SCHEMA" || schema_matches "$PRE_PDE_CONTEXT_SCHEMA" \
     || schema_matches "$PRE_CUSTOMER_SCHEMA" || schema_matches "$PRE_CANDIDATE_SCHEMA" \
     || schema_matches "$PRE_SENSITIVE_SCHEMA" || schema_matches "$PRE_SOURCE_ARTIFACT_SCHEMA" \
-    || schema_matches "$PRE_REVIEW_BATCH_SCHEMA" \
+    || schema_matches "$PRE_REVIEW_BATCH_SCHEMA" || schema_matches "$PRE_AGENT_JOB_SCHEMA" \
     || schema_matches "$SCHEMA"
 }
 
@@ -113,38 +115,43 @@ methodology_data_schema_matches_known_state() {
   schema_matches "$PRE_PDE_CONTEXT_SCHEMA" || schema_matches "$PRE_CUSTOMER_SCHEMA" \
     || schema_matches "$PRE_CANDIDATE_SCHEMA" || schema_matches "$PRE_SENSITIVE_SCHEMA" \
     || schema_matches "$PRE_SOURCE_ARTIFACT_SCHEMA" || schema_matches "$PRE_REVIEW_BATCH_SCHEMA" \
-    || schema_matches "$SCHEMA"
+    || schema_matches "$PRE_AGENT_JOB_SCHEMA" || schema_matches "$SCHEMA"
 }
 
 pde_context_schema_matches_known_state() {
   schema_matches "$PRE_CUSTOMER_SCHEMA" || schema_matches "$PRE_CANDIDATE_SCHEMA" \
     || schema_matches "$PRE_SENSITIVE_SCHEMA" || schema_matches "$PRE_SOURCE_ARTIFACT_SCHEMA" \
-    || schema_matches "$PRE_REVIEW_BATCH_SCHEMA" \
+    || schema_matches "$PRE_REVIEW_BATCH_SCHEMA" || schema_matches "$PRE_AGENT_JOB_SCHEMA" \
     || schema_matches "$SCHEMA"
 }
 
 customer_schema_matches_known_state() {
   schema_matches "$PRE_CANDIDATE_SCHEMA" || schema_matches "$PRE_SENSITIVE_SCHEMA" \
     || schema_matches "$PRE_SOURCE_ARTIFACT_SCHEMA" || schema_matches "$PRE_REVIEW_BATCH_SCHEMA" \
-    || schema_matches "$SCHEMA"
+    || schema_matches "$PRE_AGENT_JOB_SCHEMA" || schema_matches "$SCHEMA"
 }
 
 candidate_schema_matches_known_state() {
   schema_matches "$PRE_SENSITIVE_SCHEMA" || schema_matches "$PRE_SOURCE_ARTIFACT_SCHEMA" \
-    || schema_matches "$PRE_REVIEW_BATCH_SCHEMA" \
+    || schema_matches "$PRE_REVIEW_BATCH_SCHEMA" || schema_matches "$PRE_AGENT_JOB_SCHEMA" \
     || schema_matches "$SCHEMA"
 }
 
 sensitive_acl_schema_matches_known_state() {
   schema_matches "$PRE_SOURCE_ARTIFACT_SCHEMA" || schema_matches "$PRE_REVIEW_BATCH_SCHEMA" \
-    || schema_matches "$SCHEMA"
+    || schema_matches "$PRE_AGENT_JOB_SCHEMA" || schema_matches "$SCHEMA"
 }
 
 source_artifact_schema_matches_known_state() {
-  schema_matches "$PRE_REVIEW_BATCH_SCHEMA" || schema_matches "$SCHEMA"
+  schema_matches "$PRE_REVIEW_BATCH_SCHEMA" || schema_matches "$PRE_AGENT_JOB_SCHEMA" \
+    || schema_matches "$SCHEMA"
 }
 
 review_batch_schema_matches_known_state() {
+  schema_matches "$PRE_AGENT_JOB_SCHEMA" || schema_matches "$SCHEMA"
+}
+
+agent_job_schema_matches_known_state() {
   schema_matches "$SCHEMA"
 }
 
@@ -879,11 +886,67 @@ adopt_existing_review_batch_schema_if_safe() {
   esac
 }
 
+recover_incomplete_agent_job_migration() {
+  incomplete_migrations=$(npx tsx scripts/list-incomplete-postgres-migrations.ts)
+  if ! printf '%s\n' "$incomplete_migrations" | grep -Fxq "$AGENT_JOB_MIGRATION"; then
+    return 0
+  fi
+  agent_job_schema_state=$(npx tsx scripts/postgres-agent-job-schema-state.ts)
+  case "$agent_job_schema_state" in
+    legacy)
+      echo "[migration] 检测到中断且已由 PostgreSQL 回滚的 Agent Job 事务，登记后安全重放。"
+      npx prisma migrate resolve --rolled-back "$AGENT_JOB_MIGRATION" --schema "$SCHEMA"
+      ;;
+    expanded)
+      echo "[migration] 检测到已提交但未完成登记的 Agent Job 事务，只读校验后接管。"
+      npm run migrate:agent-job-report
+      if ! agent_job_schema_matches_known_state; then
+        echo "[migration] Agent Job schema 已扩展但与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$AGENT_JOB_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] Agent Job migration 留下部分 schema，必须从认证备份恢复后再试。" >&2
+      exit 1
+      ;;
+  esac
+}
+
+adopt_existing_agent_job_schema_if_safe() {
+  refresh_applied_migrations
+  if migration_is_applied "$AGENT_JOB_MIGRATION"; then
+    return 0
+  fi
+  agent_job_schema_state=$(npx tsx scripts/postgres-agent-job-schema-state.ts)
+  case "$agent_job_schema_state" in
+    uninitialized|legacy) return 0 ;;
+    expanded)
+      echo "[migration] 检测到未登记但完整的 Agent Job schema，只读校验后接管。"
+      npm run migrate:agent-job-report
+      if ! agent_job_schema_matches_known_state; then
+        echo "[migration] 未登记 Agent Job schema 与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$AGENT_JOB_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] 检测到未登记的部分 Agent Job schema，拒绝继续。" >&2
+      exit 1
+      ;;
+  esac
+}
+
 state=$(wait_for_migration_state)
 case "$state" in
   untracked)
     if schema_matches "$SCHEMA"; then
       echo "[migration] 检测到与当前模型一致的未纳管 schema。"
+      npx tsx scripts/assert-untracked-command-runs-empty.ts
+    elif schema_matches "$PRE_AGENT_JOB_SCHEMA"; then
+      echo "[migration] 检测到已批准的 CORE-205 未纳管 schema。"
       npx tsx scripts/assert-untracked-command-runs-empty.ts
     elif schema_matches "$PRE_REVIEW_BATCH_SCHEMA"; then
       echo "[migration] 检测到已批准的 SAAS-201 未纳管 schema。"
@@ -948,7 +1011,8 @@ case "$state" in
         fi
         echo "[migration] 继续中断的当前 schema 接管。"
         resolve_missing_pre_bridge_migrations
-      elif schema_matches "$PRE_REVIEW_BATCH_SCHEMA" || schema_matches "$PRE_SOURCE_ARTIFACT_SCHEMA" \
+      elif schema_matches "$PRE_AGENT_JOB_SCHEMA" || schema_matches "$PRE_REVIEW_BATCH_SCHEMA" \
+        || schema_matches "$PRE_SOURCE_ARTIFACT_SCHEMA" \
         || schema_matches "$PRE_SENSITIVE_SCHEMA" \
         || schema_matches "$PRE_CANDIDATE_SCHEMA" || schema_matches "$PRE_CUSTOMER_SCHEMA" \
         || schema_matches "$PRE_PDE_CONTEXT_SCHEMA" \
@@ -996,6 +1060,8 @@ recover_incomplete_source_artifact_migration
 adopt_existing_source_artifact_schema_if_safe
 recover_incomplete_review_batch_migration
 adopt_existing_review_batch_schema_if_safe
+recover_incomplete_agent_job_migration
+adopt_existing_agent_job_schema_if_safe
 refresh_applied_migrations
 matter_migration_pending=0
 if ! migration_is_applied "$MATTER_MIGRATION"; then
@@ -1082,6 +1148,16 @@ if ! migration_is_applied "$REVIEW_BATCH_MIGRATION"; then
   fi
 fi
 
+if ! migration_is_applied "$AGENT_JOB_MIGRATION"; then
+  agent_job_schema_state=$(npx tsx scripts/postgres-agent-job-schema-state.ts)
+  if [ "$agent_job_schema_state" = legacy ]; then
+    echo "[migration] 在 Agent Job/Run 扩展前执行固定注册表与 body-free 审计预演…"
+    npm run migrate:agent-job-report
+  else
+    echo "[migration] 新库尚无 ReviewBatch 基座；CORE-206 预演将在版本化 DDL 后执行。"
+  fi
+fi
+
 echo "[migration] 在唯一索引迁移前执行同步锚与企微绑定冲突扫描…"
 npm run migrate:sync-anchor-report
 npm run migrate:wecom-bind-report
@@ -1144,6 +1220,13 @@ echo "[migration] 写入 CORE-205 marker；正式 CRM 数据保持不变…"
 npm run migrate:review-batch-apply
 echo "[migration] 校验 CORE-205 marker、采纳收据与双向追踪完整性…"
 npm run migrate:review-batch-verify
+
+echo "[migration] 只读预演 Agent Job 固定定义、租户收窄控制与 body-free AgentRun…"
+npm run migrate:agent-job-report
+echo "[migration] 写入 CORE-206 marker；不自动创建或启用任何 Job/Run…"
+npm run migrate:agent-job-apply
+echo "[migration] 校验 CORE-206 marker、定义 hash、scope 引用与运行审计完整性…"
+npm run migrate:agent-job-verify
 
 if ! schema_matches "$SCHEMA"; then
   echo "[migration] 迁移后 schema 与当前模型仍不一致，拒绝启动：" >&2

@@ -8,7 +8,7 @@ import { candidateDedupeKeyForCreator } from '../src/candidates/dedupe.js';
 const serverRoot = resolve('.');
 const prismaBin = resolve('node_modules/.bin/prisma');
 const tsxBin = resolve('node_modules/.bin/tsx');
-// Each case launches the full cumulative SQLite upgrade in subprocesses. SAAS-201
+// Each case launches the full cumulative SQLite upgrade in subprocesses. CORE-206
 // adds another report/apply/verify stage, so CI runners need deterministic headroom.
 const SQLITE_UPGRADE_TEST_TIMEOUT_MS = 90_000;
 const methodologyFoundationTables = [
@@ -70,6 +70,8 @@ async function createLegacyFixture(databasePath: string, databaseUrl: string): P
 
   const client = new PrismaClient({ datasourceUrl: databaseUrl });
   try {
+    await client.$executeRawUnsafe('DROP TABLE "AgentRun"');
+    await client.$executeRawUnsafe('DROP TABLE "AgentJobDefinition"');
     await client.$executeRawUnsafe('DROP TABLE "SensitiveResourceGrant"');
     await client.$executeRawUnsafe('DROP TABLE "SourceArtifact"');
     for (const indexName of [
@@ -354,6 +356,8 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       await expect(client.sensitiveResourceGrant.count()).resolves.toBe(0);
       await expect(client.reviewBatch.count()).resolves.toBe(0);
       await expect(client.interaction.count()).resolves.toBe(0);
+      await expect(client.agentJobDefinition.count()).resolves.toBe(0);
+      await expect(client.agentRun.count()).resolves.toBe(0);
       await expect(client.dataMigrationState.findUnique({
         where: { key: 'CORE-113-pde-decision-context-shadow-v1' },
       })).resolves.toMatchObject({ key: 'CORE-113-pde-decision-context-shadow-v1' });
@@ -363,6 +367,9 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       await expect(client.dataMigrationState.findUnique({
         where: { key: 'CORE-205-review-batch-interaction-v1' },
       })).resolves.toMatchObject({ key: 'CORE-205-review-batch-interaction-v1' });
+      await expect(client.dataMigrationState.findUnique({
+        where: { key: 'CORE-206-agent-job-run-v1' },
+      })).resolves.toMatchObject({ key: 'CORE-206-agent-job-run-v1' });
       await expect(readdir(join(directory, 'backups'))).rejects.toThrow();
     } finally {
       await client?.$disconnect();
@@ -551,6 +558,11 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       })).resolves.toMatchObject({ key: 'CORE-205-review-batch-interaction-v1' });
       await expect(upgradedClient.reviewBatch.count()).resolves.toBe(0);
       await expect(upgradedClient.interaction.count()).resolves.toBe(0);
+      await expect(upgradedClient.dataMigrationState.findUnique({
+        where: { key: 'CORE-206-agent-job-run-v1' },
+      })).resolves.toMatchObject({ key: 'CORE-206-agent-job-run-v1' });
+      await expect(upgradedClient.agentJobDefinition.count()).resolves.toBe(0);
+      await expect(upgradedClient.agentRun.count()).resolves.toBe(0);
       await expect(upgradedClient.personSuggestion.findUniqueOrThrow({
         where: { id: 'sqlite-upgrade-person-suggestion' },
         select: { status: true, evidence: true },
@@ -623,6 +635,11 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
           AND name IN ('SourceArtifact', 'SensitiveResourceGrant')`,
       );
       expect(restoredSensitiveTables).toEqual([]);
+      const restoredAgentTables = await restoredClient.$queryRawUnsafe<Array<{ name: string }>>(
+        `SELECT name FROM sqlite_master WHERE type = 'table'
+          AND name IN ('AgentJobDefinition', 'AgentRun')`,
+      );
+      expect(restoredAgentTables).toEqual([]);
       const restoredNoteColumns = await restoredClient.$queryRawUnsafe<Array<{ name: string }>>(
         'PRAGMA table_info("Note")',
       );
@@ -1110,6 +1127,33 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       expect(failed.status).not.toBe(0);
       expect(`${failed.stdout}\n${failed.stderr}`).toContain(
         'partial ReviewBatch/Interaction expansion detected; restore the latest backup before retrying',
+      );
+    } finally {
+      await client?.$disconnect();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
+
+  it('fails closed when only part of the AgentJobDefinition/AgentRun expansion exists', async () => {
+    const directory = await mkdtemp(resolve('prisma/.agent-job-partial-test-'));
+    const relativeDirectory = basename(directory);
+    const databaseUrl = `file:./${relativeDirectory}/partial.db`;
+    let client: PrismaClient | null = null;
+    try {
+      run(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], databaseUrl);
+      client = new PrismaClient({ datasourceUrl: databaseUrl });
+      await client.$executeRawUnsafe('DROP TABLE "AgentRun"');
+      await client.$disconnect();
+      client = null;
+
+      const failed = spawnSync(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], {
+        cwd: serverRoot,
+        encoding: 'utf8',
+        env: { ...process.env, DATABASE_URL: databaseUrl, JIANGHU_SKIP_PRISMA_GENERATE: '1' },
+      });
+      expect(failed.status).not.toBe(0);
+      expect(`${failed.stdout}\n${failed.stderr}`).toContain(
+        'partial AgentJobDefinition/AgentRun expansion detected; restore the latest backup before retrying',
       );
     } finally {
       await client?.$disconnect();

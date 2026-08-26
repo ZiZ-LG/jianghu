@@ -1,4 +1,5 @@
 export * from './actions.js';
+export * from './agents.js';
 export * from './authority.js';
 export * from './capabilities.js';
 export * from './context.js';

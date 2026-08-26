@@ -51,6 +51,8 @@ import { crmContextRoutes } from './crmContext.js';
 import { deploymentProductAccess } from './productPolicy.js';
 import { sourceArtifactRoutes } from './sourceArtifacts/routes.js';
 import { reviewBatchRoutes } from './reviewBatches/routes.js';
+import { agentJobRoutes } from './agents/routes.js';
+import type { AgentJobHandlers } from './agents/model.js';
 
 async function registerSecurityPlugins(app: FastifyInstance): Promise<void> {
   const isProd = process.env.NODE_ENV === 'production';
@@ -160,7 +162,12 @@ function registerCapabilityEnforcement(app: FastifyInstance, product: ProductAcc
   });
 }
 
-function registerRoutes(app: FastifyInstance, readinessProbe: ReadinessProbe, product: ProductAccess): void {
+function registerRoutes(
+  app: FastifyInstance,
+  readinessProbe: ReadinessProbe,
+  product: ProductAccess,
+  agentHandlers: AgentJobHandlers,
+): void {
   app.get('/api/health/live', async () => ({ ok: true }));
   const readinessHandler = async (_req: unknown, reply: { code: (status: number) => { send: (body: { ok: boolean }) => unknown } }) => {
     try {
@@ -201,6 +208,7 @@ function registerRoutes(app: FastifyInstance, readinessProbe: ReadinessProbe, pr
   crmContextRoutes(app);
   sourceArtifactRoutes(app, product.policy);
   reviewBatchRoutes(app, product.policy);
+  agentJobRoutes(app, product.policy, agentHandlers);
 
   // ── 数据：拉取整树 / 应用变更 ──
   // 服务端组装时传入当前身份，统一执行归属与敏感字段 ACL。
@@ -442,6 +450,8 @@ export interface BuildAppOptions {
   logger?: boolean;
   readinessProbe?: ReadinessProbe;
   productAccess?: unknown;
+  /** Code-owned handler registry. Production passes none until each owning SAAS task registers one. */
+  agentHandlers?: AgentJobHandlers;
 }
 
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
@@ -449,10 +459,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const logger = options.logger === true ? { level: 'warn' } : false;
   const app = Fastify({ logger, trustProxy: true });
   const product = deploymentProductAccess(options.productAccess);
+  const agentHandlers = Object.freeze({ ...(options.agentHandlers ?? {}) });
   await registerSecurityPlugins(app);
   registerCapabilityEnforcement(app, product);
   registerRoutes(app, options.readinessProbe ?? (async () => {
     await prisma.$queryRaw`SELECT 1`;
-  }), product);
+  }), product, agentHandlers);
   return app;
 }

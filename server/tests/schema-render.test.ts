@@ -872,3 +872,102 @@ describe('CORE-205 ReviewBatch and Interaction expansion', () => {
       .toBeLessThan(sqliteUpgrade.indexOf("const dbPushArgs = ['prisma', 'db', 'push'"));
   });
 });
+
+describe('CORE-206 Agent Job control and run audit expansion', () => {
+  it('wires exact body-free models into guarded SQLite and PostgreSQL migration gates', async () => {
+    const sqliteSchema = await read('prisma/schema.prisma');
+    const postgresSchema = await read('prisma/postgres/schema.prisma');
+    const preAgentSchema = await read('prisma/postgres/legacy/20260825_pre_core206.prisma');
+    const migration = await read(
+      'prisma/postgres/migrations/20260825030000_expand_agent_job_run/migration.sql',
+    );
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const sqliteUpgrade = await read('scripts/upgrade-sqlite-schema.ts');
+    const schemaState = await read('scripts/postgres-agent-job-schema-state.ts');
+    const migrationCli = await read('scripts/migrate-agent-jobs.ts');
+    const packageJson = JSON.parse(await read('package.json')) as { scripts?: Record<string, string> };
+
+    for (const schema of [sqliteSchema, postgresSchema]) {
+      expect(schema).toContain('model AgentJobDefinition {');
+      expect(schema).toContain('model AgentRun {');
+      expect(schema).toContain('@@unique([tenantId, jobKey, jobVersion])');
+      expect(schema).toContain('@@unique([tenantId, actorId, jobKey, jobVersion, idempotencyKey])');
+      expect(schema).toContain('@@index([tenantId, status, createdAt])');
+      expect(schema).not.toMatch(/model Agent(?:JobDefinition|Run) \{[^}]*(?:contentEnc|body|prompt|response|rawResponse|token|secret)/);
+      expect(schema).not.toMatch(/^enum\s+/m);
+      expect(schema).not.toMatch(/^\s*\w+\s+Json[?\[\]]*/m);
+    }
+    expect(preAgentSchema).toContain('model ReviewBatch {');
+    expect(preAgentSchema).not.toContain('model AgentJobDefinition {');
+    expect(preAgentSchema).not.toContain('model AgentRun {');
+
+    expect(migration.trimStart().startsWith('BEGIN;')).toBe(true);
+    expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(migration).toContain("SET LOCAL lock_timeout = '30s'");
+    expect(migration).toContain("SET LOCAL statement_timeout = '15min'");
+    expect(migration).toContain('LOCK TABLE "Tenant", "User", "Account", "Opportunity", "SourceArtifact", "ReviewBatch"');
+    expect(migration).toContain('CREATE TABLE "AgentJobDefinition"');
+    expect(migration).toContain('CREATE TABLE "AgentRun"');
+    expect(migration).toContain('Agent Job table expansion parity failed');
+    expect(migration).not.toMatch(/(?:UPDATE|DELETE\s+FROM)\s+"(?:Account|Opportunity|SourceArtifact|ReviewBatch|Candidate|Person|Edge|PlanAction)"/i);
+
+    expect(packageJson.scripts?.['migrate:agent-job-report'])
+      .toBe('tsx scripts/migrate-agent-jobs.ts --dry-run');
+    expect(packageJson.scripts?.['migrate:agent-job-apply'])
+      .toBe('tsx scripts/migrate-agent-jobs.ts --apply');
+    expect(packageJson.scripts?.['migrate:agent-job-verify'])
+      .toBe('tsx scripts/migrate-agent-jobs.ts --verify');
+    expect(migrationCli).toContain('reportAgentJobMigration');
+    expect(migrationCli).toContain('applyAgentJobMigration');
+    expect(migrationCli).toContain('verifyAgentJobMigration');
+
+    expect(deployScript).toContain('PRE_AGENT_JOB_SCHEMA=prisma/postgres/legacy/20260825_pre_core206.prisma');
+    expect(deployScript).toContain('AGENT_JOB_MIGRATION=20260825030000_expand_agent_job_run');
+    expect(deployScript).toContain('recover_incomplete_agent_job_migration');
+    expect(deployScript).toContain('adopt_existing_agent_job_schema_if_safe');
+    expect(deployScript).toContain('agent_job_schema_matches_known_state');
+    expect(deployScript.lastIndexOf('npm run migrate:agent-job-report'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:agent-job-apply'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:agent-job-verify'))
+      .toBeGreaterThan(deployScript.lastIndexOf('npm run migrate:agent-job-apply'));
+    expect(schemaState).toContain("? 'legacy' : 'uninitialized'");
+    expect(schemaState).toContain("'expanded'");
+    expect(schemaState).toContain("'partial'");
+    expect(schemaState.indexOf('!state?.agent_definition && !state?.agent_run'))
+      .toBeLessThan(schemaState.indexOf('!state?.tenant || !state.review_batch'));
+    expect(schemaState).toContain('expectedColumns');
+    expect(schemaState).toContain('expectedIndexes');
+    expect(sqliteUpgrade).toContain('inspectAgentJobSchemaState');
+    expect(sqliteUpgrade).toContain('partial AgentJobDefinition/AgentRun expansion detected');
+    expect(sqliteUpgrade).toContain("['run', 'migrate:agent-job-apply']");
+    expect(sqliteUpgrade).toContain("['run', 'migrate:agent-job-verify']");
+    expect(sqliteUpgrade.indexOf("['run', 'migrate:agent-job-report']"))
+      .toBeLessThan(sqliteUpgrade.indexOf("const dbPushArgs = ['prisma', 'db', 'push'"));
+  });
+
+  it('keeps production handlers unavailable and the executor outside formal CRM writers', async () => {
+    const app = await read('src/app.ts');
+    const routes = await read('src/agents/routes.ts');
+    const model = await read('src/agents/model.ts');
+    const runner = await read('src/agents/runner.ts');
+    const registry = await read('src/agents/registry.ts');
+
+    expect(app).toContain('agentJobRoutes(app, product.policy, agentHandlers)');
+    expect(app).toContain('options.agentHandlers ?? {}');
+    expect(routes).toContain("app.get('/api/agent-jobs'");
+    expect(routes).toContain("app.put('/api/agent-jobs/:jobKey/control'");
+    expect(routes).toContain("app.post('/api/agent-jobs/:jobKey/runs'");
+    expect(routes).toContain("app.get('/api/agent-runs'");
+    expect(routes).toContain("app.get('/api/agent-runs/:id'");
+    expect(registry).toContain("jobKey: 'pre_meeting_brief'");
+    expect(registry).toContain("jobKey: 'post_meeting_extract'");
+    expect(registry).toContain("jobKey: 'relationship_radar'");
+    expect(model).not.toContain("from '@prisma/client'");
+    expect(model).not.toContain('TransactionClient');
+    expect(runner).not.toMatch(/\.(?:account|opportunity|person|edge|planAction|interaction|candidate)\.(?:create|update|upsert|delete)/);
+    expect(runner).not.toContain('../jobs.js');
+    expect(runner).not.toContain('../enrich.js');
+  });
+});
