@@ -6,7 +6,7 @@
 **Branch:** `codex/g4-candidate-review-intelligence`
 **Worktree:** `/Volumes/PowerData/江湖APP/.worktrees/g4-candidate-review-intelligence`
 **Base:** `5ce44f9884a8bbec0a77401711c297a154b538de`
-**Status:** IN_PROGRESS
+**Status:** DONE
 
 **Goal:** Turn the fixed `post_meeting_extract@core-206.v1` candidate Job into a production handler that reads one currently authorized SourceArtifact, produces strict evidence-backed candidates, commits exactly one ReviewBatch without touching formal CRM state, and gives a human reviewer one usable sheet for source quotes, before→after edits, explicit selection, atomic acceptance and retry.
 
@@ -45,10 +45,10 @@
 - Add: `packages/domain-contracts/src/postMeeting.test.ts`
 - Modify: `packages/domain-contracts/src/index.ts`
 
-- [ ] Write failing schema tests for the five allowed candidate kinds, maximum 20 items, unique item refs, exact SourceArtifact/Customer/Matter anchors and evidence/confidence requirements.
-- [ ] Write failing tests that reject unknown keys, `customerType`, stage/Forecast/key-person writes, arbitrary target IDs, invalid relation endpoints, malformed schedules and body/provider fields.
-- [ ] Define strict `PostMeetingCandidateBatch`, detailed ReviewBatch view, explicit review decision/request/receipt, SourceArtifact option and Job/Run UI response schemas.
-- [ ] Keep transport contracts content-bounded and make every output safe to parse independently in App and Server.
+- [x] Write failing schema tests for the five allowed candidate kinds, maximum 20 items, unique item refs, exact SourceArtifact/Customer/Matter anchors and evidence/confidence requirements.
+- [x] Write failing tests that reject unknown keys, `customerType`, stage/Forecast/key-person writes, arbitrary target IDs, invalid relation endpoints, malformed schedules and body/provider fields.
+- [x] Define strict `PostMeetingCandidateBatch`, detailed ReviewBatch view, explicit review decision/request/receipt, SourceArtifact option and Job/Run UI response schemas.
+- [x] Keep transport contracts content-bounded and make every output safe to parse independently in App and Server.
 
 ## Task 2: Add a body-safe two-phase Agent seam with RED tests
 
@@ -58,11 +58,11 @@
 - Modify: `server/tests/agent-job-policy.test.ts`
 - Modify: `server/tests/agent-job-routes.test.ts`
 
-- [ ] Write a failing test proving request-local private preparation state reaches commit but never appears in AgentRun, response, audit or logs.
-- [ ] Write a failing test proving candidate output existence is checked only after the narrow commit port, while read-only/draft outputs retain pre-commit validation.
-- [ ] Write failing tests for malformed private envelopes, missing/extra candidate output, port misuse, commit mutation of audit, timeout, authorization/ACL change and exact idempotent replay.
-- [ ] Add a backward-compatible preparation envelope (`audit` + private state) and a candidate-only commit callback; never expose Prisma or a formal writer to handlers.
-- [ ] Preserve cost, evidence, actionMode, attempt, timeout, lease, stop-control and final output validation from CORE-206.
+- [x] Write a failing test proving request-local private preparation state reaches commit but never appears in AgentRun, response, audit or logs.
+- [x] Write a failing test proving candidate output existence is checked only after the narrow commit port, while read-only/draft outputs retain pre-commit validation.
+- [x] Write failing tests for malformed private envelopes, missing/extra candidate output, port misuse, commit mutation of audit, timeout, authorization/ACL change and exact idempotent replay.
+- [x] Add a backward-compatible preparation envelope (`audit` + private state) and a candidate-only commit callback; never expose Prisma or a formal writer to handlers.
+- [x] Preserve cost, evidence, actionMode, attempt, timeout, lease, stop-control and final output validation from CORE-206.
 
 ## Task 3: Read and extract one authorized source with RED tests
 
@@ -73,11 +73,11 @@
 - Add: `server/tests/post-meeting-extract.test.ts`
 - Modify: `server/src/app.ts`
 
-- [ ] Write failing tests for current tenant/actor/effective-scope/creator ACL, exact mount and ACL version, transcript ciphertext fingerprint, Note content fingerprint, degraded/deleted/reference-only sources and viewer denial.
-- [ ] Write failing parser tests using hand-derived fixtures for source quotes, confidence, field values, new people, relations, evidence and commitments; reject markdown leakage, unknown fields, invented IDs and more than 20 outputs.
-- [ ] Load/decrypt the source only after authorization; cap body size and never return/log it.
-- [ ] Load exact in-scope Customer/Matter/Person context, call only the tenant BYO model outside the transaction, and normalize its response through the shared strict schema.
-- [ ] Register only `post_meeting_extract@core-206.v1` as the production handler. No AI config becomes a stable retryable/non-retryable failure as appropriate; there is no mock-to-formal fallback.
+- [x] Write failing tests for current tenant/actor/effective-scope/creator ACL, exact mount and ACL version, transcript ciphertext fingerprint, Note content fingerprint, degraded/deleted/reference-only sources and viewer denial.
+- [x] Write failing parser tests using hand-derived fixtures for source quotes, confidence, field values, new people, relations, evidence and commitments; reject markdown leakage, unknown fields, invented IDs and more than 20 outputs.
+- [x] Load/decrypt the source only after authorization; cap body size and never return/log it.
+- [x] Load exact in-scope Customer/Matter/Person context, call only the tenant BYO model outside the transaction, and normalize its response through the shared strict schema.
+- [x] Register only `post_meeting_extract@core-206.v1` as the production handler. No AI config becomes a stable retryable/non-retryable failure as appropriate; there is no mock-to-formal fallback.
 
 ## Task 4: Commit candidates and one ReviewBatch through the narrow port
 
@@ -94,12 +94,12 @@
 - Modify: `server/tests/candidate-review-items.test.ts`
 - Modify: `server/tests/review-batch-acceptance.test.ts`
 
-- [ ] Write failing integration tests that a successful run creates only Candidate compatibility rows + one ReviewBatch + AgentRun/audit, with zero formal Customer/Matter/Person/Edge/Evidence/Commitment/Interaction change.
-- [ ] Write failing tests for deterministic replay, cross-tenant/parent/creator/ACL mismatch, ambiguous person resolution, stale formal before-value, duplicate item ref, partial candidate conflict and injected failure rollback.
-- [ ] Extend existing Candidate helpers with one reviewed SourceArtifact binding input so candidate creation and source/visibility/ACL metadata are atomic and replay-validated; do not add a bypass writer.
-- [ ] Resolve exact endpoints, derive current field values server-side, create all five allowed candidate kinds through existing authorities, and attach them to one deterministic batch in the AgentRun transaction.
-- [ ] Add narrow universal Customer/Matter reviewed-field application for the approved allowlist, parsed through `CrmCommandSchema`, tenant/version scoped and audited. Never use `customerType`.
-- [ ] Revalidate edited Commitment drafts through `CreateCommitmentCommandSchema` during human acceptance.
+- [x] Write failing integration tests that a successful run creates only Candidate compatibility rows + one ReviewBatch + AgentRun/audit, with zero formal Customer/Matter/Person/Edge/Evidence/Commitment/Interaction change.
+- [x] Write failing tests for deterministic replay, cross-tenant/parent/creator/ACL mismatch, ambiguous person resolution, stale formal before-value, duplicate item ref, partial candidate conflict and injected failure rollback.
+- [x] Extend existing Candidate helpers with one reviewed SourceArtifact binding input so candidate creation and source/visibility/ACL metadata are atomic and replay-validated; do not add a bypass writer.
+- [x] Resolve exact endpoints, derive current field values server-side, create all five allowed candidate kinds through existing authorities, and attach them to one deterministic batch in the AgentRun transaction.
+- [x] Add narrow universal Customer/Matter reviewed-field application for the approved allowlist, parsed through `CrmCommandSchema`, tenant/version scoped and audited. Never use `customerType`.
+- [x] Revalidate edited Commitment drafts through `CreateCommitmentCommandSchema` during human acceptance.
 
 ## Task 5: Expose the authorized review sheet contract with RED tests
 
@@ -110,10 +110,10 @@
 - Modify: `server/tests/review-batch-routes.test.ts`
 - Modify: `server/tests/review-batch-acceptance.test.ts`
 
-- [ ] Write failing route tests for typed source metadata, grouped candidate detail, quote/confidence, before→after, identity/relation default-unselected flags and safe editable fields.
-- [ ] Prove list/history stay metadata-first, hidden/missing stay same-shape 404, viewer cannot accept and unauthorized users receive no quote or existence leak.
-- [ ] Parse payloads server-side into a bounded discriminated projection; never return arbitrary payload JSON, source body or ciphertext.
-- [ ] Use the shared acceptance schema, support typed edits, return deterministic per-item conflict/results and retain CORE-205 all-or-nothing semantics.
+- [x] Write failing route tests for typed source metadata, grouped candidate detail, quote/confidence, before→after, identity/relation default-unselected flags and safe editable fields.
+- [x] Prove list/history stay metadata-first, hidden/missing stay same-shape 404, viewer cannot accept and unauthorized users receive no quote or existence leak.
+- [x] Parse payloads server-side into a bounded discriminated projection; never return arbitrary payload JSON, source body or ciphertext.
+- [x] Use the shared acceptance schema, support typed edits, return deterministic per-item conflict/results and retain CORE-205 all-or-nothing semantics.
 
 ## Task 6: Build the human review and Job/Run surface with RED tests
 
@@ -128,12 +128,12 @@
 - Modify: `app/src/App.tsx`
 - Modify: `app/src/styles.css`
 
-- [ ] Write failing API/parser tests for malformed cards/runs/sources/batches/receipts and exact-session idempotent command retries.
-- [ ] Write failing pure-state tests for grouped items, default selection, edit preservation, stable request keys, atomic conflict refresh and failed-item retry without silently selecting new identity/relation candidates.
-- [ ] Write failing component tests for source selection + run, disabled/enabled Job Card, visible run status, source quote, before→after, typed editing, explicit checkboxes, batch result and readonly suppression.
-- [ ] Add a self-contained “会后速审” section inside the existing `sales-workspace` capability surface, followed by the frozen legacy account entry; do not change public or product navigation.
-- [ ] Use current CrmContext versions to build exact Agent input refs, list only mounted available sources, expose owner/admin enable/disable controls, and refresh runs/batches after a run.
-- [ ] Keep identity/relation/sensitive fields unselected, require an explicit activity kind/time and at least one explicit decision, retain drafts on 409, and refresh exact versions before retry.
+- [x] Write failing API/parser tests for malformed cards/runs/sources/batches/receipts and exact-session idempotent command retries.
+- [x] Write failing pure-state tests for grouped items, default selection, edit preservation, stable request keys, atomic conflict refresh and failed-item retry without silently selecting new identity/relation candidates.
+- [x] Write failing component tests for source selection + run, disabled/enabled Job Card, visible run status, source quote, before→after, typed editing, explicit checkboxes, batch result and readonly suppression.
+- [x] Add a self-contained “会后速审” section inside the existing `sales-workspace` capability surface, followed by the frozen legacy account entry; do not change public or product navigation.
+- [x] Use current CrmContext versions to build exact Agent input refs, list only mounted available sources, expose owner/admin enable/disable controls, and refresh runs/batches after a run.
+- [x] Keep identity/relation/sensitive fields unselected, require an explicit activity kind/time and at least one explicit decision, retain drafts on 409, and refresh exact versions before retry.
 
 ## Task 7: Verify, commit, push and close SAAS-202
 
@@ -141,13 +141,20 @@
 - Modify: this plan
 - Modify: `docs/商业版开发待办清单v1.md`
 
-- [ ] Refresh local file dependencies with `npm ci --install-links` in Server and App after changing `packages/domain-contracts`.
-- [ ] Run focused Domain/Agent/PostMeeting/Candidate/ReviewBatch/App tests after every RED→GREEN cycle.
-- [ ] Run Domain, G64111 and PDE typecheck/tests; Server generate, PostgreSQL schema check, typecheck and full tests; App typecheck/full tests. Do not run local App production build because it writes shared `app/dist/**`; exact-SHA CI owns that isolated gate.
-- [ ] Run static producer/route/authority inventory, formal-write-zero assertions, `git diff --check`, protected/shared/self-cultivation path checks and high-confidence secret scan.
-- [ ] Confirm there is no schema drift and therefore no SQLite/PostgreSQL migration for SAAS-202; run existing schema/ops regression gates.
-- [ ] Commit business code independently with SAAS-202 in the message, push and require all jobs green on the exact business SHA.
-- [ ] In a separate governance commit, record evidence, mark SAAS-202 DONE and only SAAS-203 READY, push and require exact governance SHA CI green before starting SAAS-203.
+- [x] Refresh local file dependencies with `npm ci --install-links` in Server and App after changing `packages/domain-contracts`.
+- [x] Run focused Domain/Agent/PostMeeting/Candidate/ReviewBatch/App tests after every RED→GREEN cycle.
+- [x] Run Domain, G64111 and PDE typecheck/tests; Server generate, PostgreSQL schema check, typecheck and full tests; App typecheck/full tests. Do not run local App production build because it writes shared `app/dist/**`; exact-SHA CI owns that isolated gate.
+- [x] Run static producer/route/authority inventory, formal-write-zero assertions, `git diff --check`, protected/shared/self-cultivation path checks and high-confidence secret scan.
+- [x] Confirm there is no schema drift and therefore no SQLite/PostgreSQL migration for SAAS-202; run existing schema/ops regression gates.
+- [x] Commit business code independently with SAAS-202 in the message, push and require all jobs green on the exact business SHA.
+- [x] In a separate governance commit, record evidence, mark SAAS-202 DONE and only SAAS-203 READY, push and require exact governance SHA CI green before starting SAAS-203.
+
+## Completion evidence (2026-08-26)
+
+- Business commit: `a068b0a9101f760b9b38a445978f01a54b1a0519`; [GitHub Actions 32953078282](https://github.com/ZiZ-LG/jianghu/actions/runs/32953078282) completed with 12/12 jobs successful on that exact SHA.
+- Local verification: Domain 10 files / 100 tests; Server 84 files / 705 tests plus focused 9 files / 130 tests; App 44 files / 337 tests plus focused 4 files / 45 tests; G64111 2 files / 32 tests; PDE kernel 3 files / 25 tests. All required typechecks, Prisma generate and PostgreSQL schema render checks passed.
+- PostgreSQL operations integration completed with `FRESH_INSTALL_SECOND_UPDATE_OK=1` and `POSTGRES_OPS_INTEGRATION_OK=1`; SAAS-202 introduced no schema or migration.
+- Static authority, formal-write-zero, protected/shared/self-cultivation path, navigation and high-confidence secret checks passed. No shared high-conflict file, self-cultivation file, main merge or production deployment was involved.
 
 ## Focused verification commands
 
