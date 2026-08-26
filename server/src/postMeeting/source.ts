@@ -1,5 +1,4 @@
 import { ActorRoleSchema, type CapabilityPolicy } from '@jianghu/domain-contracts';
-import type { Prisma } from '@prisma/client';
 import { dec } from '../ai.js';
 import { AgentPreparationError } from '../agents/model.js';
 import type { DbClient } from '../mutation/scopeGuards.js';
@@ -10,19 +9,15 @@ import {
 import {
   sourceArtifactProjectionForNote,
   sourceArtifactProjectionForTranscript,
-  type SourceArtifactProjection,
 } from '../sourceArtifacts/model.js';
 import {
   SOURCE_ARTIFACT_METADATA_SELECT,
   sourceArtifactMetadataIsValid,
+  sourceArtifactProjectionMatchesMetadata,
 } from '../sourceArtifacts/service.js';
 
 const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
 const MAX_CONTEXT_PEOPLE = 500;
-
-type SourceRow = Prisma.SourceArtifactGetPayload<{
-  select: typeof SOURCE_ARTIFACT_METADATA_SELECT;
-}>;
 
 export interface PostMeetingSourceInput {
   tenantId: string;
@@ -74,37 +69,6 @@ export interface AuthorizedPostMeetingSource {
 
 function fail(code: string): never {
   throw new AgentPreparationError(code);
-}
-
-function sameInstant(left: Date | null, right: Date | null): boolean {
-  return left?.getTime() === right?.getTime();
-}
-
-/**
- * Compares the backing-derived projection with the stored metadata authority.
- * The body is intentionally absent from this comparison boundary.
- */
-function projectionMatchesStored(projection: SourceArtifactProjection, stored: SourceRow): boolean {
-  return projection.id === stored.id
-    && projection.tenantId === stored.tenantId
-    && projection.accountId === stored.accountId
-    && projection.matterId === stored.matterId
-    && projection.personId === stored.personId
-    && projection.backingKind === stored.backingKind
-    && projection.backingId === stored.backingId
-    && projection.artifactKind === stored.artifactKind
-    && projection.source === stored.source
-    && projection.externalRef === stored.externalRef
-    && projection.idempotencyDomain === stored.idempotencyDomain
-    && projection.title === stored.title
-    && sameInstant(projection.occurredAt, stored.occurredAt)
-    && projection.fingerprintKind === stored.fingerprintKind
-    && projection.sourceFingerprint === stored.sourceFingerprint
-    && projection.retentionState === stored.retentionState
-    && projection.createdByUserId === stored.createdByUserId
-    && projection.visibility === stored.visibility
-    && projection.aclVersion === stored.aclVersion
-    && projection.createdAt.getTime() === stored.createdAt.getTime();
 }
 
 function checkedBody(body: string, maxBodyBytes: number): string {
@@ -206,7 +170,7 @@ export async function loadAuthorizedPostMeetingSource(
     });
     if (!note) fail('post_meeting_source_unavailable');
     const projection = sourceArtifactProjectionForNote(note);
-    if (!projectionMatchesStored(projection, source)) {
+    if (!sourceArtifactProjectionMatchesMetadata(projection, source)) {
       fail('post_meeting_source_fingerprint_mismatch');
     }
     body = checkedBody(note.content, maxBodyBytes);
@@ -224,7 +188,7 @@ export async function loadAuthorizedPostMeetingSource(
       fail('post_meeting_source_unavailable');
     }
     const projection = sourceArtifactProjectionForTranscript(transcript);
-    if (!projectionMatchesStored(projection, source)) {
+    if (!sourceArtifactProjectionMatchesMetadata(projection, source)) {
       fail('post_meeting_source_fingerprint_mismatch');
     }
     body = checkedBody((options.decrypt ?? dec)(transcript.contentEnc), maxBodyBytes);

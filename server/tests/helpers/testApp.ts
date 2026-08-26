@@ -28,7 +28,7 @@ interface RegistrationBody {
 export async function createTestContext(
   options: Pick<
     BuildAppOptions,
-    'productAccess' | 'agentHandlers' | 'agentCandidateCommitAdapter'
+    'productAccess' | 'agentHandlers' | 'agentCandidateCommitAdapter' | 'feishuImportProvider' | 'publicBaseUrl'
   > = {},
 ): Promise<TestContext> {
   assertTestDatabaseUrl();
@@ -45,6 +45,10 @@ export async function createTestContext(
     ...(options.agentCandidateCommitAdapter
       ? { agentCandidateCommitAdapter: options.agentCandidateCommitAdapter }
       : {}),
+    ...(options.feishuImportProvider
+      ? { feishuImportProvider: options.feishuImportProvider }
+      : {}),
+    publicBaseUrl: options.publicBaseUrl ?? 'http://localhost:3001',
   });
   try {
     const suffix = randomUUID();

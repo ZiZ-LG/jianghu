@@ -8,6 +8,7 @@ import {
 } from '@jianghu/domain-contracts';
 import { createPostMeetingDraft } from '../lib/postMeetingReview';
 import { PostMeetingReviewView } from './PostMeetingReviewPanel';
+import { PostMeetingSourceImportView } from './PostMeetingSourceImport';
 
 const context = CrmContextSnapshotSchema.parse({
   generatedAtUtc: '2026-08-25T18:00:00.000Z',
@@ -90,6 +91,19 @@ const baseProps = {
   activityKind: 'customer_meeting',
   occurredAtLocal: '2026-08-26T02:00',
   loading: false, busy: false, error: '', notice: '',
+  sourceImport: createElement(PostMeetingSourceImportView, {
+    actorRole: 'owner' as const, readonly: false,
+    customerId: 'customer-1', matterId: 'matter-1', mode: 'upload' as const,
+    feishuUrl: '', uploadFileName: '客户会谈.md', appId: '', appSecret: '',
+    providerStatus: null, feishuConnected: false,
+    selectedSource: null, busy: false, uploadProgress: 0, error: '', notice: '',
+    onModeChange: () => undefined, onFeishuUrlChange: () => undefined,
+    onFileChange: () => undefined, onAppIdChange: () => undefined,
+    onAppSecretChange: () => undefined, onSaveProvider: () => undefined,
+    onConnectFeishu: () => undefined, onRefreshCredentials: () => undefined,
+    onImportAndRun: () => undefined, onDegrade: () => undefined,
+    onDelete: () => undefined,
+  }),
   onCustomerChange: () => undefined,
   onMatterChange: () => undefined,
   onSourceChange: () => undefined,
@@ -107,6 +121,7 @@ describe('PostMeetingReviewView', () => {
     const html = renderToStaticMarkup(createElement(PostMeetingReviewView, baseProps));
     expect(html).toContain('data-post-meeting-review="ready"');
     expect(html).toContain('会后速审');
+    expect(html).toContain('data-post-meeting-source-import="true"');
     expect(html).toContain('已启用');
     expect(html).toContain('客户会谈');
     expect(html).toContain('data-run-status="succeeded"');

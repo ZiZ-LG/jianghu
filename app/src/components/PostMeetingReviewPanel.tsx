@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type {
   AgentJobCard,
   AgentRunView,
@@ -6,6 +6,7 @@ import type {
   CrmContextSnapshot,
   PostMeetingReviewBatchDetail,
   PostMeetingReviewReceipt,
+  PostMeetingFeishuProviderStatus,
   PostMeetingSourceOption,
 } from '@jianghu/domain-contracts';
 import { ApiError, api, newIdempotencyKey, toApiError } from '../api';
@@ -21,6 +22,17 @@ import {
   type PostMeetingDraftPatch,
   type StablePostMeetingSubmission,
 } from '../lib/postMeetingReview';
+import {
+  buildPostMeetingRunInput,
+  postMeetingRunOutcome,
+  reconcilePostMeetingSourceSelection,
+  stableFeishuImportSubmission,
+  stablePostMeetingLifecycleSubmission,
+  stableUploadImportSubmission,
+  type StablePostMeetingImportSubmission,
+  type StablePostMeetingLifecycleSubmission,
+} from '../lib/postMeetingImport';
+import { PostMeetingSourceImportView } from './PostMeetingSourceImport';
 
 export interface PostMeetingRunSummary {
   id: string;
@@ -48,6 +60,7 @@ export interface PostMeetingReviewViewProps {
   busy: boolean;
   error: string;
   notice: string;
+  sourceImport: ReactNode;
   onCustomerChange: (id: string) => void;
   onMatterChange: (id: string) => void;
   onSourceChange: (id: string) => void;
@@ -168,6 +181,7 @@ export function PostMeetingReviewView(props: PostMeetingReviewViewProps) {
         </span>
       </div>
       <p className="post-meeting-lede">从一份已授权的会议记录中生成待审候选；勾选并确认前不会写入正式 CRM。</p>
+      {props.sourceImport}
       <div className="post-meeting-toolbar">
         <label>客户<select value={props.customerId} disabled={props.busy} onChange={(event) => props.onCustomerChange(event.target.value)}>
           <option value="">选择客户</option>
@@ -303,8 +317,41 @@ export function PostMeetingReviewPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [importMode, setImportMode] = useState<'upload' | 'feishu'>('upload');
+  const [feishuUrl, setFeishuUrl] = useState('');
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [providerStatus, setProviderStatus] = useState<PostMeetingFeishuProviderStatus | null>(null);
+  const [feishuConnected, setFeishuConnected] = useState(false);
+  const [appId, setAppId] = useState('');
+  const [appSecret, setAppSecret] = useState('');
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importError, setImportError] = useState('');
+  const [importNotice, setImportNotice] = useState('');
+  const [importRunRetryAvailable, setImportRunRetryAvailable] = useState(false);
   const runSubmission = useRef<{ canonical: string; key: string } | null>(null);
   const reviewSubmission = useRef<StablePostMeetingSubmission | null>(null);
+  const importSubmission = useRef<StablePostMeetingImportSubmission | null>(null);
+  const lifecycleSubmission = useRef<StablePostMeetingLifecycleSubmission | null>(null);
+
+  const refreshFeishuStatus = useCallback(async (surfaceError = false) => {
+    try {
+      const [provider, credentialStatus] = await Promise.all([
+        api.postMeetingFeishuProviderStatus(),
+        api.postMeetingRecordingCredentialStatus(),
+      ]);
+      setProviderStatus(provider);
+      setAppId(provider.appId);
+      setFeishuConnected(credentialStatus.credentials.some((credential) => (
+        credential.source === 'feishu' && credential.status === 'active'
+      )));
+      if (surfaceError) setImportNotice('飞书授权状态已刷新。');
+    } catch (cause) {
+      setProviderStatus(null);
+      setFeishuConnected(false);
+      if (surfaceError) setImportError(toApiError(cause).message);
+    }
+  }, []);
 
   const openBatch = useCallback(async (batchId: string) => {
     setBusy(true); setError('');
@@ -353,6 +400,11 @@ export function PostMeetingReviewPanel({
   }, [actorRole, crmContext, readonly]);
 
   useEffect(() => {
+    if (!crmContext || readonly || actorRole === 'viewer') return;
+    void refreshFeishuStatus(false);
+  }, [actorRole, crmContext, readonly, refreshFeishuStatus]);
+
+  useEffect(() => {
     if (!activeCustomers.some((customer) => customer.id === customerId)) {
       setCustomerId(activeCustomers[0]?.id ?? '');
     }
@@ -372,7 +424,7 @@ export function PostMeetingReviewPanel({
     api.postMeetingSources(customerId, matterId).then((next) => {
       if (cancelled) return;
       setSources(next);
-      setSourceId((current) => next.some((source) => source.id === current) ? current : next[0]?.id ?? '');
+      setSourceId((current) => reconcilePostMeetingSourceSelection(next, current, null));
     }).catch((cause) => {
       if (!cancelled) { setSources([]); setSourceId(''); setError(toApiError(cause).message); }
     });
@@ -382,11 +434,17 @@ export function PostMeetingReviewPanel({
   if (!crmContext || readonly || actorRole === 'viewer') return null;
   const changeCustomer = (id: string) => {
     setCustomerId(id); setMatterId(''); setSourceId(''); setDetail(null); setDraft(null);
+    setImportError(''); setImportNotice('');
+    setImportRunRetryAvailable(false);
     runSubmission.current = null; reviewSubmission.current = null;
+    importSubmission.current = null; lifecycleSubmission.current = null;
   };
   const changeMatter = (id: string) => {
     setMatterId(id); setSourceId(''); setDetail(null); setDraft(null);
+    setImportError(''); setImportNotice('');
+    setImportRunRetryAvailable(false);
     runSubmission.current = null; reviewSubmission.current = null;
+    importSubmission.current = null; lifecycleSubmission.current = null;
   };
   const control = async () => {
     if (!job || (actorRole !== 'owner' && actorRole !== 'admin')) return;
@@ -399,44 +457,209 @@ export function PostMeetingReviewPanel({
       setNotice(result.card.enabled ? '会后任务已启用' : '会后任务已停用');
     } catch (cause) { setError(toApiError(cause).message); } finally { setBusy(false); }
   };
-  const run = async () => {
+  const executeSource = async (source: PostMeetingSourceOption): Promise<{
+    ok: boolean;
+    message: string;
+  }> => {
     const customer = crmContext.customers.find((item) => item.id === customerId);
     const matter = crmContext.matters.find((item) => item.id === matterId && item.customerId === customerId);
-    const source = sources.find((item) => item.id === sourceId
-      && item.customerId === customerId && item.matterId === matterId);
-    if (!job?.enabled || !customer || !matter || !source) {
-      setError('请先选择有效的客户、事项和会议来源。'); return;
-    }
-    const input = {
-      jobVersion: job.jobVersion,
-      customerId: customer.id,
-      matterId: matter.id,
-      sourceArtifactId: source.id,
-      inputRefs: [
-        { kind: 'customer' as const, id: customer.id, version: customer.version },
-        { kind: 'matter' as const, id: matter.id, version: matter.version },
-        { kind: 'source_artifact' as const, id: source.id, version: source.version },
-      ],
-    };
+    if (!job || !customer || !matter) throw new Error('请先选择有效的客户和事项。');
+    const input = buildPostMeetingRunInput({ job, customer, matter, source });
     const canonical = JSON.stringify(input);
     if (runSubmission.current?.canonical !== canonical) {
       runSubmission.current = { canonical, key: newIdempotencyKey() };
     }
-    setBusy(true); setError(''); setNotice('');
+    const receipt = await api.postMeetingRun(input, runSubmission.current.key);
+    const summary = runSummary(receipt.run);
+    const outcome = postMeetingRunOutcome(source, receipt.run);
+    setSourceId(outcome.selectedSourceId);
+    setRuns((current) => [summary, ...current.filter((item) => item.id !== summary.id)]);
+    if (outcome.reviewBatchId) {
+      const next = await api.postMeetingReview(outcome.reviewBatchId);
+      setDetail(next); setDraft(createPostMeetingDraft(next));
+      setActivityKind(next.activityKind ?? 'customer_meeting');
+      setOccurredAtLocal(localDateTime(next.occurredAt ?? next.source.occurredAt));
+      return { ok: true, message: '候选已生成，请逐项确认。' };
+    }
+    if (outcome.canRetry) runSubmission.current = null;
+    return {
+      ok: false,
+      message: `来源已保留；候选任务未完成（${outcome.errorCode}），可重试。`,
+    };
+  };
+  const run = async () => {
+    const source = sources.find((item) => item.id === sourceId
+      && item.customerId === customerId && item.matterId === matterId);
+    if (!source) { setError('请先选择有效的客户、事项和会议来源。'); return; }
+    setBusy(true); setError(''); setNotice(''); setImportError('');
     try {
-      const receipt = await api.postMeetingRun(input, runSubmission.current.key);
-      const summary = runSummary(receipt.run);
-      setRuns((current) => [summary, ...current.filter((item) => item.id !== summary.id)]);
-      if (receipt.run.status === 'succeeded' && summary.outputBatchId) {
-        const next = await api.postMeetingReview(summary.outputBatchId);
-        setDetail(next); setDraft(createPostMeetingDraft(next));
-        setActivityKind(next.activityKind ?? 'customer_meeting');
-        setOccurredAtLocal(localDateTime(next.occurredAt ?? next.source.occurredAt));
-        setNotice('候选已生成，请逐项确认。');
-      } else {
-        setError(receipt.run.failureCode || '会后任务未完成。');
-      }
+      const outcome = await executeSource(source);
+      if (outcome.ok) setNotice(outcome.message);
+      else setError(outcome.message);
     } catch (cause) { setError(toApiError(cause).message); } finally { setBusy(false); }
+  };
+  const refreshSourceOptions = async (preferredSourceId: string | null = null) => {
+    if (!customerId || !matterId) {
+      setSources([]); setSourceId(''); return [];
+    }
+    const next = await api.postMeetingSources(customerId, matterId);
+    setSources(next);
+    setSourceId((current) => reconcilePostMeetingSourceSelection(
+      next, current, preferredSourceId,
+    ));
+    return next;
+  };
+  const saveFeishuProvider = async () => {
+    if (actorRole !== 'owner' && actorRole !== 'admin') return;
+    setImportBusy(true); setImportError(''); setImportNotice('');
+    try {
+      const normalizedSecret = appSecret.trim();
+      await api.postMeetingSaveFeishuProviderConfig({
+        appId: appId.trim(),
+        ...(normalizedSecret ? { appSecret: normalizedSecret } : {}),
+      });
+      setAppSecret('');
+      await refreshFeishuStatus(false);
+      setImportNotice('飞书提供方配置已安全保存。');
+    } catch (cause) {
+      setImportError(toApiError(cause).message);
+    } finally {
+      setImportBusy(false);
+    }
+  };
+  const connectFeishu = async () => {
+    setImportBusy(true); setImportError(''); setImportNotice('');
+    try {
+      const { authUrl } = await api.postMeetingFeishuOAuthStart();
+      const url = new URL(authUrl);
+      if (url.protocol !== 'https:' || url.hostname !== 'accounts.feishu.cn') {
+        throw new Error('飞书授权地址无效。');
+      }
+      const opened = window.open(url.toString(), '_blank', 'noopener,noreferrer');
+      if (!opened) throw new Error('浏览器阻止了授权窗口，请允许弹窗后重试。');
+      setImportNotice('飞书授权窗口已打开；完成后请刷新授权状态。');
+    } catch (cause) {
+      setImportError(toApiError(cause).message);
+    } finally {
+      setImportBusy(false);
+    }
+  };
+  const refreshCredentials = async () => {
+    setImportBusy(true); setImportError(''); setImportNotice('');
+    try {
+      await refreshFeishuStatus(true);
+    } finally {
+      setImportBusy(false);
+    }
+  };
+  const importAndRun = async () => {
+    if (!customerId || !matterId) {
+      setImportError('请先选择有效的客户和事项。'); return;
+    }
+    if (importMode === 'upload' && !uploadFile) {
+      setImportError('请选择一个支持的会议文件。'); return;
+    }
+    setBusy(true); setImportBusy(true); setUploadProgress(10);
+    setError(''); setNotice(''); setImportError(''); setImportNotice('');
+    setImportRunRetryAvailable(false);
+    try {
+      let receipt;
+      if (importMode === 'upload' && uploadFile) {
+        const submission = await stableUploadImportSubmission({
+          file: uploadFile,
+          metadata: { customerId, matterId },
+        }, importSubmission.current, newIdempotencyKey);
+        importSubmission.current = submission;
+        setUploadProgress(40);
+        receipt = await api.postMeetingImportUpload(
+          uploadFile,
+          { customerId, matterId },
+          submission.idempotencyKey,
+        );
+      } else {
+        const request = { url: feishuUrl, customerId, matterId };
+        const submission = stableFeishuImportSubmission(
+          request, importSubmission.current, newIdempotencyKey,
+        );
+        importSubmission.current = submission;
+        setUploadProgress(35);
+        receipt = await api.postMeetingImportFeishu(request, submission.idempotencyKey);
+      }
+      setUploadProgress(70);
+      setSources((current) => [
+        receipt.source,
+        ...current.filter((source) => source.id !== receipt.source.id),
+      ]);
+      setSourceId(receipt.source.id);
+      runSubmission.current = null;
+      setImportRunRetryAvailable(true);
+      if (!job?.available || !job.enabled) {
+        setImportError('来源已导入并保留；会后任务尚未启用，启用后可生成候选。');
+        return;
+      }
+      const outcome = await executeSource(receipt.source);
+      setUploadProgress(100);
+      if (outcome.ok) {
+        setImportRunRetryAvailable(false);
+        setImportNotice(`来源已导入；${outcome.message}`);
+      } else {
+        setImportError(outcome.message);
+      }
+    } catch (cause) {
+      setImportError(toApiError(cause).message);
+    } finally {
+      setBusy(false); setImportBusy(false);
+    }
+  };
+  const retryImportedSource = async () => {
+    const source = sources.find((item) => item.id === sourceId
+      && item.customerId === customerId && item.matterId === matterId);
+    if (!source) { setImportError('当前来源已不可用，请重新导入。'); return; }
+    setBusy(true); setImportBusy(true); setImportError(''); setImportNotice('');
+    try {
+      const outcome = await executeSource(source);
+      if (outcome.ok) {
+        setImportRunRetryAvailable(false);
+        setImportNotice(outcome.message);
+      } else {
+        setImportRunRetryAvailable(true);
+        setImportError(outcome.message);
+      }
+    } catch (cause) {
+      setImportError(toApiError(cause).message);
+    } finally {
+      setBusy(false); setImportBusy(false);
+    }
+  };
+  const changeSourceLifecycle = async (action: 'degrade' | 'delete') => {
+    const source = sources.find((item) => item.id === sourceId
+      && item.customerId === customerId && item.matterId === matterId);
+    if (!source) { setImportError('当前来源已不可用，请刷新后重试。'); return; }
+    const confirmation = action === 'degrade'
+      ? '降解后将永久清除会议正文，但保留来源指纹与人工审核历史。确认继续？'
+      : '删除后将永久移除会议正文与来源实体，但保留必要的审计/审核墓碑。确认继续？';
+    if (!window.confirm(confirmation)) return;
+    lifecycleSubmission.current = stablePostMeetingLifecycleSubmission({
+      action, sourceId: source.id, expectedAclVersion: source.aclVersion,
+    }, lifecycleSubmission.current, newIdempotencyKey);
+    setBusy(true); setImportBusy(true); setImportError(''); setImportNotice('');
+    try {
+      if (action === 'degrade') {
+        await api.postMeetingDegradeSource(source, lifecycleSubmission.current.idempotencyKey);
+      } else {
+        await api.postMeetingDeleteSource(source, lifecycleSubmission.current.idempotencyKey);
+      }
+      await refreshSourceOptions(null);
+      runSubmission.current = null;
+      setImportRunRetryAvailable(false);
+      setImportNotice(action === 'degrade'
+        ? '会议正文已降解，来源指纹与审核历史已保留。'
+        : '来源已删除，必要的审核历史已保留。');
+    } catch (cause) {
+      setImportError(toApiError(cause).message);
+    } finally {
+      setBusy(false); setImportBusy(false);
+    }
   };
   const submit = async () => {
     if (!detail || !draft) return;
@@ -484,6 +707,43 @@ export function PostMeetingReviewPanel({
     } finally { setBusy(false); }
   };
 
+  const selectedSource = sources.find((source) => source.id === sourceId
+    && source.customerId === customerId && source.matterId === matterId) ?? null;
+  const sourceImport = <PostMeetingSourceImportView
+    actorRole={actorRole}
+    readonly={readonly}
+    customerId={customerId}
+    matterId={matterId}
+    mode={importMode}
+    feishuUrl={feishuUrl}
+    uploadFileName={uploadFile?.name ?? ''}
+    appId={appId}
+    appSecret={appSecret}
+    providerStatus={providerStatus}
+    feishuConnected={feishuConnected}
+    selectedSource={selectedSource}
+    busy={importBusy}
+    uploadProgress={uploadProgress}
+    error={importError}
+    notice={importNotice}
+    onModeChange={(mode) => {
+      setImportMode(mode); setImportError(''); setImportNotice(''); setUploadProgress(0);
+    }}
+    onFeishuUrlChange={(value) => { setFeishuUrl(value); setImportError(''); }}
+    onFileChange={(file) => { setUploadFile(file); setImportError(''); setUploadProgress(0); }}
+    onAppIdChange={setAppId}
+    onAppSecretChange={setAppSecret}
+    onSaveProvider={() => { void saveFeishuProvider(); }}
+    onConnectFeishu={() => { void connectFeishu(); }}
+    onRefreshCredentials={() => { void refreshCredentials(); }}
+    onImportAndRun={() => { void importAndRun(); }}
+    onRetryRun={importRunRetryAvailable && job?.available && job.enabled
+      ? () => { void retryImportedSource(); }
+      : undefined}
+    onDegrade={() => { void changeSourceLifecycle('degrade'); }}
+    onDelete={() => { void changeSourceLifecycle('delete'); }}
+  />;
+
   return <PostMeetingReviewView
     crmContext={crmContext}
     actorRole={actorRole}
@@ -502,9 +762,13 @@ export function PostMeetingReviewPanel({
     busy={busy}
     error={error}
     notice={notice}
+    sourceImport={sourceImport}
     onCustomerChange={changeCustomer}
     onMatterChange={changeMatter}
-    onSourceChange={(id) => { setSourceId(id); runSubmission.current = null; }}
+    onSourceChange={(id) => {
+      setSourceId(id); setImportError(''); setImportRunRetryAvailable(false);
+      runSubmission.current = null;
+    }}
     onControl={() => { void control(); }}
     onRun={() => { void run(); }}
     onOpenBatch={(id) => { void openBatch(id); }}

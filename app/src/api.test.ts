@@ -769,3 +769,106 @@ describe('typed API failures', () => {
     });
   });
 });
+
+describe('post-meeting import API', () => {
+  const anchor = { customerId: 'customer/1', matterId: 'matter/1' };
+  const source = {
+    id: 'source/1', ...anchor, title: '客户会谈.md', kind: 'uploaded_file' as const,
+    fingerprint: 'b'.repeat(64), aclVersion: 4, version: 4,
+    occurredAt: '2026-08-25T18:00:00.000Z',
+  };
+
+  it('uses only the bounded import, provider, OAuth and lifecycle endpoints', async () => {
+    const uploadReceipt = { source, replayed: false };
+    const feishuSource = { ...source, id: 'source/2', title: '飞书妙记', kind: 'transcript' as const };
+    const provider = {
+      configured: true, appId: 'cli_safe', hasSecret: true, enabled: true,
+      redirectUri: 'https://crm.lake2ocean.top/api/recording/oauth/feishu/callback',
+    };
+    const credentials = {
+      credentials: [{
+        source: 'feishu', status: 'active', expiresAt: '2026-08-26T20:00:00.000Z',
+        updatedAt: '2026-08-25T18:00:00.000Z',
+      }],
+    };
+    const lifecycle = {
+      id: source.id, aclVersion: 4, visibility: 'private', retentionState: 'degraded',
+      contentAvailable: false, backingPresent: true, replayed: false,
+    };
+    const deleted = { ...lifecycle, retentionState: 'deleted', backingPresent: false };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(200, uploadReceipt))
+      .mockResolvedValueOnce(response(200, { source: feishuSource, replayed: false }))
+      .mockResolvedValueOnce(response(200, provider))
+      .mockResolvedValueOnce(response(200, credentials))
+      .mockResolvedValueOnce(response(200, { ok: true, redirectUri: provider.redirectUri }))
+      .mockResolvedValueOnce(response(200, {
+        authUrl: 'https://accounts.feishu.cn/open-apis/authen/v1/authorize?app_id=cli_safe',
+      }))
+      .mockResolvedValueOnce(response(200, lifecycle))
+      .mockResolvedValueOnce(response(200, deleted));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const file = new File(['meeting body'], '客户会谈.md', { type: 'text/markdown' });
+    await expect(api.postMeetingImportUpload(file, {
+      ...anchor, occurredAt: '2026-08-25T18:00:00.000Z',
+    }, 'upload-key')).resolves.toEqual(uploadReceipt);
+    await expect(api.postMeetingImportFeishu({
+      url: 'https://team.feishu.cn/minutes/minute_token_001', ...anchor,
+    }, 'feishu-key')).resolves.toEqual({ source: feishuSource, replayed: false });
+    await expect(api.postMeetingFeishuProviderStatus()).resolves.toEqual(provider);
+    await expect(api.postMeetingRecordingCredentialStatus()).resolves.toEqual(credentials);
+    await expect(api.postMeetingSaveFeishuProviderConfig({
+      appId: 'cli_safe',
+    })).resolves.toEqual({ ok: true, redirectUri: provider.redirectUri });
+    await expect(api.postMeetingFeishuOAuthStart()).resolves.toEqual({
+      authUrl: 'https://accounts.feishu.cn/open-apis/authen/v1/authorize?app_id=cli_safe',
+    });
+    await expect(api.postMeetingDegradeSource(source, 'degrade-key')).resolves.toEqual(lifecycle);
+    await expect(api.postMeetingDeleteSource(source, 'delete-key')).resolves.toEqual(deleted);
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'http://localhost:3001/api/post-meeting/import/upload?customerId=customer%2F1&matterId=matter%2F1&occurredAt=2026-08-25T18%3A00%3A00.000Z',
+      'http://localhost:3001/api/post-meeting/import/feishu',
+      'http://localhost:3001/api/recording/provider/feishu',
+      'http://localhost:3001/api/recording/credentials',
+      'http://localhost:3001/api/recording/provider/feishu',
+      'http://localhost:3001/api/recording/oauth/feishu/start',
+      'http://localhost:3001/api/source-artifacts/source%2F1/degrade',
+      'http://localhost:3001/api/source-artifacts/source%2F1',
+    ]);
+    const uploadInit = fetchMock.mock.calls[0]![1] as RequestInit;
+    expect(uploadInit.body).toBeInstanceOf(FormData);
+    expect((uploadInit.headers as Headers).has('Content-Type')).toBe(false);
+    expect((uploadInit.headers as Headers).get('Idempotency-Key')).toBe('upload-key');
+    expect((fetchMock.mock.calls[1]![1] as RequestInit).body).toBe(JSON.stringify({
+      url: 'https://team.feishu.cn/minutes/minute_token_001', ...anchor,
+    }));
+    expect(((fetchMock.mock.calls[6]![1] as RequestInit).headers as Headers).get('Idempotency-Key')).toBe('degrade-key');
+    expect(JSON.parse(String((fetchMock.mock.calls[7]![1] as RequestInit).body))).toEqual({ expectedAclVersion: 4 });
+  });
+
+  it('fails closed on mismatched mounts, lifecycle IDs and secret-bearing status responses', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(response(200, {
+        source: { ...source, matterId: 'matter/2' }, replayed: false,
+      }))
+      .mockResolvedValueOnce(response(200, {
+        configured: true, appId: 'cli_safe', hasSecret: true, enabled: true,
+        redirectUri: 'https://crm.lake2ocean.top/api/recording/oauth/feishu/callback',
+        appSecret: 'must-not-cross',
+      }))
+      .mockResolvedValueOnce(response(200, {
+        id: 'source/other', aclVersion: 4, visibility: 'private', retentionState: 'degraded',
+        contentAvailable: false, backingPresent: true, replayed: false,
+      })));
+
+    await expect(api.postMeetingImportFeishu({
+      url: 'minute_token_001', ...anchor,
+    }, 'feishu-key')).rejects.toMatchObject({ code: 'invalid_response' });
+    await expect(api.postMeetingFeishuProviderStatus())
+      .rejects.toMatchObject({ code: 'invalid_response' });
+    await expect(api.postMeetingDegradeSource(source, 'degrade-key'))
+      .rejects.toMatchObject({ code: 'invalid_response' });
+  });
+});

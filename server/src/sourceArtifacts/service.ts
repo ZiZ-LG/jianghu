@@ -105,6 +105,37 @@ export function sourceArtifactMetadataIsValid(row: SourceArtifactMetadata): bool
   return validateSourceArtifactProjection(projectionFromStored(row)).ok;
 }
 
+function sameInstant(left: Date | null, right: Date | null): boolean {
+  return left?.getTime() === right?.getTime();
+}
+
+/** Exact body-free parity check between a backing-derived projection and stored metadata. */
+export function sourceArtifactProjectionMatchesMetadata(
+  projection: SourceArtifactProjection,
+  stored: SourceArtifactMetadata,
+): boolean {
+  return projection.id === stored.id
+    && projection.tenantId === stored.tenantId
+    && projection.accountId === stored.accountId
+    && projection.matterId === stored.matterId
+    && projection.personId === stored.personId
+    && projection.backingKind === stored.backingKind
+    && projection.backingId === stored.backingId
+    && projection.artifactKind === stored.artifactKind
+    && projection.source === stored.source
+    && projection.externalRef === stored.externalRef
+    && projection.idempotencyDomain === stored.idempotencyDomain
+    && projection.title === stored.title
+    && sameInstant(projection.occurredAt, stored.occurredAt)
+    && projection.fingerprintKind === stored.fingerprintKind
+    && projection.sourceFingerprint === stored.sourceFingerprint
+    && projection.retentionState === stored.retentionState
+    && projection.createdByUserId === stored.createdByUserId
+    && projection.visibility === stored.visibility
+    && projection.aclVersion === stored.aclVersion
+    && projection.createdAt.getTime() === stored.createdAt.getTime();
+}
+
 function assertProjection(row: SourceArtifactMetadata): void {
   const result = validateSourceArtifactProjection(projectionFromStored(row));
   if (!result.ok) throw new SourceArtifactError(`source_artifact_invalid:${result.code}`, 409);

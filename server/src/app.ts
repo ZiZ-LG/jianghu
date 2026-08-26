@@ -55,6 +55,11 @@ import { agentJobRoutes } from './agents/routes.js';
 import type { AgentCandidateCommitAdapter, AgentJobHandlers } from './agents/model.js';
 import { productionPostMeetingHandlers } from './postMeeting/handler.js';
 import { createPostMeetingCandidateCommitAdapter } from './postMeeting/commit.js';
+import { postMeetingImportRoutes } from './postMeeting/importRoutes.js';
+import {
+  productionFeishuImportProvider,
+  type FeishuImportProvider,
+} from './postMeeting/feishuImport.js';
 
 async function registerSecurityPlugins(app: FastifyInstance): Promise<void> {
   const isProd = process.env.NODE_ENV === 'production';
@@ -170,6 +175,8 @@ function registerRoutes(
   product: ProductAccess,
   agentHandlers: AgentJobHandlers,
   agentCandidateCommitAdapter?: AgentCandidateCommitAdapter,
+  feishuImportProvider: FeishuImportProvider = productionFeishuImportProvider,
+  publicBaseUrl?: string,
 ): void {
   app.get('/api/health/live', async () => ({ ok: true }));
   const readinessHandler = async (_req: unknown, reply: { code: (status: number) => { send: (body: { ok: boolean }) => unknown } }) => {
@@ -193,7 +200,7 @@ function registerRoutes(
   enrichRoutes(app);
   jobRoutes(app);
   voiceRoutes(app);
-  recordingRoutes(app, product.policy);
+  recordingRoutes(app, product.policy, { feishuImportProvider, publicBaseUrl });
   curatedRoutes(app);
   opportunityRoutes(app);
   accessTokenRoutes(app);
@@ -212,6 +219,7 @@ function registerRoutes(
   sourceArtifactRoutes(app, product.policy);
   reviewBatchRoutes(app, product.policy);
   agentJobRoutes(app, product.policy, agentHandlers, agentCandidateCommitAdapter);
+  postMeetingImportRoutes(app, product.policy, { feishuImportProvider });
 
   // ── 数据：拉取整树 / 应用变更 ──
   // 服务端组装时传入当前身份，统一执行归属与敏感字段 ACL。
@@ -457,6 +465,10 @@ export interface BuildAppOptions {
   agentHandlers?: AgentJobHandlers;
   /** Narrow transaction adapter for candidate jobs; never exposed as Prisma to handlers. */
   agentCandidateCommitAdapter?: AgentCandidateCommitAdapter;
+  /** Narrow exact-minute provider seam; production uses the existing Feishu adapter. */
+  feishuImportProvider?: FeishuImportProvider;
+  /** Redirect origin authority for Feishu OAuth. */
+  publicBaseUrl?: string;
 }
 
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
@@ -474,6 +486,6 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   registerCapabilityEnforcement(app, product);
   registerRoutes(app, options.readinessProbe ?? (async () => {
     await prisma.$queryRaw`SELECT 1`;
-  }), product, agentHandlers, agentCandidateCommitAdapter);
+  }), product, agentHandlers, agentCandidateCommitAdapter, options.feishuImportProvider, options.publicBaseUrl);
   return app;
 }

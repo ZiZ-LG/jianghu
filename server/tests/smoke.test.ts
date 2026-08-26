@@ -8,6 +8,7 @@ describe('buildApp', () => {
     let readinessChecks = 0;
     const app = await buildApp({
       logger: false,
+      publicBaseUrl: 'http://localhost:3001',
       readinessProbe: async () => { readinessChecks += 1; },
     });
     try {
@@ -24,6 +25,7 @@ describe('buildApp', () => {
     let readinessChecks = 0;
     const app = await buildApp({
       logger: false,
+      publicBaseUrl: 'http://localhost:3001',
       readinessProbe: async () => { readinessChecks += 1; },
     });
     try {
@@ -39,6 +41,7 @@ describe('buildApp', () => {
   it.each(['/api/health/ready', '/api/health'])('fails closed without leaking database errors at %s', async (url) => {
     const app = await buildApp({
       logger: false,
+      publicBaseUrl: 'http://localhost:3001',
       readinessProbe: async () => { throw new Error('postgresql://secret@db/internal'); },
     });
     try {
@@ -53,12 +56,19 @@ describe('buildApp', () => {
   });
 
   it('preserves warn-level startup logging when enabled', async () => {
-    const app = await buildApp({ logger: true });
+    const app = await buildApp({ logger: true, publicBaseUrl: 'http://localhost:3001' });
     try {
       expect(app.log.level).toBe('warn');
     } finally {
       await app.close();
     }
+  });
+
+  it('fails startup closed when the OAuth redirect origin is absent or insecure', async () => {
+    await expect(buildApp({ logger: false, publicBaseUrl: '' }))
+      .rejects.toMatchObject({ code: 'public_base_url_invalid' });
+    await expect(buildApp({ logger: false, publicBaseUrl: 'http://crm.lake2ocean.top' }))
+      .rejects.toMatchObject({ code: 'public_base_url_invalid' });
   });
 });
 

@@ -9,6 +9,7 @@ import {
   parsePostMeetingRuns,
   parsePostMeetingSourceOptions,
 } from './lib/postMeetingReview';
+import { exactPostMeetingImportReceipt } from './lib/postMeetingImport';
 import {
   ActorRoleSchema,
   AgentJobCardSchema,
@@ -19,6 +20,14 @@ import {
   commitmentReceiptMatchesCommand,
   CrmContextSnapshotSchema,
   PostMeetingReviewRequestSchema,
+  PostMeetingFeishuImportRequestSchema,
+  PostMeetingFeishuOAuthStartResponseSchema,
+  PostMeetingFeishuProviderConfigReceiptSchema,
+  PostMeetingFeishuProviderConfigRequestSchema,
+  PostMeetingFeishuProviderStatusSchema,
+  PostMeetingRecordingCredentialStatusResponseSchema,
+  PostMeetingSourceLifecycleReceiptSchema,
+  PostMeetingUploadMetadataSchema,
   ProductAccessSchema,
   QuickCaptureCommandReceiptSchema,
   TodayReadModelSchema,
@@ -33,7 +42,16 @@ import {
   type PostMeetingReviewBatchDetail,
   type PostMeetingReviewReceipt,
   type PostMeetingReviewRequest,
+  type PostMeetingFeishuImportRequest,
+  type PostMeetingFeishuOAuthStartResponse,
+  type PostMeetingFeishuProviderConfigReceipt,
+  type PostMeetingFeishuProviderConfigRequest,
+  type PostMeetingFeishuProviderStatus,
+  type PostMeetingRecordingCredentialStatusResponse,
+  type PostMeetingSourceImportReceipt,
+  type PostMeetingSourceLifecycleReceipt,
   type PostMeetingSourceOption,
+  type PostMeetingUploadMetadata,
   type QuickCaptureCommand,
   type QuickCaptureCommandReceipt,
   type TodayReadModel,
@@ -471,6 +489,114 @@ export const api = {
   ): Promise<PostMeetingSourceOption[]> => {
     const raw = await req<unknown>(`/api/source-artifacts?accountId=${encodeURIComponent(customerId)}&matterId=${encodeURIComponent(matterId)}&limit=100`);
     return postMeetingParse(() => parsePostMeetingSourceOptions(raw, { customerId, matterId }));
+  },
+  postMeetingImportUpload: async (
+    file: File,
+    metadata: PostMeetingUploadMetadata,
+    idempotencyKey: string,
+  ): Promise<PostMeetingSourceImportReceipt> => {
+    const payload = PostMeetingUploadMetadataSchema.parse(metadata);
+    const query = new URLSearchParams({
+      customerId: payload.customerId,
+      matterId: payload.matterId,
+    });
+    if (payload.occurredAt !== undefined && payload.occurredAt !== null) {
+      query.set('occurredAt', payload.occurredAt);
+    }
+    const form = new FormData();
+    form.append('file', file);
+    const raw = await commandReq<unknown>(`/api/post-meeting/import/upload?${query.toString()}`, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: form,
+    }, { timeoutMs: 120_000 });
+    return postMeetingParse(() => exactPostMeetingImportReceipt(raw, payload, 'uploaded_file'));
+  },
+  postMeetingImportFeishu: async (
+    request: PostMeetingFeishuImportRequest,
+    idempotencyKey: string,
+  ): Promise<PostMeetingSourceImportReceipt> => {
+    const payload = PostMeetingFeishuImportRequestSchema.parse(request);
+    const raw = await commandReq<unknown>('/api/post-meeting/import/feishu', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(payload),
+    }, { timeoutMs: 120_000 });
+    return postMeetingParse(() => exactPostMeetingImportReceipt(raw, payload, 'transcript'));
+  },
+  postMeetingFeishuProviderStatus: async (): Promise<PostMeetingFeishuProviderStatus> => {
+    const raw = await req<unknown>('/api/recording/provider/feishu');
+    return postMeetingParse(() => {
+      const parsed = PostMeetingFeishuProviderStatusSchema.safeParse(raw);
+      if (!parsed.success) throw parsed.error;
+      return parsed.data;
+    });
+  },
+  postMeetingRecordingCredentialStatus: async (): Promise<PostMeetingRecordingCredentialStatusResponse> => {
+    const raw = await req<unknown>('/api/recording/credentials');
+    return postMeetingParse(() => {
+      const parsed = PostMeetingRecordingCredentialStatusResponseSchema.safeParse(raw);
+      if (!parsed.success) throw parsed.error;
+      return parsed.data;
+    });
+  },
+  postMeetingSaveFeishuProviderConfig: async (
+    request: PostMeetingFeishuProviderConfigRequest,
+  ): Promise<PostMeetingFeishuProviderConfigReceipt> => {
+    const payload = PostMeetingFeishuProviderConfigRequestSchema.parse(request);
+    const raw = await req<unknown>('/api/recording/provider/feishu', {
+      method: 'PUT', body: JSON.stringify(payload),
+    });
+    return postMeetingParse(() => {
+      const parsed = PostMeetingFeishuProviderConfigReceiptSchema.safeParse(raw);
+      if (!parsed.success) throw parsed.error;
+      return parsed.data;
+    });
+  },
+  postMeetingFeishuOAuthStart: async (): Promise<PostMeetingFeishuOAuthStartResponse> => {
+    const raw = await req<unknown>('/api/recording/oauth/feishu/start');
+    return postMeetingParse(() => {
+      const parsed = PostMeetingFeishuOAuthStartResponseSchema.safeParse(raw);
+      if (!parsed.success) throw parsed.error;
+      return parsed.data;
+    });
+  },
+  postMeetingDegradeSource: async (
+    source: PostMeetingSourceOption,
+    idempotencyKey: string,
+  ): Promise<PostMeetingSourceLifecycleReceipt> => {
+    const raw = await commandReq<unknown>(`/api/source-artifacts/${encodeURIComponent(source.id)}/degrade`, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify({ expectedAclVersion: source.aclVersion }),
+    });
+    return postMeetingParse(() => {
+      const parsed = PostMeetingSourceLifecycleReceiptSchema.safeParse(raw);
+      if (!parsed.success || parsed.data.id !== source.id
+        || parsed.data.aclVersion !== source.aclVersion
+        || parsed.data.retentionState !== 'degraded'
+        || parsed.data.contentAvailable) throw new Error('source lifecycle mismatch');
+      return parsed.data;
+    });
+  },
+  postMeetingDeleteSource: async (
+    source: PostMeetingSourceOption,
+    idempotencyKey: string,
+  ): Promise<PostMeetingSourceLifecycleReceipt> => {
+    const raw = await commandReq<unknown>(`/api/source-artifacts/${encodeURIComponent(source.id)}`, {
+      method: 'DELETE',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify({ expectedAclVersion: source.aclVersion }),
+    });
+    return postMeetingParse(() => {
+      const parsed = PostMeetingSourceLifecycleReceiptSchema.safeParse(raw);
+      if (!parsed.success || parsed.data.id !== source.id
+        || parsed.data.aclVersion !== source.aclVersion
+        || parsed.data.retentionState !== 'deleted'
+        || parsed.data.contentAvailable
+        || parsed.data.backingPresent) throw new Error('source lifecycle mismatch');
+      return parsed.data;
+    });
   },
   postMeetingReview: async (batchId: string): Promise<PostMeetingReviewBatchDetail> => {
     const raw = await req<unknown>(`/api/review-batches/${encodeURIComponent(batchId)}`);
