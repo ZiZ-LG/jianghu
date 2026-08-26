@@ -299,6 +299,18 @@ candidate_semantic_mapping_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exe
    + (SELECT count(*) FROM \"Candidate\"
        WHERE \"legacySourceKind\" = 'EvidenceEvent' AND \"legacySourceId\" = 'legacy-evidence-event'
          AND \"dedupeKey\" = 'creator-private-v1:[\"legacy-owner-user\",\"evidence-source-v1:voice:legacy:EvidenceEvent:legacy-evidence-event\"]')" | tr -d '[:space:]')
+if [[ "$legacy_candidate_source_count" != 5 ]]; then
+  legacy_candidate_source_breakdown=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db \
+    psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
+    "SELECT concat(
+       'person=', (SELECT count(*) FROM \"PersonSuggestion\"),
+       ',relation=', (SELECT count(*) FROM \"RelSuggestion\"),
+       ',change=', (SELECT count(*) FROM \"ChangeProposal\"),
+       ',reminder=', (SELECT count(*) FROM \"Reminder\"),
+       ',evidence=', (SELECT count(*) FROM \"EvidenceEvent\" WHERE status = 'pending_review'))" \
+    | tr -d '[:space:]')
+  printf 'POSTGRES_OPS_SOURCE_COUNTS %s\n' "$legacy_candidate_source_breakdown" >&2
+fi
 [[ "$legacy_candidate_source_count" == 5 ]]
 [[ "$legacy_candidate_target_count" == 5 ]]
 [[ "$candidate_migration_count" == 1 ]]
