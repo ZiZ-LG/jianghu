@@ -1,0 +1,442 @@
+name: Stephen release
+
+on:
+  workflow_run:
+    workflows: ['CI']
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: stephen-production-release
+  cancel-in-progress: false
+
+jobs:
+  eligibility:
+    if: >-
+      vars.STEPHEN_RELEASE_ENABLED == '1' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      release_allowed: ${{ steps.paths.outputs.release_allowed }}
+      source_sha: ${{ steps.identity.outputs.source_sha }}
+    steps:
+      - name: Check out the exact green CI SHA
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Bind release identity to current main
+        id: identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          checked_out_sha=$(git rev-parse HEAD)
+          remote_main_sha=$(gh api --method GET \
+            "repos/$GH_REPO/git/ref/heads/main" --jq '.object.sha')
+          [[ "$checked_out_sha" == "$SOURCE_SHA" ]]
+          [[ "$remote_main_sha" == "$SOURCE_SHA" ]]
+          echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Check the first-parent Stephen release scope
+        id: paths
+        env:
+          SOURCE_SHA: ${{ steps.identity.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          git rev-parse "$SOURCE_SHA^1" >/dev/null
+          git diff --name-only -z "$SOURCE_SHA^1" "$SOURCE_SHA" > "$RUNNER_TEMP/stephen-release-paths"
+          relevant_change=0
+          public_build_change=0
+          candidate_manifest_change=0
+          while IFS= read -r -d '' changed_path; do
+            case "$changed_path" in
+              app/stephen/review-candidates/*)
+                relevant_change=1
+                candidate_manifest_change=1
+                ;;
+              app/stephen/*|app/public/stephen/*|app/src/components/StephenSite.test.ts|deploy/stephen*|docs/content/stephen-*|.github/workflows/stephen-*.yml)
+                relevant_change=1
+                public_build_change=1
+                ;;
+            esac
+          done < "$RUNNER_TEMP/stephen-release-paths"
+          release_allowed=false
+          if [[ "$relevant_change" -eq 1 && "$public_build_change" -eq 1 ]]; then
+            release_allowed=true
+          fi
+          {
+            echo "release_allowed=$release_allowed"
+            echo "## SAAS-607 release eligibility"
+            echo ""
+            echo "- source SHA: \`$SOURCE_SHA\`"
+            echo "- relevant Stephen change: \`$relevant_change\`"
+            echo "- public-build or release change: \`$public_build_change\`"
+            echo "- review-manifest change: \`$candidate_manifest_change\`"
+            if [[ "$candidate_manifest_change" -eq 1 && "$public_build_change" -eq 0 ]]; then
+              echo "- result: skipped; SAAS-606 pending manifests are not yet approved public-content payloads"
+            else
+              echo "- result: \`$release_allowed\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "release_allowed=$release_allowed" >> "$GITHUB_OUTPUT"
+
+      - name: Confirm Stephen checks for the exact SHA
+        if: steps.paths.outputs.release_allowed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ steps.identity.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 30); do
+            gh api --method GET "repos/$GH_REPO/actions/workflows/stephen-checks.yml/runs" \
+              -f head_sha="$SOURCE_SHA" \
+              -f branch=main \
+              -f event=push \
+              -F per_page=20 \
+              > "$RUNNER_TEMP/stephen-check-runs.json"
+            jq --arg source_sha "$SOURCE_SHA" --arg repository "$GH_REPO" \
+              '[.workflow_runs[]
+                | select(.head_sha == $source_sha)
+                | select(.head_branch == "main")
+                | select(.event == "push")
+                | select(.head_repository.full_name == $repository)]
+                | sort_by(.run_number)
+                | last // {}' \
+              "$RUNNER_TEMP/stephen-check-runs.json" \
+              > "$RUNNER_TEMP/stephen-check-run.json"
+            status=$(jq -r '.status // "missing"' "$RUNNER_TEMP/stephen-check-run.json")
+            conclusion=$(jq -r '.conclusion // ""' "$RUNNER_TEMP/stephen-check-run.json")
+            if [[ "$status" == "completed" ]]; then
+              [[ "$conclusion" == "success" ]]
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Stephen checks did not complete for the exact release SHA" >&2
+          exit 1
+
+  release:
+    needs: eligibility
+    if: needs.eligibility.outputs.release_allowed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production-stephen
+    steps:
+      - name: Check out the exact eligible SHA
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        working-directory: app
+        run: npm ci --install-links
+
+      - name: Type-check Stephen site
+        working-directory: app
+        run: npx tsc --noEmit -p stephen/tsconfig.json
+
+      - name: Type-check Stephen editorial and release automation
+        working-directory: app
+        run: npx tsc --noEmit -p stephen/tsconfig.editorial.json
+
+      - name: Test Stephen site and release controls
+        working-directory: app
+        run: npx vitest run --root stephen
+
+      - name: Build Stephen site
+        working-directory: app
+        run: npm run build:stephen
+
+      - name: Reconfirm current release authorization after Environment wait
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ needs.eligibility.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          release_enabled=$(gh api --method GET \
+            "repos/$GH_REPO/actions/variables/STEPHEN_RELEASE_ENABLED" \
+            --jq '.value')
+          [[ "$release_enabled" == '1' ]]
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
+          remote_main_sha=$(gh api --method GET \
+            "repos/$GH_REPO/git/ref/heads/main" --jq '.object.sha')
+          [[ "$remote_main_sha" == "$SOURCE_SHA" ]]
+
+      - name: Validate and bind the static artifact
+        env:
+          SOURCE_SHA: ${{ needs.eligibility.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          artifact="$GITHUB_WORKSPACE/app/dist/stephen"
+          node --experimental-strip-types app/stephen/scripts/stephen-release-cli.ts verify \
+            --artifact "$artifact" \
+            --source-sha "$SOURCE_SHA" \
+            --metadata-file "$artifact/.stephen-release.json" \
+            > "$RUNNER_TEMP/stephen-release-metadata-summary.json"
+
+      - name: Package, stage, activate, smoke, and roll back on failure
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ needs.eligibility.outputs.source_sha }}
+          SSH_HOST: ${{ secrets.STEPHEN_SSH_HOST }}
+          SSH_PORT: ${{ secrets.STEPHEN_SSH_PORT }}
+          SSH_USER: ${{ secrets.STEPHEN_SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.STEPHEN_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.STEPHEN_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          artifact="$GITHUB_WORKSPACE/app/dist/stephen"
+          metadata="$artifact/.stephen-release.json"
+          archive="$RUNNER_TEMP/stephen-$SOURCE_SHA.tar.gz"
+          key_file="$RUNNER_TEMP/stephen-release-key"
+          known_hosts_file="$RUNNER_TEMP/stephen-known-hosts"
+          smoke_body="$RUNNER_TEMP/stephen-smoke-body"
+          smoke_bundle="$RUNNER_TEMP/stephen-smoke-bundle"
+          cleanup() {
+            rm -f -- "$key_file" "$known_hosts_file" "$smoke_body" "$smoke_bundle"
+          }
+          trap cleanup EXIT
+
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$SSH_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$SSH_PORT" =~ ^[0-9]{1,5}$ ]]
+          (( SSH_PORT >= 1 && SSH_PORT <= 65535 ))
+          [[ "$SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ -n "$SSH_PRIVATE_KEY" && -n "$SSH_KNOWN_HOSTS" ]]
+
+          confirm_current_release_authorization() {
+            local release_enabled remote_main_sha
+            release_enabled=$(gh api --method GET \
+              "repos/$GH_REPO/actions/variables/STEPHEN_RELEASE_ENABLED" \
+              --jq '.value')
+            [[ "$release_enabled" == '1' ]]
+            [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
+            remote_main_sha=$(gh api --method GET \
+              "repos/$GH_REPO/git/ref/heads/main" --jq '.object.sha')
+            [[ "$remote_main_sha" == "$SOURCE_SHA" ]]
+          }
+
+          confirm_current_release_authorization
+
+          commit_epoch=$(git show -s --format=%ct "$SOURCE_SHA")
+          tar --sort=name --mtime="@$commit_epoch" --owner=0 --group=0 --numeric-owner \
+            -czf "$archive" -C "$artifact" .
+          archive_checksum=$(sha256sum "$archive" | awk '{print $1}')
+          [[ "$archive_checksum" =~ ^[0-9a-f]{64}$ ]]
+          content_checksum=$(jq -r '.contentChecksum' "$metadata")
+          [[ "$content_checksum" =~ ^[0-9a-f]{64}$ ]]
+          lease_id=$(printf '%s\0%s\0%s' \
+            "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$SOURCE_SHA" \
+            | sha256sum | cut -c1-32)
+          [[ "$lease_id" =~ ^[0-9a-f]{32}$ ]]
+
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$key_file"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$known_hosts_file"
+          chmod 600 "$key_file" "$known_hosts_file"
+          known_host_lookup="$SSH_HOST"
+          if [[ "$SSH_PORT" != "22" ]]; then
+            known_host_lookup="[$SSH_HOST]:$SSH_PORT"
+          fi
+          ssh-keygen -F "$known_host_lookup" -f "$known_hosts_file" >/dev/null
+          ssh_options=(
+            -i "$key_file"
+            -p "$SSH_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=$known_hosts_file"
+          )
+          remote="$SSH_USER@$SSH_HOST"
+          ssh "${ssh_options[@]}" "$remote" \
+            "stephen-upload $SOURCE_SHA" < "$archive"
+          ssh "${ssh_options[@]}" "$remote" \
+            "stephen-helper stage $SOURCE_SHA $archive_checksum"
+          confirm_current_release_authorization
+
+          rollback_pending_activation() {
+            set +e
+            ssh "${ssh_options[@]}" "$remote" \
+              "stephen-helper rollback $SOURCE_SHA $lease_id" >/dev/null
+            local rollback_status
+            rollback_status=$(ssh "${ssh_options[@]}" "$remote" 'stephen-helper status')
+            local status_result=$?
+            set -e
+            [[ "$status_result" -eq 0 ]] \
+              && ! grep -Fxq "current_sha=$SOURCE_SHA" <<< "$rollback_status" \
+              && grep -Fxq 'pending_source_sha=none' <<< "$rollback_status"
+          }
+
+          activation_output=''
+          set +e
+          activation_output=$(ssh "${ssh_options[@]}" "$remote" \
+            "stephen-helper activate $SOURCE_SHA $lease_id")
+          activation_status=$?
+          set -e
+          did_activate=0
+          if [[ "$activation_status" -eq 0 ]] \
+            && grep -Fxq 'activation_status=pending' <<< "$activation_output"; then
+            did_activate=1
+          elif [[ "$activation_status" -eq 0 ]] \
+            && grep -Fxq 'activation_status=already_active' <<< "$activation_output"; then
+            did_activate=0
+          else
+            set +e
+            remote_status=$(ssh "${ssh_options[@]}" "$remote" 'stephen-helper status')
+            status_result=$?
+            set -e
+            if [[ "$status_result" -eq 0 ]] \
+              && grep -Fxq "current_sha=$SOURCE_SHA" <<< "$remote_status" \
+              && grep -Fxq "pending_lease_id=$lease_id" <<< "$remote_status"; then
+              rollback_pending_activation
+            fi
+            echo 'Stephen activation response was not trustworthy; the server lease remains the final safety net' >&2
+            exit 1
+          fi
+
+          fetch_status() {
+            local expected=$1
+            local url=$2
+            local code
+            code=$(curl -q --silent --show-error --proto '=https' --max-redirs 0 --max-time 20 \
+              --output "$smoke_body" --write-out '%{http_code}' "$url")
+            [[ "$code" == "$expected" ]]
+          }
+
+          smoke_core() {
+            local base='https://stephen.lake2ocean.top'
+            fetch_status 200 "$base/" || return 1
+            cp "$smoke_body" "$smoke_bundle"
+            while IFS= read -r asset_path; do
+              curl -q --silent --show-error --fail --proto '=https' --max-redirs 0 \
+                --max-time 20 "$base$asset_path" \
+                >> "$smoke_bundle" || return 1
+            done < <(grep -Eo 'src="/assets/[^"]+\.js"' "$smoke_body" \
+              | sed -E 's/^src="([^"]+)"$/\1/' | sort -u)
+            for marker in \
+              'AI 技术' \
+              '大客户销售' \
+              '岗位组织转型' \
+              '京ICP备2026046195号-2' \
+              '京公网安备11010802049879号'; do
+              grep -Fq "$marker" "$smoke_bundle" || return 1
+            done
+            fetch_status 200 "$base/fieldbook/" || return 1
+            fetch_status 200 "$base/policy/" || return 1
+            fetch_status 200 "$base/healthz-stephen" || return 1
+            [[ $(tr -d '[:space:]' < "$smoke_body") == 'ok' ]] || return 1
+            fetch_status 200 "$base/release-id.json" || return 1
+            jq -e --arg source_sha "$SOURCE_SHA" --arg checksum "$content_checksum" \
+              '.schemaVersion == 1
+                and .task == "SAAS-607"
+                and .sourceSha == $source_sha
+                and .contentChecksum == $checksum' \
+              "$smoke_body" >/dev/null || return 1
+            fetch_status 404 "$base/api/" || return 1
+            fetch_status 200 "$base/beian-police.png" || return 1
+            [[ -s "$smoke_body" ]] || return 1
+            fetch_status 200 'https://lake2ocean.top/' || return 1
+            fetch_status 200 'https://crm.lake2ocean.top/' || return 1
+            fetch_status 200 'https://crm.lake2ocean.top/api/health' || return 1
+            fetch_status 200 'https://zizai.tech/' || return 1
+          }
+
+          smoke_release() {
+            smoke_core || return 1
+            while IFS= read -r smoke_path; do
+              fetch_status 200 "https://stephen.lake2ocean.top$smoke_path" || return 1
+            done < <(jq -r '.smokePaths[]' "$metadata")
+          }
+
+          smoke_after_rollback() {
+            fetch_status 200 'https://stephen.lake2ocean.top/' || return 1
+            fetch_status 200 'https://stephen.lake2ocean.top/healthz-stephen' || return 1
+            [[ $(tr -d '[:space:]' < "$smoke_body") == 'ok' ]] || return 1
+            fetch_status 404 'https://stephen.lake2ocean.top/api/' || return 1
+            fetch_status 200 'https://lake2ocean.top/' || return 1
+            fetch_status 200 'https://crm.lake2ocean.top/' || return 1
+            fetch_status 200 'https://crm.lake2ocean.top/api/health' || return 1
+            fetch_status 200 'https://zizai.tech/' || return 1
+          }
+
+          set +e
+          smoke_release
+          smoke_status=$?
+          set -e
+          if [[ "$smoke_status" -ne 0 ]]; then
+            if [[ "$did_activate" -eq 1 ]]; then
+              rollback_pending_activation
+              smoke_after_rollback
+            fi
+            echo 'Stephen release smoke failed; activation was rolled back when applicable' >&2
+            exit 1
+          fi
+
+          if ! confirm_current_release_authorization; then
+            if [[ "$did_activate" -eq 1 ]]; then
+              rollback_pending_activation
+              smoke_after_rollback
+            fi
+            echo 'Release authorization changed before finalize; pending activation rolled back' >&2
+            exit 1
+          fi
+
+          if [[ "$did_activate" -eq 1 ]]; then
+            set +e
+            finalize_output=$(ssh "${ssh_options[@]}" "$remote" \
+              "stephen-helper finalize $SOURCE_SHA $lease_id")
+            finalize_result=$?
+            finalize_status=$(ssh "${ssh_options[@]}" "$remote" 'stephen-helper status')
+            status_result=$?
+            set -e
+            if [[ "$status_result" -ne 0 ]] \
+              || ! grep -Fxq "current_sha=$SOURCE_SHA" <<< "$finalize_status"; then
+              echo 'Unable to reconcile Stephen finalize state; expiry lease remains armed' >&2
+              exit 1
+            fi
+            if ! grep -Fxq 'pending_source_sha=none' <<< "$finalize_status"; then
+              rollback_pending_activation
+              smoke_after_rollback
+              echo 'Stephen finalize failed; pending activation rolled back' >&2
+              exit 1
+            fi
+            if [[ "$finalize_result" -eq 0 ]]; then
+              grep -Fxq 'finalize_status=finalized' <<< "$finalize_output"
+            fi
+          fi
+
+          {
+            echo "## SAAS-607 production release"
+            echo ""
+            echo "- source SHA: \`$SOURCE_SHA\`"
+            echo "- archive checksum: \`$archive_checksum\`"
+            echo "- content checksum: \`$content_checksum\`"
+            echo "- exact-SHA checks: passed"
+            echo "- activation lease: finalized or already active"
+            echo "- Stephen and shared-host smoke: passed"
+          } >> "$GITHUB_STEP_SUMMARY"

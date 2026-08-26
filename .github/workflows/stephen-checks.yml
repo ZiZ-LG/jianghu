@@ -25,6 +25,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -40,10 +41,21 @@ jobs:
         working-directory: app
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Prove repository-variable read access for the release gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh api --method GET "repos/$GH_REPO/actions/variables" \
+            -F per_page=1 > "$RUNNER_TEMP/stephen-variable-access.json"
+          jq -e '.variables | type == "array"' \
+            "$RUNNER_TEMP/stephen-variable-access.json" >/dev/null
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -63,3 +75,24 @@ jobs:
 
       - name: Build Stephen site
         run: npm run build:stephen
+
+      - name: Exercise the root-owned production stage boundary
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          artifact="$GITHUB_WORKSPACE/app/dist/stephen"
+          metadata="$artifact/.stephen-release.json"
+          archive="$RUNNER_TEMP/stephen-production-stage.tar.gz"
+          node --experimental-strip-types stephen/scripts/stephen-release-cli.ts verify \
+            --artifact "$artifact" \
+            --source-sha "$SOURCE_SHA" \
+            --metadata-file "$metadata" \
+            > "$RUNNER_TEMP/stephen-production-stage-metadata.json"
+          tar --sort=name --owner=0 --group=0 --numeric-owner \
+            -czf "$archive" -C "$artifact" .
+          checksum=$(sha256sum "$archive" | awk '{print $1}')
+          sudo env GITHUB_ACTIONS=true RUNNER_ENVIRONMENT=github-hosted \
+            bash "$GITHUB_WORKSPACE/deploy/stephen-production-stage-test.sh" \
+            "$SOURCE_SHA" "$archive" "$checksum" \
+            "$GITHUB_WORKSPACE/deploy/stephen-remote-release.sh" "$(id -u)"

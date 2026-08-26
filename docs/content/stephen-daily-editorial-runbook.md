@@ -1,8 +1,8 @@
 # 自我修养知识库｜每日编辑与受控发布手册 v1
 
-> 状态：`SAAS-606 / IMPLEMENTED-NOT-MERGED`
+> 状态：`SAAS-606 / MERGED`；`SAAS-607 / IMPLEMENTED-NOT-MERGED`
 >
-> 当前生产约束：自动发布未启用，停止开关已合上。SAAS-606 只增加非公开候选 manifest 和 GitHub Draft PR 人工审核门，不授权生产部署、流量切换或自动发布。
+> 当前生产约束：自动发布未启用，停止开关已合上，`STEPHEN_DAILY_SCHEDULE_ENABLED` 与 `STEPHEN_RELEASE_ENABLED` 均未启用。SAAS-607 增加失败关闭的静态发布流水线候选，但不授权生产部署、流量切换、Nginx/容器修改或首次自动发布启用。
 
 ## 1. 目标与边界
 
@@ -37,6 +37,8 @@
 - 每日审核契约：`app/stephen/scripts/stephen-daily-review.ts`
 - 每日审核 CLI：`app/stephen/scripts/stephen-daily-review-cli.ts`
 - 每日 Draft PR 工作流：`.github/workflows/stephen-daily-intake.yml`
+- 静态发布工作流：`.github/workflows/stephen-release.yml`
+- 静态发布运行手册：`docs/content/stephen-release-runbook.md`
 - 公开集合：`app/stephen/src/content/publicItems.ts`
 
 默认控制值：
@@ -238,7 +240,7 @@ node --use-env-proxy --experimental-strip-types stephen/scripts/stephen-editoria
 - `EDITORIAL_AI_MODEL`
 - `EDITORIAL_AI_API_KEY`
 
-API Key 不得出现在仓库、命令参数、日志、artifact 或 PR。SAAS-606 不创建 artifact，也不创建生产 Environment、SSH 密钥、Nginx 修改或发布流水线；这些仍属于 SAAS-607～SAAS-608 的后续阶段门。
+API Key 不得出现在仓库、命令参数、日志、artifact 或 PR。SAAS-606 不创建 artifact，也不创建生产 Environment、SSH 密钥、Nginx 修改或发布流水线；SAAS-607 只提交发布流水线、候选 Nginx 契约和服务器 helper，真实 Environment/SSH 身份/运行时迁移与首次启用仍需项目所有者另行批准。监控、熔断、保留策略和持续运行收口仍属于 SAAS-608。
 
 ## 12. SAAS-606 每日候选 Draft PR 人工审核门
 
