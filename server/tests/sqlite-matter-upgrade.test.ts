@@ -30,6 +30,34 @@ const methodologyDataTables = [
   'MethodologyMigrationRun',
 ] as const;
 const methodologyTables = [...methodologyFoundationTables, ...methodologyDataTables] as const;
+const legacyAccountIndexSpecs = [
+  {
+    name: 'Account_tenantId_id_key', unique: true, columns: ['tenantId', 'id'],
+    sql: 'CREATE UNIQUE INDEX IF NOT EXISTS "Account_tenantId_id_key" ON "Account"("tenantId", "id")',
+  },
+  {
+    name: 'Account_tenantId_externalRef_key', unique: true, columns: ['tenantId', 'externalRef'],
+    sql: 'CREATE UNIQUE INDEX IF NOT EXISTS "Account_tenantId_externalRef_key" ON "Account"("tenantId", "externalRef")',
+  },
+  {
+    name: 'Account_tenantId_unifiedCreditCode_key', unique: true,
+    columns: ['tenantId', 'unifiedCreditCode'],
+    sql: 'CREATE UNIQUE INDEX IF NOT EXISTS "Account_tenantId_unifiedCreditCode_key" ON "Account"("tenantId", "unifiedCreditCode")',
+  },
+  {
+    name: 'Account_tenantId_idx', unique: false, columns: ['tenantId'],
+    sql: 'CREATE INDEX IF NOT EXISTS "Account_tenantId_idx" ON "Account"("tenantId")',
+  },
+  {
+    name: 'Account_tenantId_primaryOwnerUserId_idx', unique: false,
+    columns: ['tenantId', 'primaryOwnerUserId'],
+    sql: 'CREATE INDEX IF NOT EXISTS "Account_tenantId_primaryOwnerUserId_idx" ON "Account"("tenantId", "primaryOwnerUserId")',
+  },
+  {
+    name: 'Account_tenantId_archivedAt_idx', unique: false, columns: ['tenantId', 'archivedAt'],
+    sql: 'CREATE INDEX IF NOT EXISTS "Account_tenantId_archivedAt_idx" ON "Account"("tenantId", "archivedAt")',
+  },
+] as const;
 
 function run(command: string, args: string[], databaseUrl: string) {
   const result = spawnSync(command, args, {
@@ -174,15 +202,8 @@ async function createLegacyFixture(databasePath: string, databaseUrl: string): P
     // Explicitly remove global SQLite index names before replacing the table.
     // A slow CI run once retained one of these names after DROP TABLE, so the
     // fixture clears its exact namespace instead of relying on implicit cleanup.
-    for (const indexName of [
-      'Account_tenantId_id_key',
-      'Account_tenantId_externalRef_key',
-      'Account_tenantId_unifiedCreditCode_key',
-      'Account_tenantId_idx',
-      'Account_tenantId_primaryOwnerUserId_idx',
-      'Account_tenantId_archivedAt_idx',
-    ]) {
-      await client.$executeRawUnsafe(`DROP INDEX IF EXISTS "${indexName}"`);
+    for (const spec of legacyAccountIndexSpecs) {
+      await client.$executeRawUnsafe(`DROP INDEX IF EXISTS "${spec.name}"`);
     }
     await client.$executeRawUnsafe('DROP TABLE "Account"');
     await client.$executeRawUnsafe(`CREATE TABLE "Account" (
@@ -203,12 +224,29 @@ async function createLegacyFixture(databasePath: string, databaseUrl: string): P
       "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       CONSTRAINT "Account_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant" ("id") ON DELETE CASCADE ON UPDATE CASCADE
     )`);
-    await client.$executeRawUnsafe('CREATE UNIQUE INDEX "Account_tenantId_id_key" ON "Account"("tenantId", "id")');
-    await client.$executeRawUnsafe('CREATE UNIQUE INDEX "Account_tenantId_externalRef_key" ON "Account"("tenantId", "externalRef")');
-    await client.$executeRawUnsafe('CREATE UNIQUE INDEX "Account_tenantId_unifiedCreditCode_key" ON "Account"("tenantId", "unifiedCreditCode")');
-    await client.$executeRawUnsafe('CREATE INDEX "Account_tenantId_idx" ON "Account"("tenantId")');
-    await client.$executeRawUnsafe('CREATE INDEX "Account_tenantId_primaryOwnerUserId_idx" ON "Account"("tenantId", "primaryOwnerUserId")');
-    await client.$executeRawUnsafe('CREATE INDEX "Account_tenantId_archivedAt_idx" ON "Account"("tenantId", "archivedAt")');
+    // Re-clear the namespace after CREATE TABLE, then use idempotent DDL. Slow
+    // CI runners have previously surfaced a transient stale sqlite_master name
+    // after the pre-drop. Exact shape validation below prevents IF NOT EXISTS
+    // from hiding a wrong or foreign index.
+    for (const spec of legacyAccountIndexSpecs) {
+      await client.$executeRawUnsafe(`DROP INDEX IF EXISTS "${spec.name}"`);
+      await client.$executeRawUnsafe(spec.sql);
+    }
+    const accountIndexes = await client.$queryRawUnsafe<Array<{ name: string; unique: number }>>(
+      'PRAGMA index_list("Account")',
+    );
+    const accountIndexesByName = new Map(accountIndexes.map((row) => [row.name, row]));
+    for (const spec of legacyAccountIndexSpecs) {
+      const row = accountIndexesByName.get(spec.name);
+      const columns = await client.$queryRawUnsafe<Array<{ name: string }>>(
+        `PRAGMA index_info("${spec.name}")`,
+      );
+      if (!row || Boolean(row.unique) !== spec.unique
+        || columns.length !== spec.columns.length
+        || columns.some((column, index) => column.name !== spec.columns[index])) {
+        throw new Error(`legacy Account index reconstruction failed: ${spec.name}`);
+      }
+    }
     await client.$executeRawUnsafe(
       `INSERT INTO "Tenant" (id, name) VALUES ('sqlite-upgrade-tenant', 'SQLite Upgrade Tenant')`,
     );
