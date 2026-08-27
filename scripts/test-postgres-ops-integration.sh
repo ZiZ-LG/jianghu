@@ -157,6 +157,11 @@ POSTGRES_OPS_STAGE='start-migration-server'
 docker compose -p "$COMPOSE_PROJECT_NAME" up -d server >/dev/null
 POSTGRES_OPS_STAGE='wait-migration-server'
 wait_for_server_healthy
+# Startup migration and health verification is complete. Stop runtime workers
+# before deterministic legacy fixture assertions: patrol starts after 30 seconds
+# and could otherwise mutate the Reminder/Candidate fixture concurrently.
+POSTGRES_OPS_STAGE='stop-migration-server'
+docker compose -p "$COMPOSE_PROJECT_NAME" stop server >/dev/null
 POSTGRES_OPS_STAGE='verify-migration-history'
 migration_count=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
   'SELECT count(*) FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL' | tr -d '[:space:]')

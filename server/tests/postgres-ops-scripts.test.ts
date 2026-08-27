@@ -672,6 +672,18 @@ describe('backup artifacts stay outside source and Docker contexts', () => {
 });
 
 describe('CORE-201 Candidate migration operations', () => {
+  it('stops runtime workers before deterministic legacy fixture assertions', async () => {
+    const drill = await read('scripts/test-postgres-ops-integration.sh');
+    const waitIndex = drill.indexOf('wait_for_server_healthy');
+    const stopIndex = drill.indexOf("POSTGRES_OPS_STAGE='stop-migration-server'");
+    const historyIndex = drill.indexOf("POSTGRES_OPS_STAGE='verify-migration-history'");
+
+    expect(waitIndex).toBeGreaterThanOrEqual(0);
+    expect(stopIndex).toBeGreaterThan(waitIndex);
+    expect(stopIndex).toBeLessThan(historyIndex);
+    expect(drill).toContain('docker compose -p "$COMPOSE_PROJECT_NAME" stop server');
+  });
+
   it('failure-injects legacy, interrupted, partial, adoption, and restore paths', async () => {
     const deploy = await read('server/scripts/deploy-postgres-migrations.sh');
     const drill = await read('scripts/test-postgres-ops-integration.sh');
