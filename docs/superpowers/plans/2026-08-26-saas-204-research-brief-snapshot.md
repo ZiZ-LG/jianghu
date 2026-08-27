@@ -109,8 +109,8 @@ Bounds are fixed: at most 5 subject candidates, 20 sources, 8 sections, 20 unkno
 - Consumes: existing UTC instant, safe identifier and Agent output-reference conventions from `packages/domain-contracts`.
 - Produces: `ResearchBriefPreparedPayloadSchema`, `ResearchBriefSnapshotMetadataSchema`, `ResearchBriefSnapshotDetailSchema`, list/detail response schemas and inferred TypeScript types.
 
-- [ ] **Step 1: Write strict schema tests before the implementation.** Cover one matched/ready payload, one matched/partial payload and one ambiguous/blocked payload; reject an ambiguous payload containing sections, matched external sources without a stable selected anchor, source-less sections, duplicate source IDs, dangling source IDs, failed sources without a safe failure code, a fresh source without `retrievedAt`, non-HTTPS citation URLs, future-inverted timestamps, count/size overflow and the fields `contentEnc`, `token`, `secret`, `prompt`, `rawResponse` or unknown keys.
-- [ ] **Step 2: Run the RED contract test.**
+- [x] **Step 1: Write strict schema tests before the implementation.** Cover one matched/ready payload, one matched/partial payload and one ambiguous/blocked payload; reject an ambiguous payload containing sections, matched external sources without a stable selected anchor, source-less sections, duplicate source IDs, dangling source IDs, failed sources without a safe failure code, a fresh source without `retrievedAt`, non-HTTPS citation URLs, future-inverted timestamps, count/size overflow and the fields `contentEnc`, `token`, `secret`, `prompt`, `rawResponse` or unknown keys.
+- [x] **Step 2: Run the RED contract test.**
 
 ```bash
 cd packages/domain-contracts
@@ -119,8 +119,8 @@ npx vitest run tests/researchBrief.test.ts
 
 Expected result: the suite fails because `researchBrief.ts` and its exports do not exist.
 
-- [ ] **Step 3: Implement the exact schemas and cross-field refinements.** Canonical output must require `status=blocked` when the subject is not matched, derive `ready | partial | blocked` from the validated payload in Server code, and never accept caller-supplied counts or hashes.
-- [ ] **Step 4: Run the focused contract suite and package gates.**
+- [x] **Step 3: Implement the exact schemas and cross-field refinements.** Canonical output must require `status=blocked` when the subject is not matched, derive `ready | partial | blocked` from the validated payload in Server code, and never accept caller-supplied counts or hashes.
+- [x] **Step 4: Run the focused contract suite and package gates.**
 
 ```bash
 cd packages/domain-contracts
@@ -157,8 +157,8 @@ Expected result: all commands pass and existing Agent contracts still accept onl
 - Consumes: exact CORE-206 predecessor schema and `DataMigrationState` marker discipline.
 - Produces: Prisma model `ResearchBriefSnapshot`, migration marker `SAAS-204-research-brief-snapshot-v1`, report/apply/verify functions and exact SQLite/PostgreSQL schema-state inspectors.
 
-- [ ] **Step 1: Write RED migration/schema tests.** Assert the new table is absent in `20260826_pre_saas204.prisma`, present with the exact fields/indexes in current schemas, created expand-only by migration `20260826000000_expand_research_brief_snapshot`, and never backfills or mutates Account, Opportunity, CuratedSummary, SourceArtifact, Candidate, ReviewBatch, AgentRun or formal tables.
-- [ ] **Step 2: Add the portable model exactly as follows.**
+- [x] **Step 1: Write RED migration/schema tests.** Assert the new table is absent in `20260826_pre_saas204.prisma`, present with the exact fields/indexes in current schemas, created expand-only by migration `20260826000000_expand_research_brief_snapshot`, and never backfills or mutates Account, Opportunity, CuratedSummary, SourceArtifact, Candidate, ReviewBatch, AgentRun or formal tables.
+- [x] **Step 2: Add the portable model exactly as follows.**
 
 ```prisma
 model ResearchBriefSnapshot {
@@ -192,9 +192,9 @@ model ResearchBriefSnapshot {
 
 Also add `researchBriefSnapshots ResearchBriefSnapshot[]` to `Tenant`. Do not add a relation to Account/Opportunity/User that could cascade-delete a historical snapshot; parent identity is revalidated explicitly by tenant-scoped service queries.
 
-- [ ] **Step 3: Implement marker-last report/apply/verify.** The marker details contain schema contract version, canonical schema fingerprint and zero-backfill counts. `--dry-run` performs no DDL/data write; `--apply` accepts only the exact predecessor or exact successor shape; `--verify` rejects unknown columns/indexes, partial tables, invalid row counts/status/count ranges and marker checksum drift.
-- [ ] **Step 4: Integrate guarded SQLite and PostgreSQL operations.** SQLite must inspect/report before backup and `db push`; PostgreSQL must run versioned `migrate deploy`, report/apply/verify, adopt committed DDL after an interrupted marker step, reject partial/semantic/marker drift, exercise authenticated restore, and prove fresh install plus second update. The root integration test must print `SAAS_204_RESEARCH_BRIEF_MIGRATION_OK=1` and retain `POSTGRES_OPS_INTEGRATION_OK=1`.
-- [ ] **Step 5: Run the focused migration gates.**
+- [x] **Step 3: Implement marker-last report/apply/verify.** The marker details contain schema contract version, canonical schema fingerprint and zero-backfill counts. `--dry-run` performs no DDL/data write; `--apply` accepts only the exact predecessor or exact successor shape; `--verify` rejects unknown columns/indexes, partial tables, invalid row counts/status/count ranges and marker checksum drift.
+- [x] **Step 4: Integrate guarded SQLite and PostgreSQL operations.** SQLite must inspect/report before backup and `db push`; PostgreSQL must run versioned `migrate deploy`, report/apply/verify, adopt committed DDL after an interrupted marker step, reject partial/semantic/marker drift, exercise authenticated restore, and prove fresh install plus second update. The root integration test must print `SAAS_204_RESEARCH_BRIEF_MIGRATION_OK=1` and retain `POSTGRES_OPS_INTEGRATION_OK=1`.
+- [x] **Step 5: Run the focused migration gates.**
 
 ```bash
 cd server
@@ -244,12 +244,12 @@ export async function commitResearchBriefSnapshot(
 ): Promise<{ id: string; version: number; replayed: boolean }>;
 ```
 
-- [ ] **Step 1: Write RED semantic tests.** Prove deterministic canonical serialization/hash/status/count/freshness derivation, timestamp ordering, duplicate/dangling source rejection, stable subject anchor matching and maximum payload bytes. Prove ambiguous/unmatched payloads cannot contain conclusive sections.
-- [ ] **Step 2: Write RED service tests.** Cover current role reload, viewer denial before side effects, tenant/customer/matter mismatch, archived parents, revoked capability/scope, source-artifact mount/creator/ACL/retention/fingerprint drift, human CuratedSummary attribution, legacy AI cache labeling, same-key replay, changed-payload conflict, concurrent duplicate commit and transaction rollback.
-- [ ] **Step 3: Implement canonical model helpers.** Export `canonicalResearchBriefPayload`, `hashResearchBriefPayload`, `deriveResearchBriefMetadata` and `validateResearchBriefPreparedPayload`. Derive status/counts/basedOnAt/freshUntil/sourceSetHash server-side; never trust caller metadata.
-- [ ] **Step 4: Implement the serializable commit.** Preparation remains outside the transaction. Inside one serializable transaction, reload actor/role, policy inputs, active Customer/Matter and every referenced local source; enforce creator-private ownership; encrypt canonical payload; insert one immutable row; write AuditEvent containing only snapshot ID, counts and hashes. No update/delete method and no formal Prisma model writer may be passed into this module.
-- [ ] **Step 5: Prove plaintext and formal-state absence.** Snapshot Account/Matter/Person/Edge/Evidence/PlanAction/Interaction/Candidate/ReviewBatch/CuratedSummary rows and versions before/after commit; assert equality. Query the snapshot row/AuditEvent/CommandRun/AgentRun fixtures and assert source text, section text, URLs, provider errors and credentials do not appear outside `payloadEnc`.
-- [ ] **Step 6: Run focused model/service/security suites.**
+- [x] **Step 1: Write RED semantic tests.** Prove deterministic canonical serialization/hash/status/count/freshness derivation, timestamp ordering, duplicate/dangling source rejection, stable subject anchor matching and maximum payload bytes. Prove ambiguous/unmatched payloads cannot contain conclusive sections.
+- [x] **Step 2: Write RED service tests.** Cover current role reload, viewer denial before side effects, tenant/customer/matter mismatch, archived parents, revoked capability/scope, source-artifact mount/creator/ACL/retention/fingerprint drift, human CuratedSummary attribution, legacy AI cache labeling, same-key replay, changed-payload conflict, concurrent duplicate commit and transaction rollback.
+- [x] **Step 3: Implement canonical model helpers.** Export `canonicalResearchBriefPayload`, `hashResearchBriefPayload`, `deriveResearchBriefMetadata` and `validateResearchBriefPreparedPayload`. Derive status/counts/basedOnAt/freshUntil/sourceSetHash server-side; never trust caller metadata.
+- [x] **Step 4: Implement the serializable commit.** Preparation remains outside the transaction. Inside one serializable transaction, reload actor/role, policy inputs, active Customer/Matter and every referenced local source; enforce creator-private ownership; encrypt canonical payload; insert one immutable row; write AuditEvent containing only snapshot ID, counts and hashes. No update/delete method and no formal Prisma model writer may be passed into this module.
+- [x] **Step 5: Prove plaintext and formal-state absence.** Snapshot Account/Matter/Person/Edge/Evidence/PlanAction/Interaction/Candidate/ReviewBatch/CuratedSummary rows and versions before/after commit; assert equality. Query the snapshot row/AuditEvent/CommandRun/AgentRun fixtures and assert source text, section text, URLs, provider errors and credentials do not appear outside `payloadEnc`.
+- [x] **Step 6: Run focused model/service/security suites.**
 
 ```bash
 cd server
@@ -274,11 +274,11 @@ Expected result: all focused tests pass with zero formal writes and no plaintext
 - Consumes: `commitResearchBriefSnapshot`, encrypted snapshot payload and current scope/source authorization helpers.
 - Produces: `GET /api/research-briefs?customerId=<id>&matterId=<optional>` and `GET /api/research-briefs/:id`; no create/refresh/select/share route.
 
-- [ ] **Step 1: Write RED route tests.** Cover unauthenticated, cross-tenant, non-creator, viewer-owned vs viewer-non-owned Customer, matter-parent mismatch, archived/reassigned parent, revoked product capability, cursor/limit bounds, hidden/missing same-shape, encrypted-at-rest detail, source ACL/retention/fingerprint drift and stale formal/CuratedSummary versions.
-- [ ] **Step 2: Implement metadata list projection.** Return only ID, Customer/Matter IDs, status/subjectStatus, counts, version and timestamps. Filter by tenant + creator before loading rows, intersect current EffectiveResourceScope, use a deterministic `(generatedAt,id)` cursor, cap page size at 50 and never decrypt payload for list.
-- [ ] **Step 3: Implement detail projection.** Decrypt only after creator/current-scope authorization. Revalidate every local source. If a sensitive source is now hidden/tombstoned, omit dependent section content and return a bounded `unavailable` source plus an unknown/failure marker; if formal or human-curated source versions changed, preserve the historical section but mark it stale. Never return ciphertext, raw failure data, prompt/model response or source body.
-- [ ] **Step 4: Preserve the Agent boundary.** `pre_meeting_brief@core-206.v1` remains unavailable and has no production handler in SAAS-204. Add a static assertion that the new routes do not call LLM/QCC/Feishu, do not create AgentRun and do not expose a mutation endpoint. The existing `research_brief` output kind remains body-free `{kind,id,version}`.
-- [ ] **Step 5: Run focused route and Agent regression suites.**
+- [x] **Step 1: Write RED route tests.** Cover unauthenticated, cross-tenant, non-creator, viewer-owned vs viewer-non-owned Customer, matter-parent mismatch, archived/reassigned parent, revoked product capability, cursor/limit bounds, hidden/missing same-shape, encrypted-at-rest detail, source ACL/retention/fingerprint drift and stale formal/CuratedSummary versions.
+- [x] **Step 2: Implement metadata list projection.** Return only ID, Customer/Matter IDs, status/subjectStatus, counts, version and timestamps. Filter by tenant + creator before loading rows, intersect current EffectiveResourceScope, use a deterministic `(generatedAt,id)` cursor, cap page size at 50 and never decrypt payload for list.
+- [x] **Step 3: Implement detail projection.** Decrypt only after creator/current-scope authorization. Revalidate every local source. If a sensitive source is now hidden/tombstoned, omit dependent section content and return a bounded `unavailable` source plus an unknown/failure marker; if formal or human-curated source versions changed, preserve the historical section but mark it stale. Never return ciphertext, raw failure data, prompt/model response or source body.
+- [x] **Step 4: Preserve the Agent boundary.** `pre_meeting_brief@core-206.v1` remains unavailable and has no production handler in SAAS-204. Add a static assertion that the new routes do not call LLM/QCC/Feishu, do not create AgentRun and do not expose a mutation endpoint. The existing `research_brief` output kind remains body-free `{kind,id,version}`.
+- [x] **Step 5: Run focused route and Agent regression suites.**
 
 ```bash
 cd server
@@ -302,7 +302,7 @@ Expected result: list/detail are creator/tenant/scope/ACL safe; viewer writes re
 - Consumes: all Task 1–4 outputs and repository CI/release gates.
 - Produces: independently reviewable migration/operations commit, business commit, governance close commit, exact-SHA CI evidence and only SAAS-205 READY.
 
-- [ ] **Step 1: Refresh copied local package dependencies.**
+- [x] **Step 1: Refresh copied local package dependencies.**
 
 ```bash
 cd server && npm ci --install-links
@@ -311,7 +311,7 @@ cd ../app && npm ci --install-links
 
 Expected result: both installs succeed and package/lock files remain unchanged.
 
-- [ ] **Step 2: Run the complete local matrix.**
+- [x] **Step 2: Run the complete local matrix.**
 
 ```bash
 cd packages/domain-contracts && npm run typecheck && npm test
@@ -324,10 +324,10 @@ cd ../.. && bash scripts/test-postgres-ops-integration.sh
 
 Expected result: all suites pass. Do not run local App production build because it writes shared `app/dist/**`; exact-SHA CI owns the isolated build gate.
 
-- [ ] **Step 3: Run static gates.** Confirm schema/migration parity, only one `IN_PROGRESS`, no App/Action/formal-writer/SAAS-205 handler/public/shared-unapproved/self-cultivation path, no plaintext/secret/raw-error strings in stored/audited outputs, `git diff --check`, and a clean generated PostgreSQL schema check.
-- [ ] **Step 4: Commit operations/migration separately from business code.** Stage only schema/migration/operational files including the approved root integration script and use `feat(crm): add SAAS-204 research brief storage`. Stage contracts/model/service/routes/tests separately and use `feat(crm): implement SAAS-204 research brief snapshots`. Do not include governance docs in either commit.
-- [ ] **Step 5: Push and require exact business-head CI.** Every GitHub Actions job must be successful on the exact final business SHA. A failure is fixed inside SAAS-204, locally reverified, committed and pushed before close.
-- [ ] **Step 6: Close governance independently.** Record actual commits/test counts/migration markers/rollback evidence, mark SAAS-204 DONE and only SAAS-205 READY, commit `docs(crm): close SAAS-204 research brief`, push and require its exact SHA CI 12/12 green before SAAS-205 starts.
+- [x] **Step 3: Run static gates.** Confirm schema/migration parity, only one `IN_PROGRESS`, no App/Action/formal-writer/SAAS-205 handler/public/shared-unapproved/self-cultivation path, no plaintext/secret/raw-error strings in stored/audited outputs, `git diff --check`, and a clean generated PostgreSQL schema check.
+- [x] **Step 4: Commit operations/migration separately from business code.** Stage only schema/migration/operational files including the approved root integration script and use `feat(crm): add SAAS-204 research brief storage`. Stage contracts/model/service/routes/tests separately and use `feat(crm): implement SAAS-204 research brief snapshots`. Do not include governance docs in either commit.
+- [x] **Step 5: Push and require exact business-head CI.** Every GitHub Actions job must be successful on the exact final business SHA. A failure is fixed inside SAAS-204, locally reverified, committed and pushed before close.
+- [x] **Step 6: Close governance independently.** Record actual commits/test counts/migration markers/rollback evidence, mark SAAS-204 DONE and only SAAS-205 READY, commit `docs(crm): close SAAS-204 research brief`, push and require its exact SHA CI 12/12 green before SAAS-205 starts.
 
 ## Rollback and stop conditions
 
