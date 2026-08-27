@@ -846,3 +846,38 @@ describe('CORE-206 Agent Job migration operations', () => {
     expect(drill).toContain("lower(column_name) IN ('content','contentenc','body','evidence','payload','prompt','response','secret','token')");
   });
 });
+
+describe('SAAS-204 ResearchBriefSnapshot migration operations', () => {
+  it('failure-injects committed DDL adoption, semantic/marker drift, partial schema, restore, and fresh install', async () => {
+    const deploy = await read('server/scripts/deploy-postgres-migrations.sh');
+    const drill = await read('scripts/test-postgres-ops-integration.sh');
+
+    expect(deploy).toContain('RESEARCH_BRIEF_MIGRATION=20260826000000_expand_research_brief_snapshot');
+    expect(deploy).toContain('recover_incomplete_research_brief_migration');
+    expect(deploy).toContain('adopt_existing_research_brief_schema_if_safe');
+    expect(deploy).toContain('research_brief_schema_matches_known_state');
+    expect(deploy).toContain('agent_job_schema_matches_known_state');
+    expect(deploy.lastIndexOf('npm run migrate:research-brief-report'))
+      .toBeGreaterThan(deploy.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deploy.lastIndexOf('npm run migrate:research-brief-apply'))
+      .toBeGreaterThan(deploy.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deploy.lastIndexOf('npm run migrate:research-brief-verify'))
+      .toBeGreaterThan(deploy.lastIndexOf('npm run migrate:research-brief-apply'));
+
+    for (const marker of [
+      'INTERRUPTED_RESEARCH_BRIEF_AFTER_COMMIT_ADOPTION_OK=1',
+      'RESEARCH_BRIEF_SEMANTIC_CONFLICT_FAIL_CLOSED_OK=1',
+      'RESEARCH_BRIEF_MARKER_CHECKSUM_FAIL_CLOSED_OK=1',
+      'PARTIAL_RESEARCH_BRIEF_SCHEMA_FAIL_CLOSED_OK=1',
+      'RESEARCH_BRIEF_RESTORE_ROLLBACK_OK=1',
+      'SAAS_204_RESEARCH_BRIEF_MIGRATION_OK=1',
+      'POSTGRES_OPS_INTEGRATION_OK=1',
+    ]) expect(drill).toContain(marker);
+    expect(drill).toContain('20260826000000_expand_research_brief_snapshot');
+    expect(drill).toContain('prisma/postgres/legacy/20260826_pre_saas204.prisma');
+    expect(drill).toContain("key = 'SAAS-204-research-brief-snapshot-v1'");
+    expect(drill).toContain('migrate:research-brief-report');
+    expect(drill).toContain('migrate:research-brief-apply');
+    expect(drill).toContain('migrate:research-brief-verify');
+  });
+});

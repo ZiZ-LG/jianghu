@@ -6,6 +6,7 @@ import type { SensitiveAclSchemaState } from '../src/sensitiveAcl/migration.js';
 import type { SourceArtifactSchemaState } from '../src/sourceArtifacts/migration.js';
 import type { ReviewBatchSchemaState } from '../src/reviewBatches/migration.js';
 import type { AgentJobSchemaState } from '../src/agents/migration.js';
+import type { ResearchBriefSchemaState } from '../src/researchBriefs/migration.js';
 
 type MatterSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
 type ParticipantSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
@@ -272,6 +273,7 @@ let sensitiveAclState: SensitiveAclSchemaState;
 let sourceArtifactState: SourceArtifactSchemaState;
 let reviewBatchState: ReviewBatchSchemaState;
 let agentJobState: AgentJobSchemaState;
+let researchBriefState: ResearchBriefSchemaState;
 let backupPath: string | null = null;
 let schemaChanges = false;
 let matterBackfillRequired = false;
@@ -292,6 +294,8 @@ let reviewBatchExpansionRequired = false;
 let reviewBatchBackfillRequired = false;
 let agentJobExpansionRequired = false;
 let agentJobBackfillRequired = false;
+let researchBriefExpansionRequired = false;
+let researchBriefBackfillRequired = false;
 
 try {
   state = await inspectSchemaState(prisma);
@@ -311,6 +315,8 @@ try {
   reviewBatchState = await inspectReviewBatchSchemaState(prisma);
   const { inspectAgentJobSchemaState } = await import('../src/agents/migration.js');
   agentJobState = await inspectAgentJobSchemaState(prisma);
+  const { inspectResearchBriefSchemaState } = await import('../src/researchBriefs/migration.js');
+  researchBriefState = await inspectResearchBriefSchemaState(prisma);
   if (state === 'partial') {
     throw new Error('partial Matter column expansion detected; restore the latest backup before retrying');
   }
@@ -347,6 +353,9 @@ try {
   if (agentJobState === 'partial') {
     throw new Error('partial AgentJobDefinition/AgentRun expansion detected; restore the latest backup before retrying');
   }
+  if (researchBriefState === 'partial') {
+    throw new Error('partial ResearchBriefSnapshot expansion detected; restore the latest backup before retrying');
+  }
   customerExpansionRequired = customerState === 'uninitialized' || customerState === 'legacy';
   candidateExpansionRequired = candidateState === 'uninitialized' || candidateState === 'legacy';
   candidateBackfillRequired = candidateState !== 'expanded';
@@ -358,6 +367,8 @@ try {
   reviewBatchBackfillRequired = reviewBatchState !== 'expanded';
   agentJobExpansionRequired = agentJobState === 'uninitialized' || agentJobState === 'legacy';
   agentJobBackfillRequired = agentJobState !== 'expanded';
+  researchBriefExpansionRequired = researchBriefState === 'uninitialized' || researchBriefState === 'legacy';
+  researchBriefBackfillRequired = researchBriefState !== 'expanded';
   if (candidateState === 'legacy') {
     run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:candidate-report'], url);
   } else if (candidateState === 'expanded') {
@@ -411,6 +422,19 @@ try {
     agentJobBackfillRequired = !marker;
     run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
       'run', marker ? 'migrate:agent-job-verify' : 'migrate:agent-job-report',
+    ], url);
+  }
+  if (researchBriefState === 'legacy') {
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
+      'run', 'migrate:research-brief-report',
+    ], url);
+  } else if (researchBriefState === 'expanded') {
+    const marker = await prisma.dataMigrationState.findUnique({
+      where: { key: 'SAAS-204-research-brief-snapshot-v1' }, select: { key: true },
+    });
+    researchBriefBackfillRequired = !marker;
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
+      'run', marker ? 'migrate:research-brief-verify' : 'migrate:research-brief-report',
     ], url);
   }
   if (state === 'legacy') {
@@ -503,7 +527,7 @@ try {
     }
   }
   schemaChanges = state === 'uninitialized' ? true : schemaHasChanges(url);
-  if (state !== 'uninitialized' && (schemaChanges || matterBackfillRequired || participantBackfillRequired || commitmentBackfillRequired || methodologyExpansionRequired || methodologyDataExpansionRequired || pdeDecisionContextExpansionRequired || pdeDecisionContextBackfillRequired || customerExpansionRequired || candidateExpansionRequired || candidateBackfillRequired || sensitiveAclExpansionRequired || sensitiveAclBackfillRequired || sourceArtifactExpansionRequired || sourceArtifactBackfillRequired || reviewBatchExpansionRequired || reviewBatchBackfillRequired || agentJobExpansionRequired || agentJobBackfillRequired)) {
+  if (state !== 'uninitialized' && (schemaChanges || matterBackfillRequired || participantBackfillRequired || commitmentBackfillRequired || methodologyExpansionRequired || methodologyDataExpansionRequired || pdeDecisionContextExpansionRequired || pdeDecisionContextBackfillRequired || customerExpansionRequired || candidateExpansionRequired || candidateBackfillRequired || sensitiveAclExpansionRequired || sensitiveAclBackfillRequired || sourceArtifactExpansionRequired || sourceArtifactBackfillRequired || reviewBatchExpansionRequired || reviewBatchBackfillRequired || agentJobExpansionRequired || agentJobBackfillRequired || researchBriefExpansionRequired || researchBriefBackfillRequired)) {
     backupPath = await createConsistentBackup(prisma, databasePath);
   }
 } finally {
@@ -538,6 +562,10 @@ try {
   const { inspectAgentJobSchemaState } = await import('../src/agents/migration.js');
   if (await inspectAgentJobSchemaState(postPushPrisma) !== 'expanded') {
     throw new Error('AgentJobDefinition/AgentRun expansion verification failed');
+  }
+  const { inspectResearchBriefSchemaState } = await import('../src/researchBriefs/migration.js');
+  if (await inspectResearchBriefSchemaState(postPushPrisma) !== 'expanded') {
+    throw new Error('ResearchBriefSnapshot expansion verification failed');
   }
 } finally {
   await postPushPrisma.$disconnect();
@@ -585,6 +613,10 @@ if (agentJobBackfillRequired) {
   run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:agent-job-apply'], url);
 }
 run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:agent-job-verify'], url);
+if (researchBriefBackfillRequired) {
+  run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:research-brief-apply'], url);
+}
+run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:research-brief-verify'], url);
 
 console.log(JSON.stringify({
   ok: true,
@@ -619,5 +651,8 @@ console.log(JSON.stringify({
   agentJobStateBefore: agentJobState,
   agentJobExpansionRequired,
   agentJobBackfillRequired,
+  researchBriefStateBefore: researchBriefState,
+  researchBriefExpansionRequired,
+  researchBriefBackfillRequired,
   backupPath,
 }, null, 2));

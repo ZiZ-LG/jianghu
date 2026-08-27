@@ -1607,6 +1607,139 @@ agent_job_restore_parity=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db 
 echo "AGENT_JOB_RESTORE_ROLLBACK_OK=1"
 echo "CORE_206_AGENT_JOB_MIGRATION_OK=1"
 
+# SAAS-204 adds one encrypted, immutable ResearchBriefSnapshot authority with
+# zero backfill and no formal CRM writes. Exercise committed-DDL adoption,
+# semantic and marker drift, partial-schema refusal, and authenticated restore.
+research_brief_db=jianghu_research_brief_migration
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$research_brief_db"
+POSTGRES_DB="$research_brief_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npx prisma db push --schema prisma/postgres/legacy/20260826_pre_saas204.prisma --skip-generate >/dev/null
+   for path in prisma/postgres/migrations/20*; do
+     [ -d "$path" ] || continue
+     migration=$(basename "$path")
+     [ "$migration" = 20260826000000_expand_research_brief_snapshot ] && break
+     npx prisma migrate resolve --applied "$migration" --schema prisma/postgres/schema.prisma >/dev/null
+   done' >/dev/null
+
+research_brief_backup_root="$BACKUP_DIR/saas204-pre"
+mkdir -p "$research_brief_backup_root"
+derive_backup_keys "$BACKUP_MASTER_SECRET"
+research_brief_backup_work=$(mktemp -d "$research_brief_backup_root/.research-brief-work.XXXXXX")
+research_brief_backup="$research_brief_backup_root/jianghu-saas204-$(openssl rand -hex 8).backup"
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db \
+  pg_dump -U "$POSTGRES_USER" -d "$research_brief_db" -Fc \
+  | backup_encrypt_payload "$research_brief_backup_work/payload.enc"
+{
+  backup_cipher_metadata
+  printf 'source_database=%s\n' "$research_brief_db"
+  printf 'created_at=%s\n' "$(date -u +%Y%m%dT%H%M%SZ)"
+} > "$research_brief_backup_work/metadata"
+write_artifact_integrity "$research_brief_backup_work"
+verify_artifact_auth "$research_brief_backup_work"
+mv "$research_brief_backup_work" "$research_brief_backup"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db \
+  psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$research_brief_db" \
+  < server/prisma/postgres/migrations/20260826000000_expand_research_brief_snapshot/migration.sql >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$research_brief_db" -c \
+  "INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+   VALUES ('int-research-brief-after-commit', repeat('0', 64),
+     '20260826000000_expand_research_brief_snapshot', CURRENT_TIMESTAMP, 0);" >/dev/null
+POSTGRES_DB="$research_brief_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+research_brief_after_commit_adoption=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$research_brief_db" -tAc \
+  "SELECT ((SELECT count(*) FROM \"_prisma_migrations\"
+              WHERE migration_name = '20260826000000_expand_research_brief_snapshot'
+                AND finished_at IS NOT NULL AND rolled_back_at IS NULL) = 1
+       AND (SELECT count(*) FROM \"_prisma_migrations\"
+              WHERE migration_name = '20260826000000_expand_research_brief_snapshot'
+                AND finished_at IS NULL AND rolled_back_at IS NULL) = 0
+       AND (SELECT count(*) FROM \"DataMigrationState\"
+              WHERE key = 'SAAS-204-research-brief-snapshot-v1') = 1
+       AND to_regclass('public.\"ResearchBriefSnapshot\"') IS NOT NULL
+       AND (SELECT count(*) FROM \"ResearchBriefSnapshot\") = 0
+       AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND table_name = 'ResearchBriefSnapshot'
+                AND lower(column_name) IN ('content','body','evidence','payload','prompt','rawresponse','response','secret','token')))::int" | tr -d '[:space:]')
+[[ "$research_brief_after_commit_adoption" == 1 ]]
+echo "INTERRUPTED_RESEARCH_BRIEF_AFTER_COMMIT_ADOPTION_OK=1"
+POSTGRES_DB="$research_brief_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npm run migrate:research-brief-report >/dev/null
+   npm run migrate:research-brief-apply >/dev/null
+   npm run migrate:research-brief-verify >/dev/null'
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$research_brief_db" -c \
+  "INSERT INTO \"Tenant\" (id,name) VALUES ('research-brief-tenant','Research Brief Tenant');
+   INSERT INTO \"ResearchBriefSnapshot\"
+     (id,\"tenantId\",\"customerId\",\"createdByUserId\",\"generationKey\",status,\"subjectStatus\",
+      \"payloadEnc\",\"payloadFingerprint\",\"sourceSetHash\",\"sourceCount\",\"sectionCount\",
+      \"unknownCount\",\"failureCount\",version,\"generatedAt\")
+     VALUES ('research-brief-invalid','research-brief-tenant','customer-ref','creator-ref',repeat('g',64),
+       'ready','matched','iv.tag.ciphertext',repeat('a',64),repeat('b',64),21,1,0,0,1,CURRENT_TIMESTAMP);" >/dev/null
+if POSTGRES_DB="$research_brief_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "invalid ResearchBriefSnapshot metadata unexpectedly deployed" >&2; exit 1
+fi
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$research_brief_db" -c \
+  "DELETE FROM \"ResearchBriefSnapshot\" WHERE id = 'research-brief-invalid';" >/dev/null
+POSTGRES_DB="$research_brief_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+echo "RESEARCH_BRIEF_SEMANTIC_CONFLICT_FAIL_CLOSED_OK=1"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$research_brief_db" -c \
+  "UPDATE \"DataMigrationState\"
+      SET details = jsonb_set(details::jsonb, '{integrityChecksum}', to_jsonb(repeat('0', 64)))::text
+    WHERE key = 'SAAS-204-research-brief-snapshot-v1';" >/dev/null
+if POSTGRES_DB="$research_brief_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "ResearchBriefSnapshot marker checksum drift unexpectedly deployed" >&2; exit 1
+fi
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$research_brief_db" -c \
+  "DELETE FROM \"DataMigrationState\" WHERE key = 'SAAS-204-research-brief-snapshot-v1';" >/dev/null
+POSTGRES_DB="$research_brief_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+echo "RESEARCH_BRIEF_MARKER_CHECKSUM_FAIL_CLOSED_OK=1"
+
+research_brief_partial_db=jianghu_research_brief_partial
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$research_brief_partial_db"
+POSTGRES_DB="$research_brief_partial_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npx prisma db push --schema prisma/postgres/legacy/20260826_pre_saas204.prisma --skip-generate >/dev/null
+   for path in prisma/postgres/migrations/20*; do
+     [ -d "$path" ] || continue
+     migration=$(basename "$path")
+     [ "$migration" = 20260826000000_expand_research_brief_snapshot ] && break
+     npx prisma migrate resolve --applied "$migration" --schema prisma/postgres/schema.prisma >/dev/null
+   done' >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$research_brief_partial_db" -c \
+  "CREATE TABLE \"ResearchBriefSnapshot\" (id TEXT PRIMARY KEY);
+   INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+   VALUES ('int-research-brief-partial', repeat('0', 64),
+     '20260826000000_expand_research_brief_snapshot', CURRENT_TIMESTAMP, 0);" >/dev/null
+if POSTGRES_DB="$research_brief_partial_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "partial ResearchBriefSnapshot schema unexpectedly migrated" >&2; exit 1
+fi
+research_brief_partial_state=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$research_brief_partial_db" -tAc \
+  "SELECT ((to_regclass('public.\"ResearchBriefSnapshot\"') IS NOT NULL)
+       AND (SELECT count(*) FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'ResearchBriefSnapshot') = 1
+       AND NOT EXISTS (SELECT 1 FROM \"_prisma_migrations\"
+         WHERE migration_name = '20260826000000_expand_research_brief_snapshot'
+           AND finished_at IS NOT NULL AND rolled_back_at IS NULL))::int" | tr -d '[:space:]')
+[[ "$research_brief_partial_state" == 1 ]]
+echo "PARTIAL_RESEARCH_BRIEF_SCHEMA_FAIL_CLOSED_OK=1"
+
+research_brief_restore_db=jianghu_restore_research_brief_saas204
+bash scripts/restore-postgres.sh "$research_brief_backup" --database "$research_brief_restore_db" >/dev/null
+research_brief_restore_parity=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$research_brief_restore_db" -tAc \
+  "SELECT ((to_regclass('public.\"ResearchBriefSnapshot\"') IS NULL)
+       AND NOT EXISTS (SELECT 1 FROM \"DataMigrationState\"
+              WHERE key = 'SAAS-204-research-brief-snapshot-v1'))::int" | tr -d '[:space:]')
+[[ "$research_brief_restore_parity" == 1 ]]
+echo "RESEARCH_BRIEF_RESTORE_ROLLBACK_OK=1"
+echo "SAAS_204_RESEARCH_BRIEF_MIGRATION_OK=1"
+
 # A duplicate tenant-local owner name must roll the bridge transaction back.
 # After data repair, the same database must resume and complete safely.
 ambiguous_db=jianghu_owner_ambiguous

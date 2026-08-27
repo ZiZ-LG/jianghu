@@ -1198,4 +1198,33 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       await rm(directory, { recursive: true, force: true });
     }
   }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
+
+  it('fails closed when the ResearchBriefSnapshot expansion loses an approved index', async () => {
+    const directory = await mkdtemp(resolve('prisma/.research-brief-partial-test-'));
+    const relativeDirectory = basename(directory);
+    const databaseUrl = `file:./${relativeDirectory}/partial.db`;
+    let client: PrismaClient | null = null;
+    try {
+      run(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], databaseUrl);
+      client = new PrismaClient({ datasourceUrl: databaseUrl });
+      await client.$executeRawUnsafe(
+        'DROP INDEX "ResearchBriefSnapshot_tenantId_createdByUserId_matterId_generatedAt_idx"',
+      );
+      await client.$disconnect();
+      client = null;
+
+      const failed = spawnSync(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], {
+        cwd: serverRoot,
+        encoding: 'utf8',
+        env: { ...process.env, DATABASE_URL: databaseUrl, JIANGHU_SKIP_PRISMA_GENERATE: '1' },
+      });
+      expect(failed.status).not.toBe(0);
+      expect(`${failed.stdout}\n${failed.stderr}`).toContain(
+        'partial ResearchBriefSnapshot expansion detected; restore the latest backup before retrying',
+      );
+    } finally {
+      await client?.$disconnect();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
 });

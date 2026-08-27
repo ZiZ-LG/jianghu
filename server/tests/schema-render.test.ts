@@ -981,3 +981,80 @@ describe('CORE-206 Agent Job control and run audit expansion', () => {
     expect(runner).not.toContain('../enrich.js');
   });
 });
+
+describe('SAAS-204 ResearchBriefSnapshot expansion', () => {
+  it('creates one encrypted portable authority through guarded SQLite and PostgreSQL gates', async () => {
+    const sqliteSchema = await read('prisma/schema.prisma');
+    const postgresSchema = await read('prisma/postgres/schema.prisma');
+    const predecessor = await read('prisma/postgres/legacy/20260826_pre_saas204.prisma');
+    const migration = await read(
+      'prisma/postgres/migrations/20260826000000_expand_research_brief_snapshot/migration.sql',
+    );
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const sqliteUpgrade = await read('scripts/upgrade-sqlite-schema.ts');
+    const schemaState = await read('scripts/postgres-research-brief-schema-state.ts');
+    const migrationCli = await read('scripts/migrate-research-briefs.ts');
+    const packageJson = JSON.parse(await read('package.json')) as { scripts?: Record<string, string> };
+
+    for (const schema of [sqliteSchema, postgresSchema]) {
+      expect(schema).toContain('model ResearchBriefSnapshot {');
+      for (const field of [
+        'tenantId', 'customerId', 'matterId', 'createdByUserId', 'generationKey', 'status',
+        'subjectStatus', 'payloadEnc', 'payloadFingerprint', 'sourceSetHash', 'sourceCount',
+        'sectionCount', 'unknownCount', 'failureCount', 'version', 'basedOnAt', 'freshUntil',
+        'generatedAt', 'createdAt',
+      ]) expect(schema).toMatch(new RegExp(`model ResearchBriefSnapshot \\{[\\s\\S]*?${field}\\s+`));
+      expect(schema).toContain('@@unique([tenantId, createdByUserId, generationKey])');
+      expect(schema).toContain('@@index([tenantId, createdByUserId, customerId, generatedAt])');
+      expect(schema).toContain('@@index([tenantId, createdByUserId, matterId, generatedAt])');
+      expect(schema).not.toMatch(/model ResearchBriefSnapshot \{[^}]*(?:rawResponse|prompt|secret|token)/);
+      expect(schema).not.toMatch(/^enum\s+/m);
+      expect(schema).not.toMatch(/^\s*\w+\s+Json[?\[\]]*/m);
+    }
+    expect(predecessor).toContain('model AgentRun {');
+    expect(predecessor).not.toContain('model ResearchBriefSnapshot {');
+
+    expect(migration.trimStart().startsWith('BEGIN;')).toBe(true);
+    expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(migration).toContain("SET LOCAL lock_timeout = '30s'");
+    expect(migration).toContain("SET LOCAL statement_timeout = '15min'");
+    expect(migration).toContain('LOCK TABLE "Tenant" IN SHARE ROW EXCLUSIVE MODE');
+    expect(migration).toContain('CREATE TABLE "ResearchBriefSnapshot"');
+    expect(migration).toContain('ResearchBriefSnapshot table expansion parity failed');
+    expect(migration).not.toMatch(/(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+"(?:Account|Opportunity|CuratedSummary|SourceArtifact|Candidate|ReviewBatch|AgentRun|Person|Edge|PlanAction)"/i);
+
+    expect(packageJson.scripts?.['migrate:research-brief-report'])
+      .toBe('tsx scripts/migrate-research-briefs.ts --dry-run');
+    expect(packageJson.scripts?.['migrate:research-brief-apply'])
+      .toBe('tsx scripts/migrate-research-briefs.ts --apply');
+    expect(packageJson.scripts?.['migrate:research-brief-verify'])
+      .toBe('tsx scripts/migrate-research-briefs.ts --verify');
+    expect(migrationCli).toContain('reportResearchBriefMigration');
+    expect(migrationCli).toContain('applyResearchBriefMigration');
+    expect(migrationCli).toContain('verifyResearchBriefMigration');
+
+    expect(deployScript).toContain('PRE_RESEARCH_BRIEF_SCHEMA=prisma/postgres/legacy/20260826_pre_saas204.prisma');
+    expect(deployScript).toContain('RESEARCH_BRIEF_MIGRATION=20260826000000_expand_research_brief_snapshot');
+    expect(deployScript).toContain('recover_incomplete_research_brief_migration');
+    expect(deployScript).toContain('adopt_existing_research_brief_schema_if_safe');
+    expect(deployScript).toContain('research_brief_schema_matches_known_state');
+    expect(deployScript).toContain('agent_job_schema_matches_known_state');
+    expect(deployScript.lastIndexOf('npm run migrate:research-brief-report'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:research-brief-apply'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:research-brief-verify'))
+      .toBeGreaterThan(deployScript.lastIndexOf('npm run migrate:research-brief-apply'));
+    expect(schemaState).toContain("? 'legacy' : 'uninitialized'");
+    expect(schemaState).toContain("'expanded'");
+    expect(schemaState).toContain("'partial'");
+    expect(schemaState).toContain('expectedColumns');
+    expect(schemaState).toContain('expectedIndexes');
+    expect(sqliteUpgrade).toContain('inspectResearchBriefSchemaState');
+    expect(sqliteUpgrade).toContain('partial ResearchBriefSnapshot expansion detected');
+    expect(sqliteUpgrade).toContain("['run', 'migrate:research-brief-apply']");
+    expect(sqliteUpgrade).toContain("['run', 'migrate:research-brief-verify']");
+    expect(sqliteUpgrade.indexOf("['run', 'migrate:research-brief-report']"))
+      .toBeLessThan(sqliteUpgrade.indexOf("const dbPushArgs = ['prisma', 'db', 'push'"));
+  });
+});

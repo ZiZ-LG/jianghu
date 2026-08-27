@@ -5,7 +5,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -30,7 +30,6 @@ model Tenant {
   sensitiveGrants    SensitiveResourceGrant[]
   agentJobDefinitions AgentJobDefinition[]
   agentRuns           AgentRun[]
-  researchBriefSnapshots ResearchBriefSnapshot[]
 }
 
 // 工作区自配的企查查 OpenAPI 凭证（BYO-key）。secretKey 加密存储。
@@ -840,36 +839,6 @@ model AgentRun {
   @@index([tenantId, sourceArtifactId, createdAt])
   @@index([tenantId, actorId, createdAt])
   @@index([tenantId, definitionId])
-}
-
-// 会前研究简报的不可变加密快照。明文仅在当前授权下解密投影；本表不建立到
-// Customer/Matter/User 的级联关系，历史主体由服务层按租户和当前权限重新校验。
-model ResearchBriefSnapshot {
-  id                 String   @id
-  tenantId           String
-  tenant             Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  customerId         String
-  matterId           String?
-  createdByUserId    String
-  generationKey      String
-  status             String
-  subjectStatus      String
-  payloadEnc         String
-  payloadFingerprint String
-  sourceSetHash      String
-  sourceCount        Int
-  sectionCount       Int
-  unknownCount       Int
-  failureCount       Int
-  version            Int      @default(1)
-  basedOnAt          DateTime?
-  freshUntil         DateTime?
-  generatedAt        DateTime
-  createdAt          DateTime @default(now())
-
-  @@unique([tenantId, createdByUserId, generationKey])
-  @@index([tenantId, createdByUserId, customerId, generatedAt])
-  @@index([tenantId, createdByUserId, matterId, generatedAt])
 }
 
 // WorkBuddy 原子同步执行记录：保存非敏感引用回执，支持同 key 安全重放。
