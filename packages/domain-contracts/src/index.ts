@@ -9,3 +9,4 @@ export * from './interventions.js';
 export * from './methodology.js';
 export * from './postMeeting.js';
 export * from './postMeetingImport.js';
+export * from './researchBrief.js';

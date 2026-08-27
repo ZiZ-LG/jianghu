@@ -68,4 +68,24 @@ describe('CORE-204 shared aggregate boundary', () => {
     expect(proposals).toContain('capabilityPolicy?: CapabilityPolicy');
     expect(proposals).toContain('receipt.created && capabilityPolicy');
   });
+
+  it('keeps ResearchBriefSnapshot commit encrypted, serializable, and outside formal CRM writers', () => {
+    const service = source('researchBriefs/service.ts');
+    expect(service).toContain('Prisma.TransactionIsolationLevel.Serializable');
+    expect(service).toContain('resolveEffectiveResourceScope');
+    expect(service).toContain('authorizeSensitiveResource');
+    expect(service).toContain('payloadEnc: enc(');
+    expect(service).toContain('tx.researchBriefSnapshot.create');
+    expect(service).toContain('tx.auditEvent.create');
+    expect(service).not.toMatch(/tx\.(account|opportunity|person|edge|evidenceEvent|planAction|interaction|candidate|reviewBatch|curatedSummary)\.(create|update|upsert|delete)/);
+    expect(service).not.toMatch(/researchBriefSnapshot\.(update|upsert|delete)/);
+  });
+
+  it('keeps SAAS-204 ResearchBrief routes read-only and disconnected from providers and Agent runs', () => {
+    const routes = source('researchBriefs/routes.ts');
+    expect(routes).toContain("app.get('/api/research-briefs'");
+    expect(routes).toContain("app.get('/api/research-briefs/:id'");
+    expect(routes).not.toMatch(/app\.(post|put|patch|delete)\('/);
+    expect(routes).not.toMatch(/callLLM|qcc|feishu|agentRun|AgentRun|fetch\(/i);
+  });
 });

@@ -83,7 +83,7 @@ describe('CORE-206 controlled Agent Job routes', () => {
     };
   }
 
-  it('lists exactly three default-disabled cards without creating control rows', async () => {
+  it('lists exactly three default-disabled cards and keeps pre-meeting unavailable after SAAS-204 storage', async () => {
     await setup();
     const response = await test!.app.inject({
       method: 'GET', url: '/api/agent-jobs', headers: auth(test!.token),
@@ -96,6 +96,7 @@ describe('CORE-206 controlled Agent Job routes', () => {
     ]);
     await expect(test!.prisma.agentJobDefinition.count()).resolves.toBe(0);
     await expect(test!.prisma.agentRun.count()).resolves.toBe(0);
+    await expect(test!.prisma.researchBriefSnapshot.count()).resolves.toBe(0);
   });
 
   it('rejects a stale token whose current tenant actor no longer exists', async () => {

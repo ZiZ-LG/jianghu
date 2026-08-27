@@ -56,6 +56,7 @@ import type { AgentCandidateCommitAdapter, AgentJobHandlers } from './agents/mod
 import { productionPostMeetingHandlers } from './postMeeting/handler.js';
 import { createPostMeetingCandidateCommitAdapter } from './postMeeting/commit.js';
 import { postMeetingImportRoutes } from './postMeeting/importRoutes.js';
+import { researchBriefRoutes } from './researchBriefs/routes.js';
 import {
   productionFeishuImportProvider,
   type FeishuImportProvider,
@@ -220,6 +221,7 @@ function registerRoutes(
   reviewBatchRoutes(app, product.policy);
   agentJobRoutes(app, product.policy, agentHandlers, agentCandidateCommitAdapter);
   postMeetingImportRoutes(app, product.policy, { feishuImportProvider });
+  researchBriefRoutes(app, product.policy);
 
   // ── 数据：拉取整树 / 应用变更 ──
   // 服务端组装时传入当前身份，统一执行归属与敏感字段 ACL。
