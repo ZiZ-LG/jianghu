@@ -5,10 +5,11 @@ import { describe, expect, it } from 'vitest';
 const source = (name: string) => readFileSync(resolve(process.cwd(), 'src', name), 'utf8');
 
 describe('CORE-204 shared aggregate boundary', () => {
-  it('keeps CuratedSummary generation on formal non-sensitive sources', () => {
+  it('keeps CuratedSummary as a read-only compatibility cache with no provider or sensitive aggregation', () => {
     const curated = source('curated.ts');
-    expect(curated).not.toMatch(/prisma\.(note|transcript|candidate|sourceArtifact|sensitiveResourceGrant)\.(find|aggregate|groupBy)/);
-    expect(curated).toContain('prisma.visitNote.findMany');
+    expect(curated).not.toMatch(/prisma\.(visitNote|note|transcript|candidate|sourceArtifact|sensitiveResourceGrant)\.(find|aggregate|groupBy)/);
+    expect(curated).not.toMatch(/loadAiConfig|callLLM|collectRaw/);
+    expect(curated).toContain('curated_ai_generation_retired');
   });
 
   it('keeps team and common CRM read models off sensitive repositories', () => {

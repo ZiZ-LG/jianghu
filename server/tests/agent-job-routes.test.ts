@@ -83,14 +83,14 @@ describe('CORE-206 controlled Agent Job routes', () => {
     };
   }
 
-  it('lists exactly three default-disabled cards and keeps pre-meeting unavailable after SAAS-204 storage', async () => {
+  it('lists exactly three default-disabled cards and exposes the approved pre/post-meeting handlers', async () => {
     await setup();
     const response = await test!.app.inject({
       method: 'GET', url: '/api/agent-jobs', headers: auth(test!.token),
     });
     expect(response.statusCode, response.body).toBe(200);
     expect(response.json<{ items: Array<Record<string, unknown>> }>().items).toMatchObject([
-      { jobKey: 'pre_meeting_brief', available: false, enabled: false, controlState: 'missing', controlVersion: 0 },
+      { jobKey: 'pre_meeting_brief', available: true, enabled: false, controlState: 'missing', controlVersion: 0 },
       { jobKey: 'post_meeting_extract', available: true, enabled: false, controlState: 'missing', controlVersion: 0 },
       { jobKey: 'relationship_radar', available: false, enabled: false, controlState: 'missing', controlVersion: 0 },
     ]);
@@ -113,7 +113,7 @@ describe('CORE-206 controlled Agent Job routes', () => {
   it('rejects enabling an unavailable production card and leaves it missing', async () => {
     await setup();
     const response = await test!.app.inject({
-      method: 'PUT', url: `/api/agent-jobs/${jobKey}/control`,
+      method: 'PUT', url: '/api/agent-jobs/relationship_radar/control',
       headers: auth(test!.token, 'agent-unavailable-control'),
       payload: { jobVersion, enabled: true, expectedVersion: 0 },
     });

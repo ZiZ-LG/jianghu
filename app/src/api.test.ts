@@ -770,6 +770,130 @@ describe('typed API failures', () => {
   });
 });
 
+describe('pre-meeting brief API', () => {
+  const job = {
+    jobKey: 'pre_meeting_brief', jobVersion: 'core-206.v1', purpose: '拜访前简报',
+    triggers: ['manual'], scopeManifest: {
+      customer: 'required', matter: 'optional', sourceArtifact: 'optional',
+      allowedSourceKinds: ['note'], allowedInputRefKinds: ['customer', 'matter', 'source_artifact'],
+    }, actionMode: 'read_only', evidencePolicy: {
+      required: true, minimumRefs: 1, maximumRefs: 20, requireSourceFingerprint: true,
+    }, outputRefKinds: ['research_brief'], modelRef: 'tenant-byo-ai', connectorRefs: [],
+    budget: { maxInputRefs: 50, maxEvidenceRefs: 20, maxOutputRefs: 10, maxCostUnits: 1_000 },
+    timeoutMs: 30_000, maxAttempts: 2, available: true, enabled: true,
+    controlState: 'valid', controlVersion: 2,
+    limits: { maxCostUnits: 1_000, timeoutMs: 30_000, maxAttempts: 2 },
+  };
+  const runInput: AgentManualRunRequest = {
+    jobVersion: 'core-206.v1', customerId: 'customer/205', matterId: 'matter/205',
+    sourceArtifactId: 'source/205', inputRefs: [
+      { kind: 'customer', id: 'customer/205', version: 4 },
+      { kind: 'matter', id: 'matter/205', version: 2 },
+      { kind: 'source_artifact', id: 'source/205', version: 3 },
+    ],
+  };
+  const run = {
+    id: 'run-205', jobKey: 'pre_meeting_brief', jobVersion: 'core-206.v1',
+    actionMode: 'read_only', trigger: 'manual', status: 'succeeded',
+    customerId: runInput.customerId, matterId: runInput.matterId,
+    sourceArtifactId: runInput.sourceArtifactId, actorId: 'user-205', attemptCount: 1,
+    maxAttempts: 2, budgetLimit: 1_000, costUsed: 1, timeoutMs: 30_000,
+    authorizationFingerprint: 'b'.repeat(64), modelRef: 'tenant-byo-ai', connectorRefs: [],
+    inputRefs: runInput.inputRefs, evidenceRefs: [{
+      sourceArtifactId: 'source/205', locatorId: 'pre-meeting-source',
+      sourceFingerprint: 'a'.repeat(64), observedAt: '2026-08-27T06:00:00.000Z',
+    }], outputRefs: [{ kind: 'research_brief', id: 'brief/205', version: 1 }],
+    failureCode: '', createdAt: '2026-08-27T08:00:00.000Z',
+    startedAt: '2026-08-27T08:00:00.000Z', completedAt: '2026-08-27T08:01:00.000Z',
+    version: 2,
+  };
+  const source = {
+    id: 'source/205', accountId: 'customer/205', matterId: 'matter/205', personId: null,
+    backingKind: 'note', artifactKind: 'note', source: 'manual', externalRef: null,
+    title: '客户访谈', occurredAt: '2026-08-27T06:00:00.000Z',
+    fingerprintKind: 'content_sha256_v1', sourceFingerprint: 'a'.repeat(64),
+    retentionState: 'available', retentionUpdatedAt: '2026-08-27T08:00:00.000Z',
+    createdByUserId: 'user-205', visibility: 'private', aclVersion: 3,
+    createdAt: '2026-08-27T08:00:00.000Z', updatedAt: '2026-08-27T08:00:00.000Z',
+    backingPresent: true, contentAvailable: true, canDegrade: false, canDelete: true,
+    explanation: 'local_body_available',
+  };
+  const metadata = {
+    id: 'brief/205', customerId: 'customer/205', matterId: 'matter/205', status: 'blocked',
+    subjectStatus: 'matched', sourceCount: 0, sectionCount: 0, unknownCount: 1,
+    failureCount: 0, version: 1, basedOnAt: null, freshUntil: null,
+    generatedAt: '2026-08-27T08:00:00.000Z', createdAt: '2026-08-27T08:01:00.000Z',
+  };
+  const detail = {
+    ...metadata,
+    payload: {
+      subject: {
+        status: 'matched', query: '海岳能源', crmCustomerId: 'customer/205',
+        selected: {
+          legalName: '海岳能源', anchorKind: 'provider_subject_id',
+          anchorValue: 'customer/205', provider: 'jianghu-crm',
+        }, candidates: [],
+      },
+      sources: [], sections: [], unknowns: [{
+        key: 'questions_to_verify', question: '需要确认哪些关键问题？',
+        reasonCode: 'insufficient_evidence', sourceIds: [],
+      }], failures: [],
+      generator: { version: 'saas-204.v1', modelRef: 'tenant-byo-ai', connectorRefs: [] },
+    },
+  };
+
+  it('uses exact read and command endpoints with anchored requests and stable idempotency keys', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(200, { items: [job] }))
+      .mockResolvedValueOnce(response(200, { items: [run], nextCursor: null }))
+      .mockResolvedValueOnce(response(200, { items: [source], nextCursor: null }))
+      .mockResolvedValueOnce(response(200, { items: [metadata], nextCursor: null }))
+      .mockResolvedValueOnce(response(200, { item: detail }))
+      .mockResolvedValueOnce(response(200, { ...job, enabled: false, controlVersion: 3, replayed: false }))
+      .mockResolvedValueOnce(response(200, { run, replayed: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.preMeetingJobCards()).resolves.toEqual({ items: [job] });
+    await expect(api.preMeetingRuns()).resolves.toEqual({ items: [run], nextCursor: null });
+    await expect(api.preMeetingSources('customer/205', 'matter/205')).resolves.toHaveLength(1);
+    await expect(api.preMeetingBriefs('customer/205', 'matter/205')).resolves.toEqual({
+      items: [metadata], nextCursor: null,
+    });
+    await expect(api.preMeetingBrief('brief/205')).resolves.toEqual(detail);
+    await expect(api.preMeetingControl('core-206.v1', false, 2, 'control-205'))
+      .resolves.toMatchObject({ card: { enabled: false, controlVersion: 3 }, replayed: false });
+    await expect(api.preMeetingRun(runInput, 'run-205-key'))
+      .resolves.toMatchObject({ run: { id: 'run-205' }, replayed: true });
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'http://localhost:3001/api/agent-jobs',
+      'http://localhost:3001/api/agent-runs?limit=50',
+      'http://localhost:3001/api/source-artifacts?accountId=customer%2F205&matterId=matter%2F205&limit=100',
+      'http://localhost:3001/api/research-briefs?customerId=customer%2F205&matterId=matter%2F205&limit=50',
+      'http://localhost:3001/api/research-briefs/brief%2F205',
+      'http://localhost:3001/api/agent-jobs/pre_meeting_brief/control',
+      'http://localhost:3001/api/agent-jobs/pre_meeting_brief/runs',
+    ]);
+    expect(((fetchMock.mock.calls[5]![1] as RequestInit).headers as Headers).get('Idempotency-Key')).toBe('control-205');
+    expect(((fetchMock.mock.calls[6]![1] as RequestInit).headers as Headers).get('Idempotency-Key')).toBe('run-205-key');
+    expect(JSON.parse(String((fetchMock.mock.calls[6]![1] as RequestInit).body))).toEqual(runInput);
+  });
+
+  it('fails closed on extra private fields, wrong detail IDs and mismatched run anchors', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(response(200, { items: [metadata], nextCursor: null, payloadEnc: 'private' }))
+      .mockResolvedValueOnce(response(200, { item: { ...detail, id: 'brief-other' } }))
+      .mockResolvedValueOnce(response(200, { run: { ...run, matterId: 'matter-other' }, replayed: false })));
+
+    await expect(api.preMeetingBriefs('customer/205', 'matter/205'))
+      .rejects.toMatchObject({ code: 'invalid_response', retryable: false });
+    await expect(api.preMeetingBrief('brief/205'))
+      .rejects.toMatchObject({ code: 'invalid_response', retryable: false });
+    await expect(api.preMeetingRun(runInput, 'run-205-key'))
+      .rejects.toMatchObject({ code: 'invalid_response', retryable: false });
+  });
+});
+
 describe('post-meeting import API', () => {
   const anchor = { customerId: 'customer/1', matterId: 'matter/1' };
   const source = {

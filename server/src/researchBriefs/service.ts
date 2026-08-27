@@ -140,6 +140,27 @@ function generationKeyHash(value: string): string {
   return sha256(value);
 }
 
+function snapshotIdFromGenerationHash(
+  tenantId: string,
+  actorId: string,
+  keyHash: string,
+): string {
+  return `rbs_${sha256(JSON.stringify([
+    'research-brief-snapshot-v1', tenantId, actorId, keyHash,
+  ])).slice(0, 32)}`;
+}
+
+export function researchBriefSnapshotId(
+  tenantId: string,
+  actorId: string,
+  generationKey: string,
+): string {
+  if (!validVisibleReference(tenantId) || !validVisibleReference(actorId)) {
+    throw new ResearchBriefError('research_brief_input_invalid', 400);
+  }
+  return snapshotIdFromGenerationHash(tenantId, actorId, generationKeyHash(generationKey));
+}
+
 function isRootClient(db: DbClient): db is PrismaClient {
   return typeof (db as Partial<PrismaClient>).$transaction === 'function';
 }
@@ -408,9 +429,7 @@ async function commitInsideTransaction(
     throw new ResearchBriefError('research_brief_timestamp_invalid', 400);
   }
 
-  const id = `rbs_${sha256(JSON.stringify([
-    'research-brief-snapshot-v1', input.tenantId, input.actorId, keyHash,
-  ])).slice(0, 32)}`;
+  const id = snapshotIdFromGenerationHash(input.tenantId, input.actorId, keyHash);
   const expected = {
     id,
     customerId: input.customerId,

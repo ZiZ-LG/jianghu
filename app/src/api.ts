@@ -11,6 +11,12 @@ import {
 } from './lib/postMeetingReview';
 import { exactPostMeetingImportReceipt } from './lib/postMeetingImport';
 import {
+  parsePreMeetingBriefDetail,
+  parsePreMeetingBriefList,
+  parsePreMeetingJobCards,
+  parsePreMeetingRuns,
+} from './lib/preMeetingBrief';
+import {
   ActorRoleSchema,
   AgentJobCardSchema,
   AgentJobControlRequestSchema,
@@ -54,6 +60,8 @@ import {
   type PostMeetingUploadMetadata,
   type QuickCaptureCommand,
   type QuickCaptureCommandReceipt,
+  type ResearchBriefSnapshotDetail,
+  type ResearchBriefSnapshotListResponse,
   type TodayReadModel,
   type TodaySourceView,
 } from '@jianghu/domain-contracts';
@@ -215,8 +223,19 @@ const invalidPostMeetingResponse = (cause?: unknown): ApiError => new ApiError({
   cause,
 });
 
+const invalidPreMeetingResponse = (cause?: unknown): ApiError => new ApiError({
+  code: 'invalid_response',
+  message: '服务返回的拜访前简报数据无效，请刷新后重试。',
+  retryable: false,
+  cause,
+});
+
 function postMeetingParse<T>(parse: () => T): T {
   try { return parse(); } catch (cause) { throw invalidPostMeetingResponse(cause); }
+}
+
+function preMeetingParse<T>(parse: () => T): T {
+  try { return parse(); } catch (cause) { throw invalidPreMeetingResponse(cause); }
 }
 
 function parseCrmContextResponse(raw: unknown): CrmContextSnapshot {
@@ -471,6 +490,79 @@ export const api = {
   crmContext: async (): Promise<CrmContextSnapshot> => parseCrmContextResponse(
     await req<unknown>('/api/crm/context'),
   ),
+  preMeetingJobCards: async (): Promise<{ items: AgentJobCard[] }> => {
+    const raw = await req<unknown>('/api/agent-jobs');
+    return preMeetingParse(() => parsePreMeetingJobCards(raw));
+  },
+  preMeetingRuns: async (): Promise<{ items: AgentRunReceipt['run'][]; nextCursor: string | null }> => {
+    const raw = await req<unknown>('/api/agent-runs?limit=50');
+    return preMeetingParse(() => parsePreMeetingRuns(raw));
+  },
+  preMeetingSources: async (
+    customerId: string,
+    matterId: string,
+  ): Promise<PostMeetingSourceOption[]> => {
+    const raw = await req<unknown>(`/api/source-artifacts?accountId=${encodeURIComponent(customerId)}&matterId=${encodeURIComponent(matterId)}&limit=100`);
+    return preMeetingParse(() => parsePostMeetingSourceOptions(raw, { customerId, matterId }));
+  },
+  preMeetingBriefs: async (
+    customerId: string,
+    matterId: string,
+  ): Promise<ResearchBriefSnapshotListResponse> => {
+    const query = new URLSearchParams({ customerId, matterId, limit: '50' });
+    const raw = await req<unknown>(`/api/research-briefs?${query.toString()}`);
+    return preMeetingParse(() => parsePreMeetingBriefList(raw));
+  },
+  preMeetingBrief: async (briefId: string): Promise<ResearchBriefSnapshotDetail> => {
+    const raw = await req<unknown>(`/api/research-briefs/${encodeURIComponent(briefId)}`);
+    return preMeetingParse(() => parsePreMeetingBriefDetail(raw, briefId));
+  },
+  preMeetingControl: async (
+    jobVersion: string,
+    enabled: boolean,
+    expectedVersion: number,
+    idempotencyKey: string,
+  ): Promise<{ card: AgentJobCard; replayed: boolean }> => {
+    const payload = AgentJobControlRequestSchema.parse({ jobVersion, enabled, expectedVersion });
+    const raw = await commandReq<unknown>('/api/agent-jobs/pre_meeting_brief/control', {
+      method: 'PUT',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(payload),
+    });
+    return preMeetingParse(() => {
+      if (!isRecord(raw) || typeof raw.replayed !== 'boolean') throw new Error('control envelope');
+      const { replayed, ...cardValue } = raw;
+      const card = AgentJobCardSchema.safeParse(cardValue);
+      if (!card.success
+        || card.data.jobKey !== 'pre_meeting_brief'
+        || card.data.jobVersion !== jobVersion) throw new Error('control card');
+      return { card: card.data, replayed };
+    });
+  },
+  preMeetingRun: async (
+    input: AgentManualRunRequest,
+    idempotencyKey: string,
+  ): Promise<AgentRunReceipt> => {
+    const payload = AgentManualRunRequestSchema.parse(input);
+    const raw = await commandReq<unknown>('/api/agent-jobs/pre_meeting_brief/runs', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(payload),
+    }, { timeoutMs: 120_000 });
+    return preMeetingParse(() => {
+      const parsed = AgentRunReceiptSchema.safeParse(raw);
+      if (!parsed.success
+        || parsed.data.run.jobKey !== 'pre_meeting_brief'
+        || parsed.data.run.jobVersion !== payload.jobVersion
+        || parsed.data.run.customerId !== payload.customerId
+        || parsed.data.run.matterId !== payload.matterId
+        || parsed.data.run.sourceArtifactId !== payload.sourceArtifactId
+        || JSON.stringify(parsed.data.run.inputRefs) !== JSON.stringify(payload.inputRefs)) {
+        throw new Error('run receipt mismatch');
+      }
+      return parsed.data;
+    });
+  },
   postMeetingJobCards: async (): Promise<{ items: AgentJobCard[] }> => {
     const raw = await req<unknown>('/api/agent-jobs');
     return postMeetingParse(() => parsePostMeetingJobCards(raw));

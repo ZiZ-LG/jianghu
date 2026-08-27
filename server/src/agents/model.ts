@@ -6,6 +6,7 @@ import type {
   AgentOutputRef,
   AgentPreparedAudit,
   PostMeetingCandidateBatch,
+  ResearchBriefPreparedPayload,
 } from '@jianghu/domain-contracts';
 
 export interface AgentPreparationContext {
@@ -36,7 +37,13 @@ export interface AgentCommitContext {
   inputRefs: readonly AgentInputRef[];
   authorizationFingerprint: string;
   commitCandidateBatch?: (batch: PostMeetingCandidateBatch) => Promise<AgentOutputRef>;
+  commitResearchBrief?: (input: AgentResearchBriefCommitInput) => Promise<AgentOutputRef>;
   signal: AbortSignal;
+}
+
+export interface AgentResearchBriefCommitInput {
+  generatedAt: string;
+  payload: ResearchBriefPreparedPayload;
 }
 
 export interface AgentCandidateCommitAdapterContext extends Omit<
@@ -53,6 +60,23 @@ export interface AgentCandidateCommitAdapterContext extends Omit<
 export type AgentCandidateCommitAdapter = (
   context: AgentCandidateCommitAdapterContext,
   batch: PostMeetingCandidateBatch,
+) => Promise<AgentOutputRef>;
+
+export interface AgentResearchBriefCommitAdapterContext extends Omit<
+  AgentCommitContext,
+  'commitCandidateBatch' | 'commitResearchBrief' | 'signal'
+> {
+  tx: Prisma.TransactionClient;
+  actorRole: 'owner' | 'admin' | 'member' | 'viewer';
+  /** Current body-free SourceArtifact authority from the commit authorization snapshot. */
+  sourceFingerprint: string | null;
+  sourceAclVersion: number | null;
+}
+
+/** Trusted one-purpose adapter; it may create only one immutable ResearchBriefSnapshot. */
+export type AgentResearchBriefCommitAdapter = (
+  context: AgentResearchBriefCommitAdapterContext,
+  input: AgentResearchBriefCommitInput,
 ) => Promise<AgentOutputRef>;
 
 /**
@@ -74,6 +98,8 @@ export type AgentPreparationResult = AgentPreparedAudit | AgentPreparationEnvelo
  * than exposing a generic transaction here.
  */
 export interface AgentJobHandler {
+  /** Explicitly opts a trusted code-registered handler into one reviewed narrow port. */
+  readonly commitPort?: 'research_brief';
   prepare(context: AgentPreparationContext): Promise<AgentPreparationResult>;
   commit(
     context: AgentCommitContext,

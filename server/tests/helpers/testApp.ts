@@ -28,7 +28,8 @@ interface RegistrationBody {
 export async function createTestContext(
   options: Pick<
     BuildAppOptions,
-    'productAccess' | 'agentHandlers' | 'agentCandidateCommitAdapter' | 'feishuImportProvider' | 'publicBaseUrl'
+    'productAccess' | 'agentHandlers' | 'agentCandidateCommitAdapter'
+    | 'agentResearchBriefCommitAdapter' | 'feishuImportProvider' | 'publicBaseUrl'
   > = {},
 ): Promise<TestContext> {
   assertTestDatabaseUrl();
@@ -44,6 +45,9 @@ export async function createTestContext(
     ...(options.agentHandlers ? { agentHandlers: options.agentHandlers } : {}),
     ...(options.agentCandidateCommitAdapter
       ? { agentCandidateCommitAdapter: options.agentCandidateCommitAdapter }
+      : {}),
+    ...(options.agentResearchBriefCommitAdapter
+      ? { agentResearchBriefCommitAdapter: options.agentResearchBriefCommitAdapter }
       : {}),
     ...(options.feishuImportProvider
       ? { feishuImportProvider: options.feishuImportProvider }

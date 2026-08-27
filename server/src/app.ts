@@ -52,9 +52,15 @@ import { deploymentProductAccess } from './productPolicy.js';
 import { sourceArtifactRoutes } from './sourceArtifacts/routes.js';
 import { reviewBatchRoutes } from './reviewBatches/routes.js';
 import { agentJobRoutes } from './agents/routes.js';
-import type { AgentCandidateCommitAdapter, AgentJobHandlers } from './agents/model.js';
+import type {
+  AgentCandidateCommitAdapter,
+  AgentJobHandlers,
+  AgentResearchBriefCommitAdapter,
+} from './agents/model.js';
 import { productionPostMeetingHandlers } from './postMeeting/handler.js';
 import { createPostMeetingCandidateCommitAdapter } from './postMeeting/commit.js';
+import { productionPreMeetingHandlers } from './preMeeting/handler.js';
+import { createPreMeetingResearchBriefCommitAdapter } from './preMeeting/commit.js';
 import { postMeetingImportRoutes } from './postMeeting/importRoutes.js';
 import { researchBriefRoutes } from './researchBriefs/routes.js';
 import {
@@ -176,6 +182,7 @@ function registerRoutes(
   product: ProductAccess,
   agentHandlers: AgentJobHandlers,
   agentCandidateCommitAdapter?: AgentCandidateCommitAdapter,
+  agentResearchBriefCommitAdapter?: AgentResearchBriefCommitAdapter,
   feishuImportProvider: FeishuImportProvider = productionFeishuImportProvider,
   publicBaseUrl?: string,
 ): void {
@@ -219,7 +226,13 @@ function registerRoutes(
   crmContextRoutes(app);
   sourceArtifactRoutes(app, product.policy);
   reviewBatchRoutes(app, product.policy);
-  agentJobRoutes(app, product.policy, agentHandlers, agentCandidateCommitAdapter);
+  agentJobRoutes(
+    app,
+    product.policy,
+    agentHandlers,
+    agentCandidateCommitAdapter,
+    agentResearchBriefCommitAdapter,
+  );
   postMeetingImportRoutes(app, product.policy, { feishuImportProvider });
   researchBriefRoutes(app, product.policy);
 
@@ -467,6 +480,8 @@ export interface BuildAppOptions {
   agentHandlers?: AgentJobHandlers;
   /** Narrow transaction adapter for candidate jobs; never exposed as Prisma to handlers. */
   agentCandidateCommitAdapter?: AgentCandidateCommitAdapter;
+  /** Narrow transaction adapter for the immutable ResearchBriefSnapshot producer. */
+  agentResearchBriefCommitAdapter?: AgentResearchBriefCommitAdapter;
   /** Narrow exact-minute provider seam; production uses the existing Feishu adapter. */
   feishuImportProvider?: FeishuImportProvider;
   /** Redirect origin authority for Feishu OAuth. */
@@ -479,15 +494,19 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const app = Fastify({ logger, trustProxy: true });
   const product = deploymentProductAccess(options.productAccess);
   const agentHandlers = Object.freeze({
+    ...productionPreMeetingHandlers(prisma, product.policy),
     ...productionPostMeetingHandlers(prisma, product.policy),
     ...(options.agentHandlers ?? {}),
   });
   const agentCandidateCommitAdapter = options.agentCandidateCommitAdapter
     ?? createPostMeetingCandidateCommitAdapter({ policy: product.policy });
+  const agentResearchBriefCommitAdapter = options.agentResearchBriefCommitAdapter
+    ?? createPreMeetingResearchBriefCommitAdapter({ policy: product.policy });
   await registerSecurityPlugins(app);
   registerCapabilityEnforcement(app, product);
   registerRoutes(app, options.readinessProbe ?? (async () => {
     await prisma.$queryRaw`SELECT 1`;
-  }), product, agentHandlers, agentCandidateCommitAdapter, options.feishuImportProvider, options.publicBaseUrl);
+  }), product, agentHandlers, agentCandidateCommitAdapter, agentResearchBriefCommitAdapter,
+  options.feishuImportProvider, options.publicBaseUrl);
   return app;
 }

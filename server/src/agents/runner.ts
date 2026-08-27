@@ -6,6 +6,7 @@ import {
   AgentRunReceiptSchema,
   AgentRunViewSchema,
   PostMeetingCandidateBatchSchema,
+  ResearchBriefPreparedPayloadSchema,
   type AgentJobDefinition,
   type AgentManualRunRequest,
   type AgentOutputRef,
@@ -15,6 +16,7 @@ import {
   type CapabilityPolicy,
   type CommandContext,
   type PostMeetingCandidateBatch,
+  type ResearchBriefPreparedPayload,
 } from '@jianghu/domain-contracts';
 import { hashIdempotencyKey } from '../idempotency.js';
 import {
@@ -38,6 +40,8 @@ import {
   type AgentJobHandler,
   type AgentJobHandlers,
   type AgentPreparationResult,
+  type AgentResearchBriefCommitAdapter,
+  type AgentResearchBriefCommitInput,
 } from './model.js';
 import { validatePreparedAgentAudit } from './policy.js';
 import { hashAgentDefinition } from './registry.js';
@@ -502,6 +506,7 @@ async function commitPrepared(
   totalCost: number,
   deadlineAt: number,
   candidateCommitAdapter?: AgentCandidateCommitAdapter,
+  researchBriefCommitAdapter?: AgentResearchBriefCommitAdapter,
 ): Promise<AgentRunRow> {
   return db.$transaction(async (tx) => {
     const authorization = await authorizeAgentRequest(
@@ -582,15 +587,98 @@ async function commitPrepared(
       return output.data;
     };
 
+    const usesResearchBriefPort = handler.commitPort === 'research_brief';
+    const researchBriefPortAllowed = definition.jobKey === 'pre_meeting_brief'
+      && definition.jobVersion === 'core-206.v1'
+      && definition.actionMode === 'read_only';
+    let researchBriefCommitCalls = 0;
+    let researchBriefPortMisused = false;
+    let researchBriefPortOutput: AgentOutputRef | null = null;
+    const commitResearchBrief = async (raw: AgentResearchBriefCommitInput): Promise<AgentOutputRef> => {
+      if (!usesResearchBriefPort || !researchBriefPortAllowed || researchBriefCommitCalls !== 0) {
+        researchBriefPortMisused = true;
+        throw new AgentJobError('agent_research_brief_port_misuse', 409);
+      }
+      researchBriefCommitCalls += 1;
+      if (!researchBriefCommitAdapter) {
+        throw new AgentJobError('agent_research_brief_commit_unavailable', 409);
+      }
+      if (Date.now() > deadlineAt) throw new AgentJobError('agent_timeout', 409);
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)
+        || Object.keys(raw).sort().join(',') !== 'generatedAt,payload'
+        || typeof raw.generatedAt !== 'string') {
+        throw new AgentJobError('agent_research_brief_payload_invalid', 409);
+      }
+      const generatedAt = new Date(raw.generatedAt);
+      const payload = ResearchBriefPreparedPayloadSchema.safeParse(raw.payload);
+      if (!Number.isFinite(generatedAt.getTime())
+        || generatedAt.toISOString() !== raw.generatedAt
+        || !payload.success
+        || payload.data.subject.crmCustomerId !== request.customerId) {
+        throw new AgentJobError('agent_research_brief_payload_invalid', 409);
+      }
+      const currentSource = request.sourceArtifactId
+        ? authorization.sources.get(request.sourceArtifactId)
+        : undefined;
+      if (!currentSource
+        || normalized.evidenceRefs.length !== 1
+        || normalized.evidenceRefs[0]?.sourceArtifactId !== request.sourceArtifactId
+        || normalized.evidenceRefs[0]?.sourceFingerprint !== currentSource.sourceFingerprint) {
+        throw new AgentJobError('agent_research_brief_evidence_mismatch', 409);
+      }
+      const commitInput: AgentResearchBriefCommitInput = {
+        generatedAt: raw.generatedAt,
+        payload: payload.data as ResearchBriefPreparedPayload,
+      };
+      const output = AgentOutputRefSchema.safeParse(await researchBriefCommitAdapter({
+        tx,
+        ...commitIdentity,
+        actorRole: authorization.actorRole,
+        sourceFingerprint: currentSource.sourceFingerprint,
+        sourceAclVersion: currentSource.aclVersion,
+      }, commitInput));
+      if (!output.success || output.data.kind !== 'research_brief'
+        || normalized.outputRefs.length !== 1
+        || !sameOutputRef(output.data, normalized.outputRefs[0]!)) {
+        throw new AgentJobError('agent_research_brief_output_mismatch', 409);
+      }
+      const persisted = await tx.researchBriefSnapshot.findFirst({
+        where: {
+          id: output.data.id,
+          tenantId: ctx.tenantId,
+          createdByUserId: ctx.actorId,
+          customerId: request.customerId,
+          matterId: request.matterId,
+          version: output.data.version,
+        },
+        select: { id: true },
+      });
+      if (!persisted) throw new AgentJobError('agent_research_brief_output_invalid', 409);
+      researchBriefPortOutput = output.data;
+      return output.data;
+    };
+
+    if (usesResearchBriefPort && !researchBriefPortAllowed) {
+      throw new AgentJobError('agent_research_brief_port_forbidden', 409);
+    }
+
     const committedRaw = await commitWithDeadline(handler, {
       ...commitIdentity,
       ...(definition.actionMode === 'candidate' ? { commitCandidateBatch } : {}),
+      ...(usesResearchBriefPort && researchBriefPortAllowed ? { commitResearchBrief } : {}),
     }, normalized, privateState, deadlineAt);
     if (Date.now() > deadlineAt) throw new AgentJobError('agent_timeout', 409);
     const committed = AgentPreparedAuditSchema.parse(committedRaw);
     if (!samePrepared(normalized, committed)) throw new AgentJobError('agent_commit_contract_invalid', 409);
     if (candidatePortMisused || (candidateCommitCalls > 0 && candidatePortOutput === null)) {
       throw new AgentJobError('agent_candidate_port_misuse', 409);
+    }
+    if (usesResearchBriefPort && (
+      researchBriefPortMisused
+      || researchBriefCommitCalls !== 1
+      || researchBriefPortOutput === null
+    )) {
+      throw new AgentJobError('agent_research_brief_port_misuse', 409);
     }
     await validateOutputs(tx, ctx, policy, authorization, request, committed);
     const changed = await tx.agentRun.updateMany({
@@ -651,6 +739,7 @@ async function executeAgentRun(
   initial: AgentRunRow,
   leaseToken: string,
   candidateCommitAdapter?: AgentCandidateCommitAdapter,
+  researchBriefCommitAdapter?: AgentResearchBriefCommitAdapter,
 ): Promise<AgentRunRow> {
   const handler = registeredAgentHandler(handlers, definition);
   if (!handler) return terminalRun(db, ctx, initial, leaseToken, 'discarded', 'agent_job_unavailable');
@@ -705,7 +794,7 @@ async function executeAgentRun(
       return await commitPrepared(
         db, ctx, policy, handlers, definition, request, handler,
         run, leaseToken, parsed.audit, parsed.privateState, totalCost, deadlineAt,
-        candidateCommitAdapter,
+        candidateCommitAdapter, researchBriefCommitAdapter,
       );
     } catch (error) {
       if (authorizationFailure(error)) {
@@ -727,6 +816,7 @@ export async function runManualAgentJob(
   request: AgentManualRunRequest,
   idempotencyKey: string,
   candidateCommitAdapter?: AgentCandidateCommitAdapter,
+  researchBriefCommitAdapter?: AgentResearchBriefCommitAdapter,
 ): Promise<AgentRunReceipt> {
   const commandInput = {
     kind: `agent-job-run:${definition.jobKey}:${definition.jobVersion}`,
@@ -758,7 +848,7 @@ export async function runManualAgentJob(
     ? reserved.row
     : await executeAgentRun(
         db, ctx, policy, handlers, definition, request, reserved.row, reserved.leaseToken,
-        candidateCommitAdapter,
+        candidateCommitAdapter, researchBriefCommitAdapter,
       );
   const receipt = AgentRunReceiptSchema.parse({ run: agentRunView(finalRow), replayed: false });
   const completed = await runCommand(ctx, {

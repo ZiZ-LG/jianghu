@@ -6,6 +6,7 @@ import { TodayPanel } from './TodayPanel';
 import { CrmContextPanel, type CrmContextPanelState } from './CrmContextPages';
 import { toQuickCaptureAccounts, type QuickCaptureAccountOption } from '../lib/crmContext';
 import { PostMeetingReviewPanel } from './PostMeetingReviewPanel';
+import { PreMeetingBriefPanel } from './PreMeetingBriefPanel';
 
 function EmptyState({ children }: { children: string }) {
   return <div className="commercial-shell-empty">{children}</div>;
@@ -74,6 +75,12 @@ function ProductPanel({
   if (id === 'sales-workspace') {
     const crmContext = crmContextState.status === 'ready' ? crmContextState.snapshot : null;
     return <div data-capability-surface="sales-workspace">
+      <PreMeetingBriefPanel
+        crmContext={crmContext}
+        actorRole={actorRole}
+        readonly={readonly}
+        onDataChanged={onQuickCaptureSaved}
+      />
       <PostMeetingReviewPanel
         crmContext={crmContext}
         actorRole={actorRole}

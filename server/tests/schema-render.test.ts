@@ -947,7 +947,7 @@ describe('CORE-206 Agent Job control and run audit expansion', () => {
       .toBeLessThan(sqliteUpgrade.indexOf("const dbPushArgs = ['prisma', 'db', 'push'"));
   });
 
-  it('registers only the approved post-meeting handler while keeping handlers outside formal CRM writers', async () => {
+  it('registers only approved meeting handlers while keeping narrow ports outside formal CRM writers', async () => {
     const app = await read('src/app.ts');
     const routes = await read('src/agents/routes.ts');
     const model = await read('src/agents/model.ts');
@@ -955,10 +955,14 @@ describe('CORE-206 Agent Job control and run audit expansion', () => {
     const registry = await read('src/agents/registry.ts');
     const handler = await read('src/postMeeting/handler.ts');
     const candidateCommit = await read('src/postMeeting/commit.ts');
+    const preMeetingHandler = await read('src/preMeeting/handler.ts');
+    const briefCommit = await read('src/preMeeting/commit.ts');
 
     expect(app).toContain('productionPostMeetingHandlers(prisma, product.policy)');
     expect(app).toContain('createPostMeetingCandidateCommitAdapter({ policy: product.policy })');
-    expect(app).toContain('agentJobRoutes(app, product.policy, agentHandlers, agentCandidateCommitAdapter)');
+    expect(app).toContain('productionPreMeetingHandlers(prisma, product.policy)');
+    expect(app).toContain('createPreMeetingResearchBriefCommitAdapter({ policy: product.policy })');
+    expect(app).toContain('agentResearchBriefCommitAdapter');
     expect(app).toContain('...(options.agentHandlers ?? {})');
     expect(routes).toContain("app.get('/api/agent-jobs'");
     expect(routes).toContain("app.put('/api/agent-jobs/:jobKey/control'");
@@ -974,8 +978,11 @@ describe('CORE-206 Agent Job control and run audit expansion', () => {
     );
     expect(handlerCommitContext).not.toContain('tx:');
     expect(handler).toContain("'post_meeting_extract@core-206.v1'");
+    expect(preMeetingHandler).toContain("'pre_meeting_brief@core-206.v1'");
     expect(handler).not.toMatch(/\.(?:account|opportunity|person|edge|planAction|interaction)\.(?:create|update|upsert|delete)/);
+    expect(preMeetingHandler).not.toMatch(/\.(?:account|opportunity|person|edge|planAction|interaction|candidate|curatedSummary)\.(?:create|update|upsert|delete)/);
     expect(candidateCommit).not.toMatch(/\.(?:account|opportunity|person|edge|planAction|interaction)\.(?:create|update|upsert|delete)/);
+    expect(briefCommit).not.toMatch(/\.(?:account|opportunity|person|edge|planAction|interaction|candidate|curatedSummary)\.(?:create|update|upsert|delete)/);
     expect(runner).not.toMatch(/\.(?:account|opportunity|person|edge|planAction|interaction|candidate)\.(?:create|update|upsert|delete)/);
     expect(runner).not.toContain('../jobs.js');
     expect(runner).not.toContain('../enrich.js');
