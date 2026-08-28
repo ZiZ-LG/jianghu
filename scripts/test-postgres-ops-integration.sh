@@ -1745,6 +1745,154 @@ research_brief_restore_parity=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -
 echo "RESEARCH_BRIEF_RESTORE_ROLLBACK_OK=1"
 echo "SAAS_204_RESEARCH_BRIEF_MIGRATION_OK=1"
 
+# SAAS-206 adds the method-neutral IntelligenceItem and StakeholderFocus
+# authorities with zero backfill and no Evidence/primary-D writes. Exercise
+# committed-DDL adoption, semantic and marker drift, partial-schema refusal,
+# authenticated restore, while the global fresh-install/second-update drill
+# below proves the same migration in a clean stack.
+intelligence_focus_db=jianghu_intelligence_focus_migration
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$intelligence_focus_db"
+POSTGRES_DB="$intelligence_focus_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npx prisma db push --schema prisma/postgres/legacy/20260827_pre_saas206.prisma --skip-generate >/dev/null
+   for path in prisma/postgres/migrations/20*; do
+     [ -d "$path" ] || continue
+     migration=$(basename "$path")
+     [ "$migration" = 20260827000000_expand_intelligence_focus ] && break
+     npx prisma migrate resolve --applied "$migration" --schema prisma/postgres/schema.prisma >/dev/null
+   done' >/dev/null
+
+intelligence_focus_backup_root="$BACKUP_DIR/saas206-pre"
+mkdir -p "$intelligence_focus_backup_root"
+derive_backup_keys "$BACKUP_MASTER_SECRET"
+intelligence_focus_backup_work=$(mktemp -d "$intelligence_focus_backup_root/.intelligence-focus-work.XXXXXX")
+intelligence_focus_backup="$intelligence_focus_backup_root/jianghu-saas206-$(openssl rand -hex 8).backup"
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db \
+  pg_dump -U "$POSTGRES_USER" -d "$intelligence_focus_db" -Fc \
+  | backup_encrypt_payload "$intelligence_focus_backup_work/payload.enc"
+{
+  backup_cipher_metadata
+  printf 'source_database=%s\n' "$intelligence_focus_db"
+  printf 'created_at=%s\n' "$(date -u +%Y%m%dT%H%M%SZ)"
+} > "$intelligence_focus_backup_work/metadata"
+write_artifact_integrity "$intelligence_focus_backup_work"
+verify_artifact_auth "$intelligence_focus_backup_work"
+mv "$intelligence_focus_backup_work" "$intelligence_focus_backup"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db \
+  psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$intelligence_focus_db" \
+  < server/prisma/postgres/migrations/20260827000000_expand_intelligence_focus/migration.sql >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$intelligence_focus_db" -c \
+  "INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+   VALUES ('int-intelligence-focus-after-commit', repeat('0', 64),
+     '20260827000000_expand_intelligence_focus', CURRENT_TIMESTAMP, 0);" >/dev/null
+POSTGRES_DB="$intelligence_focus_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+intelligence_focus_after_commit_adoption=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$intelligence_focus_db" -tAc \
+  "SELECT ((SELECT count(*) FROM \"_prisma_migrations\"
+              WHERE migration_name = '20260827000000_expand_intelligence_focus'
+                AND finished_at IS NOT NULL AND rolled_back_at IS NULL) = 1
+       AND (SELECT count(*) FROM \"_prisma_migrations\"
+              WHERE migration_name = '20260827000000_expand_intelligence_focus'
+                AND finished_at IS NULL AND rolled_back_at IS NULL) = 0
+       AND (SELECT count(*) FROM \"DataMigrationState\"
+              WHERE key = 'SAAS-206-intelligence-focus-v1') = 1
+       AND to_regclass('public.\"IntelligenceItem\"') IS NOT NULL
+       AND to_regclass('public.\"StakeholderFocus\"') IS NOT NULL
+       AND (SELECT count(*) FROM \"IntelligenceItem\") = 0
+       AND (SELECT count(*) FROM \"StakeholderFocus\") = 0
+       AND (SELECT count(*) FROM \"EvidenceEvent\") = 0)::int" | tr -d '[:space:]')
+[[ "$intelligence_focus_after_commit_adoption" == 1 ]]
+echo "INTERRUPTED_INTELLIGENCE_FOCUS_AFTER_COMMIT_ADOPTION_OK=1"
+POSTGRES_DB="$intelligence_focus_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npm run migrate:intelligence-focus-report >/dev/null
+   npm run migrate:intelligence-focus-apply >/dev/null
+   npm run migrate:intelligence-focus-verify >/dev/null'
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$intelligence_focus_db" -c \
+  "INSERT INTO \"Tenant\" (id,name) VALUES ('intelligence-focus-tenant','Intelligence Focus Tenant');
+   INSERT INTO \"User\" (id,\"tenantId\",email,\"passwordHash\",name,role)
+     VALUES ('intelligence-focus-user','intelligence-focus-tenant','focus@example.test','unused','Focus Owner','owner');
+   INSERT INTO \"Account\" (id,\"tenantId\",name,\"primaryOwnerUserId\")
+     VALUES ('intelligence-focus-account','intelligence-focus-tenant','Focus Account','intelligence-focus-user');
+   INSERT INTO \"Opportunity\"
+     (id,\"tenantId\",\"accountId\",name,\"customerType\",\"pipelineStage\",\"engageStage\",\"primaryOwnerUserId\")
+     VALUES ('intelligence-focus-matter','intelligence-focus-tenant','intelligence-focus-account',
+       'Focus Matter',1,'lead','unknown','intelligence-focus-user');
+   INSERT INTO \"Person\" (id,\"tenantId\",\"accountId\",name,title)
+     VALUES ('intelligence-focus-person','intelligence-focus-tenant','intelligence-focus-account','Focus Person','Sponsor');
+   INSERT INTO \"MatterParticipant\" (id,\"tenantId\",\"accountId\",\"opportunityId\",\"personId\")
+     VALUES ('intelligence-focus-participant','intelligence-focus-tenant','intelligence-focus-account',
+       'intelligence-focus-matter','intelligence-focus-person');
+   INSERT INTO \"IntelligenceItem\"
+     (id,\"tenantId\",\"customerId\",\"matterId\",\"assertionType\",statement,
+      \"sourceKind\",\"sourceDescription\",\"learnedAt\",confidence,\"targetRefs\",
+      \"createdByUserId\",\"updatedAt\")
+     VALUES ('intelligence-focus-invalid','intelligence-focus-tenant','intelligence-focus-account',
+       'intelligence-focus-matter','reported','Bounded report','manual','Manual note',CURRENT_TIMESTAMP,0.5,
+       '[{\"kind\":\"matter\",\"id\":\"wrong-matter\"}]','intelligence-focus-user',CURRENT_TIMESTAMP);" >/dev/null
+if POSTGRES_DB="$intelligence_focus_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "invalid IntelligenceItem target closure unexpectedly deployed" >&2; exit 1
+fi
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$intelligence_focus_db" -c \
+  "DELETE FROM \"IntelligenceItem\" WHERE id = 'intelligence-focus-invalid';" >/dev/null
+POSTGRES_DB="$intelligence_focus_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+echo "INTELLIGENCE_FOCUS_SEMANTIC_CONFLICT_FAIL_CLOSED_OK=1"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$intelligence_focus_db" -c \
+  "UPDATE \"DataMigrationState\"
+      SET details = jsonb_set(details::jsonb, '{integrityChecksum}', to_jsonb(repeat('0', 64)))::text
+    WHERE key = 'SAAS-206-intelligence-focus-v1';" >/dev/null
+if POSTGRES_DB="$intelligence_focus_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "Intelligence/Focus marker checksum drift unexpectedly deployed" >&2; exit 1
+fi
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$intelligence_focus_db" -c \
+  "DELETE FROM \"DataMigrationState\" WHERE key = 'SAAS-206-intelligence-focus-v1';" >/dev/null
+POSTGRES_DB="$intelligence_focus_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+echo "INTELLIGENCE_FOCUS_MARKER_CHECKSUM_FAIL_CLOSED_OK=1"
+
+intelligence_focus_partial_db=jianghu_intelligence_focus_partial
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$intelligence_focus_partial_db"
+POSTGRES_DB="$intelligence_focus_partial_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npx prisma db push --schema prisma/postgres/legacy/20260827_pre_saas206.prisma --skip-generate >/dev/null
+   for path in prisma/postgres/migrations/20*; do
+     [ -d "$path" ] || continue
+     migration=$(basename "$path")
+     [ "$migration" = 20260827000000_expand_intelligence_focus ] && break
+     npx prisma migrate resolve --applied "$migration" --schema prisma/postgres/schema.prisma >/dev/null
+   done' >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$intelligence_focus_partial_db" -c \
+  "CREATE TABLE \"IntelligenceItem\" (id TEXT PRIMARY KEY);
+   INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+   VALUES ('int-intelligence-focus-partial', repeat('0', 64),
+     '20260827000000_expand_intelligence_focus', CURRENT_TIMESTAMP, 0);" >/dev/null
+if POSTGRES_DB="$intelligence_focus_partial_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "partial Intelligence/Focus schema unexpectedly migrated" >&2; exit 1
+fi
+intelligence_focus_partial_state=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$intelligence_focus_partial_db" -tAc \
+  "SELECT ((to_regclass('public.\"IntelligenceItem\"') IS NOT NULL)
+       AND (to_regclass('public.\"StakeholderFocus\"') IS NULL)
+       AND NOT EXISTS (SELECT 1 FROM \"_prisma_migrations\"
+         WHERE migration_name = '20260827000000_expand_intelligence_focus'
+           AND finished_at IS NOT NULL AND rolled_back_at IS NULL))::int" | tr -d '[:space:]')
+[[ "$intelligence_focus_partial_state" == 1 ]]
+echo "PARTIAL_INTELLIGENCE_FOCUS_SCHEMA_FAIL_CLOSED_OK=1"
+
+intelligence_focus_restore_db=jianghu_restore_intelligence_focus_saas206
+bash scripts/restore-postgres.sh "$intelligence_focus_backup" --database "$intelligence_focus_restore_db" >/dev/null
+intelligence_focus_restore_parity=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$intelligence_focus_restore_db" -tAc \
+  "SELECT ((to_regclass('public.\"IntelligenceItem\"') IS NULL)
+       AND (to_regclass('public.\"StakeholderFocus\"') IS NULL)
+       AND NOT EXISTS (SELECT 1 FROM \"DataMigrationState\"
+              WHERE key = 'SAAS-206-intelligence-focus-v1'))::int" | tr -d '[:space:]')
+[[ "$intelligence_focus_restore_parity" == 1 ]]
+echo "INTELLIGENCE_FOCUS_RESTORE_ROLLBACK_OK=1"
+echo "SAAS_206_INTELLIGENCE_FOCUS_MIGRATION_OK=1"
+
 # A duplicate tenant-local owner name must roll the bridge transaction back.
 # After data repair, the same database must resume and complete safely.
 ambiguous_db=jianghu_owner_ambiguous
@@ -1987,6 +2135,14 @@ fresh_env=(env -u COMPOSE_PROJECT_NAME -u POSTGRES_USER -u POSTGRES_PASSWORD -u 
 fresh_migrations=$(docker compose -p "$fresh_project" exec -T db psql -U jianghu_fresh -d jianghu_fresh -tAc \
   'SELECT count(*) FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL' | tr -d '[:space:]')
 [[ "$fresh_migrations" == "$expected_migration_count" ]]
+fresh_intelligence_focus=$(docker compose -p "$fresh_project" exec -T db psql -U jianghu_fresh -d jianghu_fresh -tAc \
+  "SELECT ((to_regclass('public.\"IntelligenceItem\"') IS NOT NULL)
+       AND (to_regclass('public.\"StakeholderFocus\"') IS NOT NULL)
+       AND (SELECT count(*) FROM \"DataMigrationState\"
+              WHERE key = 'SAAS-206-intelligence-focus-v1') = 1
+       AND (SELECT count(*) FROM \"IntelligenceItem\") = 0
+       AND (SELECT count(*) FROM \"StakeholderFocus\") = 0)::int" | tr -d '[:space:]')
+[[ "$fresh_intelligence_focus" == 1 ]]
 fresh_backup_count=$(find "$fresh_backups" -maxdepth 1 -type d -name 'jianghu-*.backup' | wc -l | tr -d ' ')
 [[ "$fresh_backup_count" == 1 ]]
 echo "FRESH_INSTALL_FIRST_RUN_OK=1"
@@ -1995,6 +2151,13 @@ echo "FRESH_INSTALL_FIRST_RUN_OK=1"
 fresh_migrations_after=$(docker compose -p "$fresh_project" exec -T db psql -U jianghu_fresh -d jianghu_fresh -tAc \
   'SELECT count(*) FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL' | tr -d '[:space:]')
 [[ "$fresh_migrations_after" == "$expected_migration_count" ]]
+fresh_intelligence_focus_after=$(docker compose -p "$fresh_project" exec -T db psql -U jianghu_fresh -d jianghu_fresh -tAc \
+  "SELECT ((SELECT count(*) FROM \"DataMigrationState\"
+              WHERE key = 'SAAS-206-intelligence-focus-v1') = 1
+       AND (SELECT count(*) FROM \"_prisma_migrations\"
+              WHERE migration_name = '20260827000000_expand_intelligence_focus'
+                AND finished_at IS NOT NULL AND rolled_back_at IS NULL) = 1)::int" | tr -d '[:space:]')
+[[ "$fresh_intelligence_focus_after" == 1 ]]
 fresh_rollback_count=$(find "$fresh_rollbacks" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
 [[ "$fresh_rollback_count" -ge 1 ]]
 echo "FRESH_INSTALL_SECOND_UPDATE_OK=1"

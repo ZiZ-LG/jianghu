@@ -7,6 +7,7 @@ import type { SourceArtifactSchemaState } from '../src/sourceArtifacts/migration
 import type { ReviewBatchSchemaState } from '../src/reviewBatches/migration.js';
 import type { AgentJobSchemaState } from '../src/agents/migration.js';
 import type { ResearchBriefSchemaState } from '../src/researchBriefs/migration.js';
+import type { IntelligenceFocusSchemaState } from '../src/intelligenceFocus/migration.js';
 
 type MatterSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
 type ParticipantSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
@@ -274,6 +275,7 @@ let sourceArtifactState: SourceArtifactSchemaState;
 let reviewBatchState: ReviewBatchSchemaState;
 let agentJobState: AgentJobSchemaState;
 let researchBriefState: ResearchBriefSchemaState;
+let intelligenceFocusState: IntelligenceFocusSchemaState;
 let backupPath: string | null = null;
 let schemaChanges = false;
 let matterBackfillRequired = false;
@@ -296,6 +298,8 @@ let agentJobExpansionRequired = false;
 let agentJobBackfillRequired = false;
 let researchBriefExpansionRequired = false;
 let researchBriefBackfillRequired = false;
+let intelligenceFocusExpansionRequired = false;
+let intelligenceFocusBackfillRequired = false;
 
 try {
   state = await inspectSchemaState(prisma);
@@ -317,6 +321,8 @@ try {
   agentJobState = await inspectAgentJobSchemaState(prisma);
   const { inspectResearchBriefSchemaState } = await import('../src/researchBriefs/migration.js');
   researchBriefState = await inspectResearchBriefSchemaState(prisma);
+  const { inspectIntelligenceFocusSchemaState } = await import('../src/intelligenceFocus/migration.js');
+  intelligenceFocusState = await inspectIntelligenceFocusSchemaState(prisma);
   if (state === 'partial') {
     throw new Error('partial Matter column expansion detected; restore the latest backup before retrying');
   }
@@ -356,6 +362,9 @@ try {
   if (researchBriefState === 'partial') {
     throw new Error('partial ResearchBriefSnapshot expansion detected; restore the latest backup before retrying');
   }
+  if (intelligenceFocusState === 'partial') {
+    throw new Error('partial IntelligenceItem/StakeholderFocus expansion detected; restore the latest backup before retrying');
+  }
   customerExpansionRequired = customerState === 'uninitialized' || customerState === 'legacy';
   candidateExpansionRequired = candidateState === 'uninitialized' || candidateState === 'legacy';
   candidateBackfillRequired = candidateState !== 'expanded';
@@ -369,6 +378,8 @@ try {
   agentJobBackfillRequired = agentJobState !== 'expanded';
   researchBriefExpansionRequired = researchBriefState === 'uninitialized' || researchBriefState === 'legacy';
   researchBriefBackfillRequired = researchBriefState !== 'expanded';
+  intelligenceFocusExpansionRequired = intelligenceFocusState === 'uninitialized' || intelligenceFocusState === 'legacy';
+  intelligenceFocusBackfillRequired = intelligenceFocusState !== 'expanded';
   if (candidateState === 'legacy') {
     run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:candidate-report'], url);
   } else if (candidateState === 'expanded') {
@@ -435,6 +446,19 @@ try {
     researchBriefBackfillRequired = !marker;
     run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
       'run', marker ? 'migrate:research-brief-verify' : 'migrate:research-brief-report',
+    ], url);
+  }
+  if (intelligenceFocusState === 'legacy') {
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
+      'run', 'migrate:intelligence-focus-report',
+    ], url);
+  } else if (intelligenceFocusState === 'expanded') {
+    const marker = await prisma.dataMigrationState.findUnique({
+      where: { key: 'SAAS-206-intelligence-focus-v1' }, select: { key: true },
+    });
+    intelligenceFocusBackfillRequired = !marker;
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
+      'run', marker ? 'migrate:intelligence-focus-verify' : 'migrate:intelligence-focus-report',
     ], url);
   }
   if (state === 'legacy') {
@@ -527,7 +551,7 @@ try {
     }
   }
   schemaChanges = state === 'uninitialized' ? true : schemaHasChanges(url);
-  if (state !== 'uninitialized' && (schemaChanges || matterBackfillRequired || participantBackfillRequired || commitmentBackfillRequired || methodologyExpansionRequired || methodologyDataExpansionRequired || pdeDecisionContextExpansionRequired || pdeDecisionContextBackfillRequired || customerExpansionRequired || candidateExpansionRequired || candidateBackfillRequired || sensitiveAclExpansionRequired || sensitiveAclBackfillRequired || sourceArtifactExpansionRequired || sourceArtifactBackfillRequired || reviewBatchExpansionRequired || reviewBatchBackfillRequired || agentJobExpansionRequired || agentJobBackfillRequired || researchBriefExpansionRequired || researchBriefBackfillRequired)) {
+  if (state !== 'uninitialized' && (schemaChanges || matterBackfillRequired || participantBackfillRequired || commitmentBackfillRequired || methodologyExpansionRequired || methodologyDataExpansionRequired || pdeDecisionContextExpansionRequired || pdeDecisionContextBackfillRequired || customerExpansionRequired || candidateExpansionRequired || candidateBackfillRequired || sensitiveAclExpansionRequired || sensitiveAclBackfillRequired || sourceArtifactExpansionRequired || sourceArtifactBackfillRequired || reviewBatchExpansionRequired || reviewBatchBackfillRequired || agentJobExpansionRequired || agentJobBackfillRequired || researchBriefExpansionRequired || researchBriefBackfillRequired || intelligenceFocusExpansionRequired || intelligenceFocusBackfillRequired)) {
     backupPath = await createConsistentBackup(prisma, databasePath);
   }
 } finally {
@@ -566,6 +590,10 @@ try {
   const { inspectResearchBriefSchemaState } = await import('../src/researchBriefs/migration.js');
   if (await inspectResearchBriefSchemaState(postPushPrisma) !== 'expanded') {
     throw new Error('ResearchBriefSnapshot expansion verification failed');
+  }
+  const { inspectIntelligenceFocusSchemaState } = await import('../src/intelligenceFocus/migration.js');
+  if (await inspectIntelligenceFocusSchemaState(postPushPrisma) !== 'expanded') {
+    throw new Error('IntelligenceItem/StakeholderFocus expansion verification failed');
   }
 } finally {
   await postPushPrisma.$disconnect();
@@ -617,6 +645,10 @@ if (researchBriefBackfillRequired) {
   run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:research-brief-apply'], url);
 }
 run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:research-brief-verify'], url);
+if (intelligenceFocusBackfillRequired) {
+  run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:intelligence-focus-apply'], url);
+}
+run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:intelligence-focus-verify'], url);
 
 console.log(JSON.stringify({
   ok: true,
@@ -654,5 +686,8 @@ console.log(JSON.stringify({
   researchBriefStateBefore: researchBriefState,
   researchBriefExpansionRequired,
   researchBriefBackfillRequired,
+  intelligenceFocusStateBefore: intelligenceFocusState,
+  intelligenceFocusExpansionRequired,
+  intelligenceFocusBackfillRequired,
   backupPath,
 }, null, 2));

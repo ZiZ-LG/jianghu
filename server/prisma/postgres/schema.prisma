@@ -31,6 +31,8 @@ model Tenant {
   agentJobDefinitions AgentJobDefinition[]
   agentRuns           AgentRun[]
   researchBriefSnapshots ResearchBriefSnapshot[]
+  intelligenceItems  IntelligenceItem[]
+  stakeholderFocuses StakeholderFocus[]
 }
 
 // 工作区自配的企查查 OpenAPI 凭证（BYO-key）。secretKey 加密存储。
@@ -870,6 +872,70 @@ model ResearchBriefSnapshot {
   @@unique([tenantId, createdByUserId, generationKey])
   @@index([tenantId, createdByUserId, customerId, generatedAt])
   @@index([tenantId, createdByUserId, matterId, generatedAt])
+}
+
+// 人工确认的可追溯情报。reported/inferred 仍是 Intelligence，绝不因存储或迁移
+// 自动升格为 Evidence；结构化目标以受检 JSON 文本保持 SQLite/PostgreSQL 可移植。
+model IntelligenceItem {
+  id                String    @id
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customerId        String
+  matterId          String
+  assertionType     String    @default("reported")
+  statement         String
+  sourceKind        String
+  sourceDescription String
+  sourceRefId       String?
+  sourceRefVersion  Int?
+  occurredAt        DateTime?
+  learnedAt         DateTime
+  confidence        Float     @default(0.5)
+  targetRefs        String    @default("[]")
+  createdByUserId   String
+  version           Int       @default(0)
+  archivedAt        DateTime?
+  archivedByUserId  String?
+  archiveReason     String    @default("")
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([tenantId, id])
+  @@index([tenantId, customerId, learnedAt])
+  @@index([tenantId, matterId, learnedAt])
+  @@index([tenantId, assertionType, learnedAt])
+  @@index([tenantId, archivedAt, learnedAt])
+}
+
+// Matter 在一个时点只有一个当前干系人聚焦。服务层确认 Person 为当前
+// MatterParticipant；通用聚焦不引用、不回填、不降级到 legacy primaryDPersonId。
+model StakeholderFocus {
+  id                String    @id
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customerId        String
+  matterId          String
+  personId          String
+  desiredChange     String
+  rationale         String
+  evidenceGap       String?
+  basisRefs         String    @default("[]")
+  validUntil        DateTime
+  activeMatterKey   String?
+  confirmedByUserId String
+  confirmedAt       DateTime
+  retiredByUserId   String?
+  retiredAt         DateTime?
+  retireReason      String    @default("")
+  version           Int       @default(0)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, activeMatterKey])
+  @@index([tenantId, customerId, updatedAt])
+  @@index([tenantId, matterId, updatedAt])
+  @@index([tenantId, personId, updatedAt])
 }
 
 // WorkBuddy 原子同步执行记录：保存非敏感引用回执，支持同 key 安全重放。

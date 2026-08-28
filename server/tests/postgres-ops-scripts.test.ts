@@ -893,3 +893,38 @@ describe('SAAS-204 ResearchBriefSnapshot migration operations', () => {
     expect(drill).toContain('migrate:research-brief-verify');
   });
 });
+
+describe('SAAS-206 IntelligenceItem and StakeholderFocus migration operations', () => {
+  it('failure-injects committed DDL adoption, semantic/marker drift, partial schema, restore, and fresh install', async () => {
+    const deploy = await read('server/scripts/deploy-postgres-migrations.sh');
+    const drill = await read('scripts/test-postgres-ops-integration.sh');
+
+    expect(deploy).toContain('INTELLIGENCE_FOCUS_MIGRATION=20260827000000_expand_intelligence_focus');
+    expect(deploy).toContain('recover_incomplete_intelligence_focus_migration');
+    expect(deploy).toContain('adopt_existing_intelligence_focus_schema_if_safe');
+    expect(deploy).toContain('intelligence_focus_schema_matches_known_state');
+    expect(deploy).toContain('research_brief_schema_matches_known_state');
+    expect(deploy.lastIndexOf('npm run migrate:intelligence-focus-report'))
+      .toBeGreaterThan(deploy.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deploy.lastIndexOf('npm run migrate:intelligence-focus-apply'))
+      .toBeGreaterThan(deploy.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deploy.lastIndexOf('npm run migrate:intelligence-focus-verify'))
+      .toBeGreaterThan(deploy.lastIndexOf('npm run migrate:intelligence-focus-apply'));
+
+    for (const marker of [
+      'INTERRUPTED_INTELLIGENCE_FOCUS_AFTER_COMMIT_ADOPTION_OK=1',
+      'INTELLIGENCE_FOCUS_SEMANTIC_CONFLICT_FAIL_CLOSED_OK=1',
+      'INTELLIGENCE_FOCUS_MARKER_CHECKSUM_FAIL_CLOSED_OK=1',
+      'PARTIAL_INTELLIGENCE_FOCUS_SCHEMA_FAIL_CLOSED_OK=1',
+      'INTELLIGENCE_FOCUS_RESTORE_ROLLBACK_OK=1',
+      'SAAS_206_INTELLIGENCE_FOCUS_MIGRATION_OK=1',
+      'POSTGRES_OPS_INTEGRATION_OK=1',
+    ]) expect(drill).toContain(marker);
+    expect(drill).toContain('20260827000000_expand_intelligence_focus');
+    expect(drill).toContain('prisma/postgres/legacy/20260827_pre_saas206.prisma');
+    expect(drill).toContain("key = 'SAAS-206-intelligence-focus-v1'");
+    expect(drill).toContain('migrate:intelligence-focus-report');
+    expect(drill).toContain('migrate:intelligence-focus-apply');
+    expect(drill).toContain('migrate:intelligence-focus-verify');
+  });
+});

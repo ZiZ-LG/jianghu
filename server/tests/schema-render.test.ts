@@ -1065,3 +1065,87 @@ describe('SAAS-204 ResearchBriefSnapshot expansion', () => {
       .toBeLessThan(sqliteUpgrade.indexOf("const dbPushArgs = ['prisma', 'db', 'push'"));
   });
 });
+
+describe('SAAS-206 IntelligenceItem and StakeholderFocus expansion', () => {
+  it('creates two portable method-neutral authorities through guarded SQLite and PostgreSQL gates', async () => {
+    const sqliteSchema = await read('prisma/schema.prisma');
+    const postgresSchema = await read('prisma/postgres/schema.prisma');
+    const predecessor = await read('prisma/postgres/legacy/20260827_pre_saas206.prisma');
+    const migration = await read(
+      'prisma/postgres/migrations/20260827000000_expand_intelligence_focus/migration.sql',
+    );
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const sqliteUpgrade = await read('scripts/upgrade-sqlite-schema.ts');
+    const schemaState = await read('scripts/postgres-intelligence-focus-schema-state.ts');
+    const migrationCli = await read('scripts/migrate-intelligence-focus.ts');
+    const packageJson = JSON.parse(await read('package.json')) as { scripts?: Record<string, string> };
+
+    for (const schemaText of [sqliteSchema, postgresSchema]) {
+      expect(schemaText).toContain('model IntelligenceItem {');
+      expect(schemaText).toContain('model StakeholderFocus {');
+      for (const field of [
+        'tenantId', 'customerId', 'matterId', 'assertionType', 'statement', 'sourceKind',
+        'sourceDescription', 'sourceRefId', 'sourceRefVersion', 'occurredAt', 'learnedAt',
+        'confidence', 'targetRefs', 'createdByUserId', 'version', 'archivedAt',
+        'archivedByUserId', 'archiveReason', 'createdAt', 'updatedAt',
+      ]) expect(schemaText).toMatch(new RegExp(`model IntelligenceItem \\{[\\s\\S]*?${field}\\s+`));
+      for (const field of [
+        'tenantId', 'customerId', 'matterId', 'personId', 'desiredChange', 'rationale',
+        'evidenceGap', 'basisRefs', 'validUntil', 'activeMatterKey', 'confirmedByUserId',
+        'confirmedAt', 'retiredByUserId', 'retiredAt', 'retireReason', 'version',
+        'createdAt', 'updatedAt',
+      ]) expect(schemaText).toMatch(new RegExp(`model StakeholderFocus \\{[\\s\\S]*?${field}\\s+`));
+      expect(schemaText).toContain('@@unique([tenantId, activeMatterKey])');
+      expect(schemaText).not.toMatch(/model (?:IntelligenceItem|StakeholderFocus) \{[^}]*(?:primaryDPersonId|g64111|adurc|methodology)/i);
+      expect(schemaText).not.toMatch(/^enum\s+/m);
+      expect(schemaText).not.toMatch(/^\s*\w+\s+Json[?\[\]]*/m);
+    }
+    expect(predecessor).toContain('model ResearchBriefSnapshot {');
+    expect(predecessor).not.toContain('model IntelligenceItem {');
+    expect(predecessor).not.toContain('model StakeholderFocus {');
+
+    expect(migration.trimStart().startsWith('BEGIN;')).toBe(true);
+    expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(migration).toContain("SET LOCAL lock_timeout = '30s'");
+    expect(migration).toContain("SET LOCAL statement_timeout = '15min'");
+    expect(migration).toContain('LOCK TABLE "Tenant" IN SHARE ROW EXCLUSIVE MODE');
+    expect(migration).toContain('CREATE TABLE "IntelligenceItem"');
+    expect(migration).toContain('CREATE TABLE "StakeholderFocus"');
+    expect(migration).toContain('IntelligenceItem table expansion parity failed');
+    expect(migration).toContain('StakeholderFocus table expansion parity failed');
+    expect(migration).not.toMatch(/(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+"(?:EvidenceEvent|Account|Opportunity|Person|Edge|PlanAction|Candidate|ResearchBriefSnapshot)"/i);
+
+    expect(packageJson.scripts?.['migrate:intelligence-focus-report'])
+      .toBe('tsx scripts/migrate-intelligence-focus.ts --dry-run');
+    expect(packageJson.scripts?.['migrate:intelligence-focus-apply'])
+      .toBe('tsx scripts/migrate-intelligence-focus.ts --apply');
+    expect(packageJson.scripts?.['migrate:intelligence-focus-verify'])
+      .toBe('tsx scripts/migrate-intelligence-focus.ts --verify');
+    expect(migrationCli).toContain('reportIntelligenceFocusMigration');
+    expect(migrationCli).toContain('applyIntelligenceFocusMigration');
+    expect(migrationCli).toContain('verifyIntelligenceFocusMigration');
+
+    expect(deployScript).toContain('PRE_INTELLIGENCE_FOCUS_SCHEMA=prisma/postgres/legacy/20260827_pre_saas206.prisma');
+    expect(deployScript).toContain('INTELLIGENCE_FOCUS_MIGRATION=20260827000000_expand_intelligence_focus');
+    expect(deployScript).toContain('recover_incomplete_intelligence_focus_migration');
+    expect(deployScript).toContain('adopt_existing_intelligence_focus_schema_if_safe');
+    expect(deployScript).toContain('intelligence_focus_schema_matches_known_state');
+    expect(deployScript.lastIndexOf('npm run migrate:intelligence-focus-report'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:intelligence-focus-apply'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:intelligence-focus-verify'))
+      .toBeGreaterThan(deployScript.lastIndexOf('npm run migrate:intelligence-focus-apply'));
+    expect(schemaState).toContain("? 'legacy' : 'uninitialized'");
+    expect(schemaState).toContain("'expanded'");
+    expect(schemaState).toContain("'partial'");
+    expect(schemaState).toContain('expectedIntelligenceColumns');
+    expect(schemaState).toContain('expectedFocusColumns');
+    expect(sqliteUpgrade).toContain('inspectIntelligenceFocusSchemaState');
+    expect(sqliteUpgrade).toContain('partial IntelligenceItem/StakeholderFocus expansion detected');
+    expect(sqliteUpgrade).toContain("['run', 'migrate:intelligence-focus-apply']");
+    expect(sqliteUpgrade).toContain("['run', 'migrate:intelligence-focus-verify']");
+    expect(sqliteUpgrade.indexOf("['run', 'migrate:intelligence-focus-report']"))
+      .toBeLessThan(sqliteUpgrade.indexOf("const dbPushArgs = ['prisma', 'db', 'push'"));
+  });
+});

@@ -87,13 +87,37 @@ describe('CRM field authority map', () => {
       targetAuthority: { kind: 'core_path', path: 'PdeDecisionContext.stageKey' },
     });
     expect(getCrmFieldAuthority('stakeholder.focus')).toMatchObject({
-      currentAuthority: { kind: 'none', path: null },
+      currentAuthority: { kind: 'core_path', path: 'StakeholderFocus' },
       targetAuthority: { kind: 'core_path', path: 'StakeholderFocus' },
     });
     expect(getCrmFieldAuthority('matter.owner')).toMatchObject({
       currentAuthority: { kind: 'core_path', path: 'Matter.primaryOwnerUserId' },
       targetAuthority: { kind: 'core_path', path: 'Matter.primaryOwnerUserId' },
     });
+  });
+
+  it('registers the implemented StakeholderFocus authority and leaves only SAAS-208 planned', () => {
+    const focus = getCrmFieldAuthority('stakeholder.focus');
+    expect(focus).toMatchObject({
+      currentAuthority: { kind: 'core_path', path: 'StakeholderFocus' },
+      targetAuthority: { kind: 'core_path', path: 'StakeholderFocus' },
+      consumers: {
+        reads: ['server/src/intelligenceFocus/routes.ts'],
+        writes: ['server/src/intelligenceFocus/service.ts'],
+        adapters: ['packages/domain-contracts/src/intelligence.ts'],
+        planned: ['SAAS-208 relationship-map projection'],
+      },
+    });
+    expect(focus?.consumers.migrations).toEqual(expect.arrayContaining([
+      'server/prisma/postgres/migrations/20260827000000_expand_intelligence_focus/migration.sql',
+      'server/src/intelligenceFocus/migration.ts',
+      'server/scripts/migrate-intelligence-focus.ts',
+      'server/scripts/postgres-intelligence-focus-schema-state.ts',
+      'server/scripts/upgrade-sqlite-schema.ts',
+    ]));
+    expect(focus?.consumers.planned.join('\n')).not.toContain('SAAS-206');
+    expect(focus?.forbidden.join('\n')).toMatch(/primaryDPersonId/);
+    expect(focus?.forbidden.join('\n')).toMatch(/score|methodology/i);
   });
 
   it('registers the exact executable customer.category consumer inventory', () => {
