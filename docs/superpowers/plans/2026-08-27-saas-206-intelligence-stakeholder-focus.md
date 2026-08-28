@@ -10,8 +10,8 @@
 
 ## Global constraints
 
-- **Task:** `SAAS-206`; **branch:** `codex/g4-candidate-review-intelligence`; **worktree:** `/Volumes/PowerData/江湖APP/.worktrees/g4-candidate-review-intelligence`; **base:** `a702b229f28e117e2eeccc0513692cc60ca2b353`; **status:** `IN_PROGRESS` after the independent start-governance exact-SHA CI gate passes.
-- Keep `SAAS-206` as the only CRM `IN_PROGRESS` item. Do not start `SAAS-207` before the SAAS-206 business and governance exact-SHA CI gates are both 12/12 green.
+- **Task:** `SAAS-206`; **branch:** `codex/g4-candidate-review-intelligence`; **worktree:** `/Volumes/PowerData/江湖APP/.worktrees/g4-candidate-review-intelligence`; **base:** `a702b229f28e117e2eeccc0513692cc60ca2b353`; **status:** `DONE` after the independent business and governance gates.
+- `SAAS-206` remained the only CRM `IN_PROGRESS` item through implementation. `SAAS-207` moves to `READY` only after business SHA `5f2d0568a6f15216d98a8b0f9013ed1c0dfa2aa3` passed 12/12 jobs and this governance close is independently verified.
 - The project owner explicitly approved SAAS-206 changes to the shared root file `scripts/test-postgres-ops-integration.sh`. That approval is limited to the migration failure-injection, recovery and fresh-install proof required by this task; it does not authorize any other shared/high-conflict file.
 - Every create/update/archive/restore/set/retire, replay, list and direct-ID read is scoped by exact `tenantId`, current database role, `sales.workspace`, active Customer/Matter closure and EffectiveResourceScope. Viewer writes always fail; viewer reads remain constrained by Customer ownership and the resolver.
 - Human commands may create formal IntelligenceItem and StakeholderFocus records. Machine/Agent/AI output may only create a Candidate with source, evidence and confidence; it cannot call these writers or silently create/revise focus. Static dependency tests and behavioral zero-write tests enforce that boundary.
@@ -180,16 +180,16 @@ Add only the two inverse arrays to `Tenant`. Do not add parent cascade relations
 - Create: `packages/domain-contracts/tests/intelligence.test.ts`
 - Modify: `packages/domain-contracts/src/index.ts`
 
-- [ ] **Step 1: Write the failing contract suite first.** Cover default `reported`, all assertion/source/target/basis variants, observed-time ordering, confidence and size bounds, duplicate/dangling/unknown fields, body-free receipts, exact CAS shapes and list/detail cursor bounds.
-- [ ] **Step 2: Run RED and confirm the failure is missing contract/export, not fixture setup.**
+- [x] **Step 1: Write the failing contract suite first.** Cover default `reported`, all assertion/source/target/basis variants, observed-time ordering, confidence and size bounds, duplicate/dangling/unknown fields, body-free receipts, exact CAS shapes and list/detail cursor bounds.
+- [x] **Step 2: Run RED and confirm the failure is missing contract/export, not fixture setup.**
 
 ```bash
 cd packages/domain-contracts
 npx vitest run tests/intelligence.test.ts
 ```
 
-- [ ] **Step 3: Implement the minimal strict schemas and inferred types.** Keep them separate from `ActionSchema`; do not modify `app/src/store.ts`, `actions.ts` or legacy mutate types.
-- [ ] **Step 4: Run GREEN focused/package gates.**
+- [x] **Step 3: Implement the minimal strict schemas and inferred types.** Keep them separate from `ActionSchema`; do not modify `app/src/store.ts`, `actions.ts` or legacy mutate types.
+- [x] **Step 4: Run GREEN focused/package gates.**
 
 ```bash
 cd packages/domain-contracts
@@ -217,11 +217,11 @@ npm test
 - Modify: `server/tests/postgres-ops-scripts.test.ts`
 - Modify: `server/tests/sqlite-matter-upgrade.test.ts`
 
-- [ ] **Step 1: Write RED schema/migration/ops tests.** Assert predecessor absence, exact successor shapes and indexes, expand-only SQL, no backfill and no mutation of Evidence, primary D, Candidate, ResearchBrief or other formal tables.
-- [ ] **Step 2: Add the exact portable models, render PostgreSQL deterministically and create marker-last migration `SAAS-206-intelligence-focus-v1`.** Report/apply/verify accepts only exact predecessor or successor state and rejects partial tables, unknown columns/indexes, invalid row semantics and marker checksum drift.
-- [ ] **Step 3: Wire guarded local/production operations.** SQLite inspects before backup/upgrade; PostgreSQL uses versioned `migrate deploy`, supports interrupted committed-DDL marker adoption, fails closed on semantic/marker/partial drift, performs authenticated isolated restore, and proves fresh install plus second update.
-- [ ] **Step 4: Extend only the approved root script.** It must print `SAAS_206_INTELLIGENCE_FOCUS_MIGRATION_OK=1` while retaining every earlier marker and `POSTGRES_OPS_INTEGRATION_OK=1`.
-- [ ] **Step 5: Run focused migration gates.**
+- [x] **Step 1: Write RED schema/migration/ops tests.** Assert predecessor absence, exact successor shapes and indexes, expand-only SQL, no backfill and no mutation of Evidence, primary D, Candidate, ResearchBrief or other formal tables.
+- [x] **Step 2: Add the exact portable models, render PostgreSQL deterministically and create marker-last migration `SAAS-206-intelligence-focus-v1`.** Report/apply/verify accepts only exact predecessor or successor state and rejects partial tables, unknown columns/indexes, invalid row semantics and marker checksum drift.
+- [x] **Step 3: Wire guarded local/production operations.** SQLite inspects before backup/upgrade; PostgreSQL uses versioned `migrate deploy`, supports interrupted committed-DDL marker adoption, fails closed on semantic/marker/partial drift, performs authenticated isolated restore, and proves fresh install plus second update.
+- [x] **Step 4: Extend only the approved root script.** It must print `SAAS_206_INTELLIGENCE_FOCUS_MIGRATION_OK=1` while retaining every earlier marker and `POSTGRES_OPS_INTEGRATION_OK=1`.
+- [x] **Step 5: Run focused migration gates.**
 
 ```bash
 cd server
@@ -245,11 +245,11 @@ bash scripts/test-postgres-ops-integration.sh
 - Create: `server/tests/intelligence-model.test.ts`
 - Create: `server/tests/intelligence-service.test.ts`
 
-- [ ] **Step 1: Write RED behavior tests.** Prove default `reported`, source/time/confidence/target preservation, strict source linkage, tenant/customer/matter/person/relation closure, current database-role reload, EffectiveResourceScope, viewer denial, CAS conflict, archive/restore, idempotent replay reauthorization and body-free audit/receipt.
-- [ ] **Step 2: Prove rumor/inference cannot become Evidence.** Snapshot Evidence rows before and after every command and replay; assertion updates remain the same IntelligenceItem row/type. A machine-facing module cannot import the formal writer.
-- [ ] **Step 3: Implement minimal canonicalization and service commands.** Lock actor and parent rows inside the command transaction; validate Interaction/Evidence reference version and authorization; persist canonical target JSON; emit audit metadata containing only IDs, assertion/source kinds, confidence, times, changed field names and version.
-- [ ] **Step 4: Implement paginated list and direct-ID reads.** Both reload current role/resolver scope; archived rows are excluded by default; projected structured references are reparsed strictly and corrupted storage fails closed.
-- [ ] **Step 5: Run focused GREEN tests.**
+- [x] **Step 1: Write RED behavior tests.** Prove default `reported`, source/time/confidence/target preservation, strict source linkage, tenant/customer/matter/person/relation closure, current database-role reload, EffectiveResourceScope, viewer denial, CAS conflict, archive/restore, idempotent replay reauthorization and body-free audit/receipt.
+- [x] **Step 2: Prove rumor/inference cannot become Evidence.** Snapshot Evidence rows before and after every command and replay; assertion updates remain the same IntelligenceItem row/type. A machine-facing module cannot import the formal writer.
+- [x] **Step 3: Implement minimal canonicalization and service commands.** Lock actor and parent rows inside the command transaction; validate Interaction/Evidence reference version and authorization; persist canonical target JSON; emit audit metadata containing only IDs, assertion/source kinds, confidence, times, changed field names and version.
+- [x] **Step 4: Implement paginated list and direct-ID reads.** Both reload current role/resolver scope; archived rows are excluded by default; projected structured references are reparsed strictly and corrupted storage fails closed.
+- [x] **Step 5: Run focused GREEN tests.**
 
 ```bash
 cd server
@@ -267,11 +267,11 @@ DATABASE_URL=file:./test.db npx vitest run \
 - Create: `server/tests/stakeholder-focus-service.test.ts`
 - Modify: `server/tests/g64111-dependency-boundary.test.ts`
 
-- [ ] **Step 1: Write RED focus tests.** Require one active focus per Matter, active Person + MatterParticipant closure, desired change, rationale, evidence gap or basis, finite future validity, server-owned confirmer, CAS replacement/retirement and current-scope replay authorization.
-- [ ] **Step 2: Prove human confirmation and source authorization.** Basis Intelligence/Interaction/Evidence rows must be exact tenant/customer/matter scoped and currently readable. Candidate/Agent/AI code cannot import the writer; no score or methodology value creates focus.
-- [ ] **Step 3: Prove primary-D independence behaviorally.** Create a focus, change `Opportunity.primaryDPersonId` to another person and to null, then show list/detail/commands and persisted focus remain identical. Focus writes must leave primary D and methodology role/value row counts/versions unchanged.
-- [ ] **Step 4: Implement minimal serializable SET/RETIRE commands.** Use `activeMatterKey` plus expected current ID/version for concurrency; caller-supplied confirmer is impossible; only ID/status/version metadata enters receipt/audit.
-- [ ] **Step 5: Run focused GREEN/security suites.**
+- [x] **Step 1: Write RED focus tests.** Require one active focus per Matter, active Person + MatterParticipant closure, desired change, rationale, evidence gap or basis, finite future validity, server-owned confirmer, CAS replacement/retirement and current-scope replay authorization.
+- [x] **Step 2: Prove human confirmation and source authorization.** Basis Intelligence/Interaction/Evidence rows must be exact tenant/customer/matter scoped and currently readable. Candidate/Agent/AI code cannot import the writer; no score or methodology value creates focus.
+- [x] **Step 3: Prove primary-D independence behaviorally.** Create a focus, change `Opportunity.primaryDPersonId` to another person and to null, then show list/detail/commands and persisted focus remain identical. Focus writes must leave primary D and methodology role/value row counts/versions unchanged.
+- [x] **Step 4: Implement minimal serializable SET/RETIRE commands.** Use `activeMatterKey` plus expected current ID/version for concurrency; caller-supplied confirmer is impossible; only ID/status/version metadata enters receipt/audit.
+- [x] **Step 5: Run focused GREEN/security suites.**
 
 ```bash
 cd server
@@ -293,11 +293,11 @@ DATABASE_URL=file:./test.db npx vitest run \
 - Modify: `packages/domain-contracts/tests/authority.test.ts`
 - Modify at governance close only: `docs/架构-双版本关系与变更治理v1.md`
 
-- [ ] **Step 1: Write RED route tests.** Cover valid Idempotency-Key, strict body/query/params, `sales.workspace`, viewer preflight before CommandRun/Audit, current-role downgrade, cross-tenant/cross-customer/cross-matter/direct-ID hiding, cursor stability, replay after scope revocation and safe errors.
-- [ ] **Step 2: Register exact endpoints.** Use `/api/commands/intelligence-item`, `/api/intelligence-items`, `/api/intelligence-items/:id`, `/api/commands/stakeholder-focus`, `/api/stakeholder-focuses` and `/api/stakeholder-focuses/:id`; no legacy Action or generic mutate fallback.
-- [ ] **Step 3: Update the executable authority inventory.** `stakeholder.focus.currentAuthority` becomes `core_path: StakeholderFocus`; classify contract/service/routes/migration readers and writers; leave only `SAAS-208 relationship-map projection` planned. Preserve the explicit forbidden primary-D/score/methodology bindings.
-- [ ] **Step 4: Prove G64111-disabled parity.** The same commands and reads pass with no active methodology binding and no G64111-specific data.
-- [ ] **Step 5: Run the focused route/authority matrix.**
+- [x] **Step 1: Write RED route tests.** Cover valid Idempotency-Key, strict body/query/params, `sales.workspace`, viewer preflight before CommandRun/Audit, current-role downgrade, cross-tenant/cross-customer/cross-matter/direct-ID hiding, cursor stability, replay after scope revocation and safe errors.
+- [x] **Step 2: Register exact endpoints.** Use `/api/commands/intelligence-item`, `/api/intelligence-items`, `/api/intelligence-items/:id`, `/api/commands/stakeholder-focus`, `/api/stakeholder-focuses` and `/api/stakeholder-focuses/:id`; no legacy Action or generic mutate fallback.
+- [x] **Step 3: Update the executable authority inventory.** `stakeholder.focus.currentAuthority` becomes `core_path: StakeholderFocus`; classify contract/service/routes/migration readers and writers; leave only `SAAS-208 relationship-map projection` planned. Preserve the explicit forbidden primary-D/score/methodology bindings.
+- [x] **Step 4: Prove G64111-disabled parity.** The same commands and reads pass with no active methodology binding and no G64111-specific data.
+- [x] **Step 5: Run the focused route/authority matrix.**
 
 ```bash
 cd packages/domain-contracts
@@ -312,9 +312,9 @@ DATABASE_URL=file:./test.db npx vitest run \
 
 ## Task 6: Full verification and exact-SHA business delivery
 
-- [ ] **Step 1: Refresh copied workspace packages.** Because `packages/domain-contracts` changes, rerun `npm ci --install-links` in both App and Server before cross-package verification.
-- [ ] **Step 2: Inspect scope.** `git diff --name-only` may include only planned CRM files plus the explicitly approved root integration script. It must contain no App source/Action, package/lock/Vite/dist, navigation, Nginx/Compose/CI, public site or self-cultivation path.
-- [ ] **Step 3: Run the complete local matrix.**
+- [x] **Step 1: Refresh copied workspace packages.** Because `packages/domain-contracts` changes, rerun `npm ci --install-links` in both App and Server before cross-package verification.
+- [x] **Step 2: Inspect scope.** `git diff --name-only` may include only planned CRM files plus the explicitly approved root integration script. It must contain no App source/Action, package/lock/Vite/dist, navigation, Nginx/Compose/CI, public site or self-cultivation path.
+- [x] **Step 3: Run the complete local matrix.**
 
 ```bash
 cd app && npm ci --install-links && npx tsc --noEmit && npm run test
@@ -326,14 +326,21 @@ cd ../..
 bash scripts/test-postgres-ops-integration.sh
 ```
 
-- [ ] **Step 4: Commit business code only.** Use `feat(crm): implement SAAS-206 intelligence focus`, push the feature branch and wait for all 12 jobs on the exact business SHA. Do not merge or deploy.
+- [x] **Step 4: Commit business code only.** Use `feat(crm): implement SAAS-206 intelligence focus`, push the feature branch and wait for all 12 jobs on the exact business SHA. Do not merge or deploy.
 
 ## Task 7: Close governance separately
 
-- [ ] **Step 1: Only after business exact-SHA CI is green, update this plan, `docs/架构-双版本关系与变更治理v1.md` and `docs/商业版开发待办清单v1.md`.** Mark SAAS-206 `DONE`, move only SAAS-207 to `READY`, record exact test/CI evidence, approved shared-script touch and rollback limits.
-- [ ] **Step 2: Add `docs/SAAS-206-IntelligenceItem与StakeholderFocus迁移回滚说明.md`.** Record exact marker/schema checks, SQLite backup-only restore, authenticated PostgreSQL restore, expand-only application rollback, retained tables/audit/command history and the prohibition on Evidence/primary-D conversion.
-- [ ] **Step 3: Commit/push governance separately and require its exact SHA CI 12/12 green.** Do not start SAAS-207 before that gate.
-- [ ] **Step 4: Report the required atomic-task template.** `SELF-CULTIVATION FILES TOUCHED=NONE`, `PRODUCTION TOUCHED=NO`, `HOMEPAGE CHECK=NOT RUN (no deployment)`, and the next gate names SAAS-207.
+- [x] **Step 1: Only after business exact-SHA CI is green, update this plan, `docs/架构-双版本关系与变更治理v1.md` and `docs/商业版开发待办清单v1.md`.** Mark SAAS-206 `DONE`, move only SAAS-207 to `READY`, record exact test/CI evidence, approved shared-script touch and rollback limits.
+- [x] **Step 2: Add `docs/SAAS-206-IntelligenceItem与StakeholderFocus迁移回滚说明.md`.** Record exact marker/schema checks, SQLite backup-only restore, authenticated PostgreSQL restore, expand-only application rollback, retained tables/audit/command history and the prohibition on Evidence/primary-D conversion.
+- [x] **Step 3: Commit/push governance separately and require its exact SHA CI 12/12 green.** Do not start SAAS-207 before that gate.
+- [x] **Step 4: Report the required atomic-task template.** `SELF-CULTIVATION FILES TOUCHED=NONE`, `PRODUCTION TOUCHED=NO`, `HOMEPAGE CHECK=NOT RUN (no deployment)`, and the next gate names SAAS-207.
+
+## Completion evidence
+
+- Business commit `5f2d0568a6f15216d98a8b0f9013ed1c0dfa2aa3` is pushed and [GitHub Actions 33172038063](https://github.com/ZiZ-LG/jianghu/actions/runs/33172038063) attempt 1 completed successfully with 12/12 jobs on that exact SHA.
+- Final local matrix: Domain Contracts 13 files / 126 tests; Server 103 files / 866 tests; App 49 files / 362 tests; G64111 2 files / 32 tests; PDE kernel 3 files / 25 tests. All required typechecks, Prisma generation, deterministic PostgreSQL schema checks and production image build gates passed.
+- The local and remote PostgreSQL operations gates both emitted `INTERRUPTED_INTELLIGENCE_FOCUS_AFTER_COMMIT_ADOPTION_OK=1`, semantic/marker/partial fail-closed markers, authenticated restore success, `SAAS_206_INTELLIGENCE_FOCUS_MIGRATION_OK=1`, fresh-install first/second-update success and `POSTGRES_OPS_INTEGRATION_OK=1`.
+- Scope remained CRM-only. The only shared/high-conflict file touched was the project-owner-approved `scripts/test-postgres-ops-integration.sh`; no App source/Action/package/lock/Vite/dist, public navigation, Nginx/Compose/CI, self-cultivation, production, Mac mini or `main` change occurred.
 
 ## Rollback
 
