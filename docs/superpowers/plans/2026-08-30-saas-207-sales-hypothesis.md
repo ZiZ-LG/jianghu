@@ -10,8 +10,8 @@
 
 ## Global constraints
 
-- **Task:** `SAAS-207`; **branch:** `codex/g4-candidate-review-intelligence`; **worktree:** `/Volumes/PowerData/江湖APP/.worktrees/g4-candidate-review-intelligence`; **base:** `bd2f9eec5265853e90e831247733b5e293ed3f4b`; **status:** `IN_PROGRESS` after the independent start-governance gate.
-- `SAAS-207` is the only CRM `IN_PROGRESS` item. `SAAS-208` stays `PENDING` until the independent business and governance-close SHAs each pass all 12 remote CI jobs.
+- **Task:** `SAAS-207`; **branch:** `codex/g4-candidate-review-intelligence`; **worktree:** `/Volumes/PowerData/江湖APP/.worktrees/g4-candidate-review-intelligence`; **base:** `bd2f9eec5265853e90e831247733b5e293ed3f4b`; **status:** `DONE` after the independent business and governance gates.
+- `SAAS-207` remained the only CRM `IN_PROGRESS` item through implementation. `SAAS-208` moves to `READY` only after business SHA `2c4f93051c979af02fb2ff8012deb6849605e81b` passed 12/12 jobs and this governance close is independently verified.
 - The project owner explicitly approved SAAS-207 changes to the shared root file `scripts/test-postgres-ops-integration.sh`. That approval is limited to the interruption, semantic/marker/partial drift, authenticated recovery and fresh-install proof required by this migration; it authorizes no other shared/high-conflict file.
 - Every create/revise/metadata/status/link command, idempotent replay, list, direct-ID read and suggestion read is scoped by exact `tenantId`, current database role, `sales.workspace`, active Customer/Matter closure and EffectiveResourceScope. Viewer writes fail before `CommandRun`/`AuditEvent`; viewer reads retain Customer ownership isolation.
 - Only `assertionMode=user_asserted` commands may create/revise a formal hypothesis, set status or link Evidence. AI, Agent and methodology code may only create source-bearing Candidate/draft output; they cannot import or call the formal writer. A deterministic status suggestion is read-only and never writes status, Candidate, Evidence, stage, forecast, focus, relation, G64111 or methodology state.
@@ -122,10 +122,10 @@ Add only the three inverse arrays to `Tenant`. Do not add destructive parent cas
 - Create: `packages/domain-contracts/tests/hypotheses.test.ts`
 - Modify: `packages/domain-contracts/src/index.ts`
 
-- [ ] Write failing tests for every command/projection/status/direction, complete user revisions, legacy-incomplete stored revisions, CAS shapes, body-free receipts, history/list bounds and deterministic suggestion output.
-- [ ] Run the focused suite and confirm RED is caused by the missing contract/export.
-- [ ] Implement minimal strict schemas and inferred types outside `ActionSchema`; do not modify `app/src/store.ts`, `actions.ts` or legacy wire actions.
-- [ ] Run focused and full domain type/test gates.
+- [x] Write failing tests for every command/projection/status/direction, complete user revisions, legacy-incomplete stored revisions, CAS shapes, body-free receipts, history/list bounds and deterministic suggestion output.
+- [x] Run the focused suite and confirm RED is caused by the missing contract/export.
+- [x] Implement minimal strict schemas and inferred types outside `ActionSchema`; do not modify `app/src/store.ts`, `actions.ts` or legacy wire actions.
+- [x] Run focused and full domain type/test gates.
 
 ## Task 2: Add expand-only models and guarded dual-database migration
 
@@ -143,10 +143,10 @@ Add only the three inverse arrays to `Tenant`. Do not add destructive parent cas
 - Modify under explicit owner approval: `scripts/test-postgres-ops-integration.sh`
 - Create/modify focused migration, schema-render, SQLite and PostgreSQL operations tests.
 
-- [ ] Write RED tests for exact predecessor/successor shapes, expand-only SQL, conservative legacy mapping, stable IDs/checksums, duplicate/orphan/AI-origin conflicts, marker-last interruption rollback/adoption, drift rejection and formal-data zero mutation.
-- [ ] Add portable models, render PostgreSQL deterministically and create marker `SAAS-207-sales-hypothesis-v1`. Report/apply/verify accept only exact known states and verify every migrated predecessor row against immutable revision history without rewriting the predecessor.
-- [ ] Wire backup-first SQLite report/apply/verify and versioned PostgreSQL `migrate deploy`; cover committed-DDL adoption, semantic/marker/partial drift, authenticated isolated restore and fresh install plus second update.
-- [ ] Extend only the approved root script and emit `SAAS_207_SALES_HYPOTHESIS_MIGRATION_OK=1` while preserving every prior marker and `POSTGRES_OPS_INTEGRATION_OK=1`.
+- [x] Write RED tests for exact predecessor/successor shapes, expand-only SQL, conservative legacy mapping, stable IDs/checksums, duplicate/orphan/AI-origin conflicts, marker-last interruption rollback/adoption, drift rejection and formal-data zero mutation.
+- [x] Add portable models, render PostgreSQL deterministically and create marker `SAAS-207-sales-hypothesis-v1`. Report/apply/verify accept only exact known states and verify every migrated predecessor row against immutable revision history without rewriting the predecessor.
+- [x] Wire backup-first SQLite report/apply/verify and versioned PostgreSQL `migrate deploy`; cover committed-DDL adoption, semantic/marker/partial drift, authenticated isolated restore and fresh install plus second update.
+- [x] Extend only the approved root script and emit `SAAS_207_SALES_HYPOTHESIS_MIGRATION_OK=1` while preserving every prior marker and `POSTGRES_OPS_INTEGRATION_OK=1`.
 
 ## Task 3: Implement immutable model and human commands
 
@@ -155,10 +155,10 @@ Add only the three inverse arrays to `Tenant`. Do not add destructive parent cas
 - Create: `server/src/hypotheses/service.ts`
 - Create: focused model/service tests.
 
-- [ ] Write RED tests for create/revise/review/status/link, append-only history, CAS conflicts, current-role downgrade, viewer denial, tenant/customer/matter/person/user/Evidence closure, idempotent replay reauthorization and body-free receipts/audit.
-- [ ] Prove revisions and links have no production update/delete path. Prove revising advances only the current pointer and resets status to `untested`; old claim/reason/signals/conditions/links remain byte-for-byte unchanged.
-- [ ] Validate approved Evidence version `0`, append-only direction, duplicate conflict and Evidence deletion protection. Snapshot formal Relation/Stage/Forecast/Focus/G64111/methodology rows around every operation and prove zero changes.
-- [ ] Implement minimal service logic in serializable transactions. Machine assertions fail before `CommandRun` or canonical writes.
+- [x] Write RED tests for create/revise/review/status/link, append-only history, CAS conflicts, current-role downgrade, viewer denial, tenant/customer/matter/person/user/Evidence closure, idempotent replay reauthorization and body-free receipts/audit.
+- [x] Prove revisions and links have no production update/delete path. Prove revising advances only the current pointer and resets status to `untested`; old claim/reason/signals/conditions/links remain byte-for-byte unchanged.
+- [x] Validate approved Evidence version `0`, append-only direction, duplicate conflict and Evidence deletion protection. Snapshot formal Relation/Stage/Forecast/Focus/G64111/methodology rows around every operation and prove zero changes.
+- [x] Implement minimal service logic in serializable transactions. Machine assertions fail before `CommandRun` or canonical writes.
 
 ## Task 4: Add current-scope reads and deterministic status suggestions
 
@@ -167,9 +167,9 @@ Add only the three inverse arrays to `Tenant`. Do not add destructive parent cas
 - Modify: `server/src/hypotheses/service.ts`
 - Create: focused read/suggestion tests.
 
-- [ ] Add paginated list and direct-ID detail reads that reload current role and EffectiveResourceScope, revalidate active parent/participant/user/Evidence closure and parse canonical stored arrays strictly.
-- [ ] Return immutable revision/link history in deterministic order without Evidence body. Corrupted current pointers, revision numbering, structured JSON, link parent/version/direction or linked Evidence status fail closed.
-- [ ] Implement the fixed read-only suggestion rule and prove it cannot write hypothesis status, AuditEvent, Candidate, Evidence or any other formal object.
+- [x] Add paginated list and direct-ID detail reads that reload current role and EffectiveResourceScope, revalidate active parent/participant/user/Evidence closure and parse canonical stored arrays strictly.
+- [x] Return immutable revision/link history in deterministic order without Evidence body. Corrupted current pointers, revision numbering, structured JSON, link parent/version/direction or linked Evidence status fail closed.
+- [x] Implement the fixed read-only suggestion rule and prove it cannot write hypothesis status, AuditEvent, Candidate, Evidence or any other formal object.
 
 ## Task 5: Expose routes, freeze predecessor writes and cut authority inventory
 
@@ -183,25 +183,32 @@ Add only the three inverse arrays to `Tenant`. Do not add destructive parent cas
 - Modify: `packages/domain-contracts/src/authority.ts` and tests.
 - Create/modify route, scope, capability and dependency-boundary tests.
 
-- [ ] Register `/api/commands/sales-hypothesis`, `/api/sales-hypotheses`, `/api/sales-hypotheses/:id`, and `/api/sales-hypotheses/:id/status-suggestion` with strict body/query/params and safe errors.
-- [ ] Freeze only assumption predecessor add/update/delete and risk↔assumption conversion; preserve exact `StrategyRisk(kind=risk)` behavior. Remove demo seed bypass by seeding complete canonical hypotheses separately from risks.
-- [ ] Extend Evidence deletion protection for immutable hypothesis links. Prove cross-tenant IDs do not leak and viewer writes fail before command/audit creation.
-- [ ] Add `sales.hypothesis` to the executable authority map as a core authority, classify every predecessor consumer/migration, forbid fallback/dual-write/automatic status changes and leave only later task consumers planned.
-- [ ] Prove G64111-disabled parity and static boundaries: App Action unchanged; Agent/AI/methodology cannot import the writer; production code cannot update/delete revisions or links or write legacy assumptions.
+- [x] Register `/api/commands/sales-hypothesis`, `/api/sales-hypotheses`, `/api/sales-hypotheses/:id`, and `/api/sales-hypotheses/:id/status-suggestion` with strict body/query/params and safe errors.
+- [x] Freeze only assumption predecessor add/update/delete and risk↔assumption conversion; preserve exact `StrategyRisk(kind=risk)` behavior. Remove demo seed bypass by seeding complete canonical hypotheses separately from risks.
+- [x] Extend Evidence deletion protection for immutable hypothesis links. Prove cross-tenant IDs do not leak and viewer writes fail before command/audit creation.
+- [x] Add `sales.hypothesis` to the executable authority map as a core authority, classify every predecessor consumer/migration, forbid fallback/dual-write/automatic status changes and leave only later task consumers planned.
+- [x] Prove G64111-disabled parity and static boundaries: App Action unchanged; Agent/AI/methodology cannot import the writer; production code cannot update/delete revisions or links or write legacy assumptions.
 
 ## Task 6: Full verification and exact-SHA business delivery
 
-- [ ] Refresh copied workspace packages with `npm ci --install-links` in App and Server because domain-contracts changed.
-- [ ] Inspect the exact diff. Only planned CRM files plus the explicitly approved root operations script may appear; no App source/Action/package/lock/Vite/dist, public navigation, Nginx/Compose/CI or self-cultivation path.
-- [ ] Run Domain, Server, App, G64111, PDE, schema/render, SQLite and full PostgreSQL operations matrices from fresh outputs.
-- [ ] Commit business code as `feat(crm): implement SAAS-207 sales hypotheses`, push the feature branch and wait for all 12 jobs on the exact business SHA. Do not merge or deploy.
+- [x] Refresh copied workspace packages with `npm ci --install-links` in App and Server because domain-contracts changed.
+- [x] Inspect the exact diff. Only planned CRM files plus the explicitly approved root operations script may appear; no App source/Action/package/lock/Vite/dist, public navigation, Nginx/Compose/CI or self-cultivation path.
+- [x] Run Domain, Server, App, G64111, PDE, schema/render, SQLite and full PostgreSQL operations matrices from fresh outputs.
+- [x] Commit business code as `feat(crm): implement SAAS-207 sales hypotheses`, push the feature branch and wait for all 12 jobs on the exact business SHA. Do not merge or deploy.
 
 ## Task 7: Close governance separately
 
-- [ ] Only after business exact-SHA CI is green, update this plan, `docs/架构-双版本关系与变更治理v1.md` and `docs/商业版开发待办清单v1.md`. Mark SAAS-207 `DONE`, move only SAAS-208 to `READY`, and record exact tests/CI/shared-script/rollback evidence.
-- [ ] Add `docs/SAAS-207-SalesHypothesis迁移回滚说明.md` with marker/schema checks, SQLite backup-only restore, authenticated PostgreSQL recovery, non-destructive application rollback and retained predecessor/revisions/links/audit/command history.
-- [ ] Commit/push governance separately and require its exact SHA 12/12 CI green before SAAS-208 starts.
-- [ ] Report the required atomic-task template with `SELF-CULTIVATION FILES TOUCHED=NONE`, `PRODUCTION TOUCHED=NO`, `HOMEPAGE CHECK=NOT RUN (no deployment)`.
+- [x] Only after business exact-SHA CI is green, update this plan, `docs/架构-双版本关系与变更治理v1.md` and `docs/商业版开发待办清单v1.md`. Mark SAAS-207 `DONE`, move only SAAS-208 to `READY`, and record exact tests/CI/shared-script/rollback evidence.
+- [x] Add `docs/SAAS-207-SalesHypothesis迁移回滚说明.md` with marker/schema checks, SQLite backup-only restore, authenticated PostgreSQL recovery, non-destructive application rollback and retained predecessor/revisions/links/audit/command history.
+- [x] Commit/push governance separately and require its exact SHA 12/12 CI green before SAAS-208 starts.
+- [x] Report the required atomic-task template with `SELF-CULTIVATION FILES TOUCHED=NONE`, `PRODUCTION TOUCHED=NO`, `HOMEPAGE CHECK=NOT RUN (no deployment)`.
+
+## Completion evidence
+
+- Business commit `2c4f93051c979af02fb2ff8012deb6849605e81b` is pushed and [GitHub Actions 33360484623](https://github.com/ZiZ-LG/jianghu/actions/runs/33360484623) completed successfully with 12/12 jobs on that exact SHA.
+- Final local matrix: Domain Contracts 14 files / 134 tests; Server 110 files / 895 tests; App 49 files / 362 tests; G64111 2 files / 32 tests; PDE kernel 3 files / 25 tests. All required typechecks, Prisma generation, deterministic PostgreSQL schema checks, dependency audits and production image build gates passed.
+- Local and remote PostgreSQL operations emitted `INTERRUPTED_SALES_HYPOTHESIS_AFTER_COMMIT_ADOPTION_OK=1`, semantic/marker/partial fail-closed markers, authenticated restore success, `SAAS_207_SALES_HYPOTHESIS_MIGRATION_OK=1`, fresh-install first/second-update success and `POSTGRES_OPS_INTEGRATION_OK=1`.
+- Scope remained CRM-only. The only shared/high-conflict file touched was the project-owner-approved `scripts/test-postgres-ops-integration.sh`; no App source/Action/package/lock/Vite/dist, public navigation, Nginx/Compose/CI, self-cultivation, production, Mac mini or `main` change occurred.
 
 ## Verification commands
 
