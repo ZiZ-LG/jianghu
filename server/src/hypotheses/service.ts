@@ -81,6 +81,7 @@ const linkSelect = {
   evidenceId: true,
   evidenceVersion: true,
   direction: true,
+  verificationCommitmentId: true,
   linkedByUserId: true,
   linkedAt: true,
 } as const;
@@ -218,6 +219,7 @@ function receipt(
   row: Pick<HypothesisRow, 'id' | 'customerId' | 'matterId' | 'currentRevisionId' | 'status' | 'version'>,
   currentRevisionNumber: number,
   evidenceLinkId: string | null = null,
+  verificationCommitmentId: string | null = null,
 ): ReceiptWithoutReplay {
   return {
     type,
@@ -227,6 +229,7 @@ function receipt(
     currentRevisionId: row.currentRevisionId,
     currentRevisionNumber,
     evidenceLinkId,
+    verificationCommitmentId,
     status: row.status as ReceiptWithoutReplay['status'],
     version: row.version,
     undoable: false,
@@ -252,6 +255,7 @@ async function writeAudit(
     evidenceId?: string;
     evidenceVersion?: number;
     direction?: string;
+    verificationCommitmentId?: string | null;
   },
 ): Promise<void> {
   await db.auditEvent.create({ data: {
@@ -281,6 +285,7 @@ async function writeAudit(
         evidenceId: input.evidenceId,
         evidenceVersion: input.evidenceVersion,
         direction: input.direction,
+        verificationCommitmentId: input.verificationCommitmentId ?? null,
       } : {}),
     }),
   } });
@@ -314,6 +319,75 @@ async function requireApprovedEvidence(
     select: { id: true },
   });
   if (!row) notFound();
+}
+
+async function requireVerificationCommitment(
+  db: DbClient,
+  ctx: CommandContext,
+  row: Pick<HypothesisRow, 'id' | 'customerId' | 'matterId' | 'currentRevisionId'>,
+  commitmentId: string | null,
+  lock: boolean,
+): Promise<void> {
+  if (commitmentId === null) return;
+  const commitment = await db.planAction.findFirst({
+    where: {
+      id: commitmentId,
+      tenantId: ctx.tenantId,
+      accountId: row.customerId,
+      opportunityId: row.matterId,
+      hypothesisId: row.id,
+      hypothesisRevisionId: row.currentRevisionId,
+      archivedAt: null,
+    },
+    select: {
+      version: true,
+      kind: true,
+      executionStatus: true,
+      completionResult: true,
+      completionResultRecordedAtUtc: true,
+      completionResultRecordedByUserId: true,
+      verificationReviewDisposition: true,
+      verificationReviewedAtUtc: true,
+      verificationReviewedByUserId: true,
+    },
+  });
+  if (!commitment) notFound();
+  if (commitment.kind !== 'verification'
+    || commitment.executionStatus !== 'completed'
+    || commitment.completionResult.length === 0
+    || !commitment.completionResultRecordedAtUtc
+    || !commitment.completionResultRecordedByUserId) {
+    conflict('hypothesis_verification_commitment_not_ready');
+  }
+  if (commitment.verificationReviewDisposition.length > 0
+    || commitment.verificationReviewedAtUtc
+    || commitment.verificationReviewedByUserId) {
+    conflict('hypothesis_verification_commitment_already_reviewed');
+  }
+  await requireTenantUser(db, ctx.tenantId, commitment.completionResultRecordedByUserId);
+  if (!lock) return;
+  const locked = await db.planAction.updateMany({
+    where: {
+      id: commitmentId,
+      tenantId: ctx.tenantId,
+      accountId: row.customerId,
+      opportunityId: row.matterId,
+      hypothesisId: row.id,
+      hypothesisRevisionId: row.currentRevisionId,
+      archivedAt: null,
+      version: commitment.version,
+      kind: 'verification',
+      executionStatus: 'completed',
+      completionResult: commitment.completionResult,
+      completionResultRecordedAtUtc: commitment.completionResultRecordedAtUtc,
+      completionResultRecordedByUserId: commitment.completionResultRecordedByUserId,
+      verificationReviewDisposition: '',
+      verificationReviewedAtUtc: null,
+      verificationReviewedByUserId: null,
+    },
+    data: { version: { increment: 0 } },
+  });
+  if (locked.count !== 1) conflict('hypothesis_verification_commitment_state_conflict');
 }
 
 async function requireCreateAccess(
@@ -367,6 +441,16 @@ export async function assertSalesHypothesisCommandAccess(
     await requireApprovedEvidence(
       db, ctx.tenantId, row.customerId, row.matterId,
       command.link.evidenceId, command.link.evidenceVersion,
+    );
+    if (row.currentRevisionId !== command.link.expectedCurrentRevisionId) {
+      conflict('sales_hypothesis_current_revision_conflict');
+    }
+    await requireVerificationCommitment(
+      db,
+      ctx,
+      row,
+      command.link.verificationCommitmentId,
+      false,
     );
   }
 }
@@ -452,7 +536,7 @@ async function linksForRevisions(
   const grouped = new Map<string, HypothesisEvidenceLinkView[]>();
   for (const link of rows) {
     if (link.hypothesisId !== row.id || !revisionSet.has(link.hypothesisRevisionId)) storageInvalid();
-    const [evidence, user] = await Promise.all([
+    const [evidence, user, verificationCommitment] = await Promise.all([
       db.evidenceEvent.findFirst({
         where: {
           id: link.evidenceId,
@@ -466,8 +550,22 @@ async function linksForRevisions(
       db.user.findFirst({
         where: { id: link.linkedByUserId, tenantId: row.tenantId }, select: { id: true },
       }),
+      link.verificationCommitmentId === null
+        ? Promise.resolve({ id: null })
+        : db.planAction.findFirst({
+            where: {
+              id: link.verificationCommitmentId,
+              tenantId: row.tenantId,
+              accountId: row.customerId,
+              opportunityId: row.matterId,
+              hypothesisId: row.id,
+              hypothesisRevisionId: link.hypothesisRevisionId,
+              archivedAt: null,
+            },
+            select: { id: true },
+          }),
     ]);
-    if (!evidence || !user) storageInvalid();
+    if (!evidence || !user || !verificationCommitment) storageInvalid();
     let view: HypothesisEvidenceLinkView;
     try {
       view = projectHypothesisEvidenceLink(link);
@@ -661,6 +759,13 @@ export async function executeSalesHypothesisCommand(
   if (row.currentRevisionId !== command.link.expectedCurrentRevisionId) {
     conflict('sales_hypothesis_current_revision_conflict');
   }
+  await requireVerificationCommitment(
+    db,
+    ctx,
+    row,
+    command.link.verificationCommitmentId,
+    true,
+  );
   const linkCount = await db.hypothesisEvidenceLink.count({
     where: { tenantId: ctx.tenantId, hypothesisRevisionId: row.currentRevisionId },
   });
@@ -674,6 +779,7 @@ export async function executeSalesHypothesisCommand(
       evidenceId: command.link.evidenceId,
       evidenceVersion: command.link.evidenceVersion,
       direction: command.link.direction,
+      verificationCommitmentId: command.link.verificationCommitmentId,
       linkedByUserId: ctx.actorId,
       linkedAt: now,
     } });
@@ -699,9 +805,16 @@ export async function executeSalesHypothesisCommand(
     status: row.status, version: result.version,
     evidenceLinkId: command.link.id, evidenceId: command.link.evidenceId,
     evidenceVersion: command.link.evidenceVersion, direction: command.link.direction,
+    verificationCommitmentId: command.link.verificationCommitmentId,
     changedFields: ['evidenceLinks'],
   });
-  return receipt(command.type, result, currentRevision.revisionNumber, command.link.id);
+  return receipt(
+    command.type,
+    result,
+    currentRevision.revisionNumber,
+    command.link.id,
+    command.link.verificationCommitmentId,
+  );
 }
 
 function decodeCursor(value: string): { updatedAt: Date; id: string } {

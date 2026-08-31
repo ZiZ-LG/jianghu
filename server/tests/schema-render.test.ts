@@ -1240,3 +1240,108 @@ describe('SAAS-207 SalesHypothesis expansion', () => {
     expect(postgresOps).toContain('SAAS_207_SALES_HYPOTHESIS_MIGRATION_OK=1');
   });
 });
+
+describe('SAAS-208 hypothesis Commitment review expansion', () => {
+  it('adds only portable same-row links through guarded SQLite and PostgreSQL gates', async () => {
+    const sqliteSchema = await read('prisma/schema.prisma');
+    const postgresSchema = await read('prisma/postgres/schema.prisma');
+    const predecessor = await read('prisma/postgres/legacy/20260831_pre_saas208.prisma');
+    const migration = await read(
+      'prisma/postgres/migrations/20260831000000_expand_hypothesis_commitment_review/migration.sql',
+    );
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const sqliteUpgrade = await read('scripts/upgrade-sqlite-schema.ts');
+    const schemaState = await read('scripts/postgres-hypothesis-commitment-review-schema-state.ts');
+    const predecessorSchemaState = await read('scripts/postgres-sales-hypothesis-schema-state.ts');
+    const migrationCli = await read('scripts/migrate-hypothesis-commitment-review.ts');
+    const postgresOps = await read('../scripts/test-postgres-ops-integration.sh');
+    const packageJson = JSON.parse(await read('package.json')) as { scripts?: Record<string, string> };
+
+    for (const schemaText of [sqliteSchema, postgresSchema]) {
+      expect(schemaText).toContain('hypothesisId                       String?');
+      expect(schemaText).toContain('hypothesisRevisionId               String?');
+      expect(schemaText).toContain('completionResult                   String    @default("")');
+      expect(schemaText).toContain('verificationReviewDisposition      String    @default("")');
+      expect(schemaText).toContain('verificationCommitmentId String?');
+      expect(schemaText).toContain('@@index([tenantId, hypothesisId, hypothesisRevisionId])');
+      expect(schemaText).toContain('@@index([tenantId, verificationCommitmentId])');
+      expect(schemaText).not.toMatch(/^enum\s+/m);
+      expect(schemaText).not.toMatch(/^\s*\w+\s+Json[?\[\]]*/m);
+    }
+    expect(predecessor).toContain('model SalesHypothesis {');
+    expect(predecessor).not.toContain('verificationCommitmentId String?');
+    expect(predecessor).not.toContain('completionResultRecordedAtUtc');
+
+    expect(migration.trimStart().startsWith('BEGIN;')).toBe(true);
+    expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(migration).toContain("SET LOCAL lock_timeout = '30s'");
+    expect(migration).toContain("SET LOCAL statement_timeout = '15min'");
+    expect(migration).toContain('LOCK TABLE "PlanAction", "SalesHypothesis", "SalesHypothesisRevision", "HypothesisEvidenceLink"');
+    expect(migration).toContain('ADD COLUMN "hypothesisId" TEXT');
+    expect(migration).toContain('ADD COLUMN "verificationCommitmentId" TEXT');
+    expect(migration).toContain("column_default = (quote_literal('') || '::text')");
+    expect(migration).not.toContain("column_default = ''''::text");
+    expect(migration).toContain('must not infer or backfill Commitment verification data');
+    expect(migration).not.toMatch(/(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+"(?:Account|Opportunity|Person|Edge|PlanAction|EvidenceEvent|SalesHypothesis|SalesHypothesisRevision|HypothesisEvidenceLink)"/i);
+    expect([...migration.matchAll(/"([^"]+)"/g)]
+      .map((match) => match[1])
+      .filter((identifier) => Buffer.byteLength(identifier, 'utf8') > 63)).toEqual([]);
+
+    expect(packageJson.scripts?.['migrate:hypothesis-commitment-review-report'])
+      .toBe('tsx scripts/migrate-hypothesis-commitment-review.ts --dry-run');
+    expect(packageJson.scripts?.['migrate:hypothesis-commitment-review-apply'])
+      .toBe('tsx scripts/migrate-hypothesis-commitment-review.ts --apply');
+    expect(packageJson.scripts?.['migrate:hypothesis-commitment-review-verify'])
+      .toBe('tsx scripts/migrate-hypothesis-commitment-review.ts --verify');
+    expect(migrationCli).toContain('reportHypothesisCommitmentReviewMigration');
+    expect(migrationCli).toContain('applyHypothesisCommitmentReviewMigration');
+    expect(migrationCli).toContain('verifyHypothesisCommitmentReviewMigration');
+
+    expect(deployScript).toContain('PRE_HYPOTHESIS_COMMITMENT_REVIEW_SCHEMA=prisma/postgres/legacy/20260831_pre_saas208.prisma');
+    expect(deployScript).toContain('HYPOTHESIS_COMMITMENT_REVIEW_MIGRATION=20260831000000_expand_hypothesis_commitment_review');
+    expect(deployScript).toContain('recover_incomplete_hypothesis_commitment_review_migration');
+    expect(deployScript).toContain('adopt_existing_hypothesis_commitment_review_schema_if_safe');
+    expect(deployScript).toContain('hypothesis_commitment_review_schema_matches_known_state');
+    expect(deployScript.lastIndexOf('npm run migrate:hypothesis-commitment-review-report'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:hypothesis-commitment-review-apply'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:hypothesis-commitment-review-verify'))
+      .toBeGreaterThan(deployScript.lastIndexOf('npm run migrate:hypothesis-commitment-review-apply'));
+    expect(schemaState).toContain("? 'legacy' : 'uninitialized'");
+    expect(schemaState).toContain("'expanded'");
+    expect(schemaState).toContain("'partial'");
+    expect(schemaState).toContain('expectedPlanActionColumns');
+    expect(schemaState).toContain('expectedLinkColumns');
+    expect(schemaState).toContain("table_name = 'PlanAction' AND column_name IN (${quotedPlanActionNames})");
+    expect(schemaState).toContain("table_name = 'HypothesisEvidenceLink' AND column_name IN (${quotedLinkNames})");
+    expect(schemaState).not.toContain("table_name IN ('PlanAction', 'HypothesisEvidenceLink')");
+    expect(predecessorSchemaState).toContain('expectedLinkSaas208Columns');
+    expect(predecessorSchemaState).toContain('HypothesisEvidenceLink_tenantId_verificationCommitmentId_idx');
+    expect(sqliteUpgrade).toContain('inspectHypothesisCommitmentReviewSchemaState');
+    expect(sqliteUpgrade).toContain('partial hypothesis Commitment review expansion detected');
+    expect(sqliteUpgrade).toContain("['run', 'migrate:hypothesis-commitment-review-apply']");
+    expect(sqliteUpgrade).toContain("['run', 'migrate:hypothesis-commitment-review-verify']");
+    expect(sqliteUpgrade.indexOf("['run', 'migrate:hypothesis-commitment-review-report']"))
+      .toBeLessThan(sqliteUpgrade.indexOf("const dbPushArgs = ['prisma', 'db', 'push'"));
+    expect(postgresOps).toContain('INTERRUPTED_HYPOTHESIS_COMMITMENT_REVIEW_AFTER_COMMIT_ADOPTION_OK=1');
+    expect(postgresOps).toContain('HYPOTHESIS_COMMITMENT_REVIEW_SEMANTIC_CONFLICT_FAIL_CLOSED_OK=1');
+    expect(postgresOps).toContain('HYPOTHESIS_COMMITMENT_REVIEW_MARKER_CHECKSUM_FAIL_CLOSED_OK=1');
+    expect(postgresOps).toContain('PARTIAL_HYPOTHESIS_COMMITMENT_REVIEW_SCHEMA_FAIL_CLOSED_OK=1');
+    expect(postgresOps).toContain('HYPOTHESIS_COMMITMENT_REVIEW_RESTORE_ROLLBACK_OK=1');
+    expect(postgresOps).toContain('SAAS_208_HYPOTHESIS_COMMITMENT_REVIEW_MIGRATION_OK=1');
+    const saas208StageOffset = postgresOps.indexOf("POSTGRES_OPS_STAGE='saas208-hypothesis-commitment-review'");
+    const saas208SeedEnd = postgresOps.indexOf('hypothesis_commitment_review_backup_root=', saas208StageOffset);
+    expect(saas208StageOffset).toBeGreaterThan(0);
+    expect(saas208SeedEnd).toBeGreaterThan(saas208StageOffset);
+    const saas208Seed = postgresOps.slice(saas208StageOffset, saas208SeedEnd);
+    expect(saas208Seed).toContain('MatterParticipant');
+    expect(saas208Seed).toContain('verification-participant');
+    expect(saas208Seed).toContain('createdAt');
+    expect(saas208Seed).toContain('updatedAt');
+    const saas208MigrationIds = [...postgresOps.matchAll(/VALUES \('(int-saas208-[^']+)'/g)]
+      .map((match) => match[1]);
+    expect(saas208MigrationIds).toEqual(['int-saas208-after-commit', 'int-saas208-partial']);
+    expect(saas208MigrationIds.every((id) => id.length <= 36)).toBe(true);
+  });
+});

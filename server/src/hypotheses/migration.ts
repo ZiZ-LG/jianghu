@@ -703,12 +703,25 @@ const LINK_INDEXES = new Set([
   'HypothesisEvidenceLink_tenantId_hypothesisId_linkedAt_idx',
   'HypothesisEvidenceLink_tenantId_evidenceId_idx',
 ]);
+// SAAS-208 is the only registered successor shape. SAAS-207 verification must
+// accept that exact additive shell during ordered upgrades, while any other
+// extra column or index remains partial drift.
+const LINK_SAAS208_COLUMNS = new Set([
+  ...LINK_COLUMNS,
+  'verificationCommitmentId',
+]);
+const LINK_SAAS208_INDEXES = new Set([
+  ...LINK_INDEXES,
+  'HypothesisEvidenceLink_tenantId_verificationCommitmentId_idx',
+]);
 
-async function sqliteTableIsExact(
+async function sqliteTableMatchesRegisteredShape(
   db: Pick<DbClient, '$queryRawUnsafe'>,
   table: 'SalesHypothesis' | 'SalesHypothesisRevision' | 'HypothesisEvidenceLink',
-  expectedColumns: ReadonlySet<string>,
-  expectedIndexes: ReadonlySet<string>,
+  registeredShapes: readonly [{
+    columns: ReadonlySet<string>;
+    indexes: ReadonlySet<string>;
+  }, ...Array<{ columns: ReadonlySet<string>; indexes: ReadonlySet<string> }>],
 ): Promise<boolean> {
   const [columns, indexes, foreignKeys] = await Promise.all([
     db.$queryRawUnsafe<Array<{ name: string }>>(`PRAGMA table_info("${table}")`),
@@ -717,17 +730,19 @@ async function sqliteTableIsExact(
       `PRAGMA foreign_key_list("${table}")`,
     ),
   ]);
-  const exactColumns = columns.length === expectedColumns.size
-    && columns.every((row) => expectedColumns.has(row.name));
   const namedIndexes = indexes.filter((row) => !row.name.startsWith('sqlite_autoindex_'));
-  const exactIndexes = namedIndexes.length === expectedIndexes.size
-    && namedIndexes.every((row) => expectedIndexes.has(row.name));
+  const registeredShape = registeredShapes.some(({ columns: expectedColumns, indexes: expectedIndexes }) => (
+    columns.length === expectedColumns.size
+      && columns.every((row) => expectedColumns.has(row.name))
+      && namedIndexes.length === expectedIndexes.size
+      && namedIndexes.every((row) => expectedIndexes.has(row.name))
+  ));
   const exactTenantFk = foreignKeys.length === 1
     && foreignKeys[0]?.table === 'Tenant'
     && foreignKeys[0].from === 'tenantId'
     && foreignKeys[0].to === 'id'
     && foreignKeys[0].on_delete.toUpperCase() === 'CASCADE';
-  return exactColumns && exactIndexes && exactTenantFk;
+  return registeredShape && exactTenantFk;
 }
 
 export async function inspectSalesHypothesisSchemaState(
@@ -749,9 +764,16 @@ export async function inspectSalesHypothesisSchemaState(
   if (expansion.length === 0) return 'legacy';
   if (expansion.length !== 3) return 'partial';
   const [hypothesisExact, revisionExact, linkExact] = await Promise.all([
-    sqliteTableIsExact(db, 'SalesHypothesis', HYPOTHESIS_COLUMNS, HYPOTHESIS_INDEXES),
-    sqliteTableIsExact(db, 'SalesHypothesisRevision', REVISION_COLUMNS, REVISION_INDEXES),
-    sqliteTableIsExact(db, 'HypothesisEvidenceLink', LINK_COLUMNS, LINK_INDEXES),
+    sqliteTableMatchesRegisteredShape(db, 'SalesHypothesis', [{
+      columns: HYPOTHESIS_COLUMNS, indexes: HYPOTHESIS_INDEXES,
+    }]),
+    sqliteTableMatchesRegisteredShape(db, 'SalesHypothesisRevision', [{
+      columns: REVISION_COLUMNS, indexes: REVISION_INDEXES,
+    }]),
+    sqliteTableMatchesRegisteredShape(db, 'HypothesisEvidenceLink', [
+      { columns: LINK_COLUMNS, indexes: LINK_INDEXES },
+      { columns: LINK_SAAS208_COLUMNS, indexes: LINK_SAAS208_INDEXES },
+    ]),
   ]);
   return hypothesisExact && revisionExact && linkExact ? 'expanded' : 'partial';
 }

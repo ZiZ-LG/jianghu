@@ -1001,6 +1001,7 @@ model HypothesisEvidenceLink {
   evidenceId           String
   evidenceVersion      Int      @default(0)
   direction            String
+  verificationCommitmentId String?
   linkedByUserId       String
   linkedAt             DateTime @default(now())
 
@@ -1008,6 +1009,7 @@ model HypothesisEvidenceLink {
   @@unique([tenantId, hypothesisRevisionId, evidenceId])
   @@index([tenantId, hypothesisId, linkedAt])
   @@index([tenantId, evidenceId])
+  @@index([tenantId, verificationCommitmentId])
 }
 
 // WorkBuddy 原子同步执行记录：保存非敏感引用回执，支持同 key 安全重放。
@@ -1284,6 +1286,16 @@ model PlanAction {
   archivedAt           DateTime?
   version              Int       @default(0)
 
+  // SAAS-208 假设验证仍使用同一 PlanAction/Commitment 行；空值表示普通 Commitment。
+  hypothesisId                       String?
+  hypothesisRevisionId               String?
+  completionResult                   String    @default("")
+  completionResultRecordedAtUtc      DateTime?
+  completionResultRecordedByUserId   String?
+  verificationReviewDisposition      String    @default("") // kept | revised | retired
+  verificationReviewedAtUtc          DateTime?
+  verificationReviewedByUserId       String?
+
   @@index([accountId])
   @@index([opportunityId])
   @@index([tenantId, accountId])
@@ -1294,6 +1306,7 @@ model PlanAction {
   @@index([tenantId, executionStatus, dueAtUtc])
   @@index([tenantId, executionStatus, localDate])
   @@index([tenantId, nextCommitmentId])
+  @@index([tenantId, hypothesisId, hypothesisRevisionId])
 }
 
 // 商机策划 · 商机里程碑（🚩）。轻量，可多个/自由增删。同样按 accountId 挂载。

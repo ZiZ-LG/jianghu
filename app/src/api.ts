@@ -17,6 +17,11 @@ import {
   parsePreMeetingRuns,
 } from './lib/preMeetingBrief';
 import {
+  parseHypothesisVerificationReviewReceipt,
+  parseRelationshipWorkspace,
+  parseSalesHypothesisCommandReceipt,
+} from './lib/relationshipWorkspace';
+import {
   ActorRoleSchema,
   AgentJobCardSchema,
   AgentJobControlRequestSchema,
@@ -36,6 +41,8 @@ import {
   PostMeetingUploadMetadataSchema,
   ProductAccessSchema,
   QuickCaptureCommandReceiptSchema,
+  ReviewHypothesisVerificationCommandSchema,
+  SalesHypothesisCommandSchema,
   TodayReadModelSchema,
   TodaySourceViewSchema,
   type AgentJobCard,
@@ -60,8 +67,13 @@ import {
   type PostMeetingUploadMetadata,
   type QuickCaptureCommand,
   type QuickCaptureCommandReceipt,
+  type RelationshipWorkspaceResponse,
   type ResearchBriefSnapshotDetail,
   type ResearchBriefSnapshotListResponse,
+  type ReviewHypothesisVerificationCommand,
+  type ReviewHypothesisVerificationReceipt,
+  type SalesHypothesisCommand,
+  type SalesHypothesisCommandReceipt,
   type TodayReadModel,
   type TodaySourceView,
 } from '@jianghu/domain-contracts';
@@ -230,12 +242,23 @@ const invalidPreMeetingResponse = (cause?: unknown): ApiError => new ApiError({
   cause,
 });
 
+const invalidRelationshipWorkspaceResponse = (cause?: unknown): ApiError => new ApiError({
+  code: 'invalid_response',
+  message: '服务返回的关系工作台数据无效，请刷新后重试。',
+  retryable: false,
+  cause,
+});
+
 function postMeetingParse<T>(parse: () => T): T {
   try { return parse(); } catch (cause) { throw invalidPostMeetingResponse(cause); }
 }
 
 function preMeetingParse<T>(parse: () => T): T {
   try { return parse(); } catch (cause) { throw invalidPreMeetingResponse(cause); }
+}
+
+function relationshipWorkspaceParse<T>(parse: () => T): T {
+  try { return parse(); } catch (cause) { throw invalidRelationshipWorkspaceResponse(cause); }
 }
 
 function parseCrmContextResponse(raw: unknown): CrmContextSnapshot {
@@ -490,6 +513,14 @@ export const api = {
   crmContext: async (): Promise<CrmContextSnapshot> => parseCrmContextResponse(
     await req<unknown>('/api/crm/context'),
   ),
+  relationshipWorkspace: async (
+    customerId: string,
+    matterId: string,
+  ): Promise<RelationshipWorkspaceResponse> => {
+    const query = new URLSearchParams({ customerId, matterId });
+    const raw = await req<unknown>(`/api/relationship-workspace?${query.toString()}`);
+    return relationshipWorkspaceParse(() => parseRelationshipWorkspace(raw, customerId, matterId));
+  },
   preMeetingJobCards: async (): Promise<{ items: AgentJobCard[] }> => {
     const raw = await req<unknown>('/api/agent-jobs');
     return preMeetingParse(() => parsePreMeetingJobCards(raw));
@@ -810,6 +841,26 @@ export const api = {
     parseCommitmentResponse(await commandReq<unknown>('/api/commands/commitment', {
       method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(command),
     }), command),
+  salesHypothesisCommand: async (
+    input: SalesHypothesisCommand,
+    idempotencyKey: string,
+  ): Promise<SalesHypothesisCommandReceipt> => {
+    const command = SalesHypothesisCommandSchema.parse(input);
+    const raw = await commandReq<unknown>('/api/commands/sales-hypothesis', {
+      method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(command),
+    });
+    return relationshipWorkspaceParse(() => parseSalesHypothesisCommandReceipt(raw, command));
+  },
+  reviewHypothesisVerification: async (
+    input: ReviewHypothesisVerificationCommand,
+    idempotencyKey: string,
+  ): Promise<ReviewHypothesisVerificationReceipt> => {
+    const command = ReviewHypothesisVerificationCommandSchema.parse(input);
+    const raw = await commandReq<unknown>('/api/commands/hypothesis-verification-review', {
+      method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(command),
+    });
+    return relationshipWorkspaceParse(() => parseHypothesisVerificationReviewReceipt(raw, command));
+  },
   quickCapture: async (command: QuickCaptureCommand, idempotencyKey: string): Promise<QuickCaptureCommandReceipt & { replayed: boolean }> => {
     const raw = await commandReq<unknown>('/api/commands/quick-capture', {
       method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(command),

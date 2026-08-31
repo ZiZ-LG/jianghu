@@ -134,7 +134,7 @@ describe('CommercialShell', () => {
     expect(html).not.toContain('data-crm-context-state="loading"');
   });
 
-  it('orders pre-meeting, post-meeting and frozen legacy surfaces while keeping the viewer brief read surface', () => {
+  it('orders pre-meeting, post-meeting, relationship and frozen legacy surfaces while keeping viewer reads', () => {
     const enabled = ['sales.workspace'];
     const owner = renderToStaticMarkup(createElement(CommercialShell, {
       access: assembleProductAccess({ edition: 'commercial', enabledEntitlements: enabled }),
@@ -173,10 +173,13 @@ describe('CommercialShell', () => {
 
     expect(owner).toContain('data-pre-meeting-brief="loading"');
     expect(owner).toContain('data-post-meeting-review="loading"');
+    expect(owner).toContain('data-relationship-workspace="idle"');
     expect(owner.indexOf('data-pre-meeting-brief')).toBeLessThan(owner.indexOf('data-post-meeting-review'));
-    expect(owner.indexOf('data-post-meeting-review')).toBeLessThan(owner.indexOf('还没有可打开的客户'));
+    expect(owner.indexOf('data-post-meeting-review')).toBeLessThan(owner.indexOf('data-relationship-workspace'));
+    expect(owner.indexOf('data-relationship-workspace')).toBeLessThan(owner.indexOf('还没有可打开的客户'));
     expect(viewer).toContain('data-pre-meeting-brief="loading"');
     expect(viewer).not.toContain('data-post-meeting-review');
+    expect(viewer).toContain('data-relationship-workspace="idle"');
     expect(viewer).toContain('还没有可打开的客户');
   });
 });

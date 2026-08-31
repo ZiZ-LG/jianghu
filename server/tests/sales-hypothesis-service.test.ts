@@ -106,7 +106,7 @@ describe('SAAS-207 SalesHypothesis human authority', () => {
     await expect(execute(createCommand())).resolves.toEqual({
       type: 'CREATE_SALES_HYPOTHESIS', salesHypothesisId: 'hypothesis-207', customerId, matterId,
       currentRevisionId: 'hypothesis-revision-207', currentRevisionNumber: 1, evidenceLinkId: null,
-      status: 'untested', version: 0, undoable: false,
+      verificationCommitmentId: null, status: 'untested', version: 0, undoable: false,
     });
     await expect(test.prisma.salesHypothesis.findUniqueOrThrow({ where: { id: 'hypothesis-207' } }))
       .resolves.toMatchObject({
@@ -251,6 +251,126 @@ describe('SAAS-207 SalesHypothesis human authority', () => {
       },
     });
     await expect(execute(duplicate)).rejects.toMatchObject({ code: 'hypothesis_evidence_conflict' });
+  });
+
+  it('links approved Evidence to one exact completed verification Commitment without leaking result text', async () => {
+    await execute(createCommand());
+    const commitmentId = 'commitment-verification-208';
+    await test.prisma.planAction.create({ data: {
+      id: commitmentId,
+      tenantId: test.tenant.id,
+      accountId: customerId,
+      opportunityId: matterId,
+      personId,
+      title: '验证预算审批排期',
+      ownerId: test.owner.id,
+      ownerUserId: test.owner.id,
+      kind: 'verification',
+      executionStatus: 'completed',
+      done: true,
+      doneAt: '2026-08-30',
+      hypothesisId: 'hypothesis-207',
+      hypothesisRevisionId: 'hypothesis-revision-207',
+      completionResult: '客户确认董事会已排期，不得进回执或审计',
+      completionResultRecordedAtUtc: now,
+      completionResultRecordedByUserId: test.owner.id,
+    } });
+    const input = command({
+      type: 'LINK_HYPOTHESIS_EVIDENCE',
+      link: {
+        id: 'link-verification-208', salesHypothesisId: 'hypothesis-207', expectedVersion: 0,
+        expectedCurrentRevisionId: 'hypothesis-revision-207', evidenceId: 'evidence-207-support',
+        evidenceVersion: 0, direction: 'supporting', verificationCommitmentId: commitmentId,
+      },
+    });
+
+    await expect(execute(input)).resolves.toMatchObject({
+      evidenceLinkId: 'link-verification-208', verificationCommitmentId: commitmentId, version: 1,
+    });
+    await expect(test.prisma.hypothesisEvidenceLink.findUniqueOrThrow({
+      where: { id: 'link-verification-208' },
+    })).resolves.toMatchObject({
+      tenantId: test.tenant.id,
+      hypothesisId: 'hypothesis-207',
+      hypothesisRevisionId: 'hypothesis-revision-207',
+      verificationCommitmentId: commitmentId,
+    });
+    const detail = await salesHypothesisDetail(
+      test.prisma, ctx, policy, 'hypothesis-207', SalesHypothesisDetailQuerySchema.parse({}),
+    );
+    expect(detail).toMatchObject({
+      revisions: [{ evidenceLinks: [{ verificationCommitmentId: commitmentId }] }],
+    });
+    const audit = await test.prisma.auditEvent.findFirstOrThrow({
+      where: { entityKind: 'sales_hypothesis', entityId: 'hypothesis-207', action: 'sales_hypothesis_evidence_link' },
+    });
+    expect(JSON.parse(audit.metadata)).toMatchObject({ verificationCommitmentId: commitmentId });
+    expect(audit.metadata).not.toContain('客户确认董事会已排期');
+  });
+
+  it('fails closed for unfinished, unlinked, reviewed, or foreign verification Commitments', async () => {
+    await execute(createCommand());
+    const createVerification = async (id: string, data: Record<string, unknown> = {}) => {
+      await test.prisma.planAction.create({ data: {
+        id,
+        tenantId: test.tenant.id,
+        accountId: customerId,
+        opportunityId: matterId,
+        title: '验证承诺',
+        ownerId: test.owner.id,
+        ownerUserId: test.owner.id,
+        kind: 'verification',
+        executionStatus: 'completed',
+        hypothesisId: 'hypothesis-207',
+        hypothesisRevisionId: 'hypothesis-revision-207',
+        completionResult: '已得到明确结果',
+        completionResultRecordedAtUtc: now,
+        completionResultRecordedByUserId: test.owner.id,
+        ...data,
+      } });
+    };
+    const link = (id: string, verificationCommitmentId: string) => command({
+      type: 'LINK_HYPOTHESIS_EVIDENCE', link: {
+        id, salesHypothesisId: 'hypothesis-207', expectedVersion: 0,
+        expectedCurrentRevisionId: 'hypothesis-revision-207', evidenceId: 'evidence-207-support',
+        evidenceVersion: 0, direction: 'supporting', verificationCommitmentId,
+      },
+    });
+
+    await createVerification('commitment-unfinished-208', {
+      executionStatus: 'planned', completionResult: '',
+      completionResultRecordedAtUtc: null, completionResultRecordedByUserId: null,
+    });
+    await expect(execute(link('link-unfinished-208', 'commitment-unfinished-208')))
+      .rejects.toMatchObject({ code: 'hypothesis_verification_commitment_not_ready' });
+
+    await createVerification('commitment-unlinked-208', {
+      hypothesisId: null, hypothesisRevisionId: null,
+    });
+    await expect(execute(link('link-unlinked-208', 'commitment-unlinked-208')))
+      .rejects.toMatchObject({ scopedNotFound: true });
+
+    await createVerification('commitment-reviewed-208', {
+      verificationReviewDisposition: 'kept',
+      verificationReviewedAtUtc: now,
+      verificationReviewedByUserId: test.owner.id,
+    });
+    await expect(execute(link('link-reviewed-208', 'commitment-reviewed-208')))
+      .rejects.toMatchObject({ code: 'hypothesis_verification_commitment_already_reviewed' });
+
+    const foreignTenant = await test.prisma.tenant.create({ data: {
+      id: 'foreign-verification-tenant-208', name: 'Foreign verification tenant',
+    } });
+    await test.prisma.planAction.create({ data: {
+      id: 'commitment-foreign-208', tenantId: foreignTenant.id,
+      accountId: customerId, opportunityId: matterId, title: 'Foreign verification',
+      executionStatus: 'completed', hypothesisId: 'hypothesis-207',
+      hypothesisRevisionId: 'hypothesis-revision-207', completionResult: 'Foreign result',
+      completionResultRecordedAtUtc: now, completionResultRecordedByUserId: test.owner.id,
+    } });
+    await expect(execute(link('link-foreign-208', 'commitment-foreign-208')))
+      .rejects.toMatchObject({ scopedNotFound: true });
+    expect(await test.prisma.hypothesisEvidenceLink.count()).toBe(0);
   });
 
   it('returns scoped list/detail history and derives current-revision-only body-free suggestions', async () => {

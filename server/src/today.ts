@@ -53,6 +53,14 @@ const TODAY_PLAN_ACTION_SELECT = {
   sourceRef: true,
   archivedAt: true,
   version: true,
+  hypothesisId: true,
+  hypothesisRevisionId: true,
+  completionResult: true,
+  completionResultRecordedAtUtc: true,
+  completionResultRecordedByUserId: true,
+  verificationReviewDisposition: true,
+  verificationReviewedAtUtc: true,
+  verificationReviewedByUserId: true,
   doneAt: true,
 } satisfies Prisma.PlanActionSelect;
 

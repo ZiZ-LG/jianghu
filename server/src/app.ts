@@ -65,6 +65,7 @@ import { postMeetingImportRoutes } from './postMeeting/importRoutes.js';
 import { researchBriefRoutes } from './researchBriefs/routes.js';
 import { intelligenceFocusRoutes } from './intelligenceFocus/routes.js';
 import { salesHypothesisRoutes } from './hypotheses/routes.js';
+import { relationshipWorkspaceRoutes } from './relationshipWorkspace/routes.js';
 import {
   productionFeishuImportProvider,
   type FeishuImportProvider,
@@ -239,6 +240,7 @@ function registerRoutes(
   researchBriefRoutes(app, product.policy);
   intelligenceFocusRoutes(app, product.policy);
   salesHypothesisRoutes(app, product.policy);
+  relationshipWorkspaceRoutes(app, product.policy);
 
   // ── 数据：拉取整树 / 应用变更 ──
   // 服务端组装时传入当前身份，统一执行归属与敏感字段 ACL。

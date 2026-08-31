@@ -320,6 +320,7 @@ describe('typed API failures', () => {
         title: '下一步', kind: 'task', ownerUserId: 'user-1', confirmationStatus: 'not_required' as const,
         scheduledAtUtc: null, dueAtUtc: null, timeZone: 'Asia/Shanghai', isAllDay: true,
         localDate: '2026-09-10', confirmationDueAtUtc: null, source: 'manual', sourceRef: null,
+        hypothesisRef: null,
       },
     };
 
@@ -406,6 +407,7 @@ describe('typed API failures', () => {
           scheduledAtUtc: '2026-08-27T07:00:00.000Z', dueAtUtc: null,
           timeZone: 'Asia/Shanghai', isAllDay: false as const, localDate: null,
           confirmationDueAtUtc: null, source: 'manual_quick_capture' as const, sourceRef: null,
+          hypothesisRef: null,
         },
       },
     };
@@ -433,6 +435,7 @@ describe('typed API failures', () => {
           scheduledAtUtc: '2026-08-27T07:00:00.000Z', dueAtUtc: null,
           timeZone: 'Asia/Shanghai', isAllDay: false as const, localDate: null,
           confirmationDueAtUtc: null, source: 'manual_quick_capture' as const, sourceRef: null,
+          hypothesisRef: null,
         },
       },
     };

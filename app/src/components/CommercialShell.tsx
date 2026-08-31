@@ -7,6 +7,7 @@ import { CrmContextPanel, type CrmContextPanelState } from './CrmContextPages';
 import { toQuickCaptureAccounts, type QuickCaptureAccountOption } from '../lib/crmContext';
 import { PostMeetingReviewPanel } from './PostMeetingReviewPanel';
 import { PreMeetingBriefPanel } from './PreMeetingBriefPanel';
+import { RelationshipWorkspacePanel } from './RelationshipWorkspacePanel';
 
 function EmptyState({ children }: { children: string }) {
   return <div className="commercial-shell-empty">{children}</div>;
@@ -83,6 +84,13 @@ function ProductPanel({
       />
       <PostMeetingReviewPanel
         crmContext={crmContext}
+        actorRole={actorRole}
+        readonly={readonly}
+        onDataChanged={onQuickCaptureSaved}
+      />
+      <RelationshipWorkspacePanel
+        crmContext={crmContext}
+        actorUserId={actorUserId}
         actorRole={actorRole}
         readonly={readonly}
         onDataChanged={onQuickCaptureSaved}

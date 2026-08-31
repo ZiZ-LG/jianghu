@@ -25,8 +25,8 @@ const VALID_ENTRY = {
 } as const;
 
 describe('CRM field authority map', () => {
-  it('contains the fourteen approved logical fields with classified consumers', () => {
-    expect(CRM_FIELD_AUTHORITY).toHaveLength(14);
+  it('contains the fifteen approved logical fields with classified consumers', () => {
+    expect(CRM_FIELD_AUTHORITY).toHaveLength(15);
     for (const entry of CRM_FIELD_AUTHORITY) expect(listCrmFieldConsumers(entry).length).toBeGreaterThan(0);
   });
 
@@ -96,16 +96,23 @@ describe('CRM field authority map', () => {
     });
   });
 
-  it('registers the implemented StakeholderFocus authority and leaves only SAAS-208 planned', () => {
+  it('registers the implemented StakeholderFocus relationship-workspace consumers with no pending cutover', () => {
     const focus = getCrmFieldAuthority('stakeholder.focus');
     expect(focus).toMatchObject({
       currentAuthority: { kind: 'core_path', path: 'StakeholderFocus' },
       targetAuthority: { kind: 'core_path', path: 'StakeholderFocus' },
       consumers: {
-        reads: ['server/src/intelligenceFocus/routes.ts'],
+        reads: [
+          'app/src/components/RelationshipWorkspacePanel.tsx',
+          'server/src/intelligenceFocus/routes.ts',
+          'server/src/relationshipWorkspace/model.ts',
+        ],
         writes: ['server/src/intelligenceFocus/service.ts'],
-        adapters: ['packages/domain-contracts/src/intelligence.ts'],
-        planned: ['SAAS-208 relationship-map projection'],
+        adapters: [
+          'packages/domain-contracts/src/intelligence.ts',
+          'packages/domain-contracts/src/relationshipWorkspace.ts',
+        ],
+        planned: [],
       },
     });
     expect(focus?.consumers.migrations).toEqual(expect.arrayContaining([
@@ -115,7 +122,7 @@ describe('CRM field authority map', () => {
       'server/scripts/postgres-intelligence-focus-schema-state.ts',
       'server/scripts/upgrade-sqlite-schema.ts',
     ]));
-    expect(focus?.consumers.planned.join('\n')).not.toContain('SAAS-206');
+    expect(focus?.consumers.planned).toEqual([]);
     expect(focus?.forbidden.join('\n')).toMatch(/primaryDPersonId/);
     expect(focus?.forbidden.join('\n')).toMatch(/score|methodology/i);
   });
@@ -132,10 +139,14 @@ describe('CRM field authority map', () => {
         path: 'SalesHypothesis + SalesHypothesisRevision + HypothesisEvidenceLink',
       },
       consumers: {
-        reads: ['server/src/hypotheses/routes.ts'],
-        writes: ['server/src/hypotheses/service.ts'],
+        reads: [
+          'app/src/components/RelationshipWorkspacePanel.tsx',
+          'server/src/hypotheses/routes.ts',
+          'server/src/relationshipWorkspace/model.ts',
+          'server/src/relationshipWorkspace/routes.ts',
+        ],
+        writes: ['server/src/hypotheses/service.ts', 'server/src/relationshipWorkspace/service.ts'],
         planned: [
-          'SAAS-208 relationship-map and Commitment review projection',
           'SAAS-209 portfolio',
           'SAAS-212 relationship radar',
         ],
@@ -143,6 +154,9 @@ describe('CRM field authority map', () => {
     });
     expect(hypothesis?.consumers.adapters).toEqual(expect.arrayContaining([
       'packages/domain-contracts/src/hypotheses.ts',
+      'packages/domain-contracts/src/relationshipWorkspace.ts',
+      'app/src/api.ts',
+      'app/src/lib/relationshipWorkspace.ts',
       'server/src/hypotheses/model.ts',
       'server/src/mutate.ts',
       'server/src/mutation/actionScope.ts',
@@ -155,10 +169,40 @@ describe('CRM field authority map', () => {
       'server/scripts/postgres-sales-hypothesis-schema-state.ts',
       'server/scripts/upgrade-sqlite-schema.ts',
       'server/src/seed-demo.ts',
+      'server/prisma/postgres/migrations/20260831000000_expand_hypothesis_commitment_review/migration.sql',
+      'server/scripts/migrate-hypothesis-commitment-review.ts',
+      'server/scripts/postgres-hypothesis-commitment-review-schema-state.ts',
     ]));
     expect(hypothesis?.forbidden.join('\n')).toMatch(/automatic|auto|自动/i);
     expect(hypothesis?.forbidden.join('\n')).toMatch(/fallback|dual/i);
     expect(hypothesis?.forbidden.join('\n')).toMatch(/revision|link/i);
+  });
+
+  it('records the relationship workspace as a read-only composition without a new field authority', () => {
+    const projection = getCrmFieldAuthority('relationship.workspace_projection');
+    expect(projection).toMatchObject({
+      currentAuthority: { kind: 'none', path: null },
+      targetAuthority: { kind: 'none', path: null },
+      consumers: {
+        reads: [
+          'app/src/components/CrmRelationshipGraph.tsx',
+          'app/src/components/RelationshipWorkspacePanel.tsx',
+          'server/src/relationshipWorkspace/routes.ts',
+        ],
+        writes: [],
+        adapters: [
+          'app/src/api.ts',
+          'app/src/lib/relationshipWorkspace.ts',
+          'packages/domain-contracts/src/relationshipWorkspace.ts',
+          'server/src/relationshipWorkspace/model.ts',
+          'server/src/relationshipWorkspace/service.ts',
+        ],
+        migrations: [],
+        planned: [],
+      },
+    });
+    expect(projection?.shadowComparison).toMatch(/Candidate.*IntelligenceItem/i);
+    expect(projection?.forbidden.join('\n')).toMatch(/accept|write|score/i);
   });
 
   it('registers the exact executable customer.category consumer inventory', () => {
@@ -280,18 +324,26 @@ describe('CRM field authority map', () => {
     expect(listCrmFieldConsumers(pdeStage)).not.toContain('app/src/lib/pde/adapter.ts');
     expect(listCrmFieldConsumers(getCrmFieldAuthority('commitment.record'))).toEqual(expect.arrayContaining([
       'app/src/lib/today.ts', 'server/src/state.ts', 'server/src/mutation/actionScope.ts',
-      'server/src/mutation/commitments.ts',
+      'server/src/mutation/commitments.ts', 'app/src/components/RelationshipWorkspacePanel.tsx',
+      'server/src/relationshipWorkspace/service.ts',
     ]));
     expect(getCrmFieldAuthority('commitment.record')).toMatchObject({
       currentAuthority: { kind: 'core_path', path: 'PlanAction.[generic Commitment fields]' },
       targetAuthority: { kind: 'core_path', path: 'PlanAction.[generic Commitment fields]' },
       consumers: {
-        writes: ['server/src/mutation/commitments.ts', 'server/src/mutation/compoundCommands.ts'],
+        writes: [
+          'server/src/mutation/commitments.ts',
+          'server/src/mutation/compoundCommands.ts',
+          'server/src/relationshipWorkspace/service.ts',
+        ],
         planned: [],
       },
     });
     expect(getCrmFieldAuthority('commitment.record')?.consumers.migrations).toContain(
       'server/prisma/postgres/migrations/20260821030000_release_customer_level_commitments/migration.sql',
+    );
+    expect(getCrmFieldAuthority('commitment.record')?.consumers.migrations).toContain(
+      'server/prisma/postgres/migrations/20260831000000_expand_hypothesis_commitment_review/migration.sql',
     );
   });
 

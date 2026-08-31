@@ -67,6 +67,7 @@ describe('SAAS-207 SalesHypothesis immutable model', () => {
     expect(projectHypothesisEvidenceLink({
       id: 'link-1', hypothesisId: view.id, hypothesisRevisionId: revision.id,
       evidenceId: 'evidence-1', evidenceVersion: 0, direction: 'supporting',
+      verificationCommitmentId: null,
       linkedByUserId: 'user-1', linkedAt: createdAt,
     })).not.toHaveProperty('rawContent');
   });
@@ -75,6 +76,7 @@ describe('SAAS-207 SalesHypothesis immutable model', () => {
     const supporting = projectHypothesisEvidenceLink({
       id: 'link-support', hypothesisId: 'hypothesis-1', hypothesisRevisionId: 'revision-1',
       evidenceId: 'evidence-support', evidenceVersion: 0, direction: 'supporting',
+      verificationCommitmentId: null,
       linkedByUserId: 'user-1', linkedAt: createdAt,
     });
     expect(hypothesisStatusSuggestion('hypothesis-1', 'revision-1', 'testing', [supporting]))

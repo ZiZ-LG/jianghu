@@ -63,6 +63,12 @@ const expectedLinkColumns = new Map<string, ExpectedColumn>([
   ['linkedByUserId', { type: 'text', nullable: 'NO', defaultValue: null }],
   ['linkedAt', { type: 'timestamp without time zone', nullable: 'NO', defaultValue: 'CURRENT_TIMESTAMP' }],
 ]);
+// SAAS-208 is the only registered additive successor. The SAAS-207 recovery
+// gate accepts this exact shape but still rejects any unregistered drift.
+const expectedLinkSaas208Columns = new Map<string, ExpectedColumn>([
+  ...expectedLinkColumns,
+  ['verificationCommitmentId', { type: 'text', nullable: 'YES', defaultValue: null }],
+]);
 
 const expectedHypothesisIndexes = new Set([
   'SalesHypothesis_pkey',
@@ -86,6 +92,10 @@ const expectedLinkIndexes = new Set([
   'HypothesisEvidenceLink_tenantId_hypothesisRevisionId_eviden_key',
   'HypothesisEvidenceLink_tenantId_hypothesisId_linkedAt_idx',
   'HypothesisEvidenceLink_tenantId_evidenceId_idx',
+]);
+const expectedLinkSaas208Indexes = new Set([
+  ...expectedLinkIndexes,
+  'HypothesisEvidenceLink_tenantId_verificationCommitmentId_idx',
 ]);
 
 function columnsMatch(columns: ColumnRow[], expectedColumns: Map<string, ExpectedColumn>): boolean {
@@ -113,8 +123,10 @@ function tenantForeignKeyMatches(foreignKeys: ForeignKeyRow[]): boolean {
 
 async function tableState(
   tableName: 'SalesHypothesis' | 'SalesHypothesisRevision' | 'HypothesisEvidenceLink',
-  expectedColumns: Map<string, ExpectedColumn>,
-  expectedIndexes: ReadonlySet<string>,
+  registeredShapes: readonly [{
+    columns: Map<string, ExpectedColumn>;
+    indexes: ReadonlySet<string>;
+  }, ...Array<{ columns: Map<string, ExpectedColumn>; indexes: ReadonlySet<string> }>],
 ): Promise<boolean> {
   const [columns, indexes, foreignKeys] = await Promise.all([
     prisma.$queryRawUnsafe<ColumnRow[]>(`
@@ -146,8 +158,9 @@ async function tableState(
          AND tc.constraint_type = 'FOREIGN KEY'
     `),
   ]);
-  return columnsMatch(columns, expectedColumns)
-    && indexesMatch(indexes, expectedIndexes)
+  return registeredShapes.some(({ columns: expectedColumns, indexes: expectedIndexes }) => (
+    columnsMatch(columns, expectedColumns) && indexesMatch(indexes, expectedIndexes)
+  ))
     && tenantForeignKeyMatches(foreignKeys);
 }
 
@@ -179,9 +192,16 @@ try {
     process.stdout.write('partial');
   } else {
     const [hypothesisExact, revisionExact, linkExact] = await Promise.all([
-      tableState('SalesHypothesis', expectedHypothesisColumns, expectedHypothesisIndexes),
-      tableState('SalesHypothesisRevision', expectedRevisionColumns, expectedRevisionIndexes),
-      tableState('HypothesisEvidenceLink', expectedLinkColumns, expectedLinkIndexes),
+      tableState('SalesHypothesis', [{
+        columns: expectedHypothesisColumns, indexes: expectedHypothesisIndexes,
+      }]),
+      tableState('SalesHypothesisRevision', [{
+        columns: expectedRevisionColumns, indexes: expectedRevisionIndexes,
+      }]),
+      tableState('HypothesisEvidenceLink', [
+        { columns: expectedLinkColumns, indexes: expectedLinkIndexes },
+        { columns: expectedLinkSaas208Columns, indexes: expectedLinkSaas208Indexes },
+      ]),
     ]);
     process.stdout.write(hypothesisExact && revisionExact && linkExact ? 'expanded' : 'partial');
   }

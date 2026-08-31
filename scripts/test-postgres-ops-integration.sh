@@ -2068,6 +2068,208 @@ sales_hypothesis_restore_parity=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec
 echo "SALES_HYPOTHESIS_RESTORE_ROLLBACK_OK=1"
 echo "SAAS_207_SALES_HYPOTHESIS_MIGRATION_OK=1"
 
+# SAAS-208 expands the existing PlanAction/Commitment row and immutable
+# HypothesisEvidenceLink with nullable verification references. Exercise
+# committed-DDL adoption, semantic/marker drift refusal, partial-schema
+# refusal, authenticated predecessor restore and zero-backfill defaults.
+POSTGRES_OPS_STAGE='saas208-hypothesis-commitment-review'
+hypothesis_commitment_review_db=jianghu_hypothesis_commitment_review_migration
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$hypothesis_commitment_review_db"
+POSTGRES_DB="$hypothesis_commitment_review_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npx prisma db push --schema prisma/postgres/legacy/20260831_pre_saas208.prisma --skip-generate >/dev/null
+   for path in prisma/postgres/migrations/20*; do
+     [ -d "$path" ] || continue
+     migration=$(basename "$path")
+     [ "$migration" = 20260831000000_expand_hypothesis_commitment_review ] && break
+     npx prisma migrate resolve --applied "$migration" --schema prisma/postgres/schema.prisma >/dev/null
+   done' >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$hypothesis_commitment_review_db" -c \
+  "INSERT INTO \"Tenant\" (id,name) VALUES ('verification-tenant','Verification Tenant');
+   INSERT INTO \"User\" (id,\"tenantId\",email,\"passwordHash\",name,role)
+     VALUES ('verification-user','verification-tenant','verification@example.test','unused','Verification Owner','owner');
+   INSERT INTO \"Account\" (id,\"tenantId\",name,\"primaryOwnerUserId\")
+     VALUES ('verification-account','verification-tenant','Verification Account','verification-user');
+   INSERT INTO \"Opportunity\"
+     (id,\"tenantId\",\"accountId\",name,\"customerType\",\"pipelineStage\",\"engageStage\",\"primaryOwnerUserId\")
+     VALUES ('verification-matter','verification-tenant','verification-account',
+       'Verification Matter',1,'lead','unknown','verification-user');
+   INSERT INTO \"Person\" (id,\"tenantId\",\"accountId\",name,title)
+     VALUES ('verification-person','verification-tenant','verification-account','Verification Person','Sponsor');
+   INSERT INTO \"MatterParticipant\" (id,\"tenantId\",\"accountId\",\"opportunityId\",\"personId\")
+     VALUES ('verification-participant','verification-tenant','verification-account',
+       'verification-matter','verification-person');
+   INSERT INTO \"SalesHypothesis\"
+     (id,\"tenantId\",\"customerId\",\"matterId\",\"personId\",status,\"ownerUserId\",\"nextReviewAt\",
+      \"currentRevisionId\",\"createdByUserId\",\"statusConfirmedByUserId\",\"statusConfirmedAt\",\"createdAt\",\"updatedAt\")
+     VALUES ('verification-hypothesis','verification-tenant','verification-account','verification-matter',
+       'verification-person','testing','verification-user','2026-09-30T00:00:00Z',
+       'verification-revision','verification-user','verification-user','2026-08-31T00:00:00Z',
+       '2026-08-31T00:00:00Z','2026-08-31T00:00:00Z');
+   INSERT INTO \"SalesHypothesisRevision\"
+     (id,\"tenantId\",\"hypothesisId\",\"revisionNumber\",claim,reason,\"expectedSignals\",
+      \"falsificationConditions\",origin,\"createdByUserId\")
+     VALUES ('verification-revision','verification-tenant','verification-hypothesis',1,
+       'Customer will schedule review','Implementation owner confirmed','[\"review scheduled\"]',
+       '[\"review refused\"]','user','verification-user');
+   INSERT INTO \"PlanAction\"
+     (id,\"tenantId\",\"accountId\",\"opportunityId\",title,\"ownerId\",\"ownerUserId\")
+     VALUES ('verification-legacy-action','verification-tenant','verification-account',
+       'verification-matter','Existing action','verification-user','verification-user');" >/dev/null
+
+hypothesis_commitment_review_backup_root="$BACKUP_DIR/saas208-pre"
+mkdir -p "$hypothesis_commitment_review_backup_root"
+derive_backup_keys "$BACKUP_MASTER_SECRET"
+hypothesis_commitment_review_backup_work=$(mktemp -d "$hypothesis_commitment_review_backup_root/.verification-work.XXXXXX")
+hypothesis_commitment_review_backup="$hypothesis_commitment_review_backup_root/jianghu-saas208-$(openssl rand -hex 8).backup"
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db \
+  pg_dump -U "$POSTGRES_USER" -d "$hypothesis_commitment_review_db" -Fc \
+  | backup_encrypt_payload "$hypothesis_commitment_review_backup_work/payload.enc"
+{
+  backup_cipher_metadata
+  printf 'source_database=%s\n' "$hypothesis_commitment_review_db"
+  printf 'created_at=%s\n' "$(date -u +%Y%m%dT%H%M%SZ)"
+} > "$hypothesis_commitment_review_backup_work/metadata"
+write_artifact_integrity "$hypothesis_commitment_review_backup_work"
+verify_artifact_auth "$hypothesis_commitment_review_backup_work"
+mv "$hypothesis_commitment_review_backup_work" "$hypothesis_commitment_review_backup"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db \
+  psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$hypothesis_commitment_review_db" \
+  < server/prisma/postgres/migrations/20260831000000_expand_hypothesis_commitment_review/migration.sql >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$hypothesis_commitment_review_db" -c \
+  "INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+   VALUES ('int-saas208-after-commit', repeat('0', 64),
+     '20260831000000_expand_hypothesis_commitment_review', CURRENT_TIMESTAMP, 0);" >/dev/null
+POSTGRES_DB="$hypothesis_commitment_review_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+hypothesis_commitment_review_after_commit=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$hypothesis_commitment_review_db" -tAc \
+  "SELECT ((SELECT count(*) FROM \"_prisma_migrations\"
+              WHERE migration_name = '20260831000000_expand_hypothesis_commitment_review'
+                AND finished_at IS NOT NULL AND rolled_back_at IS NULL) = 1
+       AND (SELECT count(*) FROM \"_prisma_migrations\"
+              WHERE migration_name = '20260831000000_expand_hypothesis_commitment_review'
+                AND finished_at IS NULL AND rolled_back_at IS NULL) = 0
+       AND (SELECT count(*) FROM \"DataMigrationState\"
+              WHERE key = 'SAAS-208-hypothesis-commitment-review-v1') = 1
+       AND (SELECT count(*) FROM \"PlanAction\"
+              WHERE id = 'verification-legacy-action'
+                AND \"hypothesisId\" IS NULL AND \"hypothesisRevisionId\" IS NULL
+                AND \"completionResult\" = '' AND \"completionResultRecordedAtUtc\" IS NULL
+                AND \"completionResultRecordedByUserId\" IS NULL
+                AND \"verificationReviewDisposition\" = '' AND \"verificationReviewedAtUtc\" IS NULL
+                AND \"verificationReviewedByUserId\" IS NULL) = 1
+       AND (SELECT count(*) FROM \"SalesHypothesis\") = 1
+       AND (SELECT count(*) FROM \"SalesHypothesisRevision\") = 1
+       AND (SELECT count(*) FROM \"EvidenceEvent\") = 0
+       AND (SELECT count(*) FROM \"HypothesisEvidenceLink\") = 0)::int" | tr -d '[:space:]')
+[[ "$hypothesis_commitment_review_after_commit" == 1 ]]
+echo "INTERRUPTED_HYPOTHESIS_COMMITMENT_REVIEW_AFTER_COMMIT_ADOPTION_OK=1"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$hypothesis_commitment_review_db" -c \
+  "INSERT INTO \"PlanAction\"
+     (id,\"tenantId\",\"accountId\",\"opportunityId\",\"personId\",title,\"ownerId\",\"ownerUserId\",
+      \"executionStatus\",\"scheduledAtUtc\",\"isAllDay\",\"hypothesisId\",\"hypothesisRevisionId\",
+      \"completionResult\",\"completionResultRecordedAtUtc\",\"completionResultRecordedByUserId\")
+     VALUES ('verification-commitment','verification-tenant','verification-account','verification-matter',
+       'verification-person','Verify review schedule','verification-user','verification-user','completed',
+       '2026-09-01T00:00:00Z',false,'verification-hypothesis','verification-revision',
+       'Customer scheduled the review','2026-09-01T02:00:00Z','verification-user');
+   INSERT INTO \"EvidenceEvent\"
+     (id,\"tenantId\",\"accountId\",\"opportunityId\",\"personId\",\"signalKey\",direction,status,
+      \"rawContent\",\"createdBy\",\"reviewedBy\",\"reviewedAt\")
+     VALUES ('verification-evidence','verification-tenant','verification-account','verification-matter',
+       'verification-person','review_scheduled',1,'approved','Customer scheduled the review',
+       'verification-user','verification-user','2026-09-01');
+   INSERT INTO \"HypothesisEvidenceLink\"
+     (id,\"tenantId\",\"hypothesisId\",\"hypothesisRevisionId\",\"evidenceId\",\"evidenceVersion\",direction,
+      \"verificationCommitmentId\",\"linkedByUserId\")
+     VALUES ('verification-link','verification-tenant','verification-hypothesis','verification-revision',
+       'verification-evidence',0,'supporting','verification-commitment','verification-user');" >/dev/null
+POSTGRES_DB="$hypothesis_commitment_review_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npm run migrate:hypothesis-commitment-review-report >/dev/null
+   npm run migrate:hypothesis-commitment-review-apply >/dev/null
+   npm run migrate:hypothesis-commitment-review-verify >/dev/null'
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$hypothesis_commitment_review_db" -c \
+  "UPDATE \"PlanAction\" SET \"hypothesisRevisionId\" = NULL, \"completionResultRecordedAtUtc\" = NULL
+    WHERE id = 'verification-commitment';" >/dev/null
+if POSTGRES_DB="$hypothesis_commitment_review_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "invalid hypothesis Commitment semantics unexpectedly deployed" >&2; exit 1
+fi
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$hypothesis_commitment_review_db" -c \
+  "UPDATE \"PlanAction\" SET \"hypothesisRevisionId\" = 'verification-revision',
+      \"completionResultRecordedAtUtc\" = '2026-09-01T02:00:00Z'
+    WHERE id = 'verification-commitment';" >/dev/null
+POSTGRES_DB="$hypothesis_commitment_review_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+echo "HYPOTHESIS_COMMITMENT_REVIEW_SEMANTIC_CONFLICT_FAIL_CLOSED_OK=1"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$hypothesis_commitment_review_db" -c \
+  "UPDATE \"DataMigrationState\"
+      SET details = jsonb_set(details::jsonb, '{integrityChecksum}', to_jsonb(repeat('0', 64)))::text
+    WHERE key = 'SAAS-208-hypothesis-commitment-review-v1';" >/dev/null
+if POSTGRES_DB="$hypothesis_commitment_review_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "SAAS-208 marker checksum drift unexpectedly deployed" >&2; exit 1
+fi
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$hypothesis_commitment_review_db" -c \
+  "DELETE FROM \"DataMigrationState\" WHERE key = 'SAAS-208-hypothesis-commitment-review-v1';" >/dev/null
+POSTGRES_DB="$hypothesis_commitment_review_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+echo "HYPOTHESIS_COMMITMENT_REVIEW_MARKER_CHECKSUM_FAIL_CLOSED_OK=1"
+
+hypothesis_commitment_review_partial_db=jianghu_hypothesis_commitment_review_partial
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$hypothesis_commitment_review_partial_db"
+POSTGRES_DB="$hypothesis_commitment_review_partial_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npx prisma db push --schema prisma/postgres/legacy/20260831_pre_saas208.prisma --skip-generate >/dev/null
+   for path in prisma/postgres/migrations/20*; do
+     [ -d "$path" ] || continue
+     migration=$(basename "$path")
+     [ "$migration" = 20260831000000_expand_hypothesis_commitment_review ] && break
+     npx prisma migrate resolve --applied "$migration" --schema prisma/postgres/schema.prisma >/dev/null
+   done' >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$hypothesis_commitment_review_partial_db" -c \
+  "ALTER TABLE \"PlanAction\" ADD COLUMN \"hypothesisId\" TEXT;
+   INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+   VALUES ('int-saas208-partial', repeat('0', 64),
+     '20260831000000_expand_hypothesis_commitment_review', CURRENT_TIMESTAMP, 0);" >/dev/null
+if POSTGRES_DB="$hypothesis_commitment_review_partial_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "partial SAAS-208 schema unexpectedly migrated" >&2; exit 1
+fi
+hypothesis_commitment_review_partial_state=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$hypothesis_commitment_review_partial_db" -tAc \
+  "SELECT ((SELECT count(*) FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'PlanAction'
+                AND column_name = 'hypothesisId') = 1
+       AND (SELECT count(*) FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'PlanAction'
+                AND column_name = 'hypothesisRevisionId') = 0
+       AND NOT EXISTS (SELECT 1 FROM \"_prisma_migrations\"
+         WHERE migration_name = '20260831000000_expand_hypothesis_commitment_review'
+           AND finished_at IS NOT NULL AND rolled_back_at IS NULL))::int" | tr -d '[:space:]')
+[[ "$hypothesis_commitment_review_partial_state" == 1 ]]
+echo "PARTIAL_HYPOTHESIS_COMMITMENT_REVIEW_SCHEMA_FAIL_CLOSED_OK=1"
+
+hypothesis_commitment_review_restore_db=jianghu_restore_hypothesis_commitment_review_saas208
+bash scripts/restore-postgres.sh "$hypothesis_commitment_review_backup" --database "$hypothesis_commitment_review_restore_db" >/dev/null
+hypothesis_commitment_review_restore_parity=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$hypothesis_commitment_review_restore_db" -tAc \
+  "SELECT ((SELECT count(*) FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'PlanAction'
+                AND column_name IN ('hypothesisId','hypothesisRevisionId','completionResult',
+                  'completionResultRecordedAtUtc','completionResultRecordedByUserId',
+                  'verificationReviewDisposition','verificationReviewedAtUtc','verificationReviewedByUserId')) = 0
+       AND (SELECT count(*) FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'HypothesisEvidenceLink'
+                AND column_name = 'verificationCommitmentId') = 0
+       AND (SELECT count(*) FROM \"PlanAction\" WHERE id = 'verification-legacy-action') = 1
+       AND (SELECT count(*) FROM \"SalesHypothesis\" WHERE id = 'verification-hypothesis') = 1
+       AND NOT EXISTS (SELECT 1 FROM \"DataMigrationState\"
+              WHERE key = 'SAAS-208-hypothesis-commitment-review-v1'))::int" | tr -d '[:space:]')
+[[ "$hypothesis_commitment_review_restore_parity" == 1 ]]
+echo "HYPOTHESIS_COMMITMENT_REVIEW_RESTORE_ROLLBACK_OK=1"
+echo "SAAS_208_HYPOTHESIS_COMMITMENT_REVIEW_MIGRATION_OK=1"
+
 # A duplicate tenant-local owner name must roll the bridge transaction back.
 # After data repair, the same database must resume and complete safely.
 ambiguous_db=jianghu_owner_ambiguous
@@ -2328,6 +2530,20 @@ fresh_sales_hypothesis=$(docker compose -p "$fresh_project" exec -T db psql -U j
        AND (SELECT count(*) FROM \"SalesHypothesisRevision\") = 0
        AND (SELECT count(*) FROM \"HypothesisEvidenceLink\") = 0)::int" | tr -d '[:space:]')
 [[ "$fresh_sales_hypothesis" == 1 ]]
+fresh_hypothesis_commitment_review=$(docker compose -p "$fresh_project" exec -T db psql -U jianghu_fresh -d jianghu_fresh -tAc \
+  "SELECT ((SELECT count(*) FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'PlanAction'
+                AND column_name IN ('hypothesisId','hypothesisRevisionId','completionResult',
+                  'completionResultRecordedAtUtc','completionResultRecordedByUserId',
+                  'verificationReviewDisposition','verificationReviewedAtUtc','verificationReviewedByUserId')) = 8
+       AND (SELECT count(*) FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'HypothesisEvidenceLink'
+                AND column_name = 'verificationCommitmentId') = 1
+       AND (SELECT count(*) FROM \"DataMigrationState\"
+              WHERE key = 'SAAS-208-hypothesis-commitment-review-v1') = 1
+       AND (SELECT count(*) FROM \"PlanAction\") = 0
+       AND (SELECT count(*) FROM \"HypothesisEvidenceLink\") = 0)::int" | tr -d '[:space:]')
+[[ "$fresh_hypothesis_commitment_review" == 1 ]]
 fresh_backup_count=$(find "$fresh_backups" -maxdepth 1 -type d -name 'jianghu-*.backup' | wc -l | tr -d ' ')
 [[ "$fresh_backup_count" == 1 ]]
 echo "FRESH_INSTALL_FIRST_RUN_OK=1"
@@ -2350,6 +2566,13 @@ fresh_sales_hypothesis_after=$(docker compose -p "$fresh_project" exec -T db psq
               WHERE migration_name = '20260830000000_expand_sales_hypothesis'
                 AND finished_at IS NOT NULL AND rolled_back_at IS NULL) = 1)::int" | tr -d '[:space:]')
 [[ "$fresh_sales_hypothesis_after" == 1 ]]
+fresh_hypothesis_commitment_review_after=$(docker compose -p "$fresh_project" exec -T db psql -U jianghu_fresh -d jianghu_fresh -tAc \
+  "SELECT ((SELECT count(*) FROM \"DataMigrationState\"
+              WHERE key = 'SAAS-208-hypothesis-commitment-review-v1') = 1
+       AND (SELECT count(*) FROM \"_prisma_migrations\"
+              WHERE migration_name = '20260831000000_expand_hypothesis_commitment_review'
+                AND finished_at IS NOT NULL AND rolled_back_at IS NULL) = 1)::int" | tr -d '[:space:]')
+[[ "$fresh_hypothesis_commitment_review_after" == 1 ]]
 fresh_rollback_count=$(find "$fresh_rollbacks" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
 [[ "$fresh_rollback_count" -ge 1 ]]
 echo "FRESH_INSTALL_SECOND_UPDATE_OK=1"

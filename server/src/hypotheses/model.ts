@@ -91,6 +91,7 @@ export interface HypothesisEvidenceLinkProjectionRow {
   evidenceId: string;
   evidenceVersion: number;
   direction: string;
+  verificationCommitmentId: string | null;
   linkedByUserId: string;
   linkedAt: Date;
 }
@@ -105,6 +106,7 @@ export function projectHypothesisEvidenceLink(
     evidenceId: row.evidenceId,
     evidenceVersion: row.evidenceVersion,
     direction: row.direction,
+    verificationCommitmentId: row.verificationCommitmentId,
     linkedByUserId: row.linkedByUserId,
     linkedAt: row.linkedAt.toISOString(),
   });

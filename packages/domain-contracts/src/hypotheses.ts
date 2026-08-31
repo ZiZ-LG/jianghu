@@ -92,6 +92,7 @@ export const HypothesisEvidenceLinkViewSchema = z.object({
   evidenceId: visibleId,
   evidenceVersion: z.literal(0),
   direction: HypothesisEvidenceDirectionSchema,
+  verificationCommitmentId: visibleId.nullable().default(null),
   linkedByUserId: visibleId,
   linkedAt: instant,
 }).strict();
@@ -182,9 +183,10 @@ export const LinkHypothesisEvidenceCommandSchema = z.object({
     salesHypothesisId: visibleId,
     expectedVersion: version,
     expectedCurrentRevisionId: visibleId,
-    evidenceId: visibleId,
-    evidenceVersion: z.literal(0),
-    direction: HypothesisEvidenceDirectionSchema,
+        evidenceId: visibleId,
+        evidenceVersion: z.literal(0),
+        direction: HypothesisEvidenceDirectionSchema,
+        verificationCommitmentId: visibleId.nullable().default(null),
   }).strict(),
 }).strict();
 
@@ -212,6 +214,7 @@ export const SalesHypothesisCommandReceiptSchema = z.object({
   currentRevisionId: visibleId,
   currentRevisionNumber: positiveInteger,
   evidenceLinkId: visibleId.nullable(),
+  verificationCommitmentId: visibleId.nullable().default(null),
   status: SalesHypothesisStatusSchema,
   version,
   replayed: z.boolean(),
@@ -223,6 +226,13 @@ export const SalesHypothesisCommandReceiptSchema = z.object({
       code: z.ZodIssueCode.custom,
       path: ['evidenceLinkId'],
       message: 'only evidence-link receipts carry a link ID',
+    });
+  }
+  if (!isLink && value.verificationCommitmentId !== null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['verificationCommitmentId'],
+      message: 'only evidence-link receipts carry a verification Commitment ID',
     });
   }
 });
