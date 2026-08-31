@@ -11,7 +11,7 @@
 ## Global constraints
 
 - **Task:** `SAAS-208`; **branch:** `codex/g4-candidate-review-intelligence`; **worktree:** `/Volumes/PowerData/江湖APP/.worktrees/g4-candidate-review-intelligence`; **base:** `1d7f06950a7d1a2f4444f35c85bb5fcda37a9160`.
-- `SAAS-208` is the only CRM `IN_PROGRESS` item. `SAAS-212` relationship radar, RelationshipSignal/InterventionItem scoring, portfolio ordering, G64111 optional-install work and G4 final journey remain out of scope.
+- `SAAS-208` was the only CRM `IN_PROGRESS` item during implementation. Its exact business SHA passed 12/12 CI; this governance close marks it `DONE` and moves only dependent `SAAS-212` to `READY`. RelationshipSignal/InterventionItem scoring, portfolio ordering, G64111 optional-install work and G4 final journey remain out of this task's scope.
 - The project owner explicitly approved SAAS-208 changes to shared root file `scripts/test-postgres-ops-integration.sh`. That approval is limited to this task's interruption, semantic/marker/partial-drift, authenticated-recovery and fresh-install proof; no other shared/high-conflict file is approved.
 - Do not modify App package/lock/Vite/dist, Docker Compose, navigation or cross-site entry, common Nginx/CI, any self-cultivation path, production, Aliyun, Mac mini or `main`.
 - Every read, command, replay and projection reloads the current database role, requires `sales.workspace`, resolves EffectiveResourceScope and validates exact tenant/Customer/Matter/Person/Relation/Hypothesis/Revision/Commitment/Evidence closure. Viewer writes fail before `CommandRun`/`AuditEvent`; viewer reads retain Customer ownership isolation and never gain candidate/source access from role alone.
@@ -69,10 +69,10 @@ The two hypothesis pointers are both null or both present. A linked Commitment m
 - Modify: `packages/domain-contracts/src/index.ts`
 - Modify: focused CRM/hypothesis contract tests
 
-- [ ] Write failing tests for bounded projection layers, endpoint variants, exact falsification/source/time/confidence fields, readiness states, viewer-safe body boundaries, linked Commitment/result commands, Evidence-link reference and the keep/revise/retire union.
-- [ ] Confirm RED is caused by missing schemas/fields, then implement minimal strict Zod contracts outside the legacy `Action` union.
-- [ ] Prove Quick Capture and all old Commitment/Hypothesis payloads remain valid with explicit null/default linkage, while partial pairs, unknown keys, overlong text and caller-supplied audit metadata fail closed.
-- [ ] Run focused and full domain type/test gates.
+- [x] Write failing tests for bounded projection layers, endpoint variants, exact falsification/source/time/confidence fields, readiness states, viewer-safe body boundaries, linked Commitment/result commands, Evidence-link reference and the keep/revise/retire union.
+- [x] Confirm RED is caused by missing schemas/fields, then implement minimal strict Zod contracts outside the legacy `Action` union.
+- [x] Prove Quick Capture and all old Commitment/Hypothesis payloads remain valid with explicit null/default linkage, while partial pairs, unknown keys, overlong text and caller-supplied audit metadata fail closed.
+- [x] Run focused and full domain type/test gates.
 
 ## Task 2: Add guarded dual-database expansion
 
@@ -90,10 +90,10 @@ The two hypothesis pointers are both null or both present. A linked Commitment m
 - Modify under explicit owner approval: `scripts/test-postgres-ops-integration.sh`
 - Create/modify focused migration, schema-render, SQLite-upgrade and PostgreSQL-operations tests
 
-- [ ] Write RED tests for exact predecessor/successor schemas, defaults, paired metadata, no backfill, marker-last adoption, interruption, semantic/marker/partial drift, authenticated restore and fresh install/second update.
-- [ ] Add portable columns/indexes and marker `SAAS-208-hypothesis-commitment-review-v1`; reject any non-empty pre-existing expansion state that cannot be proven canonical.
-- [ ] Wire backup-first SQLite report/apply/verify and versioned PostgreSQL `migrate deploy`; never delete or rewrite existing PlanAction, SalesHypothesis, Revision or EvidenceLink rows.
-- [ ] Extend only the approved root operations script and preserve every prior marker plus `POSTGRES_OPS_INTEGRATION_OK=1`.
+- [x] Write RED tests for exact predecessor/successor schemas, defaults, paired metadata, no backfill, marker-last adoption, interruption, semantic/marker/partial drift, authenticated restore and fresh install/second update.
+- [x] Add portable columns/indexes and marker `SAAS-208-hypothesis-commitment-review-v1`; reject any non-empty pre-existing expansion state that cannot be proven canonical.
+- [x] Wire backup-first SQLite report/apply/verify and versioned PostgreSQL `migrate deploy`; never delete or rewrite existing PlanAction, SalesHypothesis, Revision or EvidenceLink rows.
+- [x] Extend only the approved root operations script and preserve every prior marker plus `POSTGRES_OPS_INTEGRATION_OK=1`.
 
 ## Task 3: Enforce linked Commitment creation and result capture
 
@@ -102,10 +102,10 @@ The two hypothesis pointers are both null or both present. A linked Commitment m
 - Modify: `server/src/commitment/view.ts`
 - Modify: focused Commitment service/route/view tests
 
-- [ ] Write RED tests for current-role downgrade, viewer denial before CommandRun/Audit, tenant/customer/matter/current-revision closure, stale revision, non-Matter Commitment rejection, idempotent replay reauthorization and old unlinked Commitment parity.
-- [ ] Persist exact hypothesis/revision pointers only through `CREATE_COMMITMENT`; snapshot formal Relation/Stage/Forecast/Focus/G64111/methodology rows and prove zero mutation.
-- [ ] Implement `RECORD_COMMITMENT_RESULT` with completed-state, CAS, one linked verification authority, bounded result, pre-review mutability and body-free receipt/audit. Reject result writes after review.
-- [ ] Keep Today/Quick Capture/legacy PlanAction semantics unchanged and prove no fallback to `sourceRef`, `review`, `gapItem` or G64111 fields.
+- [x] Write RED tests for current-role downgrade, viewer denial before CommandRun/Audit, tenant/customer/matter/current-revision closure, stale revision, non-Matter Commitment rejection, idempotent replay reauthorization and old unlinked Commitment parity.
+- [x] Persist exact hypothesis/revision pointers only through `CREATE_COMMITMENT`; snapshot formal Relation/Stage/Forecast/Focus/G64111/methodology rows and prove zero mutation.
+- [x] Implement `RECORD_COMMITMENT_RESULT` with completed-state, CAS, one linked verification authority, bounded result, pre-review mutability and body-free receipt/audit. Reject result writes after review.
+- [x] Keep Today/Quick Capture/legacy PlanAction semantics unchanged and prove no fallback to `sourceRef`, `review`, `gapItem` or G64111 fields.
 
 ## Task 4: Bind approved Evidence to exact verification cycles
 
@@ -114,9 +114,9 @@ The two hypothesis pointers are both null or both present. A linked Commitment m
 - Modify: `server/src/hypotheses/service.ts`
 - Modify: focused hypothesis model/service/route tests
 
-- [ ] Write RED tests for optional verification Commitment linkage, exact tenant/customer/matter/hypothesis/current-revision closure, completed state, approved Evidence version `0`, append-only behavior and stale/reviewed commitment conflicts.
-- [ ] Preserve all SAAS-207 links with null commitment. New linked Evidence remains immutable and blocks Evidence deletion exactly as before.
-- [ ] Reauthorize idempotent replay against the current role/scope/ACL and keep receipt/audit body-free.
+- [x] Write RED tests for optional verification Commitment linkage, exact tenant/customer/matter/hypothesis/current-revision closure, completed state, approved Evidence version `0`, append-only behavior and stale/reviewed commitment conflicts.
+- [x] Preserve all SAAS-207 links with null commitment. New linked Evidence remains immutable and blocks Evidence deletion exactly as before.
+- [x] Reauthorize idempotent replay against the current role/scope/ACL and keep receipt/audit body-free.
 
 ## Task 5: Assemble the current-scope relationship workspace
 
@@ -127,10 +127,10 @@ The two hypothesis pointers are both null or both present. A linked Commitment m
 - Modify: `server/src/app.ts`
 - Create: focused model/service/route/scope/ACL tests
 
-- [ ] Write RED tests for formal solid relations, authorized pending-candidate dashed relations, explicit-person dotted hypotheses, Intelligence badges, Focus highlight, linked Commitment readiness and deterministic ordering/bounds.
-- [ ] Assemble one serializable snapshot after current role, capability, EffectiveResourceScope and exact parent closure checks. Candidate quote/body projection additionally requires current candidate/source review ACL; revoked/malformed candidate branches fail closed without broadening other reads.
-- [ ] Validate every returned Person/Relation/Intelligence target/Focus/Hypothesis/Revision/Commitment/Evidence reference. Corrupt storage or cross-parent formal authorities fail the request rather than returning mixed-tenant data.
-- [ ] Prove the read route creates no AuditEvent, CommandRun, Candidate, Relation, Evidence, Focus, hypothesis change, Commitment change, methodology value or AgentRun.
+- [x] Write RED tests for formal solid relations, authorized pending-candidate dashed relations, explicit-person dotted hypotheses, Intelligence badges, Focus highlight, linked Commitment readiness and deterministic ordering/bounds.
+- [x] Assemble one serializable snapshot after current role, capability, EffectiveResourceScope and exact parent closure checks. Candidate quote/body projection additionally requires current candidate/source review ACL; revoked/malformed candidate branches fail closed without broadening other reads.
+- [x] Validate every returned Person/Relation/Intelligence target/Focus/Hypothesis/Revision/Commitment/Evidence reference. Corrupt storage or cross-parent formal authorities fail the request rather than returning mixed-tenant data.
+- [x] Prove the read route creates no AuditEvent, CommandRun, Candidate, Relation, Evidence, Focus, hypothesis change, Commitment change, methodology value or AgentRun.
 
 ## Task 6: Implement one-time human verification review
 
@@ -139,9 +139,9 @@ The two hypothesis pointers are both null or both present. A linked Commitment m
 - Modify: `server/src/relationshipWorkspace/routes.ts`
 - Create/modify focused review command and replay tests
 
-- [ ] Write RED tests for result-or-linked-Evidence prerequisite, exact current revision, CAS, one-time disposition, keep/revise/retire semantics, failure rollback, current-role downgrade, viewer denial and body-free idempotent replay.
-- [ ] Implement one serializable command transaction that reuses the SAAS-207 hypothesis authority operation, records the matching disposition on PlanAction and emits bounded separate audits without copying result/claim/Evidence/source text.
-- [ ] Prove keep cannot revise/retire, revise cannot overwrite old Revision or links, retire cannot be inferred from contradictory Evidence, and no AI/Agent/methodology path can call the human writer.
+- [x] Write RED tests for result-or-linked-Evidence prerequisite, exact current revision, CAS, one-time disposition, keep/revise/retire semantics, failure rollback, current-role downgrade, viewer denial and body-free idempotent replay.
+- [x] Implement one serializable command transaction that reuses the SAAS-207 hypothesis authority operation, records the matching disposition on PlanAction and emits bounded separate audits without copying result/claim/Evidence/source text.
+- [x] Prove keep cannot revise/retire, revise cannot overwrite old Revision or links, retire cannot be inferred from contradictory Evidence, and no AI/Agent/methodology path can call the human writer.
 
 ## Task 7: Build the lightweight relationship workspace UI
 
@@ -155,11 +155,11 @@ The two hypothesis pointers are both null or both present. A linked Commitment m
 - Modify: `app/src/styles.css`
 - Create/modify focused graph, domain, transport, panel and shell tests
 
-- [ ] Extract the existing lightweight relation graph without changing generic Customer/Matter behavior. Formal relations remain solid; candidate edges are gray dashed with `?`; hypothesis annotations are dotted and can be hidden independently without mutating data.
-- [ ] Add Customer/Matter selection, source/time/confidence/freshness Intelligence badges, explicit falsification conditions, current Focus highlight, linked verification Commitments and readiness copy. Matter-level hypotheses remain visible outside the graph.
-- [ ] Add explicit, typed user flows to create a pinned verification Commitment, complete it, record a result/link approved Evidence, then keep/revise/retire. Stable idempotency keys survive same-session retry; conflicts retain form data and require refresh/rebase.
-- [ ] Viewer sees only authorized read projection and no write controls. G64111-disabled product fixtures complete the full workflow; no UI reads `primaryDPersonId`, ADURC, L1–L4 as a generic requirement, pipeline stage, G64111 score or legacy assumption.
-- [ ] Mount the panel in the existing `sales-workspace` capability surface before the frozen legacy entry. Do not add navigation, package, Vite or build-output changes.
+- [x] Extract the existing lightweight relation graph without changing generic Customer/Matter behavior. Formal relations remain solid; candidate edges are gray dashed with `?`; hypothesis annotations are dotted and can be hidden independently without mutating data.
+- [x] Add Customer/Matter selection, source/time/confidence/freshness Intelligence badges, explicit falsification conditions, current Focus highlight, linked verification Commitments and readiness copy. Matter-level hypotheses remain visible outside the graph.
+- [x] Add explicit, typed user flows to create a pinned verification Commitment, complete it, record a result/link approved Evidence, then keep/revise/retire. Stable idempotency keys survive same-session retry; conflicts retain form data and require refresh/rebase.
+- [x] Viewer sees only authorized read projection and no write controls. G64111-disabled product fixtures complete the full workflow; no UI reads `primaryDPersonId`, ADURC, L1–L4 as a generic requirement, pipeline stage, G64111 score or legacy assumption.
+- [x] Mount the panel in the existing `sales-workspace` capability surface before the frozen legacy entry. Do not add navigation, package, Vite or build-output changes.
 
 ## Task 8: Lock authority, migration recovery and no-scope-expansion evidence
 
@@ -168,16 +168,16 @@ The two hypothesis pointers are both null or both present. A linked Commitment m
 - Create: `docs/SAAS-208-关系工作台与假设验证迁移回滚说明.md`
 - Create/modify static authority, production-boundary, demo and rollback tests
 
-- [ ] Update `stakeholder.focus`, `sales.hypothesis` and `commitment.record` consumers from planned to exact SAAS-208 files; record the candidate/intelligence read-only projection without creating a competing authority.
-- [ ] Document backup-first SQLite and authenticated isolated PostgreSQL recovery. Rollback keeps all new columns, links, results, dispositions, marker, AuditEvent, CommandRun and migration history; application rollback may hide the panel but cannot reinterpret or delete completed review evidence.
-- [ ] Static tests reject `primaryDPersonId`, StrategyRisk assumption fallback, automatic formal writes, relationship-radar/InterventionItem code, sensitive body logging and unapproved shared/self-cultivation paths.
+- [x] Update `stakeholder.focus`, `sales.hypothesis` and `commitment.record` consumers from planned to exact SAAS-208 files; record the candidate/intelligence read-only projection without creating a competing authority.
+- [x] Document backup-first SQLite and authenticated isolated PostgreSQL recovery. Rollback keeps all new columns, links, results, dispositions, marker, AuditEvent, CommandRun and migration history; application rollback may hide the panel but cannot reinterpret or delete completed review evidence.
+- [x] Static tests reject `primaryDPersonId`, StrategyRisk assumption fallback, automatic formal writes, relationship-radar/InterventionItem code, sensitive body logging and unapproved shared/self-cultivation paths.
 
 ## Task 9: Verify, commit, push and wait for exact-SHA CI
 
-- [ ] After package changes, run `npm ci --install-links` in `app/` and `server/` before downstream checks.
-- [ ] Run focused RED→GREEN suites, then Domain typecheck/tests, Server generate/typecheck/full tests/schema render-check/migration operations, App typecheck/tests/build, G64111 typecheck/tests and PDE typecheck/tests.
-- [ ] Inspect `git diff --check`, exact changed-file inventory, self-cultivation denylist and shared-file allowlist. Stage no generated `app/dist` or local database/artifact.
-- [ ] Create one independent business commit containing `SAAS-208`, push only `codex/g4-candidate-review-intelligence`, and wait until all required jobs for that exact SHA are green. Do not rerun a still-running suite and do not create/merge a PR or deploy.
+- [x] After package changes, run `npm ci --install-links` in `app/` and `server/` before downstream checks.
+- [x] Run focused RED→GREEN suites, then Domain typecheck/tests, Server generate/typecheck/full tests/schema render-check/migration operations, App typecheck/tests/build, G64111 typecheck/tests and PDE typecheck/tests.
+- [x] Inspect `git diff --check`, exact changed-file inventory, self-cultivation denylist and shared-file allowlist. Stage no generated `app/dist` or local database/artifact.
+- [x] Create one independent business commit containing `SAAS-208`, push only `codex/g4-candidate-review-intelligence`, and wait until all required jobs for that exact SHA are green. Do not rerun a still-running suite and do not create/merge a PR or deploy.
 
 ## Task 10: Close governance only after the business gate
 
@@ -185,15 +185,22 @@ The two hypothesis pointers are both null or both present. A linked Commitment m
 - Modify: `docs/商业版开发待办清单v1.md`
 - Modify: this plan's task checkboxes/evidence only
 
-- [ ] Record exact business SHA, test counts, 12/12 Actions run, migration marker and rollback document; mark `SAAS-208` `DONE` and `SAAS-212` `READY` only if every acceptance condition passes.
-- [ ] Commit/push governance separately and wait for its exact SHA CI before reporting completion or starting SAAS-212.
+- [x] Record exact business SHA, test counts, 12/12 Actions run, migration marker and rollback document; mark `SAAS-208` `DONE` and `SAAS-212` `READY` only if every acceptance condition passes.
+- [x] Commit/push governance separately and wait for its exact SHA CI before reporting completion or starting SAAS-212.
 
 ## Acceptance gate
 
-- [ ] One authorized Matter view visibly distinguishes formal solid relations, pending machine dashed `?` candidates and toggleable dotted hypothesis annotations; no overlay changes formal Relation.
-- [ ] Intelligence shows assertion type, source, confidence and exact time/freshness; Focus comes only from StakeholderFocus; every hypothesis displays expected signals and falsification conditions.
-- [ ] A user can create an exact-revision verification Commitment, complete it, add a human result or exact approved Evidence, then explicitly keep/revise/retire. No step automatically changes hypothesis, Relation, Focus, stage, forecast or key-person status.
-- [ ] Tenant, viewer ownership, current-role, capability, parent closure, sensitive ACL, idempotency, audit/body-minimization and corruption tests pass for list, direct route, commands and replays.
-- [ ] SQLite and PostgreSQL fresh/update/interruption/drift/recovery gates pass with marker `SAAS-208-hypothesis-commitment-review-v1`; production deploy path remains versioned `migrate deploy`.
-- [ ] G64111 disabled fixtures pass the full workflow, while G64111 and PDE regression suites remain green.
-- [ ] Only the explicitly approved shared root operations script is touched; self-cultivation files, production, Aliyun, Mac mini, `main` and public-site routing remain untouched.
+- [x] One authorized Matter view visibly distinguishes formal solid relations, pending machine dashed `?` candidates and toggleable dotted hypothesis annotations; no overlay changes formal Relation.
+- [x] Intelligence shows assertion type, source, confidence and exact time/freshness; Focus comes only from StakeholderFocus; every hypothesis displays expected signals and falsification conditions.
+- [x] A user can create an exact-revision verification Commitment, complete it, add a human result or exact approved Evidence, then explicitly keep/revise/retire. No step automatically changes hypothesis, Relation, Focus, stage, forecast or key-person status.
+- [x] Tenant, viewer ownership, current-role, capability, parent closure, sensitive ACL, idempotency, audit/body-minimization and corruption tests pass for list, direct route, commands and replays.
+- [x] SQLite and PostgreSQL fresh/update/interruption/drift/recovery gates pass with marker `SAAS-208-hypothesis-commitment-review-v1`; production deploy path remains versioned `migrate deploy`.
+- [x] G64111 disabled fixtures pass the full workflow, while G64111 and PDE regression suites remain green.
+- [x] Only the explicitly approved shared root operations script is touched; self-cultivation files, production, Aliyun, Mac mini, `main` and public-site routing remain untouched.
+
+## Completion evidence
+
+- Business commit `e5503e37f8d1ec0ad5fee1f263efc586f0b96b44` is pushed and [GitHub Actions 33429254792](https://github.com/ZiZ-LG/jianghu/actions/runs/33429254792) completed successfully with 12/12 jobs on that exact SHA.
+- Final local matrix: Domain Contracts 15 files / 142 tests; Server 114 files / 919 tests; App 53 files / 372 tests; G64111 2 files / 32 tests; PDE kernel 3 files / 25 tests. All required typechecks, Prisma generation, deterministic PostgreSQL schema checks, dependency audits, App build and production image gates passed.
+- Local PostgreSQL operations emitted SAAS-208 committed-DDL adoption, semantic/marker/partial-drift fail-closed, authenticated restore, `SAAS_208_HYPOTHESIS_COMMITMENT_REVIEW_MIGRATION_OK=1`, fresh-install first/second-update and `POSTGRES_OPS_INTEGRATION_OK=1`; the remote `postgres-operations` job also succeeded.
+- Scope remained CRM-only. The only shared/high-conflict file touched was the project-owner-approved `scripts/test-postgres-ops-integration.sh`; no self-cultivation, public routing, production, Aliyun, Mac mini or `main` change occurred.
