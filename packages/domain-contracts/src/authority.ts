@@ -311,6 +311,52 @@ export const CRM_FIELD_AUTHORITY: CrmAuthorityEntry[] = CrmAuthorityMapSchema.pa
     ],
   },
   {
+    logicalField: 'sales.hypothesis',
+    currentAuthority: {
+      kind: 'core_path',
+      path: 'SalesHypothesis + SalesHypothesisRevision + HypothesisEvidenceLink',
+    },
+    targetAuthority: {
+      kind: 'core_path',
+      path: 'SalesHypothesis + SalesHypothesisRevision + HypothesisEvidenceLink',
+    },
+    consumers: {
+      reads: ['server/src/hypotheses/routes.ts'],
+      writes: ['server/src/hypotheses/service.ts'],
+      adapters: [
+        'packages/domain-contracts/src/hypotheses.ts',
+        'server/src/hypotheses/model.ts',
+        'server/src/mutate.ts',
+        'server/src/mutation/actionScope.ts',
+        'server/src/candidates/reviewItems.ts',
+      ],
+      migrations: [
+        'server/prisma/postgres/legacy/20260830_pre_saas207.prisma',
+        'server/prisma/postgres/migrations/20260830000000_expand_sales_hypothesis/migration.sql',
+        'server/scripts/deploy-postgres-migrations.sh',
+        'server/scripts/migrate-sales-hypotheses.ts',
+        'server/scripts/postgres-sales-hypothesis-schema-state.ts',
+        'server/scripts/upgrade-sqlite-schema.ts',
+        'server/src/hypotheses/migration.ts',
+        'server/src/seed-demo.ts',
+      ],
+      planned: [
+        'SAAS-208 relationship-map and Commitment review projection',
+        'SAAS-209 portfolio',
+        'SAAS-212 relationship radar',
+      ],
+    },
+    shadowComparison: 'Manual legacy StrategyRisk assumptions are migrated once with exact tenant, parent, identity, status, and first-revision parity; runtime never dual-reads or falls back.',
+    cutoverCondition: 'Dedicated commands, immutable history and evidence links, deterministic read-only status suggestions, current-role scope checks, dual-database migration, and recovery tests pass.',
+    stopCondition: 'All new hypothesis writes use SalesHypothesis commands; StrategyRisk assumptions are frozen while StrategyRisk risks retain their existing behavior.',
+    removalPhase: 'Legacy assumption rows remain rollback history through G7; no destructive removal is part of SAAS-207.',
+    forbidden: [
+      'Automatically applying any AI, Agent, methodology, or evidence-based status suggestion to the formal hypothesis status',
+      'Updating or deleting a SalesHypothesisRevision or HypothesisEvidenceLink after creation',
+      'Falling back to StrategyRisk(kind=assumption) or dual-writing canonical and legacy hypothesis records',
+    ],
+  },
+  {
     logicalField: 'sales.forecast',
     currentAuthority: { kind: 'legacy_path', path: 'Opportunity.expectedAmountW + winProbability + expectedSignDate' },
     targetAuthority: { kind: 'core_path', path: 'ForecastEntry' },

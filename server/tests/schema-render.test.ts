@@ -1149,3 +1149,94 @@ describe('SAAS-206 IntelligenceItem and StakeholderFocus expansion', () => {
       .toBeLessThan(sqliteUpgrade.indexOf("const dbPushArgs = ['prisma', 'db', 'push'"));
   });
 });
+
+describe('SAAS-207 SalesHypothesis expansion', () => {
+  it('creates portable immutable authorities through guarded SQLite and PostgreSQL gates', async () => {
+    const sqliteSchema = await read('prisma/schema.prisma');
+    const postgresSchema = await read('prisma/postgres/schema.prisma');
+    const predecessor = await read('prisma/postgres/legacy/20260830_pre_saas207.prisma');
+    const migration = await read(
+      'prisma/postgres/migrations/20260830000000_expand_sales_hypothesis/migration.sql',
+    );
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const sqliteUpgrade = await read('scripts/upgrade-sqlite-schema.ts');
+    const schemaState = await read('scripts/postgres-sales-hypothesis-schema-state.ts');
+    const migrationCli = await read('scripts/migrate-sales-hypotheses.ts');
+    const postgresOps = await read('../scripts/test-postgres-ops-integration.sh');
+    const packageJson = JSON.parse(await read('package.json')) as { scripts?: Record<string, string> };
+
+    for (const schemaText of [sqliteSchema, postgresSchema]) {
+      expect(schemaText).toContain('model SalesHypothesis {');
+      expect(schemaText).toContain('model SalesHypothesisRevision {');
+      expect(schemaText).toContain('model HypothesisEvidenceLink {');
+      expect(schemaText).toContain('@@unique([tenantId, legacyStrategyRiskId])');
+      expect(schemaText).toContain('@@unique([tenantId, hypothesisId, revisionNumber])');
+      expect(schemaText).toContain('@@unique([tenantId, hypothesisRevisionId, evidenceId])');
+      expect(schemaText).not.toMatch(/^enum\s+/m);
+      expect(schemaText).not.toMatch(/^\s*\w+\s+Json[?\[\]]*/m);
+    }
+    expect(predecessor).toContain('model StakeholderFocus {');
+    expect(predecessor).not.toContain('model SalesHypothesis {');
+
+    expect(migration.trimStart().startsWith('BEGIN;')).toBe(true);
+    expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(migration).toContain("SET LOCAL lock_timeout = '30s'");
+    expect(migration).toContain("SET LOCAL statement_timeout = '15min'");
+    expect(migration).toContain('LOCK TABLE "Tenant", "StrategyRisk" IN SHARE ROW EXCLUSIVE MODE');
+    expect(migration).toContain('CREATE TABLE "SalesHypothesis"');
+    expect(migration).toContain('CREATE TABLE "SalesHypothesisRevision"');
+    expect(migration).toContain('CREATE TABLE "HypothesisEvidenceLink"');
+    expect([...migration.matchAll(/"([^"]+)"/g)]
+      .map((match) => match[1])
+      .filter((identifier) => Buffer.byteLength(identifier, 'utf8') > 63)).toEqual([]);
+    for (const indexName of [
+      'SalesHypothesisRevision_tenantId_hypothesisId_revisionNumbe_key',
+      'HypothesisEvidenceLink_tenantId_hypothesisRevisionId_eviden_key',
+    ]) {
+      expect(migration).toContain(`CREATE UNIQUE INDEX "${indexName}"`);
+      expect(schemaState).toContain(`'${indexName}'`);
+    }
+    expect(migration).toContain('SalesHypothesis table expansion parity failed');
+    expect(migration).not.toMatch(/(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+"(?:StrategyRisk|EvidenceEvent|Account|Opportunity|Person|Edge|PlanAction|Candidate|StakeholderFocus)"/i);
+
+    expect(packageJson.scripts?.['migrate:sales-hypothesis-report'])
+      .toBe('tsx scripts/migrate-sales-hypotheses.ts --dry-run');
+    expect(packageJson.scripts?.['migrate:sales-hypothesis-apply'])
+      .toBe('tsx scripts/migrate-sales-hypotheses.ts --apply');
+    expect(packageJson.scripts?.['migrate:sales-hypothesis-verify'])
+      .toBe('tsx scripts/migrate-sales-hypotheses.ts --verify');
+    expect(migrationCli).toContain('reportSalesHypothesisMigration');
+    expect(migrationCli).toContain('applySalesHypothesisMigration');
+    expect(migrationCli).toContain('verifySalesHypothesisMigration');
+
+    expect(deployScript).toContain('PRE_SALES_HYPOTHESIS_SCHEMA=prisma/postgres/legacy/20260830_pre_saas207.prisma');
+    expect(deployScript).toContain('SALES_HYPOTHESIS_MIGRATION=20260830000000_expand_sales_hypothesis');
+    expect(deployScript).toContain('recover_incomplete_sales_hypothesis_migration');
+    expect(deployScript).toContain('adopt_existing_sales_hypothesis_schema_if_safe');
+    expect(deployScript).toContain('sales_hypothesis_schema_matches_known_state');
+    expect(deployScript.lastIndexOf('npm run migrate:sales-hypothesis-report'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:sales-hypothesis-apply'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:sales-hypothesis-verify'))
+      .toBeGreaterThan(deployScript.lastIndexOf('npm run migrate:sales-hypothesis-apply'));
+    expect(schemaState).toContain("? 'legacy' : 'uninitialized'");
+    expect(schemaState).toContain("'expanded'");
+    expect(schemaState).toContain("'partial'");
+    expect(schemaState).toContain('expectedHypothesisColumns');
+    expect(schemaState).toContain('expectedRevisionColumns');
+    expect(schemaState).toContain('expectedLinkColumns');
+    expect(sqliteUpgrade).toContain('inspectSalesHypothesisSchemaState');
+    expect(sqliteUpgrade).toContain('partial SalesHypothesis expansion detected');
+    expect(sqliteUpgrade).toContain("['run', 'migrate:sales-hypothesis-apply']");
+    expect(sqliteUpgrade).toContain("['run', 'migrate:sales-hypothesis-verify']");
+    expect(sqliteUpgrade.indexOf("['run', 'migrate:sales-hypothesis-report']"))
+      .toBeLessThan(sqliteUpgrade.indexOf("const dbPushArgs = ['prisma', 'db', 'push'"));
+    expect(postgresOps).toContain('INTERRUPTED_SALES_HYPOTHESIS_AFTER_COMMIT_ADOPTION_OK=1');
+    expect(postgresOps).toContain('SALES_HYPOTHESIS_SEMANTIC_CONFLICT_FAIL_CLOSED_OK=1');
+    expect(postgresOps).toContain('SALES_HYPOTHESIS_MARKER_CHECKSUM_FAIL_CLOSED_OK=1');
+    expect(postgresOps).toContain('PARTIAL_SALES_HYPOTHESIS_SCHEMA_FAIL_CLOSED_OK=1');
+    expect(postgresOps).toContain('SALES_HYPOTHESIS_RESTORE_ROLLBACK_OK=1');
+    expect(postgresOps).toContain('SAAS_207_SALES_HYPOTHESIS_MIGRATION_OK=1');
+  });
+});

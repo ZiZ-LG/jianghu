@@ -1893,6 +1893,181 @@ intelligence_focus_restore_parity=$(docker compose -p "$COMPOSE_PROJECT_NAME" ex
 echo "INTELLIGENCE_FOCUS_RESTORE_ROLLBACK_OK=1"
 echo "SAAS_206_INTELLIGENCE_FOCUS_MIGRATION_OK=1"
 
+# SAAS-207 replaces the writable StrategyRisk assumption path with a
+# revision-preserving SalesHypothesis authority. Exercise committed-DDL
+# adoption, conservative manual-only backfill, semantic/marker drift refusal,
+# partial-schema refusal and authenticated predecessor restore. The fresh
+# install drill below also proves empty-first-install and idempotent update.
+POSTGRES_OPS_STAGE='saas207-sales-hypothesis'
+sales_hypothesis_db=jianghu_sales_hypothesis_migration
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$sales_hypothesis_db"
+POSTGRES_DB="$sales_hypothesis_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npx prisma db push --schema prisma/postgres/legacy/20260830_pre_saas207.prisma --skip-generate >/dev/null
+   for path in prisma/postgres/migrations/20*; do
+     [ -d "$path" ] || continue
+     migration=$(basename "$path")
+     [ "$migration" = 20260830000000_expand_sales_hypothesis ] && break
+     npx prisma migrate resolve --applied "$migration" --schema prisma/postgres/schema.prisma >/dev/null
+   done' >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$sales_hypothesis_db" -c \
+  "INSERT INTO \"Tenant\" (id,name) VALUES ('sales-hypothesis-tenant','Sales Hypothesis Tenant');
+   INSERT INTO \"User\" (id,\"tenantId\",email,\"passwordHash\",name,role)
+     VALUES ('sales-hypothesis-user','sales-hypothesis-tenant','hypothesis@example.test','unused','Hypothesis Owner','owner');
+   INSERT INTO \"Account\" (id,\"tenantId\",name,\"primaryOwnerUserId\")
+     VALUES ('sales-hypothesis-account','sales-hypothesis-tenant','Hypothesis Account','sales-hypothesis-user');
+   INSERT INTO \"Opportunity\"
+     (id,\"tenantId\",\"accountId\",name,\"customerType\",\"pipelineStage\",\"engageStage\",\"primaryOwnerUserId\")
+     VALUES ('sales-hypothesis-matter','sales-hypothesis-tenant','sales-hypothesis-account',
+       'Hypothesis Matter',1,'lead','unknown','sales-hypothesis-user');
+   INSERT INTO \"StrategyRisk\"
+     (id,\"tenantId\",\"accountId\",\"opportunityId\",kind,text,severity,mitigation,status,origin,\"createdAt\") VALUES
+     ('sales-hypothesis-assumption','sales-hypothesis-tenant','sales-hypothesis-account',
+       'sales-hypothesis-matter','assumption','Budget will be approved','mid','Watch committee date',
+       'open','manual','2026-08-01T08:00:00Z'),
+     ('sales-hypothesis-risk','sales-hypothesis-tenant','sales-hypothesis-account',
+       'sales-hypothesis-matter','risk','Delivery window is short','high','Split milestones',
+       'open','manual','2026-08-01T08:00:00Z');" >/dev/null
+
+sales_hypothesis_backup_root="$BACKUP_DIR/saas207-pre"
+mkdir -p "$sales_hypothesis_backup_root"
+derive_backup_keys "$BACKUP_MASTER_SECRET"
+sales_hypothesis_backup_work=$(mktemp -d "$sales_hypothesis_backup_root/.sales-hypothesis-work.XXXXXX")
+sales_hypothesis_backup="$sales_hypothesis_backup_root/jianghu-saas207-$(openssl rand -hex 8).backup"
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db \
+  pg_dump -U "$POSTGRES_USER" -d "$sales_hypothesis_db" -Fc \
+  | backup_encrypt_payload "$sales_hypothesis_backup_work/payload.enc"
+{
+  backup_cipher_metadata
+  printf 'source_database=%s\n' "$sales_hypothesis_db"
+  printf 'created_at=%s\n' "$(date -u +%Y%m%dT%H%M%SZ)"
+} > "$sales_hypothesis_backup_work/metadata"
+write_artifact_integrity "$sales_hypothesis_backup_work"
+verify_artifact_auth "$sales_hypothesis_backup_work"
+mv "$sales_hypothesis_backup_work" "$sales_hypothesis_backup"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db \
+  psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$sales_hypothesis_db" \
+  < server/prisma/postgres/migrations/20260830000000_expand_sales_hypothesis/migration.sql >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$sales_hypothesis_db" -c \
+  "INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+   VALUES ('int-sales-hypothesis-after-commit', repeat('0', 64),
+     '20260830000000_expand_sales_hypothesis', CURRENT_TIMESTAMP, 0);" >/dev/null
+POSTGRES_DB="$sales_hypothesis_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+sales_hypothesis_after_commit_adoption=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$sales_hypothesis_db" -tAc \
+  "SELECT ((SELECT count(*) FROM \"_prisma_migrations\"
+              WHERE migration_name = '20260830000000_expand_sales_hypothesis'
+                AND finished_at IS NOT NULL AND rolled_back_at IS NULL) = 1
+       AND (SELECT count(*) FROM \"_prisma_migrations\"
+              WHERE migration_name = '20260830000000_expand_sales_hypothesis'
+                AND finished_at IS NULL AND rolled_back_at IS NULL) = 0
+       AND (SELECT count(*) FROM \"DataMigrationState\"
+              WHERE key = 'SAAS-207-sales-hypothesis-v1') = 1
+       AND (SELECT count(*) FROM \"SalesHypothesis\") = 1
+       AND (SELECT count(*) FROM \"SalesHypothesisRevision\") = 1
+       AND (SELECT count(*) FROM \"HypothesisEvidenceLink\") = 0
+       AND (SELECT count(*) FROM \"StrategyRisk\") = 2
+       AND (SELECT count(*) FROM \"SalesHypothesis\"
+              WHERE \"legacyStrategyRiskId\" = 'sales-hypothesis-assumption'
+                AND status = 'untested' AND \"ownerUserId\" IS NULL
+                AND \"nextReviewAt\" IS NULL AND \"personId\" IS NULL) = 1
+       AND (SELECT count(*) FROM \"SalesHypothesisRevision\"
+              WHERE origin = 'legacy_assumption' AND claim = 'Budget will be approved'
+                AND reason = 'Watch committee date' AND \"expectedSignals\" = '[]'
+                AND \"falsificationConditions\" = '[]') = 1
+       AND NOT EXISTS (SELECT 1 FROM \"SalesHypothesis\"
+              WHERE \"legacyStrategyRiskId\" = 'sales-hypothesis-risk')
+       AND (SELECT count(*) FROM \"EvidenceEvent\") = 0
+       AND (SELECT count(*) FROM \"Edge\") = 0
+       AND (SELECT count(*) FROM \"PlanAction\") = 0
+       AND (SELECT count(*) FROM \"StakeholderFocus\") = 0)::int" | tr -d '[:space:]')
+[[ "$sales_hypothesis_after_commit_adoption" == 1 ]]
+echo "INTERRUPTED_SALES_HYPOTHESIS_AFTER_COMMIT_ADOPTION_OK=1"
+POSTGRES_DB="$sales_hypothesis_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npm run migrate:sales-hypothesis-report >/dev/null
+   npm run migrate:sales-hypothesis-apply >/dev/null
+   npm run migrate:sales-hypothesis-verify >/dev/null'
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$sales_hypothesis_db" -c \
+  "INSERT INTO \"StrategyRisk\"
+     (id,\"tenantId\",\"accountId\",\"opportunityId\",kind,text,status,origin)
+   VALUES ('sales-hypothesis-ai','sales-hypothesis-tenant','sales-hypothesis-account',
+     'sales-hypothesis-matter','assumption','Machine assertion','open','ai');" >/dev/null
+if POSTGRES_DB="$sales_hypothesis_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "machine-origin assumption unexpectedly deployed" >&2; exit 1
+fi
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$sales_hypothesis_db" -c \
+  "DELETE FROM \"StrategyRisk\" WHERE id = 'sales-hypothesis-ai';
+   UPDATE \"SalesHypothesisRevision\" SET claim = 'Tampered initial claim'
+    WHERE origin = 'legacy_assumption';" >/dev/null
+if POSTGRES_DB="$sales_hypothesis_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "tampered initial SalesHypothesis revision unexpectedly deployed" >&2; exit 1
+fi
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$sales_hypothesis_db" -c \
+  "UPDATE \"SalesHypothesisRevision\" SET claim = 'Budget will be approved'
+    WHERE origin = 'legacy_assumption';" >/dev/null
+POSTGRES_DB="$sales_hypothesis_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+echo "SALES_HYPOTHESIS_SEMANTIC_CONFLICT_FAIL_CLOSED_OK=1"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$sales_hypothesis_db" -c \
+  "UPDATE \"DataMigrationState\"
+      SET details = jsonb_set(details::jsonb, '{integrityChecksum}', to_jsonb(repeat('0', 64)))::text
+    WHERE key = 'SAAS-207-sales-hypothesis-v1';" >/dev/null
+if POSTGRES_DB="$sales_hypothesis_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "SalesHypothesis marker checksum drift unexpectedly deployed" >&2; exit 1
+fi
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$sales_hypothesis_db" -c \
+  "DELETE FROM \"DataMigrationState\" WHERE key = 'SAAS-207-sales-hypothesis-v1';" >/dev/null
+POSTGRES_DB="$sales_hypothesis_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+echo "SALES_HYPOTHESIS_MARKER_CHECKSUM_FAIL_CLOSED_OK=1"
+
+sales_hypothesis_partial_db=jianghu_sales_hypothesis_partial
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$sales_hypothesis_partial_db"
+POSTGRES_DB="$sales_hypothesis_partial_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npx prisma db push --schema prisma/postgres/legacy/20260830_pre_saas207.prisma --skip-generate >/dev/null
+   for path in prisma/postgres/migrations/20*; do
+     [ -d "$path" ] || continue
+     migration=$(basename "$path")
+     [ "$migration" = 20260830000000_expand_sales_hypothesis ] && break
+     npx prisma migrate resolve --applied "$migration" --schema prisma/postgres/schema.prisma >/dev/null
+   done' >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$sales_hypothesis_partial_db" -c \
+  "CREATE TABLE \"SalesHypothesis\" (id TEXT PRIMARY KEY);
+   INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+   VALUES ('int-sales-hypothesis-partial', repeat('0', 64),
+     '20260830000000_expand_sales_hypothesis', CURRENT_TIMESTAMP, 0);" >/dev/null
+if POSTGRES_DB="$sales_hypothesis_partial_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "partial SalesHypothesis schema unexpectedly migrated" >&2; exit 1
+fi
+sales_hypothesis_partial_state=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$sales_hypothesis_partial_db" -tAc \
+  "SELECT ((to_regclass('public.\"SalesHypothesis\"') IS NOT NULL)
+       AND (to_regclass('public.\"SalesHypothesisRevision\"') IS NULL)
+       AND (to_regclass('public.\"HypothesisEvidenceLink\"') IS NULL)
+       AND NOT EXISTS (SELECT 1 FROM \"_prisma_migrations\"
+         WHERE migration_name = '20260830000000_expand_sales_hypothesis'
+           AND finished_at IS NOT NULL AND rolled_back_at IS NULL))::int" | tr -d '[:space:]')
+[[ "$sales_hypothesis_partial_state" == 1 ]]
+echo "PARTIAL_SALES_HYPOTHESIS_SCHEMA_FAIL_CLOSED_OK=1"
+
+sales_hypothesis_restore_db=jianghu_restore_sales_hypothesis_saas207
+bash scripts/restore-postgres.sh "$sales_hypothesis_backup" --database "$sales_hypothesis_restore_db" >/dev/null
+sales_hypothesis_restore_parity=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$sales_hypothesis_restore_db" -tAc \
+  "SELECT ((to_regclass('public.\"SalesHypothesis\"') IS NULL)
+       AND (to_regclass('public.\"SalesHypothesisRevision\"') IS NULL)
+       AND (to_regclass('public.\"HypothesisEvidenceLink\"') IS NULL)
+       AND (SELECT count(*) FROM \"StrategyRisk\" WHERE kind = 'assumption') = 1
+       AND NOT EXISTS (SELECT 1 FROM \"DataMigrationState\"
+              WHERE key = 'SAAS-207-sales-hypothesis-v1'))::int" | tr -d '[:space:]')
+[[ "$sales_hypothesis_restore_parity" == 1 ]]
+echo "SALES_HYPOTHESIS_RESTORE_ROLLBACK_OK=1"
+echo "SAAS_207_SALES_HYPOTHESIS_MIGRATION_OK=1"
+
 # A duplicate tenant-local owner name must roll the bridge transaction back.
 # After data repair, the same database must resume and complete safely.
 ambiguous_db=jianghu_owner_ambiguous
@@ -2143,6 +2318,16 @@ fresh_intelligence_focus=$(docker compose -p "$fresh_project" exec -T db psql -U
        AND (SELECT count(*) FROM \"IntelligenceItem\") = 0
        AND (SELECT count(*) FROM \"StakeholderFocus\") = 0)::int" | tr -d '[:space:]')
 [[ "$fresh_intelligence_focus" == 1 ]]
+fresh_sales_hypothesis=$(docker compose -p "$fresh_project" exec -T db psql -U jianghu_fresh -d jianghu_fresh -tAc \
+  "SELECT ((to_regclass('public.\"SalesHypothesis\"') IS NOT NULL)
+       AND (to_regclass('public.\"SalesHypothesisRevision\"') IS NOT NULL)
+       AND (to_regclass('public.\"HypothesisEvidenceLink\"') IS NOT NULL)
+       AND (SELECT count(*) FROM \"DataMigrationState\"
+              WHERE key = 'SAAS-207-sales-hypothesis-v1') = 1
+       AND (SELECT count(*) FROM \"SalesHypothesis\") = 0
+       AND (SELECT count(*) FROM \"SalesHypothesisRevision\") = 0
+       AND (SELECT count(*) FROM \"HypothesisEvidenceLink\") = 0)::int" | tr -d '[:space:]')
+[[ "$fresh_sales_hypothesis" == 1 ]]
 fresh_backup_count=$(find "$fresh_backups" -maxdepth 1 -type d -name 'jianghu-*.backup' | wc -l | tr -d ' ')
 [[ "$fresh_backup_count" == 1 ]]
 echo "FRESH_INSTALL_FIRST_RUN_OK=1"
@@ -2158,6 +2343,13 @@ fresh_intelligence_focus_after=$(docker compose -p "$fresh_project" exec -T db p
               WHERE migration_name = '20260827000000_expand_intelligence_focus'
                 AND finished_at IS NOT NULL AND rolled_back_at IS NULL) = 1)::int" | tr -d '[:space:]')
 [[ "$fresh_intelligence_focus_after" == 1 ]]
+fresh_sales_hypothesis_after=$(docker compose -p "$fresh_project" exec -T db psql -U jianghu_fresh -d jianghu_fresh -tAc \
+  "SELECT ((SELECT count(*) FROM \"DataMigrationState\"
+              WHERE key = 'SAAS-207-sales-hypothesis-v1') = 1
+       AND (SELECT count(*) FROM \"_prisma_migrations\"
+              WHERE migration_name = '20260830000000_expand_sales_hypothesis'
+                AND finished_at IS NOT NULL AND rolled_back_at IS NULL) = 1)::int" | tr -d '[:space:]')
+[[ "$fresh_sales_hypothesis_after" == 1 ]]
 fresh_rollback_count=$(find "$fresh_rollbacks" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
 [[ "$fresh_rollback_count" -ge 1 ]]
 echo "FRESH_INSTALL_SECOND_UPDATE_OK=1"

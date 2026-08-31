@@ -17,6 +17,7 @@ PRE_REVIEW_BATCH_SCHEMA=prisma/postgres/legacy/20260825_pre_core205.prisma
 PRE_AGENT_JOB_SCHEMA=prisma/postgres/legacy/20260825_pre_core206.prisma
 PRE_RESEARCH_BRIEF_SCHEMA=prisma/postgres/legacy/20260826_pre_saas204.prisma
 PRE_INTELLIGENCE_FOCUS_SCHEMA=prisma/postgres/legacy/20260827_pre_saas206.prisma
+PRE_SALES_HYPOTHESIS_SCHEMA=prisma/postgres/legacy/20260830_pre_saas207.prisma
 PRE_CUSTOMER_SCHEMA=$(mktemp /tmp/jianghu-pre-core115.prisma.XXXXXX)
 cleanup_pre_customer_schema() {
   rm -f "$PRE_CUSTOMER_SCHEMA"
@@ -41,6 +42,7 @@ REVIEW_BATCH_MIGRATION=20260825020000_expand_review_batch_interaction
 AGENT_JOB_MIGRATION=20260825030000_expand_agent_job_run
 RESEARCH_BRIEF_MIGRATION=20260826000000_expand_research_brief_snapshot
 INTELLIGENCE_FOCUS_MIGRATION=20260827000000_expand_intelligence_focus
+SALES_HYPOTHESIS_MIGRATION=20260830000000_expand_sales_hypothesis
 
 npx tsx scripts/render-pre-customer-schema.ts "$PRE_CANDIDATE_SCHEMA" "$PRE_CUSTOMER_SCHEMA"
 
@@ -166,10 +168,15 @@ agent_job_schema_matches_known_state() {
 }
 
 research_brief_schema_matches_known_state() {
-  schema_matches "$PRE_INTELLIGENCE_FOCUS_SCHEMA" || schema_matches "$SCHEMA"
+  schema_matches "$PRE_INTELLIGENCE_FOCUS_SCHEMA" \
+    || schema_matches "$PRE_SALES_HYPOTHESIS_SCHEMA" || schema_matches "$SCHEMA"
 }
 
 intelligence_focus_schema_matches_known_state() {
+  schema_matches "$PRE_SALES_HYPOTHESIS_SCHEMA" || schema_matches "$SCHEMA"
+}
+
+sales_hypothesis_schema_matches_known_state() {
   schema_matches "$SCHEMA"
 }
 
@@ -1063,11 +1070,67 @@ adopt_existing_intelligence_focus_schema_if_safe() {
   esac
 }
 
+recover_incomplete_sales_hypothesis_migration() {
+  incomplete_migrations=$(npx tsx scripts/list-incomplete-postgres-migrations.ts)
+  if ! printf '%s\n' "$incomplete_migrations" | grep -Fxq "$SALES_HYPOTHESIS_MIGRATION"; then
+    return 0
+  fi
+  sales_hypothesis_schema_state=$(npx tsx scripts/postgres-sales-hypothesis-schema-state.ts)
+  case "$sales_hypothesis_schema_state" in
+    legacy)
+      echo "[migration] 检测到中断且已由 PostgreSQL 回滚的 SalesHypothesis 事务，登记后安全重放。"
+      npx prisma migrate resolve --rolled-back "$SALES_HYPOTHESIS_MIGRATION" --schema "$SCHEMA"
+      ;;
+    expanded)
+      echo "[migration] 检测到已提交但未完成登记的 SalesHypothesis 事务，只读校验后接管。"
+      npm run migrate:sales-hypothesis-report
+      if ! sales_hypothesis_schema_matches_known_state; then
+        echo "[migration] SalesHypothesis schema 已扩展但与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$SALES_HYPOTHESIS_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] SalesHypothesis migration 留下部分 schema，必须从认证备份恢复后再试。" >&2
+      exit 1
+      ;;
+  esac
+}
+
+adopt_existing_sales_hypothesis_schema_if_safe() {
+  refresh_applied_migrations
+  if migration_is_applied "$SALES_HYPOTHESIS_MIGRATION"; then
+    return 0
+  fi
+  sales_hypothesis_schema_state=$(npx tsx scripts/postgres-sales-hypothesis-schema-state.ts)
+  case "$sales_hypothesis_schema_state" in
+    uninitialized|legacy) return 0 ;;
+    expanded)
+      echo "[migration] 检测到未登记但完整的 SalesHypothesis schema，只读校验后接管。"
+      npm run migrate:sales-hypothesis-report
+      if ! sales_hypothesis_schema_matches_known_state; then
+        echo "[migration] 未登记 SalesHypothesis schema 与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$SALES_HYPOTHESIS_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] 检测到未登记的部分 SalesHypothesis schema，拒绝继续。" >&2
+      exit 1
+      ;;
+  esac
+}
+
 state=$(wait_for_migration_state)
 case "$state" in
   untracked)
     if schema_matches "$SCHEMA"; then
       echo "[migration] 检测到与当前模型一致的未纳管 schema。"
+      npx tsx scripts/assert-untracked-command-runs-empty.ts
+    elif schema_matches "$PRE_SALES_HYPOTHESIS_SCHEMA"; then
+      echo "[migration] 检测到已批准的 SAAS-206 未纳管 schema。"
       npx tsx scripts/assert-untracked-command-runs-empty.ts
     elif schema_matches "$PRE_INTELLIGENCE_FOCUS_SCHEMA"; then
       echo "[migration] 检测到已批准的 SAAS-204 未纳管 schema。"
@@ -1141,7 +1204,8 @@ case "$state" in
         fi
         echo "[migration] 继续中断的当前 schema 接管。"
         resolve_missing_pre_bridge_migrations
-      elif schema_matches "$PRE_INTELLIGENCE_FOCUS_SCHEMA" \
+      elif schema_matches "$PRE_SALES_HYPOTHESIS_SCHEMA" \
+        || schema_matches "$PRE_INTELLIGENCE_FOCUS_SCHEMA" \
         || schema_matches "$PRE_RESEARCH_BRIEF_SCHEMA" \
         || schema_matches "$PRE_AGENT_JOB_SCHEMA" || schema_matches "$PRE_REVIEW_BATCH_SCHEMA" \
         || schema_matches "$PRE_SOURCE_ARTIFACT_SCHEMA" \
@@ -1198,6 +1262,8 @@ recover_incomplete_research_brief_migration
 adopt_existing_research_brief_schema_if_safe
 recover_incomplete_intelligence_focus_migration
 adopt_existing_intelligence_focus_schema_if_safe
+recover_incomplete_sales_hypothesis_migration
+adopt_existing_sales_hypothesis_schema_if_safe
 refresh_applied_migrations
 matter_migration_pending=0
 if ! migration_is_applied "$MATTER_MIGRATION"; then
@@ -1314,6 +1380,16 @@ if ! migration_is_applied "$INTELLIGENCE_FOCUS_MIGRATION"; then
   fi
 fi
 
+if ! migration_is_applied "$SALES_HYPOTHESIS_MIGRATION"; then
+  sales_hypothesis_schema_state=$(npx tsx scripts/postgres-sales-hypothesis-schema-state.ts)
+  if [ "$sales_hypothesis_schema_state" = legacy ]; then
+    echo "[migration] 在 SalesHypothesis 扩展前执行人工 assumption、父树与保守状态映射预演…"
+    npm run migrate:sales-hypothesis-report
+  else
+    echo "[migration] 新库尚无 Intelligence/Focus 基座；SAAS-207 预演将在版本化 DDL 后执行。"
+  fi
+fi
+
 echo "[migration] 在唯一索引迁移前执行同步锚与企微绑定冲突扫描…"
 npm run migrate:sync-anchor-report
 npm run migrate:wecom-bind-report
@@ -1397,6 +1473,13 @@ echo "[migration] 写入 SAAS-206 marker；不回填情报、聚焦、Evidence �
 npm run migrate:intelligence-focus-apply
 echo "[migration] 校验 SAAS-206 marker、schema 指纹、受检引用与方法中立性…"
 npm run migrate:intelligence-focus-verify
+
+echo "[migration] 只读预演 legacy assumption、SalesHypothesis 修订与 Evidence 链接完整性…"
+npm run migrate:sales-hypothesis-report
+echo "[migration] 以单事务保守回填人工 assumption，并在最后写入 SAAS-207 marker…"
+npm run migrate:sales-hypothesis-apply
+echo "[migration] 校验 SAAS-207 marker、不可变初始修订、父树与正式状态零推断…"
+npm run migrate:sales-hypothesis-verify
 
 if ! schema_matches "$SCHEMA"; then
   echo "[migration] 迁移后 schema 与当前模型仍不一致，拒绝启动：" >&2

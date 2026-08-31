@@ -33,6 +33,9 @@ model Tenant {
   researchBriefSnapshots ResearchBriefSnapshot[]
   intelligenceItems  IntelligenceItem[]
   stakeholderFocuses StakeholderFocus[]
+  salesHypotheses    SalesHypothesis[]
+  salesHypothesisRevisions SalesHypothesisRevision[]
+  hypothesisEvidenceLinks HypothesisEvidenceLink[]
 }
 
 // 工作区自配的企查查 OpenAPI 凭证（BYO-key）。secretKey 加密存储。
@@ -936,6 +939,75 @@ model StakeholderFocus {
   @@index([tenantId, customerId, updatedAt])
   @@index([tenantId, matterId, updatedAt])
   @@index([tenantId, personId, updatedAt])
+}
+
+// 经人工确认的销售假设权威记录。机器只能给出候选建议，不能自动修改 status。
+// legacyStrategyRiskId 仅用于 SAAS-207 一次性迁移与回滚追溯；不再双写旧 assumption。
+model SalesHypothesis {
+  id                      String    @id
+  tenantId                String
+  tenant                  Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customerId              String
+  matterId                String
+  personId                String?
+  status                  String    @default("untested")
+  ownerUserId             String?
+  nextReviewAt            DateTime?
+  currentRevisionId       String
+  legacyStrategyRiskId    String?
+  createdByUserId         String?
+  statusConfirmedByUserId String?
+  statusConfirmedAt       DateTime?
+  version                 Int       @default(0)
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, legacyStrategyRiskId])
+  @@index([tenantId, customerId, updatedAt])
+  @@index([tenantId, matterId, updatedAt])
+  @@index([tenantId, personId, updatedAt])
+  @@index([tenantId, ownerUserId, nextReviewAt])
+  @@index([tenantId, status, nextReviewAt])
+}
+
+// 假设语义修订历史为 append-only；服务层禁止更新和删除。
+model SalesHypothesisRevision {
+  id                      String   @id
+  tenantId                String
+  tenant                  Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  hypothesisId            String
+  revisionNumber          Int
+  claim                   String
+  reason                  String   @default("")
+  expectedSignals         String   @default("[]")
+  falsificationConditions String   @default("[]")
+  origin                  String   @default("user")
+  createdByUserId         String?
+  createdAt               DateTime @default(now())
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, hypothesisId, revisionNumber])
+  @@index([tenantId, hypothesisId, createdAt])
+}
+
+// 仅允许绑定当前修订与已批准 EvidenceEvent；绑定后为 append-only。
+model HypothesisEvidenceLink {
+  id                   String   @id
+  tenantId             String
+  tenant               Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  hypothesisId         String
+  hypothesisRevisionId String
+  evidenceId           String
+  evidenceVersion      Int      @default(0)
+  direction            String
+  linkedByUserId       String
+  linkedAt             DateTime @default(now())
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, hypothesisRevisionId, evidenceId])
+  @@index([tenantId, hypothesisId, linkedAt])
+  @@index([tenantId, evidenceId])
 }
 
 // WorkBuddy 原子同步执行记录：保存非敏感引用回执，支持同 key 安全重放。

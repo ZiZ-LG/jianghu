@@ -64,6 +64,7 @@ import { createPreMeetingResearchBriefCommitAdapter } from './preMeeting/commit.
 import { postMeetingImportRoutes } from './postMeeting/importRoutes.js';
 import { researchBriefRoutes } from './researchBriefs/routes.js';
 import { intelligenceFocusRoutes } from './intelligenceFocus/routes.js';
+import { salesHypothesisRoutes } from './hypotheses/routes.js';
 import {
   productionFeishuImportProvider,
   type FeishuImportProvider,
@@ -237,6 +238,7 @@ function registerRoutes(
   postMeetingImportRoutes(app, product.policy, { feishuImportProvider });
   researchBriefRoutes(app, product.policy);
   intelligenceFocusRoutes(app, product.policy);
+  salesHypothesisRoutes(app, product.policy);
 
   // ── 数据：拉取整树 / 应用变更 ──
   // 服务端组装时传入当前身份，统一执行归属与敏感字段 ACL。
@@ -290,7 +292,7 @@ function registerRoutes(
 
   app.post('/api/demo', { preHandler: [app.authenticate] }, async (req, reply) => {
     if (!requireRole(req, reply, ['owner', 'admin', 'member'])) return; // viewer 只读
-    await createDemoForTenant(req.user.tenantId);
+    await createDemoForTenant(req.user.tenantId, req.user.userId);
     return { ok: true };
   });
 

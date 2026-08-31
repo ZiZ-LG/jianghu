@@ -10,7 +10,7 @@ import {
 } from '@jianghu/domain-contracts';
 import { prisma } from './prisma.js';
 import { enqueueEnrichJob, enqueueProfileJob } from './jobs.js';
-import { requireActionScope } from './mutation/actionScope.js';
+import { LegacyAssumptionFrozenError, requireActionScope } from './mutation/actionScope.js';
 import { requireScopedRow, ScopedNotFoundError, type DbClient } from './mutation/scopeGuards.js';
 import { isTrustedHumanAssertion, normalizeActionTrust } from './ingestTrust.js';
 import { activePersonWhere } from './activePerson.js';
@@ -807,6 +807,7 @@ async function applyActionInTransaction(
     // ── 策略沙盘 · 风险/假设（StrategyRisk）──
     case 'ADD_STRATEGY_RISK': {
       const r = action.risk;
+      if (r.kind === 'assumption') throw new LegacyAssumptionFrozenError();
       await db.strategyRisk.create({ data: {
         id: r.id, tenantId, accountId: action.accId, opportunityId: action.oppId,
         kind: r.kind ?? 'risk', text: r.text ?? '', severity: r.severity ?? 'mid',
@@ -815,13 +816,26 @@ async function applyActionInTransaction(
       return;
     }
     case 'UPDATE_STRATEGY_RISK': {
+      const existing = await requireScopedRow(db.strategyRisk.findFirst({
+        where: { id: action.riskId, tenantId, accountId: action.accId },
+        select: { kind: true },
+      }));
+      if (existing.kind === 'assumption' || action.patch.kind === 'assumption') {
+        throw new LegacyAssumptionFrozenError();
+      }
       const d = pick(action.patch, ['kind', 'text', 'severity', 'mitigation', 'status', 'origin']);
       await db.strategyRisk.updateMany({ where: { id: action.riskId, tenantId, accountId: action.accId }, data: d });
       return;
     }
-    case 'DELETE_STRATEGY_RISK':
+    case 'DELETE_STRATEGY_RISK': {
+      const existing = await requireScopedRow(db.strategyRisk.findFirst({
+        where: { id: action.riskId, tenantId, accountId: action.accId },
+        select: { kind: true },
+      }));
+      if (existing.kind === 'assumption') throw new LegacyAssumptionFrozenError();
       await db.strategyRisk.deleteMany({ where: { id: action.riskId, tenantId, accountId: action.accId } });
       return;
+    }
 
     // ── 策略沙盘 · 轻量弹药（StrategyResource）──
     case 'ADD_STRATEGY_RESOURCE': {

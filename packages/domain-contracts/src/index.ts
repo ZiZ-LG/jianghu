@@ -5,6 +5,7 @@ export * from './capabilities.js';
 export * from './context.js';
 export * from './crm.js';
 export * from './ids.js';
+export * from './hypotheses.js';
 export * from './intelligence.js';
 export * from './interventions.js';
 export * from './methodology.js';

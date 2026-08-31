@@ -1192,17 +1192,23 @@ export async function assertEvidenceDeletionAllowed(
     select: { id: true, status: true },
   });
   if (!row) return;
-  const linked = await db.candidate.findUnique({
-    where: {
-      tenantId_legacySourceKind_legacySourceId: {
-        tenantId: input.tenantId,
-        legacySourceKind: EVIDENCE_SOURCE_KIND,
-        legacySourceId: row.id,
+  const [candidateLink, hypothesisLink] = await Promise.all([
+    db.candidate.findUnique({
+      where: {
+        tenantId_legacySourceKind_legacySourceId: {
+          tenantId: input.tenantId,
+          legacySourceKind: EVIDENCE_SOURCE_KIND,
+          legacySourceId: row.id,
+        },
       },
-    },
-    select: { id: true },
-  });
-  if (row.status === 'pending_review' || linked) {
+      select: { id: true },
+    }),
+    db.hypothesisEvidenceLink.findFirst({
+      where: { tenantId: input.tenantId, evidenceId: row.id },
+      select: { id: true },
+    }),
+  ]);
+  if (row.status === 'pending_review' || candidateLink || hypothesisLink) {
     throw new CandidateWriteConflictError('候选证据不可删除；请通过审核保留审计轨迹');
   }
 }

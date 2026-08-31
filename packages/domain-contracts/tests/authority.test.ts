@@ -25,8 +25,8 @@ const VALID_ENTRY = {
 } as const;
 
 describe('CRM field authority map', () => {
-  it('contains the thirteen approved logical fields with classified consumers', () => {
-    expect(CRM_FIELD_AUTHORITY).toHaveLength(13);
+  it('contains the fourteen approved logical fields with classified consumers', () => {
+    expect(CRM_FIELD_AUTHORITY).toHaveLength(14);
     for (const entry of CRM_FIELD_AUTHORITY) expect(listCrmFieldConsumers(entry).length).toBeGreaterThan(0);
   });
 
@@ -118,6 +118,47 @@ describe('CRM field authority map', () => {
     expect(focus?.consumers.planned.join('\n')).not.toContain('SAAS-206');
     expect(focus?.forbidden.join('\n')).toMatch(/primaryDPersonId/);
     expect(focus?.forbidden.join('\n')).toMatch(/score|methodology/i);
+  });
+
+  it('registers SalesHypothesis as the sole hypothesis authority and freezes its predecessor', () => {
+    const hypothesis = getCrmFieldAuthority('sales.hypothesis');
+    expect(hypothesis).toMatchObject({
+      currentAuthority: {
+        kind: 'core_path',
+        path: 'SalesHypothesis + SalesHypothesisRevision + HypothesisEvidenceLink',
+      },
+      targetAuthority: {
+        kind: 'core_path',
+        path: 'SalesHypothesis + SalesHypothesisRevision + HypothesisEvidenceLink',
+      },
+      consumers: {
+        reads: ['server/src/hypotheses/routes.ts'],
+        writes: ['server/src/hypotheses/service.ts'],
+        planned: [
+          'SAAS-208 relationship-map and Commitment review projection',
+          'SAAS-209 portfolio',
+          'SAAS-212 relationship radar',
+        ],
+      },
+    });
+    expect(hypothesis?.consumers.adapters).toEqual(expect.arrayContaining([
+      'packages/domain-contracts/src/hypotheses.ts',
+      'server/src/hypotheses/model.ts',
+      'server/src/mutate.ts',
+      'server/src/mutation/actionScope.ts',
+      'server/src/candidates/reviewItems.ts',
+    ]));
+    expect(hypothesis?.consumers.migrations).toEqual(expect.arrayContaining([
+      'server/prisma/postgres/migrations/20260830000000_expand_sales_hypothesis/migration.sql',
+      'server/src/hypotheses/migration.ts',
+      'server/scripts/migrate-sales-hypotheses.ts',
+      'server/scripts/postgres-sales-hypothesis-schema-state.ts',
+      'server/scripts/upgrade-sqlite-schema.ts',
+      'server/src/seed-demo.ts',
+    ]));
+    expect(hypothesis?.forbidden.join('\n')).toMatch(/automatic|auto|自动/i);
+    expect(hypothesis?.forbidden.join('\n')).toMatch(/fallback|dual/i);
+    expect(hypothesis?.forbidden.join('\n')).toMatch(/revision|link/i);
   });
 
   it('registers the exact executable customer.category consumer inventory', () => {

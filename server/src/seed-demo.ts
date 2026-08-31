@@ -5,7 +5,12 @@ import { mapLegacyPlanActionToCommitmentFields } from './commitment/legacy.js';
 import { createPdeDecisionContext } from './pde/context.js';
 
 /** 为某租户创建一份演示数据（西部电力建设集团风光储项目）。每次调用用独立 id 前缀，避免冲突。 */
-export async function createDemoForTenant(tenantId: string): Promise<void> {
+export async function createDemoForTenant(tenantId: string, actorId: string): Promise<void> {
+  const actor = await prisma.user.findFirst({
+    where: { id: actorId, tenantId },
+    select: { id: true },
+  });
+  if (!actor) throw new Error('demo actor not found in tenant');
   const rid = randomUUID().replaceAll('-', '');
   const id = (k: string) => `${rid}_${k}`;
   const accId = id('acc');
@@ -114,7 +119,7 @@ export async function createDemoForTenant(tenantId: string): Promise<void> {
     };
   }) });
 
-  // ── 策略沙盘示例：策略卡（挂靠 G64111 缺口，含 AI 来源）+ 风险/假设 + 弹药 ──
+  // ── 策略沙盘示例：策略卡（挂靠 G64111 缺口，含 AI 来源）+ 风险 + 弹药 ──
   await prisma.strategyCard.createMany({ data: ([
     ['P3', '借局级样板案例约钱大钧单独深谈，摸清政绩诉求、做到“密谋级”支持', '当前 P3 仅明确支持(plus)，与拍板人深度不足；钱大钧 BI=数字化考核+个人晋升', 'qian', 'manual'],
     ['1K', '通过钱大钧引荐触达赵建国，用可上报的降本标杆数据换 A 背书', '1K 仅 plus，批准人关系浅；忌越级引发 D 反噬', 'zhao', 'ai'],
@@ -126,9 +131,51 @@ export async function createDemoForTenant(tenantId: string): Promise<void> {
   await prisma.strategyRisk.createMany({ data: ([
     ['risk', '吴强(采购)已倒向友商A，可能在招采参数/评标环节设卡', 'high', '借孙学文+合规流程对冲，必要时拆包绕开其强项'],
     ['risk', '越级直接找赵建国会让钱大钧觉得被架空，P3 可能由正转负', 'high', '一律走“D 引荐上 A”，给钱大钧政绩、不抢功'],
-    ['assumption', '假设孙学文(教练)愿在评标专家层为我方背书', 'mid', ''],
-    ['assumption', '假设 12 月预算批复如期，否则签约顺延一季度', 'mid', ''],
   ] as [string, string, string, string][]).map((r, i) => ({ id: id(`sr${i}`), tenantId, accountId: accId, opportunityId: oppId, kind: r[0], text: r[1], severity: r[2], mitigation: r[3], status: 'open', origin: 'manual' })) });
+
+  // 销售假设已有独立权威模型；演示数据不再写冻结的 StrategyRisk(kind=assumption)。
+  const hypotheses = [
+    {
+      hypothesisId: id('hyp0'), revisionId: id('hyprev0'), personId: id('sun'), reviewOffset: 14,
+      claim: '孙学文愿意在评标专家层为我方提供合规背书',
+      reason: '现有教练关系较强，但具体背书动作尚未验证',
+      expectedSignals: ['孙学文确认参加评标专家沟通', '收到其对技术方案的书面正向意见'],
+      falsificationConditions: ['孙学文明确拒绝参与', '孙学文要求保持中立且不评价我方方案'],
+    },
+    {
+      hypothesisId: id('hyp1'), revisionId: id('hyprev1'), personId: id('qian'), reviewOffset: 21,
+      claim: '项目预算会按当前计划获得批复',
+      reason: '预算已进入内部流程，但尚未形成正式批文',
+      expectedSignals: ['收到正式预算批文', '财务负责人确认预算科目已锁定'],
+      falsificationConditions: ['预算评审明确驳回', '审批计划推迟到下一财年'],
+    },
+  ];
+  await prisma.$transaction([
+    prisma.salesHypothesis.createMany({ data: hypotheses.map((item) => ({
+      id: item.hypothesisId,
+      tenantId,
+      customerId: accId,
+      matterId: oppId,
+      personId: item.personId,
+      status: 'untested',
+      ownerUserId: actor.id,
+      nextReviewAt: new Date(`${ymd(item.reviewOffset)}T12:00:00.000Z`),
+      currentRevisionId: item.revisionId,
+      createdByUserId: actor.id,
+    })) }),
+    prisma.salesHypothesisRevision.createMany({ data: hypotheses.map((item) => ({
+      id: item.revisionId,
+      tenantId,
+      hypothesisId: item.hypothesisId,
+      revisionNumber: 1,
+      claim: item.claim,
+      reason: item.reason,
+      expectedSignals: S(item.expectedSignals),
+      falsificationConditions: S(item.falsificationConditions),
+      origin: 'user',
+      createdByUserId: actor.id,
+    })) }),
+  ]);
 
   await prisma.strategyResource.createMany({ data: ([
     ['CP3D 信创实测报告', 'product', '证明信创合规+性能'],
