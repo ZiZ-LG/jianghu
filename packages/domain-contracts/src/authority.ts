@@ -520,6 +520,47 @@ export const CRM_FIELD_AUTHORITY: CrmAuthorityEntry[] = CrmAuthorityMapSchema.pa
     removalPhase: 'Physical table may remain; legacy command contraction is G7',
     forbidden: ['Creating a second Commitment master table', 'Long-term dual writes or fallback reads', 'Fabricating a Matter for a customer-level Commitment'],
   },
+  {
+    logicalField: 'sales.relationship_signal',
+    currentAuthority: { kind: 'core_path', path: 'RelationshipRadarSnapshot' },
+    targetAuthority: { kind: 'core_path', path: 'RelationshipRadarSnapshot' },
+    consumers: {
+      reads: [
+        'app/src/components/RelationshipRadarPanel.tsx',
+        'server/src/relationshipRadar/routes.ts',
+        'server/src/relationshipRadar/service.ts',
+        'server/src/today.ts',
+      ],
+      writes: ['server/src/relationshipRadar/commit.ts'],
+      adapters: [
+        'app/src/api.ts',
+        'app/src/lib/relationshipRadar.ts',
+        'packages/domain-contracts/src/relationshipRadar.ts',
+        'server/src/agents/runner.ts',
+        'server/src/relationshipRadar/handler.ts',
+        'server/src/relationshipRadar/model.ts',
+        'server/src/relationshipRadar/rules.ts',
+      ],
+      migrations: [
+        'server/prisma/postgres/migrations/20260831235900_expand_relationship_radar/migration.sql',
+        'server/scripts/migrate-relationship-radar.ts',
+        'server/scripts/postgres-relationship-radar-schema-state.ts',
+        'server/scripts/upgrade-sqlite-schema.ts',
+        'server/src/relationshipRadar/migration.ts',
+      ],
+      planned: [],
+    },
+    shadowComparison: 'Recompute the six deterministic signals from current tenant-scoped formal metadata and compare the exact source-set hash before every projection.',
+    cutoverCondition: 'The immutable snapshot, one-shot Agent port, current-scope revalidation, Today dedupe, viewer isolation, and SQLite/PostgreSQL migration gates all pass.',
+    stopCondition: 'Relationship signals remain derived and expiring; stale, revoked, or changed sources downgrade to unknown and expose no intervention or draft.',
+    removalPhase: 'No formal CRM field removal; introduced as the SAAS-212 derived-signal authority.',
+    forbidden: [
+      'Treating a relationship signal or aggregate score as a formal relationship, stage, forecast, or key-person authority',
+      'Automatically submitting a draft or writing any formal CRM row from the deterministic producer',
+      'Serving an expired, source-changed, cross-tenant, or currently unauthorized projection',
+      'Adding a parallel customer type or methodology-specific role fallback',
+    ],
+  },
 ]);
 
 export function getCrmFieldAuthority(logicalField: string): CrmAuthorityEntry | undefined {

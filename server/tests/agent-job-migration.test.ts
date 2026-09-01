@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   AGENT_JOB_MIGRATION_MARKER,
+  agentJobMigrationContractChecksum,
   applyAgentJobMigration,
   inspectAgentJobSchemaState,
   reportAgentJobMigration,
@@ -18,6 +19,12 @@ describe('CORE-206 AgentJobDefinition and AgentRun migration', () => {
 
   beforeEach(async () => { test = await createTestContext(); });
   afterEach(async () => test.cleanup());
+
+  it('keeps the historical CORE-206 marker contract stable after the radar card advances', () => {
+    expect(agentJobMigrationContractChecksum()).toBe(
+      '8cf6a7a2294cfc0623829826f5913b0b43cd4022e3e276b425804bfd243feb99',
+    );
+  });
 
   it('marks the exact empty expansion without creating a Job or Run row', async () => {
     await expect(inspectAgentJobSchemaState(test.prisma)).resolves.toBe('expanded');

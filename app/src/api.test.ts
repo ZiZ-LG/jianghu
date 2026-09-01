@@ -572,6 +572,38 @@ describe('typed API failures', () => {
     expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual(longSourceRef);
   });
 
+  it('uses strict parent-scoped relationship-radar projection, source, and history transports', async () => {
+    const sourceRef = {
+      entityKind: 'matter' as const, entityId: 'matter-1', version: 3, scheduleVersion: null,
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(200, {
+        status: 'missing', customerId: 'customer-1', matterId: 'matter-1',
+      }))
+      .mockResolvedValueOnce(response(200, {
+        sourceRef, customerId: 'customer-1', matterId: 'matter-1',
+        label: '当前事项', detail: '版本 3',
+      }))
+      .mockResolvedValueOnce(response(200, { items: [], nextCursor: null }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.relationshipRadar('customer-1', 'matter-1')).resolves.toMatchObject({ status: 'missing' });
+    await expect(api.relationshipRadarSource('customer-1', 'matter-1', sourceRef)).resolves.toMatchObject({
+      sourceRef, customerId: 'customer-1', matterId: 'matter-1',
+    });
+    await expect(api.relationshipRadarRuns('customer-1', 'matter-1')).resolves.toEqual({
+      items: [], nextCursor: null,
+    });
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'http://localhost:3001/api/relationship-radar?customerId=customer-1&matterId=matter-1',
+      'http://localhost:3001/api/relationship-radar/source',
+      'http://localhost:3001/api/agent-runs?limit=50',
+    ]);
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      customerId: 'customer-1', matterId: 'matter-1', sourceRef,
+    });
+  });
+
   it('sends minimum repair commands to the dedicated audited endpoints', async () => {
     const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => response(200, {
       source: 'workbuddy', sourceRef: 'acc-ref', syncedAt: null, syncRuns: [], auditEvents: [],

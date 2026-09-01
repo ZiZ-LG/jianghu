@@ -2270,6 +2270,145 @@ hypothesis_commitment_review_restore_parity=$(docker compose -p "$COMPOSE_PROJEC
 echo "HYPOTHESIS_COMMITMENT_REVIEW_RESTORE_ROLLBACK_OK=1"
 echo "SAAS_208_HYPOTHESIS_COMMITMENT_REVIEW_MIGRATION_OK=1"
 
+# SAAS-212 adds only the immutable body-free RelationshipRadarSnapshot table.
+# Exercise committed-DDL adoption, malformed stored metadata refusal, marker
+# drift refusal, partial-table refusal, authenticated predecessor restore and
+# zero-backfill defaults before the production deploy path may use it.
+POSTGRES_OPS_STAGE='saas212-relationship-radar'
+relationship_radar_db=jianghu_relationship_radar_migration
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$relationship_radar_db"
+POSTGRES_DB="$relationship_radar_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npx prisma db push --schema prisma/postgres/legacy/20260831_pre_saas212.prisma --skip-generate >/dev/null
+   for path in prisma/postgres/migrations/20*; do
+     [ -d "$path" ] || continue
+     migration=$(basename "$path")
+     [ "$migration" = 20260831235900_expand_relationship_radar ] && break
+     npx prisma migrate resolve --applied "$migration" --schema prisma/postgres/schema.prisma >/dev/null
+   done' >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$relationship_radar_db" -c \
+  "INSERT INTO \"Tenant\" (id,name) VALUES ('radar-tenant','Radar Tenant');
+   INSERT INTO \"User\" (id,\"tenantId\",email,\"passwordHash\",name,role)
+     VALUES ('radar-user','radar-tenant','radar@example.test','unused','Radar Owner','owner');
+   INSERT INTO \"Account\" (id,\"tenantId\",name,\"primaryOwnerUserId\")
+     VALUES ('radar-account','radar-tenant','Radar Account','radar-user');
+   INSERT INTO \"Opportunity\"
+     (id,\"tenantId\",\"accountId\",name,\"customerType\",\"pipelineStage\",\"engageStage\",\"primaryOwnerUserId\")
+     VALUES ('radar-matter','radar-tenant','radar-account','Radar Matter',1,'lead','unknown','radar-user');" >/dev/null
+
+relationship_radar_backup_root="$BACKUP_DIR/saas212-pre"
+mkdir -p "$relationship_radar_backup_root"
+derive_backup_keys "$BACKUP_MASTER_SECRET"
+relationship_radar_backup_work=$(mktemp -d "$relationship_radar_backup_root/.radar-work.XXXXXX")
+relationship_radar_backup="$relationship_radar_backup_root/jianghu-saas212-$(openssl rand -hex 8).backup"
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db \
+  pg_dump -U "$POSTGRES_USER" -d "$relationship_radar_db" -Fc \
+  | backup_encrypt_payload "$relationship_radar_backup_work/payload.enc"
+{
+  backup_cipher_metadata
+  printf 'source_database=%s\n' "$relationship_radar_db"
+  printf 'created_at=%s\n' "$(date -u +%Y%m%dT%H%M%SZ)"
+} > "$relationship_radar_backup_work/metadata"
+write_artifact_integrity "$relationship_radar_backup_work"
+verify_artifact_auth "$relationship_radar_backup_work"
+mv "$relationship_radar_backup_work" "$relationship_radar_backup"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db \
+  psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$relationship_radar_db" \
+  < server/prisma/postgres/migrations/20260831235900_expand_relationship_radar/migration.sql >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$relationship_radar_db" -c \
+  "INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+   VALUES ('int-saas212-after-commit', repeat('0', 64),
+     '20260831235900_expand_relationship_radar', CURRENT_TIMESTAMP, 0);" >/dev/null
+POSTGRES_DB="$relationship_radar_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+relationship_radar_after_commit=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$relationship_radar_db" -tAc \
+  "SELECT ((SELECT count(*) FROM \"_prisma_migrations\"
+              WHERE migration_name = '20260831235900_expand_relationship_radar'
+                AND finished_at IS NOT NULL AND rolled_back_at IS NULL) = 1
+       AND (SELECT count(*) FROM \"_prisma_migrations\"
+              WHERE migration_name = '20260831235900_expand_relationship_radar'
+                AND finished_at IS NULL AND rolled_back_at IS NULL) = 0
+       AND (SELECT count(*) FROM \"DataMigrationState\"
+              WHERE key = 'SAAS-212-relationship-radar-v1') = 1
+       AND (to_regclass('public.\"RelationshipRadarSnapshot\"') IS NOT NULL)
+       AND (SELECT count(*) FROM \"RelationshipRadarSnapshot\") = 0
+       AND (SELECT count(*) FROM \"Account\" WHERE id = 'radar-account') = 1
+       AND (SELECT count(*) FROM \"Opportunity\" WHERE id = 'radar-matter') = 1)::int" | tr -d '[:space:]')
+[[ "$relationship_radar_after_commit" == 1 ]]
+echo "INTERRUPTED_RELATIONSHIP_RADAR_AFTER_COMMIT_ADOPTION_OK=1"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$relationship_radar_db" -c \
+  "INSERT INTO \"RelationshipRadarSnapshot\"
+     (id,\"tenantId\",\"customerId\",\"matterId\",\"createdByUserId\",\"agentRunId\",
+      \"generationKey\",\"payloadJson\",\"payloadFingerprint\",\"sourceSetHash\",
+      \"signalCount\",\"interventionCount\",\"draftCount\",\"ruleVersion\",\"generatedAt\",\"expiresAt\")
+   VALUES ('rrs-invalid','radar-tenant','radar-account','radar-matter','radar-user','missing-run',
+     repeat('a',64),'{}',repeat('b',64),repeat('c',64),6,0,0,
+     'saas-212.relationship-radar.v1',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP + interval '24 hours');" >/dev/null
+if POSTGRES_DB="$relationship_radar_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "invalid RelationshipRadarSnapshot semantics unexpectedly deployed" >&2; exit 1
+fi
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$relationship_radar_db" -c \
+  "DELETE FROM \"RelationshipRadarSnapshot\" WHERE id = 'rrs-invalid';" >/dev/null
+POSTGRES_DB="$relationship_radar_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+echo "RELATIONSHIP_RADAR_SEMANTIC_CONFLICT_FAIL_CLOSED_OK=1"
+
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$relationship_radar_db" -c \
+  "UPDATE \"DataMigrationState\"
+      SET details = jsonb_set(details::jsonb, '{integrityChecksum}', to_jsonb(repeat('0', 64)))::text
+    WHERE key = 'SAAS-212-relationship-radar-v1';" >/dev/null
+if POSTGRES_DB="$relationship_radar_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "SAAS-212 marker checksum drift unexpectedly deployed" >&2; exit 1
+fi
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$relationship_radar_db" -c \
+  "DELETE FROM \"DataMigrationState\" WHERE key = 'SAAS-212-relationship-radar-v1';" >/dev/null
+POSTGRES_DB="$relationship_radar_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+  --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null
+echo "RELATIONSHIP_RADAR_MARKER_CHECKSUM_FAIL_CLOSED_OK=1"
+
+relationship_radar_partial_db=jianghu_relationship_radar_partial
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db createdb -U "$POSTGRES_USER" "$relationship_radar_partial_db"
+POSTGRES_DB="$relationship_radar_partial_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps --entrypoint sh server -c \
+  'npx prisma db push --schema prisma/postgres/legacy/20260831_pre_saas212.prisma --skip-generate >/dev/null
+   for path in prisma/postgres/migrations/20*; do
+     [ -d "$path" ] || continue
+     migration=$(basename "$path")
+     [ "$migration" = 20260831235900_expand_relationship_radar ] && break
+     npx prisma migrate resolve --applied "$migration" --schema prisma/postgres/schema.prisma >/dev/null
+   done' >/dev/null
+docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$relationship_radar_partial_db" -c \
+  "CREATE TABLE \"RelationshipRadarSnapshot\" (id TEXT PRIMARY KEY);
+   INSERT INTO \"_prisma_migrations\" (id, checksum, migration_name, started_at, applied_steps_count)
+   VALUES ('int-saas212-partial', repeat('0', 64),
+     '20260831235900_expand_relationship_radar', CURRENT_TIMESTAMP, 0);" >/dev/null
+if POSTGRES_DB="$relationship_radar_partial_db" docker compose -p "$COMPOSE_PROJECT_NAME" run --rm --no-deps \
+    --entrypoint ./scripts/deploy-postgres-migrations.sh server >/dev/null 2>&1; then
+  echo "partial SAAS-212 relationship radar schema unexpectedly migrated" >&2; exit 1
+fi
+relationship_radar_partial_state=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$relationship_radar_partial_db" -tAc \
+  "SELECT ((SELECT count(*) FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'RelationshipRadarSnapshot') = 1
+       AND NOT EXISTS (SELECT 1 FROM \"_prisma_migrations\"
+         WHERE migration_name = '20260831235900_expand_relationship_radar'
+           AND finished_at IS NOT NULL AND rolled_back_at IS NULL))::int" | tr -d '[:space:]')
+[[ "$relationship_radar_partial_state" == 1 ]]
+echo "PARTIAL_RELATIONSHIP_RADAR_SCHEMA_FAIL_CLOSED_OK=1"
+
+relationship_radar_restore_db=jianghu_restore_relationship_radar_saas212
+bash scripts/restore-postgres.sh "$relationship_radar_backup" --database "$relationship_radar_restore_db" >/dev/null
+relationship_radar_restore_parity=$(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T db psql -U "$POSTGRES_USER" -d "$relationship_radar_restore_db" -tAc \
+  "SELECT ((to_regclass('public.\"RelationshipRadarSnapshot\"') IS NULL)
+       AND (SELECT count(*) FROM \"Account\" WHERE id = 'radar-account') = 1
+       AND (SELECT count(*) FROM \"Opportunity\" WHERE id = 'radar-matter') = 1
+       AND NOT EXISTS (SELECT 1 FROM \"DataMigrationState\"
+              WHERE key = 'SAAS-212-relationship-radar-v1'))::int" | tr -d '[:space:]')
+[[ "$relationship_radar_restore_parity" == 1 ]]
+echo "RELATIONSHIP_RADAR_RESTORE_ROLLBACK_OK=1"
+echo "SAAS_212_RELATIONSHIP_RADAR_MIGRATION_OK=1"
+
 # A duplicate tenant-local owner name must roll the bridge transaction back.
 # After data repair, the same database must resume and complete safely.
 ambiguous_db=jianghu_owner_ambiguous
@@ -2544,6 +2683,14 @@ fresh_hypothesis_commitment_review=$(docker compose -p "$fresh_project" exec -T 
        AND (SELECT count(*) FROM \"PlanAction\") = 0
        AND (SELECT count(*) FROM \"HypothesisEvidenceLink\") = 0)::int" | tr -d '[:space:]')
 [[ "$fresh_hypothesis_commitment_review" == 1 ]]
+fresh_relationship_radar=$(docker compose -p "$fresh_project" exec -T db psql -U jianghu_fresh -d jianghu_fresh -tAc \
+  "SELECT ((to_regclass('public.\"RelationshipRadarSnapshot\"') IS NOT NULL)
+       AND (SELECT count(*) FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'RelationshipRadarSnapshot') = 18
+       AND (SELECT count(*) FROM \"DataMigrationState\"
+              WHERE key = 'SAAS-212-relationship-radar-v1') = 1
+       AND (SELECT count(*) FROM \"RelationshipRadarSnapshot\") = 0)::int" | tr -d '[:space:]')
+[[ "$fresh_relationship_radar" == 1 ]]
 fresh_backup_count=$(find "$fresh_backups" -maxdepth 1 -type d -name 'jianghu-*.backup' | wc -l | tr -d ' ')
 [[ "$fresh_backup_count" == 1 ]]
 echo "FRESH_INSTALL_FIRST_RUN_OK=1"
@@ -2573,6 +2720,14 @@ fresh_hypothesis_commitment_review_after=$(docker compose -p "$fresh_project" ex
               WHERE migration_name = '20260831000000_expand_hypothesis_commitment_review'
                 AND finished_at IS NOT NULL AND rolled_back_at IS NULL) = 1)::int" | tr -d '[:space:]')
 [[ "$fresh_hypothesis_commitment_review_after" == 1 ]]
+fresh_relationship_radar_after=$(docker compose -p "$fresh_project" exec -T db psql -U jianghu_fresh -d jianghu_fresh -tAc \
+  "SELECT ((SELECT count(*) FROM \"DataMigrationState\"
+              WHERE key = 'SAAS-212-relationship-radar-v1') = 1
+       AND (SELECT count(*) FROM \"_prisma_migrations\"
+              WHERE migration_name = '20260831235900_expand_relationship_radar'
+                AND finished_at IS NOT NULL AND rolled_back_at IS NULL) = 1
+       AND (SELECT count(*) FROM \"RelationshipRadarSnapshot\") = 0)::int" | tr -d '[:space:]')
+[[ "$fresh_relationship_radar_after" == 1 ]]
 fresh_rollback_count=$(find "$fresh_rollbacks" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
 [[ "$fresh_rollback_count" -ge 1 ]]
 echo "FRESH_INSTALL_SECOND_UPDATE_OK=1"

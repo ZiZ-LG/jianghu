@@ -19,6 +19,7 @@ PRE_RESEARCH_BRIEF_SCHEMA=prisma/postgres/legacy/20260826_pre_saas204.prisma
 PRE_INTELLIGENCE_FOCUS_SCHEMA=prisma/postgres/legacy/20260827_pre_saas206.prisma
 PRE_SALES_HYPOTHESIS_SCHEMA=prisma/postgres/legacy/20260830_pre_saas207.prisma
 PRE_HYPOTHESIS_COMMITMENT_REVIEW_SCHEMA=prisma/postgres/legacy/20260831_pre_saas208.prisma
+PRE_RELATIONSHIP_RADAR_SCHEMA=prisma/postgres/legacy/20260831_pre_saas212.prisma
 PRE_CUSTOMER_SCHEMA=$(mktemp /tmp/jianghu-pre-core115.prisma.XXXXXX)
 cleanup_pre_customer_schema() {
   rm -f "$PRE_CUSTOMER_SCHEMA"
@@ -45,6 +46,7 @@ RESEARCH_BRIEF_MIGRATION=20260826000000_expand_research_brief_snapshot
 INTELLIGENCE_FOCUS_MIGRATION=20260827000000_expand_intelligence_focus
 SALES_HYPOTHESIS_MIGRATION=20260830000000_expand_sales_hypothesis
 HYPOTHESIS_COMMITMENT_REVIEW_MIGRATION=20260831000000_expand_hypothesis_commitment_review
+RELATIONSHIP_RADAR_MIGRATION=20260831235900_expand_relationship_radar
 
 npx tsx scripts/render-pre-customer-schema.ts "$PRE_CANDIDATE_SCHEMA" "$PRE_CUSTOMER_SCHEMA"
 
@@ -172,19 +174,26 @@ agent_job_schema_matches_known_state() {
 research_brief_schema_matches_known_state() {
   schema_matches "$PRE_INTELLIGENCE_FOCUS_SCHEMA" \
     || schema_matches "$PRE_SALES_HYPOTHESIS_SCHEMA" \
-    || schema_matches "$PRE_HYPOTHESIS_COMMITMENT_REVIEW_SCHEMA" || schema_matches "$SCHEMA"
+    || schema_matches "$PRE_HYPOTHESIS_COMMITMENT_REVIEW_SCHEMA" \
+    || schema_matches "$PRE_RELATIONSHIP_RADAR_SCHEMA" || schema_matches "$SCHEMA"
 }
 
 intelligence_focus_schema_matches_known_state() {
   schema_matches "$PRE_SALES_HYPOTHESIS_SCHEMA" \
-    || schema_matches "$PRE_HYPOTHESIS_COMMITMENT_REVIEW_SCHEMA" || schema_matches "$SCHEMA"
+    || schema_matches "$PRE_HYPOTHESIS_COMMITMENT_REVIEW_SCHEMA" \
+    || schema_matches "$PRE_RELATIONSHIP_RADAR_SCHEMA" || schema_matches "$SCHEMA"
 }
 
 sales_hypothesis_schema_matches_known_state() {
-  schema_matches "$PRE_HYPOTHESIS_COMMITMENT_REVIEW_SCHEMA" || schema_matches "$SCHEMA"
+  schema_matches "$PRE_HYPOTHESIS_COMMITMENT_REVIEW_SCHEMA" \
+    || schema_matches "$PRE_RELATIONSHIP_RADAR_SCHEMA" || schema_matches "$SCHEMA"
 }
 
 hypothesis_commitment_review_schema_matches_known_state() {
+  schema_matches "$PRE_RELATIONSHIP_RADAR_SCHEMA" || schema_matches "$SCHEMA"
+}
+
+relationship_radar_schema_matches_known_state() {
   schema_matches "$SCHEMA"
 }
 
@@ -1184,11 +1193,67 @@ adopt_existing_hypothesis_commitment_review_schema_if_safe() {
   esac
 }
 
+recover_incomplete_relationship_radar_migration() {
+  incomplete_migrations=$(npx tsx scripts/list-incomplete-postgres-migrations.ts)
+  if ! printf '%s\n' "$incomplete_migrations" | grep -Fxq "$RELATIONSHIP_RADAR_MIGRATION"; then
+    return 0
+  fi
+  relationship_radar_schema_state=$(npx tsx scripts/postgres-relationship-radar-schema-state.ts)
+  case "$relationship_radar_schema_state" in
+    legacy)
+      echo "[migration] 检测到中断且已由 PostgreSQL 回滚的 SAAS-212 关系雷达事务，登记后安全重放。"
+      npx prisma migrate resolve --rolled-back "$RELATIONSHIP_RADAR_MIGRATION" --schema "$SCHEMA"
+      ;;
+    expanded)
+      echo "[migration] 检测到已提交但未完成登记的 SAAS-212 关系雷达事务，只读校验后接管。"
+      npm run migrate:relationship-radar-report
+      if ! relationship_radar_schema_matches_known_state; then
+        echo "[migration] SAAS-212 关系雷达 schema 已扩展但与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$RELATIONSHIP_RADAR_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] SAAS-212 关系雷达 migration 留下部分 schema，必须从认证备份恢复后再试。" >&2
+      exit 1
+      ;;
+  esac
+}
+
+adopt_existing_relationship_radar_schema_if_safe() {
+  refresh_applied_migrations
+  if migration_is_applied "$RELATIONSHIP_RADAR_MIGRATION"; then
+    return 0
+  fi
+  relationship_radar_schema_state=$(npx tsx scripts/postgres-relationship-radar-schema-state.ts)
+  case "$relationship_radar_schema_state" in
+    uninitialized|legacy) return 0 ;;
+    expanded)
+      echo "[migration] 检测到未登记但完整的 SAAS-212 关系雷达 schema，只读校验后接管。"
+      npm run migrate:relationship-radar-report
+      if ! relationship_radar_schema_matches_known_state; then
+        echo "[migration] 未登记 SAAS-212 关系雷达 schema 与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$RELATIONSHIP_RADAR_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] 检测到未登记的部分 SAAS-212 关系雷达 schema，拒绝继续。" >&2
+      exit 1
+      ;;
+  esac
+}
+
 state=$(wait_for_migration_state)
 case "$state" in
   untracked)
     if schema_matches "$SCHEMA"; then
       echo "[migration] 检测到与当前模型一致的未纳管 schema。"
+      npx tsx scripts/assert-untracked-command-runs-empty.ts
+    elif schema_matches "$PRE_RELATIONSHIP_RADAR_SCHEMA"; then
+      echo "[migration] 检测到已批准的 SAAS-208 未纳管 schema。"
       npx tsx scripts/assert-untracked-command-runs-empty.ts
     elif schema_matches "$PRE_HYPOTHESIS_COMMITMENT_REVIEW_SCHEMA"; then
       echo "[migration] 检测到已批准的 SAAS-207 未纳管 schema。"
@@ -1268,7 +1333,9 @@ case "$state" in
         fi
         echo "[migration] 继续中断的当前 schema 接管。"
         resolve_missing_pre_bridge_migrations
-      elif schema_matches "$PRE_SALES_HYPOTHESIS_SCHEMA" \
+      elif schema_matches "$PRE_RELATIONSHIP_RADAR_SCHEMA" \
+        || schema_matches "$PRE_HYPOTHESIS_COMMITMENT_REVIEW_SCHEMA" \
+        || schema_matches "$PRE_SALES_HYPOTHESIS_SCHEMA" \
         || schema_matches "$PRE_INTELLIGENCE_FOCUS_SCHEMA" \
         || schema_matches "$PRE_RESEARCH_BRIEF_SCHEMA" \
         || schema_matches "$PRE_AGENT_JOB_SCHEMA" || schema_matches "$PRE_REVIEW_BATCH_SCHEMA" \
@@ -1330,6 +1397,8 @@ recover_incomplete_sales_hypothesis_migration
 adopt_existing_sales_hypothesis_schema_if_safe
 recover_incomplete_hypothesis_commitment_review_migration
 adopt_existing_hypothesis_commitment_review_schema_if_safe
+recover_incomplete_relationship_radar_migration
+adopt_existing_relationship_radar_schema_if_safe
 refresh_applied_migrations
 matter_migration_pending=0
 if ! migration_is_applied "$MATTER_MIGRATION"; then
@@ -1466,6 +1535,16 @@ if ! migration_is_applied "$HYPOTHESIS_COMMITMENT_REVIEW_MIGRATION"; then
   fi
 fi
 
+if ! migration_is_applied "$RELATIONSHIP_RADAR_MIGRATION"; then
+  relationship_radar_schema_state=$(npx tsx scripts/postgres-relationship-radar-schema-state.ts)
+  if [ "$relationship_radar_schema_state" = legacy ]; then
+    echo "[migration] 在 SAAS-212 关系雷达扩展前执行零回填、body-free 快照与 AgentRun 绑定预演…"
+    npm run migrate:relationship-radar-report
+  else
+    echo "[migration] 新库尚无 SAAS-208 关系工作台基座；SAAS-212 预演将在版本化 DDL 后执行。"
+  fi
+fi
+
 echo "[migration] 在唯一索引迁移前执行同步锚与企微绑定冲突扫描…"
 npm run migrate:sync-anchor-report
 npm run migrate:wecom-bind-report
@@ -1563,6 +1642,13 @@ echo "[migration] 写入 SAAS-208 marker；不回填 Commitment、Evidence 或�
 npm run migrate:hypothesis-commitment-review-apply
 echo "[migration] 校验 SAAS-208 marker、同行字段、父树与一次性人工审查元数据…"
 npm run migrate:hypothesis-commitment-review-verify
+
+echo "[migration] 只读预演 SAAS-212 不可变关系雷达快照、计数、AgentRun 绑定与零正式写入…"
+npm run migrate:relationship-radar-report
+echo "[migration] 写入 SAAS-212 marker；不回填快照且不修改任何正式 CRM 状态…"
+npm run migrate:relationship-radar-apply
+echo "[migration] 校验 SAAS-212 marker、schema 指纹、规则版本、精确输出引用与 24 小时有效期…"
+npm run migrate:relationship-radar-verify
 
 if ! schema_matches "$SCHEMA"; then
   echo "[migration] 迁移后 schema 与当前模型仍不一致，拒绝启动：" >&2

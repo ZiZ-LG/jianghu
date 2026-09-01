@@ -8,7 +8,7 @@ import {
 } from '@jianghu/domain-contracts';
 import type { DbClient } from '../mutation/scopeGuards.js';
 import {
-  BUILT_IN_AGENT_DEFINITIONS,
+  CORE_206_AGENT_DEFINITIONS,
   builtInAgentDefinition,
   canonicalAgentDefinition,
   hashAgentDefinition,
@@ -46,7 +46,7 @@ export function agentJobMigrationContractChecksum(): string {
   return sha256(JSON.stringify({
     marker: AGENT_JOB_MIGRATION_MARKER,
     version: AGENT_JOB_MIGRATION_VERSION,
-    definitions: BUILT_IN_AGENT_DEFINITIONS.map((definition) => ({
+    definitions: CORE_206_AGENT_DEFINITIONS.map((definition) => ({
       key: definition.jobKey,
       version: definition.jobVersion,
       hash: hashAgentDefinition(definition),

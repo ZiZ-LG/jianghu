@@ -9,7 +9,10 @@ import * as TodayComponents from './TodayPanel';
 
 type TodayViewComponent = (props: {
   model: TodayReadModel;
-  onOpenSource: (source: TodayReadModel['sections'][number]['items'][number]['sourceRefs'][number]) => void;
+  onOpenSource: (
+    item: TodayReadModel['sections'][number]['items'][number],
+    source: TodayReadModel['sections'][number]['items'][number]['sourceRefs'][number],
+  ) => void;
   readonly?: boolean;
   onAction?: (...args: never[]) => void;
 }) => ReturnType<typeof createElement>;
@@ -17,7 +20,10 @@ type TodayViewComponent = (props: {
 type TodayPanelStateViewComponent = (props: {
   state: { status: 'error'; message: string };
   onRetry: () => void;
-  onOpenSource: (source: TodayReadModel['sections'][number]['items'][number]['sourceRefs'][number]) => void;
+  onOpenSource: (
+    item: TodayReadModel['sections'][number]['items'][number],
+    source: TodayReadModel['sections'][number]['items'][number]['sourceRefs'][number],
+  ) => void;
 }) => ReturnType<typeof createElement>;
 
 const source = (entityKind: 'commitment' | 'matter', entityId: string, version: number, scheduleVersion: number | null) => ({

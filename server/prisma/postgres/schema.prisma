@@ -31,6 +31,7 @@ model Tenant {
   agentJobDefinitions AgentJobDefinition[]
   agentRuns           AgentRun[]
   researchBriefSnapshots ResearchBriefSnapshot[]
+  relationshipRadarSnapshots RelationshipRadarSnapshot[]
   intelligenceItems  IntelligenceItem[]
   stakeholderFocuses StakeholderFocus[]
   salesHypotheses    SalesHypothesis[]
@@ -875,6 +876,35 @@ model ResearchBriefSnapshot {
   @@unique([tenantId, createdByUserId, generationKey])
   @@index([tenantId, createdByUserId, customerId, generatedAt])
   @@index([tenantId, createdByUserId, matterId, generatedAt])
+}
+
+// SAAS-212 关系雷达只保存 body-free、可过期的派生快照。正式 CRM 权威
+// 与 AgentRun 历史始终由服务层按租户、当前角色和精确 source revision 重新校验。
+model RelationshipRadarSnapshot {
+  id                 String   @id
+  tenantId           String
+  tenant             Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customerId         String
+  matterId           String
+  createdByUserId    String
+  agentRunId         String
+  generationKey      String
+  payloadJson        String
+  payloadFingerprint String
+  sourceSetHash      String
+  signalCount        Int
+  interventionCount  Int
+  draftCount         Int
+  ruleVersion        String
+  generatedAt        DateTime
+  expiresAt          DateTime
+  version            Int      @default(1)
+  createdAt          DateTime @default(now())
+
+  @@unique([tenantId, agentRunId], map: "rrs_tenant_run_key")
+  @@unique([tenantId, createdByUserId, generationKey], map: "rrs_tenant_creator_generation_key")
+  @@index([tenantId, customerId, matterId, generatedAt], map: "rrs_tenant_customer_matter_generated_idx")
+  @@index([tenantId, matterId, expiresAt], map: "rrs_tenant_matter_expires_idx")
 }
 
 // 人工确认的可追溯情报。reported/inferred 仍是 Intelligence，绝不因存储或迁移

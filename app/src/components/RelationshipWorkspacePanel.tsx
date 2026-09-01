@@ -13,6 +13,7 @@ import {
   verificationReadinessLabel,
 } from '../lib/relationshipWorkspace';
 import { CrmRelationshipGraph } from './CrmRelationshipGraph';
+import { RelationshipRadarPanel } from './RelationshipRadarPanel';
 
 type HypothesisProjection = RelationshipWorkspaceResponse['hypotheses'][number];
 type VerificationProjection = HypothesisProjection['verificationCommitments'][number];
@@ -324,6 +325,8 @@ export function RelationshipWorkspacePanel({
   useEffect(() => {
     if (!matters.some((matter) => matter.id === matterId)) setMatterId(matters[0]?.id ?? '');
   }, [matterId, matters]);
+  const selectedCustomer = activeCustomers.find((customer) => customer.id === customerId) ?? null;
+  const selectedMatter = matters.find((matter) => matter.id === matterId) ?? null;
 
   const reload = useCallback(async () => {
     if (!customerId || !matterId) { setState({ status: 'idle' }); return; }
@@ -498,6 +501,14 @@ export function RelationshipWorkspacePanel({
         {matters.map((matter) => <option key={matter.id} value={matter.id}>{matter.title}</option>)}
       </select></label>
     </div>
+    <RelationshipRadarPanel
+      customer={selectedCustomer}
+      matter={selectedMatter}
+      actorUserId={actorUserId}
+      actorRole={actorRole}
+      readonly={readonly}
+      onDataChanged={onDataChanged}
+    />
     <RelationshipWorkspacePanelView
       state={state}
       readonly={readonly || actorRole === 'viewer'}

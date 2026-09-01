@@ -83,7 +83,7 @@ describe('CORE-206 controlled Agent Job routes', () => {
     };
   }
 
-  it('lists exactly three default-disabled cards and exposes the approved pre/post-meeting handlers', async () => {
+  it('lists exactly three default-disabled cards and exposes all approved production handlers', async () => {
     await setup();
     const response = await test!.app.inject({
       method: 'GET', url: '/api/agent-jobs', headers: auth(test!.token),
@@ -92,7 +92,7 @@ describe('CORE-206 controlled Agent Job routes', () => {
     expect(response.json<{ items: Array<Record<string, unknown>> }>().items).toMatchObject([
       { jobKey: 'pre_meeting_brief', available: true, enabled: false, controlState: 'missing', controlVersion: 0 },
       { jobKey: 'post_meeting_extract', available: true, enabled: false, controlState: 'missing', controlVersion: 0 },
-      { jobKey: 'relationship_radar', available: false, enabled: false, controlState: 'missing', controlVersion: 0 },
+      { jobKey: 'relationship_radar', available: true, enabled: false, controlState: 'missing', controlVersion: 0 },
     ]);
     await expect(test!.prisma.agentJobDefinition.count()).resolves.toBe(0);
     await expect(test!.prisma.agentRun.count()).resolves.toBe(0);
@@ -110,15 +110,15 @@ describe('CORE-206 controlled Agent Job routes', () => {
     await expect(test!.prisma.agentJobDefinition.count()).resolves.toBe(0);
   });
 
-  it('rejects enabling an unavailable production card and leaves it missing', async () => {
+  it('rejects the historical radar version and leaves the active control missing', async () => {
     await setup();
     const response = await test!.app.inject({
       method: 'PUT', url: '/api/agent-jobs/relationship_radar/control',
       headers: auth(test!.token, 'agent-unavailable-control'),
       payload: { jobVersion, enabled: true, expectedVersion: 0 },
     });
-    expect(response.statusCode, response.body).toBe(409);
-    expect(response.json()).toMatchObject({ code: 'agent_job_unavailable' });
+    expect(response.statusCode, response.body).toBe(404);
+    expect(response.json()).toMatchObject({ code: 'agent_job_not_found' });
     await expect(test!.prisma.agentJobDefinition.count()).resolves.toBe(0);
   });
 

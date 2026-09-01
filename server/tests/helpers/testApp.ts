@@ -29,7 +29,8 @@ export async function createTestContext(
   options: Pick<
     BuildAppOptions,
     'productAccess' | 'agentHandlers' | 'agentCandidateCommitAdapter'
-    | 'agentResearchBriefCommitAdapter' | 'feishuImportProvider' | 'publicBaseUrl'
+    | 'agentResearchBriefCommitAdapter' | 'agentRelationshipRadarCommitAdapter'
+    | 'feishuImportProvider' | 'publicBaseUrl'
   > = {},
 ): Promise<TestContext> {
   assertTestDatabaseUrl();
@@ -48,6 +49,9 @@ export async function createTestContext(
       : {}),
     ...(options.agentResearchBriefCommitAdapter
       ? { agentResearchBriefCommitAdapter: options.agentResearchBriefCommitAdapter }
+      : {}),
+    ...(options.agentRelationshipRadarCommitAdapter
+      ? { agentRelationshipRadarCommitAdapter: options.agentRelationshipRadarCommitAdapter }
       : {}),
     ...(options.feishuImportProvider
       ? { feishuImportProvider: options.feishuImportProvider }

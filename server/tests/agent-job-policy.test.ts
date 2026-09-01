@@ -9,6 +9,7 @@ import {
   effectiveAgentControl,
   validatePreparedAgentAudit,
 } from '../src/agents/policy.js';
+import { exactAgentDefinition } from '../src/agents/repository.js';
 
 describe('CORE-206 fixed Agent registry and policy', () => {
   it('registers exactly three immutable cards with fixed modes and triggers', () => {
@@ -23,9 +24,17 @@ describe('CORE-206 fixed Agent registry and policy', () => {
     expect(builtInAgentDefinition('post_meeting_extract', 'core-206.v1')).toMatchObject({
       actionMode: 'candidate', outputRefKinds: ['review_batch'],
     });
-    expect(builtInAgentDefinition('relationship_radar', 'core-206.v1')).toMatchObject({
-      actionMode: 'draft', triggers: ['manual', 'schedule'],
+    expect(BUILT_IN_AGENT_DEFINITIONS[2]).toMatchObject({
+      jobKey: 'relationship_radar', jobVersion: 'saas-212.v1', actionMode: 'draft',
+      triggers: ['manual', 'schedule'],
+      evidencePolicy: { required: false, minimumRefs: 0, maximumRefs: 0 },
     });
+    expect(builtInAgentDefinition('relationship_radar', 'core-206.v1')).toMatchObject({
+      jobVersion: 'core-206.v1', evidencePolicy: { required: true, minimumRefs: 1 },
+    });
+    expect(() => exactAgentDefinition('relationship_radar', 'core-206.v1'))
+      .toThrow('agent_job_not_found');
+    expect(exactAgentDefinition('relationship_radar', 'saas-212.v1')).toBe(BUILT_IN_AGENT_DEFINITIONS[2]);
     expect(builtInAgentDefinition('post_meeting_extract', 'unknown')).toBeNull();
   });
 

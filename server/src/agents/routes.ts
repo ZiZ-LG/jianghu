@@ -15,6 +15,7 @@ import { readableAgentRunById, readableAgentRuns } from './history.js';
 import type {
   AgentCandidateCommitAdapter,
   AgentJobHandlers,
+  AgentRelationshipRadarCommitAdapter,
   AgentResearchBriefCommitAdapter,
 } from './model.js';
 import {
@@ -90,6 +91,7 @@ export function agentJobRoutes(
   handlers: AgentJobHandlers,
   candidateCommitAdapter?: AgentCandidateCommitAdapter,
   researchBriefCommitAdapter?: AgentResearchBriefCommitAdapter,
+  relationshipRadarCommitAdapter?: AgentRelationshipRadarCommitAdapter,
 ): void {
   app.get('/api/agent-jobs', { preHandler: [app.authenticate] }, async (req: any) => ({
     items: await listAgentJobCards(prisma, req.user.tenantId, handlers),
@@ -134,7 +136,7 @@ export function agentJobRoutes(
       const definition = exactAgentDefinition(params.data.jobKey, body.data.jobVersion);
       return await runManualAgentJob(
         prisma, context(req), policy, handlers, definition, body.data, key,
-        candidateCommitAdapter, researchBriefCommitAdapter,
+        candidateCommitAdapter, researchBriefCommitAdapter, relationshipRadarCommitAdapter,
       );
     } catch (error) {
       return failure(reply, error);

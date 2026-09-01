@@ -25,8 +25,8 @@ const VALID_ENTRY = {
 } as const;
 
 describe('CRM field authority map', () => {
-  it('contains the fifteen approved logical fields with classified consumers', () => {
-    expect(CRM_FIELD_AUTHORITY).toHaveLength(15);
+  it('contains the sixteen approved logical fields with classified consumers', () => {
+    expect(CRM_FIELD_AUTHORITY).toHaveLength(16);
     for (const entry of CRM_FIELD_AUTHORITY) expect(listCrmFieldConsumers(entry).length).toBeGreaterThan(0);
   });
 
@@ -203,6 +203,29 @@ describe('CRM field authority map', () => {
     });
     expect(projection?.shadowComparison).toMatch(/Candidate.*IntelligenceItem/i);
     expect(projection?.forbidden.join('\n')).toMatch(/accept|write|score/i);
+  });
+
+  it('registers RelationshipRadarSnapshot as the derived relationship-signal authority', () => {
+    const radar = getCrmFieldAuthority('sales.relationship_signal');
+    expect(radar).toMatchObject({
+      currentAuthority: { kind: 'core_path', path: 'RelationshipRadarSnapshot' },
+      targetAuthority: { kind: 'core_path', path: 'RelationshipRadarSnapshot' },
+      consumers: {
+        writes: ['server/src/relationshipRadar/commit.ts'],
+        planned: [],
+      },
+    });
+    expect(radar?.consumers.reads).toEqual(expect.arrayContaining([
+      'app/src/components/RelationshipRadarPanel.tsx',
+      'server/src/relationshipRadar/service.ts',
+      'server/src/today.ts',
+    ]));
+    expect(radar?.consumers.migrations).toEqual(expect.arrayContaining([
+      'server/prisma/postgres/migrations/20260831235900_expand_relationship_radar/migration.sql',
+      'server/src/relationshipRadar/migration.ts',
+    ]));
+    expect(radar?.forbidden.join('\n')).toMatch(/aggregate score|formal|自动|Automatically/i);
+    expect(radar?.stopCondition).toMatch(/expired|changed|unknown/i);
   });
 
   it('registers the exact executable customer.category consumer inventory', () => {

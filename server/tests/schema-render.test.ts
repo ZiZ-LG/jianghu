@@ -1345,3 +1345,85 @@ describe('SAAS-208 hypothesis Commitment review expansion', () => {
     expect(saas208MigrationIds.every((id) => id.length <= 36)).toBe(true);
   });
 });
+
+describe('SAAS-212 relationship radar snapshot expansion', () => {
+  it('ships one portable immutable table through guarded SQLite and PostgreSQL gates', async () => {
+    const sqliteSchema = await read('prisma/schema.prisma');
+    const postgresSchema = await read('prisma/postgres/schema.prisma');
+    const predecessor = await read('prisma/postgres/legacy/20260831_pre_saas212.prisma');
+    const migration = await read(
+      'prisma/postgres/migrations/20260831235900_expand_relationship_radar/migration.sql',
+    );
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const sqliteUpgrade = await read('scripts/upgrade-sqlite-schema.ts');
+    const schemaState = await read('scripts/postgres-relationship-radar-schema-state.ts');
+    const migrationCli = await read('scripts/migrate-relationship-radar.ts');
+    const postgresOps = await read('../scripts/test-postgres-ops-integration.sh');
+    const packageJson = JSON.parse(await read('package.json')) as { scripts?: Record<string, string> };
+
+    for (const schemaText of [sqliteSchema, postgresSchema]) {
+      expect(schemaText).toContain('model RelationshipRadarSnapshot {');
+      expect(schemaText).toContain('payloadJson        String');
+      expect(schemaText).toContain('agentRunId         String');
+      expect(schemaText).toContain('@@unique([tenantId, agentRunId], map: "rrs_tenant_run_key")');
+      expect(schemaText).toContain('@@unique([tenantId, createdByUserId, generationKey], map: "rrs_tenant_creator_generation_key")');
+      expect(schemaText).toContain('@@index([tenantId, customerId, matterId, generatedAt], map: "rrs_tenant_customer_matter_generated_idx")');
+      expect(schemaText).toContain('@@index([tenantId, matterId, expiresAt], map: "rrs_tenant_matter_expires_idx")');
+      expect(schemaText).not.toMatch(/^enum\s+/m);
+      expect(schemaText).not.toMatch(/^\s*\w+\s+Json[?\[\]]*/m);
+    }
+    expect(predecessor).toContain('model AgentRun {');
+    expect(predecessor).toContain('completionResultRecordedAtUtc');
+    expect(predecessor).not.toContain('model RelationshipRadarSnapshot {');
+
+    expect(migration.trimStart().startsWith('BEGIN;')).toBe(true);
+    expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(migration).toContain("SET LOCAL lock_timeout = '30s'");
+    expect(migration).toContain("SET LOCAL statement_timeout = '15min'");
+    expect(migration).toContain('LOCK TABLE "Tenant" IN SHARE ROW EXCLUSIVE MODE');
+    expect(migration).toContain('CREATE TABLE "RelationshipRadarSnapshot"');
+    expect(migration).toContain('SAAS-212 expansion must not infer or backfill radar snapshots');
+    expect(migration).not.toMatch(/(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+"(?:Account|Opportunity|Person|Edge|PlanAction|EvidenceEvent|AgentRun)"/i);
+    expect([...migration.matchAll(/"([^"]+)"/g)]
+      .map((match) => match[1])
+      .filter((identifier) => Buffer.byteLength(identifier, 'utf8') > 63)).toEqual([]);
+
+    expect(packageJson.scripts?.['migrate:relationship-radar-report'])
+      .toBe('tsx scripts/migrate-relationship-radar.ts --dry-run');
+    expect(packageJson.scripts?.['migrate:relationship-radar-apply'])
+      .toBe('tsx scripts/migrate-relationship-radar.ts --apply');
+    expect(packageJson.scripts?.['migrate:relationship-radar-verify'])
+      .toBe('tsx scripts/migrate-relationship-radar.ts --verify');
+    expect(migrationCli).toContain('reportRelationshipRadarMigration');
+    expect(migrationCli).toContain('applyRelationshipRadarMigration');
+    expect(migrationCli).toContain('verifyRelationshipRadarMigration');
+
+    expect(deployScript).toContain('PRE_RELATIONSHIP_RADAR_SCHEMA=prisma/postgres/legacy/20260831_pre_saas212.prisma');
+    expect(deployScript).toContain('RELATIONSHIP_RADAR_MIGRATION=20260831235900_expand_relationship_radar');
+    expect(deployScript).toContain('recover_incomplete_relationship_radar_migration');
+    expect(deployScript).toContain('adopt_existing_relationship_radar_schema_if_safe');
+    expect(deployScript).toContain('relationship_radar_schema_matches_known_state');
+    expect(deployScript.lastIndexOf('npm run migrate:relationship-radar-report'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:relationship-radar-apply'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:relationship-radar-verify'))
+      .toBeGreaterThan(deployScript.lastIndexOf('npm run migrate:relationship-radar-apply'));
+    expect(schemaState).toContain("dependencies ? 'legacy' : 'uninitialized'");
+    expect(schemaState).toContain("'expanded'");
+    expect(schemaState).toContain("'partial'");
+    expect(schemaState).toContain('expectedColumns');
+    expect(schemaState).toContain('expectedIndexes');
+    expect(sqliteUpgrade).toContain('inspectRelationshipRadarSchemaState');
+    expect(sqliteUpgrade).toContain('partial RelationshipRadarSnapshot expansion detected');
+    expect(sqliteUpgrade).toContain("['run', 'migrate:relationship-radar-apply']");
+    expect(sqliteUpgrade).toContain("['run', 'migrate:relationship-radar-verify']");
+
+    expect(postgresOps).toContain('INTERRUPTED_RELATIONSHIP_RADAR_AFTER_COMMIT_ADOPTION_OK=1');
+    expect(postgresOps).toContain('RELATIONSHIP_RADAR_SEMANTIC_CONFLICT_FAIL_CLOSED_OK=1');
+    expect(postgresOps).toContain('RELATIONSHIP_RADAR_MARKER_CHECKSUM_FAIL_CLOSED_OK=1');
+    expect(postgresOps).toContain('PARTIAL_RELATIONSHIP_RADAR_SCHEMA_FAIL_CLOSED_OK=1');
+    expect(postgresOps).toContain('RELATIONSHIP_RADAR_RESTORE_ROLLBACK_OK=1');
+    expect(postgresOps).toContain('SAAS_212_RELATIONSHIP_RADAR_MIGRATION_OK=1');
+  });
+});

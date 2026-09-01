@@ -22,6 +22,12 @@ import {
   parseSalesHypothesisCommandReceipt,
 } from './lib/relationshipWorkspace';
 import {
+  parseRelationshipRadar,
+  parseRelationshipRadarJobCards,
+  parseRelationshipRadarRunReceipt,
+  parseRelationshipRadarRuns,
+} from './lib/relationshipRadar';
+import {
   ActorRoleSchema,
   AgentJobCardSchema,
   AgentJobControlRequestSchema,
@@ -68,6 +74,7 @@ import {
   type QuickCaptureCommand,
   type QuickCaptureCommandReceipt,
   type RelationshipWorkspaceResponse,
+  type RelationshipRadarResponse,
   type ResearchBriefSnapshotDetail,
   type ResearchBriefSnapshotListResponse,
   type ReviewHypothesisVerificationCommand,
@@ -249,6 +256,13 @@ const invalidRelationshipWorkspaceResponse = (cause?: unknown): ApiError => new 
   cause,
 });
 
+const invalidRelationshipRadarResponse = (cause?: unknown): ApiError => new ApiError({
+  code: 'invalid_response',
+  message: '服务返回的关系雷达数据无效，请刷新后重试。',
+  retryable: false,
+  cause,
+});
+
 function postMeetingParse<T>(parse: () => T): T {
   try { return parse(); } catch (cause) { throw invalidPostMeetingResponse(cause); }
 }
@@ -259,6 +273,10 @@ function preMeetingParse<T>(parse: () => T): T {
 
 function relationshipWorkspaceParse<T>(parse: () => T): T {
   try { return parse(); } catch (cause) { throw invalidRelationshipWorkspaceResponse(cause); }
+}
+
+function relationshipRadarParse<T>(parse: () => T): T {
+  try { return parse(); } catch (cause) { throw invalidRelationshipRadarResponse(cause); }
 }
 
 function parseCrmContextResponse(raw: unknown): CrmContextSnapshot {
@@ -520,6 +538,74 @@ export const api = {
     const query = new URLSearchParams({ customerId, matterId });
     const raw = await req<unknown>(`/api/relationship-workspace?${query.toString()}`);
     return relationshipWorkspaceParse(() => parseRelationshipWorkspace(raw, customerId, matterId));
+  },
+  relationshipRadar: async (
+    customerId: string,
+    matterId: string,
+  ): Promise<RelationshipRadarResponse> => {
+    const query = new URLSearchParams({ customerId, matterId });
+    const raw = await req<unknown>(`/api/relationship-radar?${query.toString()}`);
+    return relationshipRadarParse(() => parseRelationshipRadar(raw, customerId, matterId));
+  },
+  relationshipRadarSource: async (
+    customerId: string,
+    matterId: string,
+    sourceRef: InterventionSourceRef,
+  ): Promise<TodaySourceView> => {
+    const raw = await req<unknown>('/api/relationship-radar/source', {
+      method: 'POST', body: JSON.stringify({ customerId, matterId, sourceRef }),
+    });
+    const source = relationshipRadarParse(() => parseTodaySourceResponse(raw, sourceRef));
+    if (source.customerId !== customerId || source.matterId !== matterId) {
+      throw invalidRelationshipRadarResponse(new Error('Relationship radar source parent mismatch'));
+    }
+    return source;
+  },
+  relationshipRadarJobCards: async (): Promise<{ items: AgentJobCard[] }> => {
+    const raw = await req<unknown>('/api/agent-jobs');
+    return relationshipRadarParse(() => parseRelationshipRadarJobCards(raw));
+  },
+  relationshipRadarRuns: async (
+    customerId: string,
+    matterId: string,
+  ): Promise<{ items: AgentRunReceipt['run'][]; nextCursor: string | null }> => {
+    const raw = await req<unknown>('/api/agent-runs?limit=50');
+    return relationshipRadarParse(() => parseRelationshipRadarRuns(raw, customerId, matterId));
+  },
+  relationshipRadarControl: async (
+    enabled: boolean,
+    expectedVersion: number,
+    idempotencyKey: string,
+  ): Promise<{ card: AgentJobCard; replayed: boolean }> => {
+    const payload = AgentJobControlRequestSchema.parse({
+      jobVersion: 'saas-212.v1', enabled, expectedVersion,
+    });
+    const raw = await commandReq<unknown>('/api/agent-jobs/relationship_radar/control', {
+      method: 'PUT',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(payload),
+    });
+    return relationshipRadarParse(() => {
+      if (!isRecord(raw) || typeof raw.replayed !== 'boolean') throw new Error('control envelope');
+      const { replayed, ...cardValue } = raw;
+      const card = AgentJobCardSchema.safeParse(cardValue);
+      if (!card.success
+        || card.data.jobKey !== 'relationship_radar'
+        || card.data.jobVersion !== 'saas-212.v1') throw new Error('control card');
+      return { card: card.data, replayed };
+    });
+  },
+  relationshipRadarRun: async (
+    input: AgentManualRunRequest,
+    idempotencyKey: string,
+  ): Promise<AgentRunReceipt> => {
+    const payload = AgentManualRunRequestSchema.parse(input);
+    const raw = await commandReq<unknown>('/api/agent-jobs/relationship_radar/runs', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(payload),
+    }, { timeoutMs: 120_000 });
+    return relationshipRadarParse(() => parseRelationshipRadarRunReceipt(raw, payload));
   },
   preMeetingJobCards: async (): Promise<{ items: AgentJobCard[] }> => {
     const raw = await req<unknown>('/api/agent-jobs');
@@ -812,8 +898,16 @@ export const api = {
     });
   },
   today: async (): Promise<TodayReadModel> => parseTodayResponse(await req<unknown>('/api/today')),
-  todaySource: async (source: InterventionSourceRef): Promise<TodaySourceView> => parseTodaySourceResponse(
-    await req<unknown>('/api/today/source', { method: 'POST', body: JSON.stringify(source) }),
+  todaySource: async (
+    source: InterventionSourceRef,
+    radarParent?: { customerId: string; matterId: string },
+  ): Promise<TodaySourceView> => parseTodaySourceResponse(
+    await req<unknown>('/api/today/source', {
+      method: 'POST',
+      body: JSON.stringify(radarParent ? {
+        providerKey: 'relationship_radar', ...radarParent, sourceRef: source,
+      } : source),
+    }),
     source,
   ),
   mutate: (action: Action): Promise<{ ok: true }> => req('/api/mutate', { method: 'POST', body: JSON.stringify({ action: toWireAction(action) }) }),

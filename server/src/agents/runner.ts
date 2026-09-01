@@ -6,6 +6,7 @@ import {
   AgentRunReceiptSchema,
   AgentRunViewSchema,
   PostMeetingCandidateBatchSchema,
+  RelationshipRadarSnapshotPayloadSchema,
   ResearchBriefPreparedPayloadSchema,
   type AgentJobDefinition,
   type AgentManualRunRequest,
@@ -16,6 +17,7 @@ import {
   type CapabilityPolicy,
   type CommandContext,
   type PostMeetingCandidateBatch,
+  type RelationshipRadarSnapshotPayload,
   type ResearchBriefPreparedPayload,
 } from '@jianghu/domain-contracts';
 import { hashIdempotencyKey } from '../idempotency.js';
@@ -40,6 +42,8 @@ import {
   type AgentJobHandler,
   type AgentJobHandlers,
   type AgentPreparationResult,
+  type AgentRelationshipRadarCommitAdapter,
+  type AgentRelationshipRadarCommitInput,
   type AgentResearchBriefCommitAdapter,
   type AgentResearchBriefCommitInput,
 } from './model.js';
@@ -507,6 +511,7 @@ async function commitPrepared(
   deadlineAt: number,
   candidateCommitAdapter?: AgentCandidateCommitAdapter,
   researchBriefCommitAdapter?: AgentResearchBriefCommitAdapter,
+  relationshipRadarCommitAdapter?: AgentRelationshipRadarCommitAdapter,
 ): Promise<AgentRunRow> {
   return db.$transaction(async (tx) => {
     const authorization = await authorizeAgentRequest(
@@ -662,10 +667,108 @@ async function commitPrepared(
       throw new AgentJobError('agent_research_brief_port_forbidden', 409);
     }
 
+    const usesRelationshipRadarPort = handler.commitPort === 'relationship_radar';
+    const relationshipRadarPortAllowed = definition.jobKey === 'relationship_radar'
+      && definition.jobVersion === 'saas-212.v1'
+      && definition.actionMode === 'draft';
+    let relationshipRadarCommitCalls = 0;
+    let relationshipRadarPortMisused = false;
+    let relationshipRadarPortOutputs: readonly AgentOutputRef[] | null = null;
+    const commitRelationshipRadar = async (
+      raw: AgentRelationshipRadarCommitInput,
+    ): Promise<readonly AgentOutputRef[]> => {
+      if (!usesRelationshipRadarPort
+        || !relationshipRadarPortAllowed
+        || relationshipRadarCommitCalls !== 0) {
+        relationshipRadarPortMisused = true;
+        throw new AgentJobError('agent_relationship_radar_port_misuse', 409);
+      }
+      relationshipRadarCommitCalls += 1;
+      if (!relationshipRadarCommitAdapter) {
+        throw new AgentJobError('agent_relationship_radar_commit_unavailable', 409);
+      }
+      if (Date.now() > deadlineAt) throw new AgentJobError('agent_timeout', 409);
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)
+        || Object.keys(raw).sort().join(',') !== 'generatedAt,payload,sourceSetHash'
+        || typeof raw.generatedAt !== 'string'
+        || typeof raw.sourceSetHash !== 'string'
+        || !/^[a-f0-9]{64}$/.test(raw.sourceSetHash)) {
+        throw new AgentJobError('agent_relationship_radar_payload_invalid', 409);
+      }
+      const generatedAt = new Date(raw.generatedAt);
+      const payload = RelationshipRadarSnapshotPayloadSchema.safeParse(raw.payload);
+      if (!Number.isFinite(generatedAt.getTime())
+        || generatedAt.toISOString() !== raw.generatedAt
+        || !payload.success
+        || request.matterId === null
+        || payload.data.customerId !== request.customerId
+        || payload.data.matterId !== request.matterId
+        || payload.data.generatedAtUtc !== raw.generatedAt
+        || normalized.evidenceRefs.length !== 0) {
+        throw new AgentJobError('agent_relationship_radar_payload_invalid', 409);
+      }
+      const expectedRefs: AgentOutputRef[] = [
+        ...payload.data.signals.map((item) => ({
+          kind: 'relationship_signal' as const, id: item.id, version: 1,
+        })),
+        ...payload.data.interventions.map((item) => ({
+          kind: 'intervention_item' as const, id: item.id, version: 1,
+        })),
+        ...payload.data.drafts.map((item) => ({
+          kind: 'draft_action' as const, id: item.id, version: 1,
+        })),
+      ];
+      if (JSON.stringify(normalized.outputRefs) !== JSON.stringify(expectedRefs)) {
+        throw new AgentJobError('agent_relationship_radar_output_mismatch', 409);
+      }
+      const commitInput: AgentRelationshipRadarCommitInput = {
+        generatedAt: raw.generatedAt,
+        payload: payload.data as RelationshipRadarSnapshotPayload,
+        sourceSetHash: raw.sourceSetHash,
+      };
+      const rawOutputs = await relationshipRadarCommitAdapter({
+        tx,
+        ...commitIdentity,
+        actorRole: authorization.actorRole,
+      }, commitInput);
+      if (!Array.isArray(rawOutputs)) {
+        throw new AgentJobError('agent_relationship_radar_output_mismatch', 409);
+      }
+      const outputs = rawOutputs.map((output) => AgentOutputRefSchema.safeParse(output));
+      if (outputs.some((output) => !output.success)) {
+        throw new AgentJobError('agent_relationship_radar_output_mismatch', 409);
+      }
+      const parsedOutputs = outputs.map((output) => output.data!);
+      if (JSON.stringify(parsedOutputs) !== JSON.stringify(expectedRefs)) {
+        throw new AgentJobError('agent_relationship_radar_output_mismatch', 409);
+      }
+      const persisted = await tx.relationshipRadarSnapshot.findFirst({
+        where: {
+          tenantId: ctx.tenantId,
+          agentRunId: run.id,
+          createdByUserId: ctx.actorId,
+          customerId: request.customerId,
+          matterId: request.matterId,
+          version: 1,
+        },
+        select: { id: true },
+      });
+      if (!persisted) throw new AgentJobError('agent_relationship_radar_output_invalid', 409);
+      relationshipRadarPortOutputs = parsedOutputs;
+      return parsedOutputs;
+    };
+
+    if (usesRelationshipRadarPort && !relationshipRadarPortAllowed) {
+      throw new AgentJobError('agent_relationship_radar_port_forbidden', 409);
+    }
+
     const committedRaw = await commitWithDeadline(handler, {
       ...commitIdentity,
       ...(definition.actionMode === 'candidate' ? { commitCandidateBatch } : {}),
       ...(usesResearchBriefPort && researchBriefPortAllowed ? { commitResearchBrief } : {}),
+      ...(usesRelationshipRadarPort && relationshipRadarPortAllowed
+        ? { commitRelationshipRadar }
+        : {}),
     }, normalized, privateState, deadlineAt);
     if (Date.now() > deadlineAt) throw new AgentJobError('agent_timeout', 409);
     const committed = AgentPreparedAuditSchema.parse(committedRaw);
@@ -679,6 +782,13 @@ async function commitPrepared(
       || researchBriefPortOutput === null
     )) {
       throw new AgentJobError('agent_research_brief_port_misuse', 409);
+    }
+    if (usesRelationshipRadarPort && (
+      relationshipRadarPortMisused
+      || relationshipRadarCommitCalls !== 1
+      || relationshipRadarPortOutputs === null
+    )) {
+      throw new AgentJobError('agent_relationship_radar_port_misuse', 409);
     }
     await validateOutputs(tx, ctx, policy, authorization, request, committed);
     const changed = await tx.agentRun.updateMany({
@@ -740,6 +850,7 @@ async function executeAgentRun(
   leaseToken: string,
   candidateCommitAdapter?: AgentCandidateCommitAdapter,
   researchBriefCommitAdapter?: AgentResearchBriefCommitAdapter,
+  relationshipRadarCommitAdapter?: AgentRelationshipRadarCommitAdapter,
 ): Promise<AgentRunRow> {
   const handler = registeredAgentHandler(handlers, definition);
   if (!handler) return terminalRun(db, ctx, initial, leaseToken, 'discarded', 'agent_job_unavailable');
@@ -795,6 +906,7 @@ async function executeAgentRun(
         db, ctx, policy, handlers, definition, request, handler,
         run, leaseToken, parsed.audit, parsed.privateState, totalCost, deadlineAt,
         candidateCommitAdapter, researchBriefCommitAdapter,
+        relationshipRadarCommitAdapter,
       );
     } catch (error) {
       if (authorizationFailure(error)) {
@@ -817,6 +929,7 @@ export async function runManualAgentJob(
   idempotencyKey: string,
   candidateCommitAdapter?: AgentCandidateCommitAdapter,
   researchBriefCommitAdapter?: AgentResearchBriefCommitAdapter,
+  relationshipRadarCommitAdapter?: AgentRelationshipRadarCommitAdapter,
 ): Promise<AgentRunReceipt> {
   const commandInput = {
     kind: `agent-job-run:${definition.jobKey}:${definition.jobVersion}`,
@@ -849,6 +962,7 @@ export async function runManualAgentJob(
     : await executeAgentRun(
         db, ctx, policy, handlers, definition, request, reserved.row, reserved.leaseToken,
         candidateCommitAdapter, researchBriefCommitAdapter,
+        relationshipRadarCommitAdapter,
       );
   const receipt = AgentRunReceiptSchema.parse({ run: agentRunView(finalRow), replayed: false });
   const completed = await runCommand(ctx, {

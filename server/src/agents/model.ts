@@ -6,6 +6,7 @@ import type {
   AgentOutputRef,
   AgentPreparedAudit,
   PostMeetingCandidateBatch,
+  RelationshipRadarSnapshotPayload,
   ResearchBriefPreparedPayload,
 } from '@jianghu/domain-contracts';
 
@@ -38,12 +39,21 @@ export interface AgentCommitContext {
   authorizationFingerprint: string;
   commitCandidateBatch?: (batch: PostMeetingCandidateBatch) => Promise<AgentOutputRef>;
   commitResearchBrief?: (input: AgentResearchBriefCommitInput) => Promise<AgentOutputRef>;
+  commitRelationshipRadar?: (
+    input: AgentRelationshipRadarCommitInput,
+  ) => Promise<readonly AgentOutputRef[]>;
   signal: AbortSignal;
 }
 
 export interface AgentResearchBriefCommitInput {
   generatedAt: string;
   payload: ResearchBriefPreparedPayload;
+}
+
+export interface AgentRelationshipRadarCommitInput {
+  generatedAt: string;
+  payload: RelationshipRadarSnapshotPayload;
+  sourceSetHash: string;
 }
 
 export interface AgentCandidateCommitAdapterContext extends Omit<
@@ -64,7 +74,7 @@ export type AgentCandidateCommitAdapter = (
 
 export interface AgentResearchBriefCommitAdapterContext extends Omit<
   AgentCommitContext,
-  'commitCandidateBatch' | 'commitResearchBrief' | 'signal'
+  'commitCandidateBatch' | 'commitResearchBrief' | 'commitRelationshipRadar' | 'signal'
 > {
   tx: Prisma.TransactionClient;
   actorRole: 'owner' | 'admin' | 'member' | 'viewer';
@@ -78,6 +88,20 @@ export type AgentResearchBriefCommitAdapter = (
   context: AgentResearchBriefCommitAdapterContext,
   input: AgentResearchBriefCommitInput,
 ) => Promise<AgentOutputRef>;
+
+export interface AgentRelationshipRadarCommitAdapterContext extends Omit<
+  AgentCommitContext,
+  'commitCandidateBatch' | 'commitResearchBrief' | 'commitRelationshipRadar' | 'signal'
+> {
+  tx: Prisma.TransactionClient;
+  actorRole: 'owner' | 'admin' | 'member' | 'viewer';
+}
+
+/** Trusted one-purpose adapter; it may create only one immutable radar snapshot. */
+export type AgentRelationshipRadarCommitAdapter = (
+  context: AgentRelationshipRadarCommitAdapterContext,
+  input: AgentRelationshipRadarCommitInput,
+) => Promise<readonly AgentOutputRef[]>;
 
 /**
  * Request-local preparation data may contain authorized source bodies or raw
@@ -99,7 +123,7 @@ export type AgentPreparationResult = AgentPreparedAudit | AgentPreparationEnvelo
  */
 export interface AgentJobHandler {
   /** Explicitly opts a trusted code-registered handler into one reviewed narrow port. */
-  readonly commitPort?: 'research_brief';
+  readonly commitPort?: 'research_brief' | 'relationship_radar';
   prepare(context: AgentPreparationContext): Promise<AgentPreparationResult>;
   commit(
     context: AgentCommitContext,

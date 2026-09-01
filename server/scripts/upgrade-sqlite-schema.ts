@@ -10,6 +10,7 @@ import type { ResearchBriefSchemaState } from '../src/researchBriefs/migration.j
 import type { IntelligenceFocusSchemaState } from '../src/intelligenceFocus/migration.js';
 import type { SalesHypothesisSchemaState } from '../src/hypotheses/migration.js';
 import type { HypothesisCommitmentReviewSchemaState } from '../src/relationshipWorkspace/migration.js';
+import type { RelationshipRadarSchemaState } from '../src/relationshipRadar/migration.js';
 
 type MatterSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
 type ParticipantSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
@@ -280,6 +281,7 @@ let researchBriefState: ResearchBriefSchemaState;
 let intelligenceFocusState: IntelligenceFocusSchemaState;
 let salesHypothesisState: SalesHypothesisSchemaState;
 let hypothesisCommitmentReviewState: HypothesisCommitmentReviewSchemaState;
+let relationshipRadarState: RelationshipRadarSchemaState;
 let backupPath: string | null = null;
 let schemaChanges = false;
 let matterBackfillRequired = false;
@@ -308,6 +310,8 @@ let salesHypothesisExpansionRequired = false;
 let salesHypothesisBackfillRequired = false;
 let hypothesisCommitmentReviewExpansionRequired = false;
 let hypothesisCommitmentReviewMarkerRequired = false;
+let relationshipRadarExpansionRequired = false;
+let relationshipRadarMarkerRequired = false;
 
 try {
   state = await inspectSchemaState(prisma);
@@ -335,6 +339,8 @@ try {
   salesHypothesisState = await inspectSalesHypothesisSchemaState(prisma);
   const { inspectHypothesisCommitmentReviewSchemaState } = await import('../src/relationshipWorkspace/migration.js');
   hypothesisCommitmentReviewState = await inspectHypothesisCommitmentReviewSchemaState(prisma);
+  const { inspectRelationshipRadarSchemaState } = await import('../src/relationshipRadar/migration.js');
+  relationshipRadarState = await inspectRelationshipRadarSchemaState(prisma);
   if (state === 'partial') {
     throw new Error('partial Matter column expansion detected; restore the latest backup before retrying');
   }
@@ -383,6 +389,9 @@ try {
   if (hypothesisCommitmentReviewState === 'partial') {
     throw new Error('partial hypothesis Commitment review expansion detected; restore the latest backup before retrying');
   }
+  if (relationshipRadarState === 'partial') {
+    throw new Error('partial RelationshipRadarSnapshot expansion detected; restore the latest backup before retrying');
+  }
   customerExpansionRequired = customerState === 'uninitialized' || customerState === 'legacy';
   candidateExpansionRequired = candidateState === 'uninitialized' || candidateState === 'legacy';
   candidateBackfillRequired = candidateState !== 'expanded';
@@ -403,6 +412,9 @@ try {
   hypothesisCommitmentReviewExpansionRequired = hypothesisCommitmentReviewState === 'uninitialized'
     || hypothesisCommitmentReviewState === 'legacy';
   hypothesisCommitmentReviewMarkerRequired = hypothesisCommitmentReviewState !== 'expanded';
+  relationshipRadarExpansionRequired = relationshipRadarState === 'uninitialized'
+    || relationshipRadarState === 'legacy';
+  relationshipRadarMarkerRequired = relationshipRadarState !== 'expanded';
   if (candidateState === 'legacy') {
     run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:candidate-report'], url);
   } else if (candidateState === 'expanded') {
@@ -512,6 +524,15 @@ try {
         : 'migrate:hypothesis-commitment-review-report',
     ], url);
   }
+  if (relationshipRadarState === 'expanded') {
+    const marker = await prisma.dataMigrationState.findUnique({
+      where: { key: 'SAAS-212-relationship-radar-v1' }, select: { key: true },
+    });
+    relationshipRadarMarkerRequired = !marker;
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
+      'run', marker ? 'migrate:relationship-radar-verify' : 'migrate:relationship-radar-report',
+    ], url);
+  }
   if (state === 'legacy') {
     run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-matter-fields.ts', '--dry-run'], url);
     matterBackfillRequired = true;
@@ -602,7 +623,7 @@ try {
     }
   }
   schemaChanges = state === 'uninitialized' ? true : schemaHasChanges(url);
-  if (state !== 'uninitialized' && (schemaChanges || matterBackfillRequired || participantBackfillRequired || commitmentBackfillRequired || methodologyExpansionRequired || methodologyDataExpansionRequired || pdeDecisionContextExpansionRequired || pdeDecisionContextBackfillRequired || customerExpansionRequired || candidateExpansionRequired || candidateBackfillRequired || sensitiveAclExpansionRequired || sensitiveAclBackfillRequired || sourceArtifactExpansionRequired || sourceArtifactBackfillRequired || reviewBatchExpansionRequired || reviewBatchBackfillRequired || agentJobExpansionRequired || agentJobBackfillRequired || researchBriefExpansionRequired || researchBriefBackfillRequired || intelligenceFocusExpansionRequired || intelligenceFocusBackfillRequired || salesHypothesisExpansionRequired || salesHypothesisBackfillRequired || hypothesisCommitmentReviewExpansionRequired || hypothesisCommitmentReviewMarkerRequired)) {
+  if (state !== 'uninitialized' && (schemaChanges || matterBackfillRequired || participantBackfillRequired || commitmentBackfillRequired || methodologyExpansionRequired || methodologyDataExpansionRequired || pdeDecisionContextExpansionRequired || pdeDecisionContextBackfillRequired || customerExpansionRequired || candidateExpansionRequired || candidateBackfillRequired || sensitiveAclExpansionRequired || sensitiveAclBackfillRequired || sourceArtifactExpansionRequired || sourceArtifactBackfillRequired || reviewBatchExpansionRequired || reviewBatchBackfillRequired || agentJobExpansionRequired || agentJobBackfillRequired || researchBriefExpansionRequired || researchBriefBackfillRequired || intelligenceFocusExpansionRequired || intelligenceFocusBackfillRequired || salesHypothesisExpansionRequired || salesHypothesisBackfillRequired || hypothesisCommitmentReviewExpansionRequired || hypothesisCommitmentReviewMarkerRequired || relationshipRadarExpansionRequired || relationshipRadarMarkerRequired)) {
     backupPath = await createConsistentBackup(prisma, databasePath);
   }
 } finally {
@@ -653,6 +674,10 @@ try {
   const { inspectHypothesisCommitmentReviewSchemaState } = await import('../src/relationshipWorkspace/migration.js');
   if (await inspectHypothesisCommitmentReviewSchemaState(postPushPrisma) !== 'expanded') {
     throw new Error('hypothesis Commitment review expansion verification failed');
+  }
+  const { inspectRelationshipRadarSchemaState } = await import('../src/relationshipRadar/migration.js');
+  if (await inspectRelationshipRadarSchemaState(postPushPrisma) !== 'expanded') {
+    throw new Error('RelationshipRadarSnapshot expansion verification failed');
   }
 } finally {
   await postPushPrisma.$disconnect();
@@ -716,6 +741,10 @@ if (hypothesisCommitmentReviewMarkerRequired) {
   run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:hypothesis-commitment-review-apply'], url);
 }
 run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:hypothesis-commitment-review-verify'], url);
+if (relationshipRadarMarkerRequired) {
+  run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:relationship-radar-apply'], url);
+}
+run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:relationship-radar-verify'], url);
 
 console.log(JSON.stringify({
   ok: true,
@@ -762,5 +791,8 @@ console.log(JSON.stringify({
   hypothesisCommitmentReviewStateBefore: hypothesisCommitmentReviewState,
   hypothesisCommitmentReviewExpansionRequired,
   hypothesisCommitmentReviewMarkerRequired,
+  relationshipRadarStateBefore: relationshipRadarState,
+  relationshipRadarExpansionRequired,
+  relationshipRadarMarkerRequired,
   backupPath,
 }, null, 2));

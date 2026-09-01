@@ -5,7 +5,7 @@ import {
   type AgentJobKey,
 } from '@jianghu/domain-contracts';
 
-const definitions = [
+const coreDefinitions = [
   {
     jobKey: 'pre_meeting_brief',
     jobVersion: 'core-206.v1',
@@ -101,9 +101,38 @@ const definitions = [
   },
 ] satisfies unknown[];
 
-export const BUILT_IN_AGENT_DEFINITIONS: readonly AgentJobDefinition[] = definitions.map(
+const saas212RelationshipRadarDefinition = {
+  ...coreDefinitions[2],
+  jobVersion: 'saas-212.v1',
+  evidencePolicy: {
+    required: false,
+    minimumRefs: 0,
+    maximumRefs: 0,
+    requireSourceFingerprint: true,
+  },
+  budget: {
+    maxInputRefs: 100,
+    maxEvidenceRefs: 0,
+    maxOutputRefs: 100,
+    maxCostUnits: 500,
+  },
+} satisfies unknown;
+
+const parsedCoreDefinitions: readonly AgentJobDefinition[] = coreDefinitions.map(
   (definition) => AgentJobDefinitionSchema.parse(definition),
 );
+
+/** Frozen only for validating the existing CORE-206 marker and historical rows. */
+export const CORE_206_AGENT_DEFINITIONS: readonly AgentJobDefinition[] = parsedCoreDefinitions;
+
+const historicalDefinitions: readonly AgentJobDefinition[] = [parsedCoreDefinitions[2]!];
+
+/** Active cards only. Historical controls never appear here and therefore cannot run. */
+export const BUILT_IN_AGENT_DEFINITIONS: readonly AgentJobDefinition[] = [
+  parsedCoreDefinitions[0]!,
+  parsedCoreDefinitions[1]!,
+  AgentJobDefinitionSchema.parse(saas212RelationshipRadarDefinition),
+];
 
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize);
@@ -126,7 +155,7 @@ export function builtInAgentDefinition(
   jobKey: AgentJobKey,
   jobVersion: string,
 ): AgentJobDefinition | null {
-  return BUILT_IN_AGENT_DEFINITIONS.find((definition) => (
+  return [...BUILT_IN_AGENT_DEFINITIONS, ...historicalDefinitions].find((definition) => (
     definition.jobKey === jobKey && definition.jobVersion === jobVersion
   )) ?? null;
 }

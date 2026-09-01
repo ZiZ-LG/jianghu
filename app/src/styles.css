@@ -338,6 +338,30 @@ button.commercial-shell-row:hover { background: var(--hover); }
 .post-meeting-submit { padding-top: 14px; border-top: 1px solid var(--line); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: end; gap: 10px; }
 .post-meeting-submit .btn { min-height: 42px; }
 .relationship-workspace-shell { margin-bottom: 24px; display: grid; gap: 12px; }
+.relationship-radar { min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 12px; display: grid; gap: 12px; background: var(--panel-2); }
+.relationship-radar[data-relationship-radar="loading"], .relationship-radar[data-relationship-radar="error"] { min-height: 88px; place-content: center; justify-items: center; color: var(--ink-2); text-align: center; }
+.relationship-radar-heading, .relationship-radar-signal > header, .relationship-radar-draft-editor > div { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.relationship-radar-heading h3 { margin: 2px 0 0; font-size: 18px; }
+.relationship-radar-heading .eyebrow { color: var(--accent-ink); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.relationship-radar-actions, .relationship-radar-sources { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+.relationship-radar-meta { display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--muted); font-size: 12px; }
+.relationship-radar-history { padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; display: grid; gap: 7px; background: var(--panel); }
+.relationship-radar-history ol { margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 7px 14px; list-style: none; }
+.relationship-radar-history li { display: flex; gap: 7px; color: var(--ink-2); font-size: 12px; }
+.relationship-radar-history li span { color: var(--accent-ink); font-weight: 700; }
+.relationship-radar-history time { color: var(--muted); }
+.relationship-radar-signals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.relationship-radar-signal { min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 9px; display: grid; gap: 8px; background: var(--panel); }
+.relationship-radar-signal > header span { padding: 3px 7px; border-radius: 999px; color: var(--accent-ink); background: var(--accent-soft); font-size: 12px; font-weight: 700; }
+.relationship-radar-signal[data-radar-status="gap"] { border-color: var(--danger); }
+.relationship-radar-signal p, .relationship-radar-draft p { margin: 0; color: var(--ink-2); line-height: 1.55; }
+.relationship-radar-source { padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; display: grid; gap: 4px; color: var(--ink-2); background: var(--panel); }
+.relationship-radar-draft { padding: 12px; border: 1px dashed var(--line); border-radius: 9px; display: grid; gap: 10px; background: var(--panel); }
+.relationship-radar-draft p { display: grid; gap: 3px; }
+.relationship-radar-draft-editor { display: grid; grid-template-columns: minmax(0, 1fr) minmax(190px, .6fr); gap: 10px; }
+.relationship-radar-draft-editor label { display: grid; gap: 5px; color: var(--ink-2); font-size: 12px; font-weight: 700; }
+.relationship-radar-draft-editor input { width: 100%; min-height: 42px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--panel); font: inherit; }
+.relationship-radar-draft-editor > div { grid-column: 1 / -1; justify-content: flex-end; }
 .relationship-selector { padding: 14px; border: 1px solid var(--line); border-radius: 12px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; background: var(--panel-2); }
 .relationship-selector label, .relationship-result-editor label, .relationship-evidence-editor label, .relationship-review-editor label, .relationship-revision-grid label { min-width: 0; display: grid; gap: 5px; color: var(--ink-2); font-size: 12px; font-weight: 700; }
 .relationship-selector select, .relationship-result-editor textarea, .relationship-evidence-editor input, .relationship-evidence-editor select, .relationship-review-editor input, .relationship-revision-grid input, .relationship-revision-grid textarea { width: 100%; min-height: 42px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--panel); font: inherit; font-size: 14px; }
@@ -402,10 +426,10 @@ button.commercial-shell-row:hover { background: var(--hover); }
   .crm-context-section header > span, .crm-context-compact-list span { text-align: left; }
   .crm-relation-canvas svg { min-height: 210px; }
   .crm-relation-list li { grid-template-columns: 1fr; }
-  .pre-meeting-brief, .post-meeting-review, .relationship-workspace { padding: 14px; }
-  .pre-meeting-heading, .pre-meeting-sheet-head, .post-meeting-heading, .post-meeting-item-head, .post-meeting-source-meta, .post-meeting-import-heading, .post-meeting-current-source, .post-meeting-oauth, .relationship-workspace-heading, .relationship-hypothesis-card > header, .relationship-verification > header, .commercial-legacy-heading { align-items: stretch; flex-direction: column; }
+  .pre-meeting-brief, .post-meeting-review, .relationship-workspace, .relationship-radar { padding: 14px; }
+  .pre-meeting-heading, .pre-meeting-sheet-head, .post-meeting-heading, .post-meeting-item-head, .post-meeting-source-meta, .post-meeting-import-heading, .post-meeting-current-source, .post-meeting-oauth, .relationship-workspace-heading, .relationship-radar-heading, .relationship-hypothesis-card > header, .relationship-verification > header, .commercial-legacy-heading { align-items: stretch; flex-direction: column; }
   .pre-meeting-authority, .pre-meeting-sheet-head small { text-align: left; }
-  .pre-meeting-toolbar, .post-meeting-toolbar, .post-meeting-edit-grid, .post-meeting-submit, .post-meeting-provider-config, .relationship-selector, .relationship-workspace-grid, .relationship-hypothesis-checks, .relationship-evidence-editor { grid-template-columns: 1fr; }
+  .pre-meeting-toolbar, .post-meeting-toolbar, .post-meeting-edit-grid, .post-meeting-submit, .post-meeting-provider-config, .relationship-selector, .relationship-workspace-grid, .relationship-radar-signals, .relationship-radar-draft-editor, .relationship-hypothesis-checks, .relationship-evidence-editor { grid-template-columns: 1fr; }
   .pre-meeting-toolbar .btn { width: 100%; }
   .post-meeting-toolbar .btn, .post-meeting-submit .btn, .post-meeting-provider-config .btn, .post-meeting-import-actions .btn, .post-meeting-current-source .btn { width: 100%; }
   .post-meeting-current-source > div:last-child { display: grid; grid-template-columns: 1fr; }

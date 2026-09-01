@@ -55,6 +55,7 @@ import { agentJobRoutes } from './agents/routes.js';
 import type {
   AgentCandidateCommitAdapter,
   AgentJobHandlers,
+  AgentRelationshipRadarCommitAdapter,
   AgentResearchBriefCommitAdapter,
 } from './agents/model.js';
 import { productionPostMeetingHandlers } from './postMeeting/handler.js';
@@ -66,6 +67,9 @@ import { researchBriefRoutes } from './researchBriefs/routes.js';
 import { intelligenceFocusRoutes } from './intelligenceFocus/routes.js';
 import { salesHypothesisRoutes } from './hypotheses/routes.js';
 import { relationshipWorkspaceRoutes } from './relationshipWorkspace/routes.js';
+import { productionRelationshipRadarHandlers } from './relationshipRadar/handler.js';
+import { createRelationshipRadarCommitAdapter } from './relationshipRadar/commit.js';
+import { relationshipRadarRoutes } from './relationshipRadar/routes.js';
 import {
   productionFeishuImportProvider,
   type FeishuImportProvider,
@@ -186,6 +190,7 @@ function registerRoutes(
   agentHandlers: AgentJobHandlers,
   agentCandidateCommitAdapter?: AgentCandidateCommitAdapter,
   agentResearchBriefCommitAdapter?: AgentResearchBriefCommitAdapter,
+  agentRelationshipRadarCommitAdapter?: AgentRelationshipRadarCommitAdapter,
   feishuImportProvider: FeishuImportProvider = productionFeishuImportProvider,
   publicBaseUrl?: string,
 ): void {
@@ -225,7 +230,7 @@ function registerRoutes(
   methodologyCommandRoutes(app);
   repairRoutes(app, product.policy);
   personMergeRoutes(app, product.policy);
-  todayRoutes(app);
+  todayRoutes(app, product.policy);
   crmContextRoutes(app);
   sourceArtifactRoutes(app, product.policy);
   reviewBatchRoutes(app, product.policy);
@@ -235,12 +240,14 @@ function registerRoutes(
     agentHandlers,
     agentCandidateCommitAdapter,
     agentResearchBriefCommitAdapter,
+    agentRelationshipRadarCommitAdapter,
   );
   postMeetingImportRoutes(app, product.policy, { feishuImportProvider });
   researchBriefRoutes(app, product.policy);
   intelligenceFocusRoutes(app, product.policy);
   salesHypothesisRoutes(app, product.policy);
   relationshipWorkspaceRoutes(app, product.policy);
+  relationshipRadarRoutes(app, product.policy);
 
   // ── 数据：拉取整树 / 应用变更 ──
   // 服务端组装时传入当前身份，统一执行归属与敏感字段 ACL。
@@ -488,6 +495,8 @@ export interface BuildAppOptions {
   agentCandidateCommitAdapter?: AgentCandidateCommitAdapter;
   /** Narrow transaction adapter for the immutable ResearchBriefSnapshot producer. */
   agentResearchBriefCommitAdapter?: AgentResearchBriefCommitAdapter;
+  /** Narrow transaction adapter for one immutable RelationshipRadarSnapshot. */
+  agentRelationshipRadarCommitAdapter?: AgentRelationshipRadarCommitAdapter;
   /** Narrow exact-minute provider seam; production uses the existing Feishu adapter. */
   feishuImportProvider?: FeishuImportProvider;
   /** Redirect origin authority for Feishu OAuth. */
@@ -502,17 +511,21 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   const agentHandlers = Object.freeze({
     ...productionPreMeetingHandlers(prisma, product.policy),
     ...productionPostMeetingHandlers(prisma, product.policy),
+    ...productionRelationshipRadarHandlers(prisma, product.policy),
     ...(options.agentHandlers ?? {}),
   });
   const agentCandidateCommitAdapter = options.agentCandidateCommitAdapter
     ?? createPostMeetingCandidateCommitAdapter({ policy: product.policy });
   const agentResearchBriefCommitAdapter = options.agentResearchBriefCommitAdapter
     ?? createPreMeetingResearchBriefCommitAdapter({ policy: product.policy });
+  const agentRelationshipRadarCommitAdapter = options.agentRelationshipRadarCommitAdapter
+    ?? createRelationshipRadarCommitAdapter({ policy: product.policy });
   await registerSecurityPlugins(app);
   registerCapabilityEnforcement(app, product);
   registerRoutes(app, options.readinessProbe ?? (async () => {
     await prisma.$queryRaw`SELECT 1`;
   }), product, agentHandlers, agentCandidateCommitAdapter, agentResearchBriefCommitAdapter,
+  agentRelationshipRadarCommitAdapter,
   options.feishuImportProvider, options.publicBaseUrl);
   return app;
 }
