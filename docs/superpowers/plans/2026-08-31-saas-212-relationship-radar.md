@@ -89,11 +89,11 @@ model RelationshipRadarSnapshot {
 - Modify: `packages/domain-contracts/src/index.ts`
 - Modify: focused Agent and Intervention contract tests
 
-- [ ] Write failing tests for the exact six dimensions/order, status/severity matrix, source revision shape, 24-hour expiry, no total score, bounded generic explanations, interventions and uncommitted drafts.
-- [ ] Confirm RED is caused by missing contracts, then implement minimal strict Zod schemas and canonical source-set validation.
-- [ ] Prove malformed/duplicate dimensions, free-form bodies, unknown keys, missing exact target revisions, impossible severity/source combinations and committed-action claims fail closed.
-- [ ] Version only `relationship_radar` to `saas-212.v1`, set SourceArtifact evidence to optional/minimum zero, preserve `draft` mode and all three body-free output kinds, and prove old orphaned control cannot enable the new definition.
-- [ ] Run focused and full domain type/test gates.
+- [x] Write failing tests for the exact six dimensions/order, status/severity matrix, source revision shape, 24-hour expiry, no total score, bounded generic explanations, interventions and uncommitted drafts.
+- [x] Confirm RED is caused by missing contracts, then implement minimal strict Zod schemas and canonical source-set validation.
+- [x] Prove malformed/duplicate dimensions, free-form bodies, unknown keys, missing exact target revisions, impossible severity/source combinations and committed-action claims fail closed.
+- [x] Version only `relationship_radar` to `saas-212.v1`, set SourceArtifact evidence to optional/minimum zero, preserve `draft` mode and all three body-free output kinds, and prove old orphaned control cannot enable the new definition.
+- [x] Run focused and full domain type/test gates.
 
 ## Task 2: Add guarded dual-database snapshot expansion
 
@@ -111,10 +111,10 @@ model RelationshipRadarSnapshot {
 - Modify under explicit owner approval: `scripts/test-postgres-ops-integration.sh`
 - Create/modify focused migration, schema-render, SQLite-upgrade and PostgreSQL-operations tests
 
-- [ ] Write RED tests for exact predecessor/successor schemas, immutable defaults, marker-last adoption, interrupted creation, semantic/marker/partial drift, authenticated restore and fresh install/second update.
-- [ ] Add the portable table/indexes and marker `SAAS-212-relationship-radar-v1`; never backfill, rewrite or delete CRM/Agent rows.
-- [ ] Wire backup-first SQLite report/apply/verify and versioned PostgreSQL `migrate deploy`; reject an unprovable non-empty or malformed pre-existing table.
-- [ ] Extend only the approved root operations script and preserve every prior migration marker plus `POSTGRES_OPS_INTEGRATION_OK=1`.
+- [x] Write RED tests for exact predecessor/successor schemas, immutable defaults, marker-last adoption, interrupted creation, semantic/marker/partial drift, authenticated restore and fresh install/second update.
+- [x] Add the portable table/indexes and marker `SAAS-212-relationship-radar-v1`; never backfill, rewrite or delete CRM/Agent rows.
+- [x] Wire backup-first SQLite report/apply/verify and versioned PostgreSQL `migrate deploy`; reject an unprovable non-empty or malformed pre-existing table.
+- [x] Extend only the approved root operations script and preserve every prior migration marker plus `POSTGRES_OPS_INTEGRATION_OK=1`.
 
 ## Task 3: Implement deterministic six-dimension rule preparation
 
@@ -124,10 +124,10 @@ model RelationshipRadarSnapshot {
 - Create: `server/src/relationshipRadar/handler.ts`
 - Create/modify focused rule, scope, corruption and no-formal-write tests
 
-- [ ] Write RED tests for every threshold boundary, exact source revision, deterministic ordering/fingerprint, missing sources, archived/drifted parents, single-thread/coverage/warm-path edge cases and no aggregate score.
-- [ ] Load one current Customer/Matter under tenant, current role, `sales.workspace` and EffectiveResourceScope; read only current formal Interaction, MatterParticipant, Edge, approved Evidence, active IntelligenceItem, current StakeholderFocus and planned/completed Commitment metadata.
-- [ ] Build exactly six signals, zero or more unified InterventionItems and bounded action drafts using server-owned generic prose. Do not parse source bodies, use Candidate/Hypothesis overlays as formal facts or call an LLM/provider.
-- [ ] Prove handler preparation performs zero writes and remains deterministic for the same input revisions and observation time.
+- [x] Write RED tests for every threshold boundary, exact source revision, deterministic ordering/fingerprint, missing sources, archived/drifted parents, single-thread/coverage/warm-path edge cases and no aggregate score.
+- [x] Load one current Customer/Matter under tenant, current role, `sales.workspace` and EffectiveResourceScope; read only current formal Interaction, MatterParticipant, Edge, approved Evidence, active IntelligenceItem, current StakeholderFocus and planned/completed Commitment metadata.
+- [x] Build exactly six signals, zero or more unified InterventionItems and bounded action drafts using server-owned generic prose. Do not parse source bodies, use Candidate/Hypothesis overlays as formal facts or call an LLM/provider.
+- [x] Prove handler preparation performs zero writes and remains deterministic for the same input revisions and observation time.
 
 ## Task 4: Add one narrow radar Agent commit port
 
@@ -139,10 +139,10 @@ model RelationshipRadarSnapshot {
 - Modify: `server/src/app.ts`
 - Create/modify focused registry, runner, adapter, idempotency and failure-rollback tests
 
-- [ ] Write RED tests proving exactly one radar port call, output-ref/snapshot parity, one snapshot per AgentRun, canonical fingerprint, current authorization recheck, body-free AgentRun/Audit and full rollback on any validation failure.
-- [ ] Add `relationship_radar` to the existing narrow commit-port union without exposing Prisma or a general writer to the handler. Persist the immutable snapshot inside the runner's serializable transaction only after commit-time scope/source reauthorization.
-- [ ] Validate that every `relationship_signal`, `intervention_item` and `draft_action` output ref corresponds to the committed snapshot and budget; reject missing, duplicate, foreign or handler-authored refs.
-- [ ] Register the deterministic production handler/adapter. Viewer manual runs and owner/admin/member runs after role downgrade fail before AgentRun/Audit; enable/disable remains owner/admin only and the new version defaults disabled.
+- [x] Write RED tests proving exactly one radar port call, output-ref/snapshot parity, one snapshot per AgentRun, canonical fingerprint, current authorization recheck, body-free AgentRun/Audit and full rollback on any validation failure.
+- [x] Add `relationship_radar` to the existing narrow commit-port union without exposing Prisma or a general writer to the handler. Persist the immutable snapshot inside the runner's serializable transaction only after commit-time scope/source reauthorization.
+- [x] Validate that every `relationship_signal`, `intervention_item` and `draft_action` output ref corresponds to the committed snapshot and budget; reject missing, duplicate, foreign or handler-authored refs.
+- [x] Register the deterministic production handler/adapter. Viewer manual runs and owner/admin/member runs after role downgrade fail before AgentRun/Audit; enable/disable remains owner/admin only and the new version defaults disabled.
 
 ## Task 5: Project current radar and traceable sources
 
@@ -153,11 +153,11 @@ model RelationshipRadarSnapshot {
 - Modify: `server/src/app.ts`
 - Create/modify focused snapshot, route, current-role, viewer-scope, source-drill and Today provider tests
 
-- [ ] Write RED tests for latest unexpired snapshot selection, tenant/customer/matter closure, creator-independent authorized read, viewer ownership scope, source drift/revocation downgrade, expired snapshot omission and no read-side writes.
-- [ ] Add a strict current radar read route and source resolver. Resolve Matter, Interaction, Relation, Evidence, IntelligenceItem, StakeholderFocus and Commitment metadata only after current authority/revision checks; return bounded metadata, never Evidence/source body or secret fields.
-- [ ] Rebuild visible explanations and intervention targets from current formal metadata. Missing or stale sources downgrade the signal to `unknown/low`; interventions without exact current drillable refs are omitted.
-- [ ] Feed only current revalidated radar interventions into Today, preserve `待确认 / 待跟进 / 已完成`, existing core ordering and provider isolation, and deduplicate the no-next-step radar item against `matter_without_next_commitment`.
-- [ ] Prove `/api/today/source` returns 404 after revocation/drift and that Today/radar reads create no AgentRun, AuditEvent, CommandRun or formal CRM writes.
+- [x] Write RED tests for latest unexpired snapshot selection, tenant/customer/matter closure, creator-independent authorized read, viewer ownership scope, source drift/revocation downgrade, expired snapshot omission and no read-side writes.
+- [x] Add a strict current radar read route and source resolver. Resolve Matter, Interaction, Relation, Evidence, IntelligenceItem, StakeholderFocus and Commitment metadata only after current authority/revision checks; return bounded metadata, never Evidence/source body or secret fields.
+- [x] Rebuild visible explanations and intervention targets from current formal metadata. Missing or stale sources downgrade the signal to `unknown/low`; interventions without exact current drillable refs are omitted.
+- [x] Feed only current revalidated radar interventions into Today, preserve `待确认 / 待跟进 / 已完成`, existing core ordering and provider isolation, and deduplicate the no-next-step radar item against `matter_without_next_commitment`.
+- [x] Prove `/api/today/source` returns 404 after revocation/drift and that Today/radar reads create no AgentRun, AuditEvent, CommandRun or formal CRM writes.
 
 ## Task 6: Add relationship-radar workspace UI
 
@@ -169,10 +169,10 @@ model RelationshipRadarSnapshot {
 - Modify: `app/src/styles.css`
 - Create/modify focused domain, transport, panel, workspace and Today tests
 
-- [ ] Write RED tests for the six independent cards, status/severity copy, reason/source/time/ruleVersion/action, source drill, expiry state, disabled Job state, run lifecycle and absence of any aggregate score.
-- [ ] Load relationship workspace, radar Job card/history and latest radar in parallel; use stable primitive effect dependencies and functional state updates, with no inline component definitions or duplicated derived state.
-- [ ] Let owner/admin explicitly enable/disable and owner/admin/member run the Job; viewer sees only the current authorized projection and no write controls. A draft can prefill the existing Commitment editor only after an explicit click and is never auto-submitted.
-- [ ] Render source-loss downgrade and expired/missing states without presenting unknowns as facts. Preserve responsive/dark-theme semantic variables and do not change navigation, App package/lock/Vite or generated `dist`.
+- [x] Write RED tests for the six independent cards, status/severity copy, reason/source/time/ruleVersion/action, source drill, expiry state, disabled Job state, run lifecycle and absence of any aggregate score.
+- [x] Load relationship workspace, radar Job card/history and latest radar in parallel; use stable primitive effect dependencies and functional state updates, with no inline component definitions or duplicated derived state.
+- [x] Let owner/admin explicitly enable/disable and owner/admin/member run the Job; viewer sees only the current authorized projection and no write controls. A draft can prefill the existing Commitment editor only after an explicit click and is never auto-submitted.
+- [x] Render source-loss downgrade and expired/missing states without presenting unknowns as facts. Preserve responsive/dark-theme semantic variables and do not change navigation, App package/lock/Vite or generated `dist`.
 
 ## Task 7: Lock authority, recovery and scope evidence
 
@@ -181,16 +181,16 @@ model RelationshipRadarSnapshot {
 - Create: `docs/SAAS-212-关系雷达迁移与回滚说明.md`
 - Create/modify static authority, production-boundary, demo and rollback tests
 
-- [ ] Register `sales.relationship_signal` as the derived snapshot authority and exact SAAS-212 producers/consumers; keep Relation, Evidence, Focus, Commitment, stage, forecast and methodology authorities unchanged.
-- [ ] Document backup-first SQLite and authenticated isolated PostgreSQL recovery. Rollback may disable the new Job and hide projections but must retain snapshots, marker, AgentRun/AuditEvent and migration history; no destructive drop or reinterpretation.
-- [ ] Static tests reject total scores, Candidate/Hypothesis-to-formal promotion, `primaryDPersonId`, ADURC/G64111/pipeline fallbacks, automatic formal writes, sensitive text persistence, unapproved shared files and self-cultivation paths.
+- [x] Register `sales.relationship_signal` as the derived snapshot authority and exact SAAS-212 producers/consumers; keep Relation, Evidence, Focus, Commitment, stage, forecast and methodology authorities unchanged.
+- [x] Document backup-first SQLite and authenticated isolated PostgreSQL recovery. Rollback may disable the new Job and hide projections but must retain snapshots, marker, AgentRun/AuditEvent and migration history; no destructive drop or reinterpretation.
+- [x] Static tests reject total scores, Candidate/Hypothesis-to-formal promotion, `primaryDPersonId`, ADURC/G64111/pipeline fallbacks, automatic formal writes, sensitive text persistence, unapproved shared files and self-cultivation paths.
 
 ## Task 8: Verify, commit, push and wait for exact-SHA CI
 
-- [ ] After package changes, run `npm ci --install-links` in `app/` and `server/` before downstream checks.
-- [ ] Run focused RED→GREEN suites, then Domain typecheck/tests, Server generate/typecheck/full tests/schema render-check/migration operations, App typecheck/tests/build, G64111 typecheck/tests and PDE typecheck/tests.
-- [ ] Inspect `git diff --check`, exact changed-file inventory, self-cultivation denylist and shared-file allowlist. Stage no generated `app/dist`, local database, logs, backups or artifacts.
-- [ ] Create one independent business commit containing `SAAS-212`, push only `codex/g4-candidate-review-intelligence`, and wait until all required jobs for that exact SHA are green. Do not rerun a still-running suite and do not create/merge a PR or deploy.
+- [x] After package changes, run `npm ci --install-links` in `app/` and `server/` before downstream checks.
+- [x] Run focused RED→GREEN suites, then Domain typecheck/tests, Server generate/typecheck/full tests/schema render-check/migration operations, App typecheck/tests/build, G64111 typecheck/tests and PDE typecheck/tests.
+- [x] Inspect `git diff --check`, exact changed-file inventory, self-cultivation denylist and shared-file allowlist. Stage no generated `app/dist`, local database, logs, backups or artifacts.
+- [x] Create one independent business commit containing `SAAS-212`, push only `codex/g4-candidate-review-intelligence`, and wait until all required jobs for that exact SHA are green. Do not rerun a still-running suite and do not create/merge a PR or deploy.
 
 ## Task 9: Close governance only after the business gate
 
@@ -198,18 +198,18 @@ model RelationshipRadarSnapshot {
 - Modify: `docs/商业版开发待办清单v1.md`
 - Modify: this plan's task checkboxes/evidence only
 
-- [ ] Record exact business SHA, test counts, 12/12 Actions run, migration marker and rollback document; mark `SAAS-212` `DONE` and `SAAS-209` `READY` only if every acceptance condition passes.
-- [ ] Commit/push governance separately and wait for its exact SHA CI before reporting completion or starting SAAS-209.
+- [x] Record exact business SHA, test counts, 12/12 Actions run, migration marker and rollback document; mark `SAAS-212` `DONE` and `SAAS-209` `READY` only if every acceptance condition passes.
+- [x] Commit/push governance separately and wait for its exact SHA CI before reporting completion or starting SAAS-209.
 
 ## Acceptance gate
 
-- [ ] Exactly six method-neutral RelationshipSignals appear independently with status, severity, reason, exact current source refs, observation/expiry time, rule version and suggested action; no total score exists.
-- [ ] Every medium/high projected signal and every InterventionItem has sources and a target that drill down under the reader's current authority. Revoked, archived, drifted or inaccessible sources never leak and never increase severity.
-- [ ] `relationship_radar@saas-212.v1` remains fail-closed until explicitly enabled, runs deterministically through one narrow draft port, persists one immutable body-free snapshot and performs zero formal CRM writes.
-- [ ] Today retains exactly three top-level sections and core behavior while consuming only current revalidated radar items; no-next-step duplicates are suppressed.
-- [ ] Viewer ownership isolation, write denial before audit, role-downgrade replay checks, tenant/parent closure and source ACL/revision checks pass for all new routes and runner paths.
-- [ ] SQLite/PostgreSQL migration, interruption/adoption/drift/recovery/fresh-install gates, all local suites and exact-SHA remote CI are green.
-- [ ] `SELF-CULTIVATION FILES TOUCHED` is `NONE`; `PRODUCTION TOUCHED` is `NO`; only approved shared file `scripts/test-postgres-ops-integration.sh` is changed.
+- [x] Exactly six method-neutral RelationshipSignals appear independently with status, severity, reason, exact current source refs, observation/expiry time, rule version and suggested action; no total score exists.
+- [x] Every medium/high projected signal and every InterventionItem has sources and a target that drill down under the reader's current authority. Revoked, archived, drifted or inaccessible sources never leak and never increase severity.
+- [x] `relationship_radar@saas-212.v1` remains fail-closed until explicitly enabled, runs deterministically through one narrow draft port, persists one immutable body-free snapshot and performs zero formal CRM writes.
+- [x] Today retains exactly three top-level sections and core behavior while consuming only current revalidated radar items; no-next-step duplicates are suppressed.
+- [x] Viewer ownership isolation, write denial before audit, role-downgrade replay checks, tenant/parent closure and source ACL/revision checks pass for all new routes and runner paths.
+- [x] SQLite/PostgreSQL migration, interruption/adoption/drift/recovery/fresh-install gates, all local suites and exact-SHA remote CI are green.
+- [x] `SELF-CULTIVATION FILES TOUCHED` is `NONE`; `PRODUCTION TOUCHED` is `NO`; only approved shared file `scripts/test-postgres-ops-integration.sh` is changed.
 
 ## Out of scope
 
