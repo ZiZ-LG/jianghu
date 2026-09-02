@@ -190,6 +190,18 @@ export const TodaySourceViewSchema = z.object({
 
 export type TodaySourceView = z.infer<typeof TodaySourceViewSchema>;
 
+export const TodaySourceRequestSchema = z.union([
+  InterventionSourceRefSchema,
+  z.object({
+    providerKey: z.literal('relationship_radar'),
+    customerId: entityId,
+    matterId: entityId,
+    sourceRef: InterventionSourceRefSchema,
+  }).strict(),
+]);
+
+export type TodaySourceRequest = z.infer<typeof TodaySourceRequestSchema>;
+
 const section = <TSection extends TodaySectionKey, TLabel extends string>(
   key: TSection,
   label: TLabel,

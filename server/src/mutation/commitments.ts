@@ -24,6 +24,8 @@ import {
 } from './scopeGuards.js';
 
 type CreateInput = Extract<CommitmentCommand, { type: 'CREATE_COMMITMENT' }>['commitment'];
+type NextCreateInput = Extract<CommitmentCommand, { type: 'CREATE_NEXT_COMMITMENT' }>['commitment'];
+type AnyCreateInput = CreateInput | NextCreateInput;
 type ScheduleInput = Extract<CommitmentCommand, { type: 'RESCHEDULE_COMMITMENT' }>['schedule'];
 
 class CommitmentPermissionError extends Error {
@@ -56,6 +58,18 @@ class CommitmentIdConflictError extends Error {
   constructor() { super('跟进承诺标识已存在'); }
 }
 
+class CommitmentHypothesisMatterRequiredError extends Error {
+  readonly statusCode = 409;
+  readonly code = 'commitment_hypothesis_matter_required';
+  constructor() { super('假设验证承诺必须属于具体事项'); }
+}
+
+class CommitmentHypothesisRevisionConflictError extends Error {
+  readonly statusCode = 409;
+  readonly code = 'commitment_hypothesis_revision_conflict';
+  constructor() { super('假设已修订，请刷新后重新创建验证承诺'); }
+}
+
 const iso = (value: Date | null): string | null => value?.toISOString() ?? null;
 
 function localParts(instant: string, timeZone: string): { date: string; hour: number } {
@@ -81,8 +95,13 @@ function legacySchedule(input: Pick<CreateInput, 'scheduledAtUtc' | 'dueAtUtc' |
   return { startDate: local.date, endDate: local.date, half: local.hour < 12 ? 'am' : local.hour < 18 ? 'pm' : 'eve' };
 }
 
-function createData(input: CreateInput, tenantId: string, actorId: string): Prisma.PlanActionUncheckedCreateInput {
+function hypothesisRef(input: AnyCreateInput): CreateInput['hypothesisRef'] | null {
+  return 'hypothesisRef' in input ? input.hypothesisRef : null;
+}
+
+function createData(input: AnyCreateInput, tenantId: string, actorId: string): Prisma.PlanActionUncheckedCreateInput {
   const legacy = legacySchedule(input);
+  const linkedHypothesis = hypothesisRef(input);
   return {
     id: input.id,
     tenantId,
@@ -120,6 +139,14 @@ function createData(input: CreateInput, tenantId: string, actorId: string): Pris
     sourceRef: input.sourceRef,
     archivedAt: null,
     version: 0,
+    hypothesisId: linkedHypothesis?.hypothesisId ?? null,
+    hypothesisRevisionId: linkedHypothesis?.hypothesisRevisionId ?? null,
+    completionResult: '',
+    completionResultRecordedAtUtc: null,
+    completionResultRecordedByUserId: null,
+    verificationReviewDisposition: '',
+    verificationReviewedAtUtc: null,
+    verificationReviewedByUserId: null,
   };
 }
 
@@ -139,6 +166,9 @@ function receipt(row: PlanAction, linkedFromCommitmentId: string | null = null):
     scheduleVersion: row.scheduleVersion,
     nextCommitmentId: row.nextCommitmentId,
     linkedFromCommitmentId,
+    hypothesisId: row.hypothesisId,
+    hypothesisRevisionId: row.hypothesisRevisionId,
+    resultRecorded: row.completionResult.length > 0,
     undoable: false,
     repairCommands,
   });
@@ -220,10 +250,49 @@ async function lockOwner(ctx: CommandContext, ownerUserId: string, db: Prisma.Tr
   if (locked.count !== 1) throw new ScopedNotFoundError();
 }
 
+async function lockHypothesisRevision(
+  ctx: CommandContext,
+  customerId: string,
+  matterId: string | null,
+  hypothesisId: string,
+  hypothesisRevisionId: string,
+  db: Prisma.TransactionClient,
+): Promise<void> {
+  if (!matterId) throw new CommitmentHypothesisMatterRequiredError();
+  const hypothesis = await requireScopedRow(db.salesHypothesis.findFirst({
+    where: { id: hypothesisId, tenantId: ctx.tenantId, customerId, matterId },
+    select: { version: true, currentRevisionId: true },
+  }));
+  if (hypothesis.currentRevisionId !== hypothesisRevisionId) {
+    throw new CommitmentHypothesisRevisionConflictError();
+  }
+  const revision = await db.salesHypothesisRevision.findFirst({
+    where: {
+      id: hypothesisRevisionId,
+      tenantId: ctx.tenantId,
+      hypothesisId,
+    },
+    select: { id: true },
+  });
+  if (!revision) throw new CommitmentHypothesisRevisionConflictError();
+  const locked = await db.salesHypothesis.updateMany({
+    where: {
+      id: hypothesisId,
+      tenantId: ctx.tenantId,
+      customerId,
+      matterId,
+      currentRevisionId: hypothesisRevisionId,
+      version: hypothesis.version,
+    },
+    data: { version: { increment: 0 } },
+  });
+  if (locked.count !== 1) throw new CommitmentHypothesisRevisionConflictError();
+}
+
 async function requireCreateScope(
   ctx: CommandContext,
   actorRole: Exclude<CommandContext['actorRole'], 'viewer'>,
-  input: CreateInput,
+  input: AnyCreateInput,
   db: Prisma.TransactionClient,
   scope: EffectiveResourceScope,
 ): Promise<void> {
@@ -239,13 +308,24 @@ async function requireCreateScope(
   await lockCustomer(ctx, input.customerId, db);
   if (input.matterId) await lockMatter(ctx, input.customerId, input.matterId, db);
   if (input.personId) await lockPerson(ctx, input.customerId, input.personId, db);
+  const linkedHypothesis = hypothesisRef(input);
+  if (linkedHypothesis) {
+    await lockHypothesisRevision(
+      ctx,
+      input.customerId,
+      input.matterId,
+      linkedHypothesis.hypothesisId,
+      linkedHypothesis.hypothesisRevisionId,
+      db,
+    );
+  }
   if (actorRole === 'member' && input.ownerUserId !== ctx.actorId) {
     throw new CommitmentAssignmentPermissionError();
   }
   await lockOwner(ctx, input.ownerUserId, db);
 }
 
-async function ensureNewId(input: CreateInput, db: Prisma.TransactionClient): Promise<void> {
+async function ensureNewId(input: AnyCreateInput, db: Prisma.TransactionClient): Promise<void> {
   const existing = await db.planAction.findUnique({ where: { id: input.id }, select: { id: true } });
   if (existing) throw new CommitmentIdConflictError();
 }
@@ -253,7 +333,7 @@ async function ensureNewId(input: CreateInput, db: Prisma.TransactionClient): Pr
 async function insertCommitment(
   ctx: CommandContext,
   actorRole: Exclude<CommandContext['actorRole'], 'viewer'>,
-  input: CreateInput,
+  input: AnyCreateInput,
   db: Prisma.TransactionClient,
   scope: EffectiveResourceScope,
 ): Promise<PlanAction> {
@@ -405,11 +485,17 @@ export async function executeCommitmentCommand(
   if (input.type === 'CREATE_COMMITMENT') {
     const row = await insertCommitment(ctx, actorRole, input.commitment, db, scope);
     await audit(ctx, 'commitment_created', row.id,
-      ['kind', 'ownerUserId', 'executionStatus', 'confirmationStatus', 'schedule', 'source', 'version'],
+      [
+        'kind', 'ownerUserId', 'executionStatus', 'confirmationStatus', 'schedule', 'source',
+        ...(row.hypothesisId ? ['hypothesisId', 'hypothesisRevisionId'] : []),
+        'version',
+      ],
       {
         customerId: row.accountId, matterId: row.opportunityId, personId: row.personId,
         ownerUserId: row.ownerUserId, executionStatus: row.executionStatus,
         confirmationStatus: row.confirmationStatus, scheduleVersion: row.scheduleVersion,
+        hypothesisId: row.hypothesisId,
+        hypothesisRevisionId: row.hypothesisRevisionId,
         version: row.version,
       }, db, row.sourceRef);
     return receipt(row);
@@ -451,6 +537,69 @@ export async function executeCommitmentCommand(
 
   const row = await loadCommitment(ctx, input.customerId, input.commitmentId, db, scope);
   requireCas(row, input.baseVersion, input.expectedScheduleVersion);
+
+  if (input.type === 'RECORD_COMMITMENT_RESULT') {
+    if (!row.hypothesisId || !row.hypothesisRevisionId) {
+      throw new CommitmentStateConflictError('只有关联假设修订的承诺可以记录验证结果');
+    }
+    if (row.executionStatus !== 'completed') {
+      throw new CommitmentStateConflictError('只有已完成的验证承诺可以记录结果');
+    }
+    if (row.completionResult.length > 0 || row.completionResultRecordedAtUtc
+      || row.completionResultRecordedByUserId) {
+      throw new CommitmentStateConflictError('该验证承诺已记录结果');
+    }
+    if (row.verificationReviewDisposition.length > 0 || row.verificationReviewedAtUtc
+      || row.verificationReviewedByUserId) {
+      throw new CommitmentStateConflictError('该验证承诺已完成人工复核');
+    }
+    await lockHypothesisRevision(
+      ctx,
+      row.accountId,
+      row.opportunityId,
+      row.hypothesisId,
+      row.hypothesisRevisionId,
+      db,
+    );
+    const recordedAt = new Date();
+    const changed = await db.planAction.updateMany({
+      where: {
+        id: row.id,
+        tenantId: ctx.tenantId,
+        accountId: row.accountId,
+        archivedAt: null,
+        version: input.baseVersion,
+        scheduleVersion: input.expectedScheduleVersion,
+        executionStatus: 'completed',
+        hypothesisId: row.hypothesisId,
+        hypothesisRevisionId: row.hypothesisRevisionId,
+        completionResult: '',
+        completionResultRecordedAtUtc: null,
+        completionResultRecordedByUserId: null,
+        verificationReviewDisposition: '',
+        verificationReviewedAtUtc: null,
+        verificationReviewedByUserId: null,
+      },
+      data: {
+        completionResult: input.result,
+        completionResultRecordedAtUtc: recordedAt,
+        completionResultRecordedByUserId: ctx.actorId,
+        version: { increment: 1 },
+      },
+    });
+    if (changed.count !== 1) throw new CommitmentVersionConflictError();
+    const updated = await db.planAction.findUniqueOrThrow({ where: { id: row.id } });
+    await audit(ctx, 'commitment_result_recorded', row.id,
+      ['completionResult', 'completionResultRecordedAtUtc', 'completionResultRecordedByUserId', 'version'],
+      {
+        resultRecorded: true,
+        hypothesisId: row.hypothesisId,
+        hypothesisRevisionId: row.hypothesisRevisionId,
+        fromVersion: row.version,
+        toVersion: updated.version,
+      }, db);
+    return receipt(updated);
+  }
 
   if (input.type === 'RESCHEDULE_COMMITMENT') {
     if (row.executionStatus !== 'planned') throw new CommitmentStateConflictError();
@@ -595,9 +744,18 @@ async function assertCommitmentReceiptParent(
       tenantId: ctx.tenantId,
       accountId: receiptValue.customerId,
     },
-    select: { opportunityId: true },
+    select: {
+      opportunityId: true,
+      hypothesisId: true,
+      hypothesisRevisionId: true,
+      completionResult: true,
+    },
   });
-  if (!parent || parent.opportunityId !== receiptValue.matterId) {
+  if (!parent
+    || parent.opportunityId !== receiptValue.matterId
+    || parent.hypothesisId !== receiptValue.hypothesisId
+    || parent.hypothesisRevisionId !== receiptValue.hypothesisRevisionId
+    || (receiptValue.resultRecorded && parent.completionResult.length === 0)) {
     throw new Error('Commitment command receipt parent mismatch');
   }
 }

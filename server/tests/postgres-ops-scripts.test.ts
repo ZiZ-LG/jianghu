@@ -670,3 +670,261 @@ describe('backup artifacts stay outside source and Docker contexts', () => {
     }
   });
 });
+
+describe('CORE-201 Candidate migration operations', () => {
+  it('stops runtime workers before deterministic legacy fixture assertions', async () => {
+    const drill = await read('scripts/test-postgres-ops-integration.sh');
+    const waitIndex = drill.indexOf('wait_for_server_healthy');
+    const stopIndex = drill.indexOf("POSTGRES_OPS_STAGE='stop-migration-server'");
+    const historyIndex = drill.indexOf("POSTGRES_OPS_STAGE='verify-migration-history'");
+
+    expect(waitIndex).toBeGreaterThanOrEqual(0);
+    expect(stopIndex).toBeGreaterThan(waitIndex);
+    expect(stopIndex).toBeLessThan(historyIndex);
+    expect(drill).toContain('docker compose -p "$COMPOSE_PROJECT_NAME" stop server');
+  });
+
+  it('failure-injects legacy, interrupted, partial, adoption, and restore paths', async () => {
+    const deploy = await read('server/scripts/deploy-postgres-migrations.sh');
+    const drill = await read('scripts/test-postgres-ops-integration.sh');
+
+    expect(deploy).toContain('CANDIDATE_MIGRATION=20260824000000_expand_candidate_foundation');
+    expect(deploy).toContain('recover_incomplete_candidate_migration');
+    expect(deploy).toContain('adopt_existing_candidate_schema_if_safe');
+    expect(deploy).toContain('candidate_schema_matches_known_state');
+    expect(deploy.indexOf('npm run migrate:candidate-report'))
+      .toBeLessThan(deploy.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deploy.lastIndexOf('npm run migrate:candidate-apply'))
+      .toBeGreaterThan(deploy.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deploy.lastIndexOf('npm run migrate:candidate-verify'))
+      .toBeGreaterThan(deploy.lastIndexOf('npm run migrate:candidate-apply'));
+
+    for (const marker of [
+      'LEGACY_CANDIDATE_REPORT_OK=1',
+      'CANDIDATE_BACKFILL_APPLY_OK=1',
+      'CANDIDATE_SOURCE_ROWS_UNCHANGED_OK=1',
+      'INTERRUPTED_CANDIDATE_BEFORE_COMMIT_RETRY_OK=1',
+      'INTERRUPTED_CANDIDATE_AFTER_COMMIT_ADOPTION_OK=1',
+      'CANDIDATE_SEMANTIC_CONFLICT_FAIL_CLOSED_OK=1',
+      'PARTIAL_CANDIDATE_SCHEMA_FAIL_CLOSED_OK=1',
+      'CANDIDATE_RESTORE_ROLLBACK_OK=1',
+      'CORE_203_CANDIDATE_CUTOVER_OK=1',
+    ]) expect(drill).toContain(marker);
+    expect(drill).toContain('20260824000000_expand_candidate_foundation');
+    expect(drill).toContain('prisma/postgres/legacy/20260824_pre_core201.prisma');
+    expect(drill).toContain('migrate:candidate-report');
+    expect(drill).toContain('migrate:candidate-apply');
+    expect(drill).toContain('migrate:candidate-verify');
+  });
+});
+
+describe('CORE-204 sensitive ACL migration operations', () => {
+  it('failure-injects expansion, adoption, semantic drift, partial schema, and restore paths', async () => {
+    const deploy = await read('server/scripts/deploy-postgres-migrations.sh');
+    const drill = await read('scripts/test-postgres-ops-integration.sh');
+
+    expect(deploy).toContain('SENSITIVE_ACL_MIGRATION=20260825000000_expand_sensitive_resource_acl');
+    expect(deploy).toContain('recover_incomplete_sensitive_acl_migration');
+    expect(deploy).toContain('adopt_existing_sensitive_acl_schema_if_safe');
+    expect(deploy).toContain('sensitive_acl_schema_matches_known_state');
+    expect(deploy.lastIndexOf('npm run migrate:sensitive-acl-report'))
+      .toBeGreaterThan(deploy.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deploy.lastIndexOf('npm run migrate:sensitive-acl-apply'))
+      .toBeGreaterThan(deploy.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deploy.lastIndexOf('npm run migrate:sensitive-acl-verify'))
+      .toBeGreaterThan(deploy.lastIndexOf('npm run migrate:sensitive-acl-apply'));
+
+    for (const marker of [
+      'SENSITIVE_ACL_BACKFILL_APPLY_OK=1',
+      'SENSITIVE_ACL_CREATOR_QUARANTINE_OK=1',
+      'INTERRUPTED_SENSITIVE_ACL_AFTER_COMMIT_ADOPTION_OK=1',
+      'SENSITIVE_ACL_SEMANTIC_CONFLICT_FAIL_CLOSED_OK=1',
+      'SENSITIVE_ACL_MARKER_CHECKSUM_FAIL_CLOSED_OK=1',
+      'PARTIAL_SENSITIVE_ACL_SCHEMA_FAIL_CLOSED_OK=1',
+      'SENSITIVE_ACL_RESTORE_ROLLBACK_OK=1',
+      'CORE_204_SENSITIVE_ACL_CUTOVER_OK=1',
+    ]) expect(drill).toContain(marker);
+    expect(drill).toContain('20260825000000_expand_sensitive_resource_acl');
+    expect(drill).toContain('prisma/postgres/legacy/20260825_pre_core204.prisma');
+    expect(drill).toContain('migrate:sensitive-acl-report');
+    expect(drill).toContain('migrate:sensitive-acl-apply');
+    expect(drill).toContain('migrate:sensitive-acl-verify');
+    expect(drill).toContain('Transcript_tenantId_idempotencyDomain_source_externalRef_key');
+    expect(drill).toContain('creator-private-v1:\\\"sensitive-acl-user\\\"');
+    expect(drill).toContain('legacy-v1:ChangeProposal:sensitive-field-proposal');
+    expect(drill).toContain("payload::jsonb ->> 'legacyDedupeKey' = \\\"dedupeKey\\\"");
+  });
+});
+
+describe('SAAS-201 SourceArtifact projection migration operations', () => {
+  it('failure-injects committed DDL adoption, semantic drift, marker drift, partial schema, and restore', async () => {
+    const deploy = await read('server/scripts/deploy-postgres-migrations.sh');
+    const drill = await read('scripts/test-postgres-ops-integration.sh');
+
+    expect(deploy).toContain('SOURCE_ARTIFACT_MIGRATION=20260825010000_expand_source_artifact_projection');
+    expect(deploy).toContain('recover_incomplete_source_artifact_migration');
+    expect(deploy).toContain('adopt_existing_source_artifact_schema_if_safe');
+    expect(deploy).toContain('source_artifact_schema_matches_known_state');
+    expect(deploy.lastIndexOf('npm run migrate:source-artifact-report'))
+      .toBeGreaterThan(deploy.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deploy.lastIndexOf('npm run migrate:source-artifact-apply'))
+      .toBeGreaterThan(deploy.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deploy.lastIndexOf('npm run migrate:source-artifact-verify'))
+      .toBeGreaterThan(deploy.lastIndexOf('npm run migrate:source-artifact-apply'));
+
+    for (const marker of [
+      'SOURCE_ARTIFACT_BACKFILL_APPLY_OK=1',
+      'SOURCE_ARTIFACT_CREATOR_QUARANTINE_OK=1',
+      'INTERRUPTED_SOURCE_ARTIFACT_AFTER_COMMIT_ADOPTION_OK=1',
+      'SOURCE_ARTIFACT_SEMANTIC_CONFLICT_FAIL_CLOSED_OK=1',
+      'SOURCE_ARTIFACT_FINGERPRINT_DRIFT_FAIL_CLOSED_OK=1',
+      'SOURCE_ARTIFACT_MARKER_CHECKSUM_FAIL_CLOSED_OK=1',
+      'PARTIAL_SOURCE_ARTIFACT_SCHEMA_FAIL_CLOSED_OK=1',
+      'SOURCE_ARTIFACT_RESTORE_ROLLBACK_OK=1',
+      'SAAS_201_SOURCE_ARTIFACT_CUTOVER_OK=1',
+    ]) expect(drill).toContain(marker);
+    expect(drill).toContain('20260825010000_expand_source_artifact_projection');
+    expect(drill).toContain('prisma/postgres/legacy/20260825_pre_saas201.prisma');
+    expect(drill).toContain('migrate:source-artifact-report');
+    expect(drill).toContain('migrate:source-artifact-apply');
+    expect(drill).toContain('migrate:source-artifact-verify');
+    expect(drill).toContain("key = 'SAAS-201-source-artifact-projection-v1'");
+    expect(drill).toContain("'{integrityChecksum}'");
+    expect(drill).toContain("column_name IN ('content','contentEnc','body','payload')");
+  });
+});
+
+describe('CORE-205 ReviewBatch migration operations', () => {
+  it('failure-injects committed DDL adoption, attachment/semantic/marker drift, partial schema, and restore', async () => {
+    const deploy = await read('server/scripts/deploy-postgres-migrations.sh');
+    const drill = await read('scripts/test-postgres-ops-integration.sh');
+
+    expect(deploy).toContain('REVIEW_BATCH_MIGRATION=20260825020000_expand_review_batch_interaction');
+    expect(deploy).toContain('recover_incomplete_review_batch_migration');
+    expect(deploy).toContain('adopt_existing_review_batch_schema_if_safe');
+    expect(deploy).toContain('review_batch_schema_matches_known_state');
+    expect(deploy).toContain('source_artifact_schema_matches_known_state');
+    expect(deploy.lastIndexOf('npm run migrate:review-batch-report'))
+      .toBeGreaterThan(deploy.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deploy.lastIndexOf('npm run migrate:review-batch-apply'))
+      .toBeGreaterThan(deploy.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deploy.lastIndexOf('npm run migrate:review-batch-verify'))
+      .toBeGreaterThan(deploy.lastIndexOf('npm run migrate:review-batch-apply'));
+
+    for (const marker of [
+      'INTERRUPTED_REVIEW_BATCH_AFTER_COMMIT_ADOPTION_OK=1',
+      'REVIEW_BATCH_SEMANTIC_CONFLICT_FAIL_CLOSED_OK=1',
+      'REVIEW_BATCH_MARKER_CHECKSUM_FAIL_CLOSED_OK=1',
+      'REVIEW_BATCH_ATTACHMENT_DRIFT_FAIL_CLOSED_OK=1',
+      'PARTIAL_REVIEW_BATCH_SCHEMA_FAIL_CLOSED_OK=1',
+      'REVIEW_BATCH_RESTORE_ROLLBACK_OK=1',
+      'CORE_205_REVIEW_BATCH_MIGRATION_OK=1',
+    ]) expect(drill).toContain(marker);
+    expect(drill).toContain('20260825020000_expand_review_batch_interaction');
+    expect(drill).toContain('prisma/postgres/legacy/20260825_pre_core205.prisma');
+    expect(drill).toContain("key = 'CORE-205-review-batch-interaction-v1'");
+    expect(drill).toContain("column_name IN ('content','contentEnc','body','evidence','payload')");
+  });
+});
+
+describe('CORE-206 Agent Job migration operations', () => {
+  it('failure-injects committed DDL adoption, semantic/marker drift, partial schema, and restore', async () => {
+    const deploy = await read('server/scripts/deploy-postgres-migrations.sh');
+    const drill = await read('scripts/test-postgres-ops-integration.sh');
+
+    expect(deploy).toContain('AGENT_JOB_MIGRATION=20260825030000_expand_agent_job_run');
+    expect(deploy).toContain('recover_incomplete_agent_job_migration');
+    expect(deploy).toContain('adopt_existing_agent_job_schema_if_safe');
+    expect(deploy).toContain('agent_job_schema_matches_known_state');
+    expect(deploy).toContain('review_batch_schema_matches_known_state');
+    expect(deploy.lastIndexOf('npm run migrate:agent-job-report'))
+      .toBeGreaterThan(deploy.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deploy.lastIndexOf('npm run migrate:agent-job-apply'))
+      .toBeGreaterThan(deploy.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deploy.lastIndexOf('npm run migrate:agent-job-verify'))
+      .toBeGreaterThan(deploy.lastIndexOf('npm run migrate:agent-job-apply'));
+
+    for (const marker of [
+      'INTERRUPTED_AGENT_JOB_AFTER_COMMIT_ADOPTION_OK=1',
+      'AGENT_JOB_SEMANTIC_CONFLICT_FAIL_CLOSED_OK=1',
+      'AGENT_JOB_MARKER_CHECKSUM_FAIL_CLOSED_OK=1',
+      'PARTIAL_AGENT_JOB_SCHEMA_FAIL_CLOSED_OK=1',
+      'AGENT_JOB_RESTORE_ROLLBACK_OK=1',
+      'CORE_206_AGENT_JOB_MIGRATION_OK=1',
+    ]) expect(drill).toContain(marker);
+    expect(drill).toContain('20260825030000_expand_agent_job_run');
+    expect(drill).toContain('prisma/postgres/legacy/20260825_pre_core206.prisma');
+    expect(drill).toContain("key = 'CORE-206-agent-job-run-v1'");
+    expect(drill).toContain("lower(column_name) IN ('content','contentenc','body','evidence','payload','prompt','response','secret','token')");
+  });
+});
+
+describe('SAAS-204 ResearchBriefSnapshot migration operations', () => {
+  it('failure-injects committed DDL adoption, semantic/marker drift, partial schema, restore, and fresh install', async () => {
+    const deploy = await read('server/scripts/deploy-postgres-migrations.sh');
+    const drill = await read('scripts/test-postgres-ops-integration.sh');
+
+    expect(deploy).toContain('RESEARCH_BRIEF_MIGRATION=20260826000000_expand_research_brief_snapshot');
+    expect(deploy).toContain('recover_incomplete_research_brief_migration');
+    expect(deploy).toContain('adopt_existing_research_brief_schema_if_safe');
+    expect(deploy).toContain('research_brief_schema_matches_known_state');
+    expect(deploy).toContain('agent_job_schema_matches_known_state');
+    expect(deploy.lastIndexOf('npm run migrate:research-brief-report'))
+      .toBeGreaterThan(deploy.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deploy.lastIndexOf('npm run migrate:research-brief-apply'))
+      .toBeGreaterThan(deploy.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deploy.lastIndexOf('npm run migrate:research-brief-verify'))
+      .toBeGreaterThan(deploy.lastIndexOf('npm run migrate:research-brief-apply'));
+
+    for (const marker of [
+      'INTERRUPTED_RESEARCH_BRIEF_AFTER_COMMIT_ADOPTION_OK=1',
+      'RESEARCH_BRIEF_SEMANTIC_CONFLICT_FAIL_CLOSED_OK=1',
+      'RESEARCH_BRIEF_MARKER_CHECKSUM_FAIL_CLOSED_OK=1',
+      'PARTIAL_RESEARCH_BRIEF_SCHEMA_FAIL_CLOSED_OK=1',
+      'RESEARCH_BRIEF_RESTORE_ROLLBACK_OK=1',
+      'SAAS_204_RESEARCH_BRIEF_MIGRATION_OK=1',
+      'POSTGRES_OPS_INTEGRATION_OK=1',
+    ]) expect(drill).toContain(marker);
+    expect(drill).toContain('20260826000000_expand_research_brief_snapshot');
+    expect(drill).toContain('prisma/postgres/legacy/20260826_pre_saas204.prisma');
+    expect(drill).toContain("key = 'SAAS-204-research-brief-snapshot-v1'");
+    expect(drill).toContain('migrate:research-brief-report');
+    expect(drill).toContain('migrate:research-brief-apply');
+    expect(drill).toContain('migrate:research-brief-verify');
+  });
+});
+
+describe('SAAS-206 IntelligenceItem and StakeholderFocus migration operations', () => {
+  it('failure-injects committed DDL adoption, semantic/marker drift, partial schema, restore, and fresh install', async () => {
+    const deploy = await read('server/scripts/deploy-postgres-migrations.sh');
+    const drill = await read('scripts/test-postgres-ops-integration.sh');
+
+    expect(deploy).toContain('INTELLIGENCE_FOCUS_MIGRATION=20260827000000_expand_intelligence_focus');
+    expect(deploy).toContain('recover_incomplete_intelligence_focus_migration');
+    expect(deploy).toContain('adopt_existing_intelligence_focus_schema_if_safe');
+    expect(deploy).toContain('intelligence_focus_schema_matches_known_state');
+    expect(deploy).toContain('research_brief_schema_matches_known_state');
+    expect(deploy.lastIndexOf('npm run migrate:intelligence-focus-report'))
+      .toBeGreaterThan(deploy.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deploy.lastIndexOf('npm run migrate:intelligence-focus-apply'))
+      .toBeGreaterThan(deploy.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deploy.lastIndexOf('npm run migrate:intelligence-focus-verify'))
+      .toBeGreaterThan(deploy.lastIndexOf('npm run migrate:intelligence-focus-apply'));
+
+    for (const marker of [
+      'INTERRUPTED_INTELLIGENCE_FOCUS_AFTER_COMMIT_ADOPTION_OK=1',
+      'INTELLIGENCE_FOCUS_SEMANTIC_CONFLICT_FAIL_CLOSED_OK=1',
+      'INTELLIGENCE_FOCUS_MARKER_CHECKSUM_FAIL_CLOSED_OK=1',
+      'PARTIAL_INTELLIGENCE_FOCUS_SCHEMA_FAIL_CLOSED_OK=1',
+      'INTELLIGENCE_FOCUS_RESTORE_ROLLBACK_OK=1',
+      'SAAS_206_INTELLIGENCE_FOCUS_MIGRATION_OK=1',
+      'POSTGRES_OPS_INTEGRATION_OK=1',
+    ]) expect(drill).toContain(marker);
+    expect(drill).toContain('20260827000000_expand_intelligence_focus');
+    expect(drill).toContain('prisma/postgres/legacy/20260827_pre_saas206.prisma');
+    expect(drill).toContain("key = 'SAAS-206-intelligence-focus-v1'");
+    expect(drill).toContain('migrate:intelligence-focus-report');
+    expect(drill).toContain('migrate:intelligence-focus-apply');
+    expect(drill).toContain('migrate:intelligence-focus-verify');
+  });
+});

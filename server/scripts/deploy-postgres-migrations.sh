@@ -10,6 +10,16 @@ PRE_SCOPE_SCHEMA=prisma/postgres/legacy/20260821_pre_core109.prisma
 PRE_METHODOLOGY_SCHEMA=prisma/postgres/legacy/20260821_pre_core110.prisma
 PRE_METHODOLOGY_DATA_SCHEMA=prisma/postgres/legacy/20260821_pre_core111.prisma
 PRE_PDE_CONTEXT_SCHEMA=prisma/postgres/legacy/20260821_pre_core113.prisma
+PRE_CANDIDATE_SCHEMA=prisma/postgres/legacy/20260824_pre_core201.prisma
+PRE_SENSITIVE_SCHEMA=prisma/postgres/legacy/20260825_pre_core204.prisma
+PRE_SOURCE_ARTIFACT_SCHEMA=prisma/postgres/legacy/20260825_pre_saas201.prisma
+PRE_REVIEW_BATCH_SCHEMA=prisma/postgres/legacy/20260825_pre_core205.prisma
+PRE_AGENT_JOB_SCHEMA=prisma/postgres/legacy/20260825_pre_core206.prisma
+PRE_RESEARCH_BRIEF_SCHEMA=prisma/postgres/legacy/20260826_pre_saas204.prisma
+PRE_INTELLIGENCE_FOCUS_SCHEMA=prisma/postgres/legacy/20260827_pre_saas206.prisma
+PRE_SALES_HYPOTHESIS_SCHEMA=prisma/postgres/legacy/20260830_pre_saas207.prisma
+PRE_HYPOTHESIS_COMMITMENT_REVIEW_SCHEMA=prisma/postgres/legacy/20260831_pre_saas208.prisma
+PRE_RELATIONSHIP_RADAR_SCHEMA=prisma/postgres/legacy/20260831_pre_saas212.prisma
 PRE_CUSTOMER_SCHEMA=$(mktemp /tmp/jianghu-pre-core115.prisma.XXXXXX)
 cleanup_pre_customer_schema() {
   rm -f "$PRE_CUSTOMER_SCHEMA"
@@ -27,8 +37,18 @@ METHODOLOGY_MIGRATION=20260821050000_add_methodology_foundation
 METHODOLOGY_DATA_MIGRATION=20260821060000_add_methodology_data_foundation
 PDE_CONTEXT_MIGRATION=20260821070000_add_pde_decision_context
 CUSTOMER_MIGRATION=20260823000000_expand_customer_fields
+CANDIDATE_MIGRATION=20260824000000_expand_candidate_foundation
+SENSITIVE_ACL_MIGRATION=20260825000000_expand_sensitive_resource_acl
+SOURCE_ARTIFACT_MIGRATION=20260825010000_expand_source_artifact_projection
+REVIEW_BATCH_MIGRATION=20260825020000_expand_review_batch_interaction
+AGENT_JOB_MIGRATION=20260825030000_expand_agent_job_run
+RESEARCH_BRIEF_MIGRATION=20260826000000_expand_research_brief_snapshot
+INTELLIGENCE_FOCUS_MIGRATION=20260827000000_expand_intelligence_focus
+SALES_HYPOTHESIS_MIGRATION=20260830000000_expand_sales_hypothesis
+HYPOTHESIS_COMMITMENT_REVIEW_MIGRATION=20260831000000_expand_hypothesis_commitment_review
+RELATIONSHIP_RADAR_MIGRATION=20260831235900_expand_relationship_radar
 
-npx tsx scripts/render-pre-customer-schema.ts "$SCHEMA" "$PRE_CUSTOMER_SCHEMA"
+npx tsx scripts/render-pre-customer-schema.ts "$PRE_CANDIDATE_SCHEMA" "$PRE_CUSTOMER_SCHEMA"
 
 wait_for_migration_state() {
   i=0
@@ -61,6 +81,9 @@ matter_schema_matches_known_state() {
     || schema_matches "$PRE_COMMITMENT_CUTOVER_SCHEMA" || schema_matches "$PRE_SCOPE_SCHEMA" \
     || schema_matches "$PRE_METHODOLOGY_SCHEMA" || schema_matches "$PRE_METHODOLOGY_DATA_SCHEMA" \
     || schema_matches "$PRE_PDE_CONTEXT_SCHEMA" || schema_matches "$PRE_CUSTOMER_SCHEMA" \
+    || schema_matches "$PRE_CANDIDATE_SCHEMA" || schema_matches "$PRE_SENSITIVE_SCHEMA" \
+    || schema_matches "$PRE_SOURCE_ARTIFACT_SCHEMA" || schema_matches "$PRE_REVIEW_BATCH_SCHEMA" \
+    || schema_matches "$PRE_AGENT_JOB_SCHEMA" || schema_matches "$PRE_RESEARCH_BRIEF_SCHEMA" \
     || schema_matches "$SCHEMA"
 }
 
@@ -68,36 +91,110 @@ participant_schema_matches_known_state() {
   schema_matches "$PRE_COMMITMENT_SCHEMA" || schema_matches "$PRE_COMMITMENT_CUTOVER_SCHEMA" \
     || schema_matches "$PRE_SCOPE_SCHEMA" || schema_matches "$PRE_METHODOLOGY_SCHEMA" \
     || schema_matches "$PRE_METHODOLOGY_DATA_SCHEMA" || schema_matches "$PRE_PDE_CONTEXT_SCHEMA" \
-    || schema_matches "$PRE_CUSTOMER_SCHEMA" \
-    || schema_matches "$SCHEMA"
+    || schema_matches "$PRE_CUSTOMER_SCHEMA" || schema_matches "$PRE_CANDIDATE_SCHEMA" \
+    || schema_matches "$PRE_SENSITIVE_SCHEMA" || schema_matches "$PRE_SOURCE_ARTIFACT_SCHEMA" \
+    || schema_matches "$PRE_REVIEW_BATCH_SCHEMA" || schema_matches "$PRE_AGENT_JOB_SCHEMA" \
+    || schema_matches "$PRE_RESEARCH_BRIEF_SCHEMA" || schema_matches "$SCHEMA"
 }
 
 commitment_cutover_schema_matches_known_state() {
   schema_matches "$PRE_SCOPE_SCHEMA" || schema_matches "$PRE_METHODOLOGY_SCHEMA" \
     || schema_matches "$PRE_METHODOLOGY_DATA_SCHEMA" || schema_matches "$PRE_PDE_CONTEXT_SCHEMA" \
-    || schema_matches "$PRE_CUSTOMER_SCHEMA" \
-    || schema_matches "$SCHEMA"
+    || schema_matches "$PRE_CUSTOMER_SCHEMA" || schema_matches "$PRE_CANDIDATE_SCHEMA" \
+    || schema_matches "$PRE_SENSITIVE_SCHEMA" || schema_matches "$PRE_SOURCE_ARTIFACT_SCHEMA" \
+    || schema_matches "$PRE_REVIEW_BATCH_SCHEMA" || schema_matches "$PRE_AGENT_JOB_SCHEMA" \
+    || schema_matches "$PRE_RESEARCH_BRIEF_SCHEMA" || schema_matches "$SCHEMA"
 }
 
 scope_schema_matches_known_state() {
   schema_matches "$PRE_METHODOLOGY_SCHEMA" || schema_matches "$PRE_METHODOLOGY_DATA_SCHEMA" \
     || schema_matches "$PRE_PDE_CONTEXT_SCHEMA" || schema_matches "$PRE_CUSTOMER_SCHEMA" \
+    || schema_matches "$PRE_CANDIDATE_SCHEMA" || schema_matches "$PRE_SENSITIVE_SCHEMA" \
+    || schema_matches "$PRE_SOURCE_ARTIFACT_SCHEMA" || schema_matches "$PRE_REVIEW_BATCH_SCHEMA" \
+    || schema_matches "$PRE_AGENT_JOB_SCHEMA" || schema_matches "$PRE_RESEARCH_BRIEF_SCHEMA" \
     || schema_matches "$SCHEMA"
 }
 
 methodology_schema_matches_known_state() {
   schema_matches "$PRE_METHODOLOGY_DATA_SCHEMA" || schema_matches "$PRE_PDE_CONTEXT_SCHEMA" \
-    || schema_matches "$PRE_CUSTOMER_SCHEMA" \
-    || schema_matches "$SCHEMA"
+    || schema_matches "$PRE_CUSTOMER_SCHEMA" || schema_matches "$PRE_CANDIDATE_SCHEMA" \
+    || schema_matches "$PRE_SENSITIVE_SCHEMA" || schema_matches "$PRE_SOURCE_ARTIFACT_SCHEMA" \
+    || schema_matches "$PRE_REVIEW_BATCH_SCHEMA" || schema_matches "$PRE_AGENT_JOB_SCHEMA" \
+    || schema_matches "$PRE_RESEARCH_BRIEF_SCHEMA" || schema_matches "$SCHEMA"
 }
 
 methodology_data_schema_matches_known_state() {
   schema_matches "$PRE_PDE_CONTEXT_SCHEMA" || schema_matches "$PRE_CUSTOMER_SCHEMA" \
+    || schema_matches "$PRE_CANDIDATE_SCHEMA" || schema_matches "$PRE_SENSITIVE_SCHEMA" \
+    || schema_matches "$PRE_SOURCE_ARTIFACT_SCHEMA" || schema_matches "$PRE_REVIEW_BATCH_SCHEMA" \
+    || schema_matches "$PRE_AGENT_JOB_SCHEMA" || schema_matches "$PRE_RESEARCH_BRIEF_SCHEMA" \
     || schema_matches "$SCHEMA"
 }
 
 pde_context_schema_matches_known_state() {
-  schema_matches "$PRE_CUSTOMER_SCHEMA" || schema_matches "$SCHEMA"
+  schema_matches "$PRE_CUSTOMER_SCHEMA" || schema_matches "$PRE_CANDIDATE_SCHEMA" \
+    || schema_matches "$PRE_SENSITIVE_SCHEMA" || schema_matches "$PRE_SOURCE_ARTIFACT_SCHEMA" \
+    || schema_matches "$PRE_REVIEW_BATCH_SCHEMA" || schema_matches "$PRE_AGENT_JOB_SCHEMA" \
+    || schema_matches "$PRE_RESEARCH_BRIEF_SCHEMA" || schema_matches "$SCHEMA"
+}
+
+customer_schema_matches_known_state() {
+  schema_matches "$PRE_CANDIDATE_SCHEMA" || schema_matches "$PRE_SENSITIVE_SCHEMA" \
+    || schema_matches "$PRE_SOURCE_ARTIFACT_SCHEMA" || schema_matches "$PRE_REVIEW_BATCH_SCHEMA" \
+    || schema_matches "$PRE_AGENT_JOB_SCHEMA" || schema_matches "$PRE_RESEARCH_BRIEF_SCHEMA" \
+    || schema_matches "$SCHEMA"
+}
+
+candidate_schema_matches_known_state() {
+  schema_matches "$PRE_SENSITIVE_SCHEMA" || schema_matches "$PRE_SOURCE_ARTIFACT_SCHEMA" \
+    || schema_matches "$PRE_REVIEW_BATCH_SCHEMA" || schema_matches "$PRE_AGENT_JOB_SCHEMA" \
+    || schema_matches "$PRE_RESEARCH_BRIEF_SCHEMA" || schema_matches "$SCHEMA"
+}
+
+sensitive_acl_schema_matches_known_state() {
+  schema_matches "$PRE_SOURCE_ARTIFACT_SCHEMA" || schema_matches "$PRE_REVIEW_BATCH_SCHEMA" \
+    || schema_matches "$PRE_AGENT_JOB_SCHEMA" || schema_matches "$PRE_RESEARCH_BRIEF_SCHEMA" \
+    || schema_matches "$SCHEMA"
+}
+
+source_artifact_schema_matches_known_state() {
+  schema_matches "$PRE_REVIEW_BATCH_SCHEMA" || schema_matches "$PRE_AGENT_JOB_SCHEMA" \
+    || schema_matches "$PRE_RESEARCH_BRIEF_SCHEMA" || schema_matches "$SCHEMA"
+}
+
+review_batch_schema_matches_known_state() {
+  schema_matches "$PRE_AGENT_JOB_SCHEMA" || schema_matches "$PRE_RESEARCH_BRIEF_SCHEMA" \
+    || schema_matches "$SCHEMA"
+}
+
+agent_job_schema_matches_known_state() {
+  schema_matches "$PRE_RESEARCH_BRIEF_SCHEMA" || schema_matches "$SCHEMA"
+}
+
+research_brief_schema_matches_known_state() {
+  schema_matches "$PRE_INTELLIGENCE_FOCUS_SCHEMA" \
+    || schema_matches "$PRE_SALES_HYPOTHESIS_SCHEMA" \
+    || schema_matches "$PRE_HYPOTHESIS_COMMITMENT_REVIEW_SCHEMA" \
+    || schema_matches "$PRE_RELATIONSHIP_RADAR_SCHEMA" || schema_matches "$SCHEMA"
+}
+
+intelligence_focus_schema_matches_known_state() {
+  schema_matches "$PRE_SALES_HYPOTHESIS_SCHEMA" \
+    || schema_matches "$PRE_HYPOTHESIS_COMMITMENT_REVIEW_SCHEMA" \
+    || schema_matches "$PRE_RELATIONSHIP_RADAR_SCHEMA" || schema_matches "$SCHEMA"
+}
+
+sales_hypothesis_schema_matches_known_state() {
+  schema_matches "$PRE_HYPOTHESIS_COMMITMENT_REVIEW_SCHEMA" \
+    || schema_matches "$PRE_RELATIONSHIP_RADAR_SCHEMA" || schema_matches "$SCHEMA"
+}
+
+hypothesis_commitment_review_schema_matches_known_state() {
+  schema_matches "$PRE_RELATIONSHIP_RADAR_SCHEMA" || schema_matches "$SCHEMA"
+}
+
+relationship_radar_schema_matches_known_state() {
+  schema_matches "$SCHEMA"
 }
 
 refresh_applied_migrations() {
@@ -581,7 +678,7 @@ recover_incomplete_customer_migration() {
       ;;
     expanded)
       echo "[migration] 检测到已提交但未完成登记的 Customer 事务，校验后接管。"
-      if ! schema_matches "$SCHEMA"; then
+      if ! customer_schema_matches_known_state; then
         echo "[migration] Customer schema 已扩展但与当前模型不一致，拒绝接管：" >&2
         cat /tmp/postgres-schema-drift.log >&2
         exit 1
@@ -605,7 +702,7 @@ adopt_existing_customer_schema_if_safe() {
     legacy) return 0 ;;
     expanded)
       echo "[migration] 检测到未登记但完整的 Customer schema，校验后接管。"
-      if ! schema_matches "$SCHEMA"; then
+      if ! customer_schema_matches_known_state; then
         echo "[migration] 未登记 Customer schema 与当前模型不一致，拒绝接管：" >&2
         cat /tmp/postgres-schema-drift.log >&2
         exit 1
@@ -619,11 +716,571 @@ adopt_existing_customer_schema_if_safe() {
   esac
 }
 
+recover_incomplete_candidate_migration() {
+  incomplete_migrations=$(npx tsx scripts/list-incomplete-postgres-migrations.ts)
+  if ! printf '%s\n' "$incomplete_migrations" | grep -Fxq "$CANDIDATE_MIGRATION"; then
+    return 0
+  fi
+  candidate_schema_state=$(npx tsx scripts/postgres-candidate-schema-state.ts)
+  case "$candidate_schema_state" in
+    legacy)
+      echo "[migration] 检测到中断且已由 PostgreSQL 回滚的 Candidate 事务，登记后安全重放。"
+      npx prisma migrate resolve --rolled-back "$CANDIDATE_MIGRATION" --schema "$SCHEMA"
+      ;;
+    expanded)
+      echo "[migration] 检测到已提交但未完成登记的 Candidate 事务，只读校验后接管。"
+      npm run migrate:candidate-report
+      if ! candidate_schema_matches_known_state; then
+        echo "[migration] Candidate schema 已扩展但与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$CANDIDATE_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] Candidate migration 留下部分 schema，必须从认证备份恢复后再试。" >&2
+      exit 1
+      ;;
+  esac
+}
+
+adopt_existing_candidate_schema_if_safe() {
+  refresh_applied_migrations
+  if migration_is_applied "$CANDIDATE_MIGRATION"; then
+    return 0
+  fi
+  candidate_schema_state=$(npx tsx scripts/postgres-candidate-schema-state.ts)
+  case "$candidate_schema_state" in
+    uninitialized|legacy) return 0 ;;
+    expanded)
+      echo "[migration] 检测到未登记但完整的 Candidate schema，只读校验后接管。"
+      npm run migrate:candidate-report
+      if ! candidate_schema_matches_known_state; then
+        echo "[migration] 未登记 Candidate schema 与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$CANDIDATE_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] 检测到未登记的部分 Candidate schema，拒绝继续。" >&2
+      exit 1
+      ;;
+  esac
+}
+
+recover_incomplete_sensitive_acl_migration() {
+  incomplete_migrations=$(npx tsx scripts/list-incomplete-postgres-migrations.ts)
+  if ! printf '%s\n' "$incomplete_migrations" | grep -Fxq "$SENSITIVE_ACL_MIGRATION"; then
+    return 0
+  fi
+  sensitive_acl_schema_state=$(npx tsx scripts/postgres-sensitive-acl-schema-state.ts)
+  case "$sensitive_acl_schema_state" in
+    legacy)
+      echo "[migration] 检测到中断且已由 PostgreSQL 回滚的敏感资源 ACL 事务，登记后安全重放。"
+      npx prisma migrate resolve --rolled-back "$SENSITIVE_ACL_MIGRATION" --schema "$SCHEMA"
+      ;;
+    expanded)
+      echo "[migration] 检测到已提交但未完成登记的敏感资源 ACL 事务，只读校验后接管。"
+      npm run migrate:sensitive-acl-report
+      if ! sensitive_acl_schema_matches_known_state; then
+        echo "[migration] 敏感资源 ACL schema 已扩展但与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$SENSITIVE_ACL_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] 敏感资源 ACL migration 留下部分 schema，必须从认证备份恢复后再试。" >&2
+      exit 1
+      ;;
+  esac
+}
+
+adopt_existing_sensitive_acl_schema_if_safe() {
+  refresh_applied_migrations
+  if migration_is_applied "$SENSITIVE_ACL_MIGRATION"; then
+    return 0
+  fi
+  sensitive_acl_schema_state=$(npx tsx scripts/postgres-sensitive-acl-schema-state.ts)
+  case "$sensitive_acl_schema_state" in
+    uninitialized|legacy) return 0 ;;
+    expanded)
+      echo "[migration] 检测到未登记但完整的敏感资源 ACL schema，只读校验后接管。"
+      npm run migrate:sensitive-acl-report
+      if ! sensitive_acl_schema_matches_known_state; then
+        echo "[migration] 未登记敏感资源 ACL schema 与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$SENSITIVE_ACL_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] 检测到未登记的部分敏感资源 ACL schema，拒绝继续。" >&2
+      exit 1
+      ;;
+  esac
+}
+
+recover_incomplete_source_artifact_migration() {
+  incomplete_migrations=$(npx tsx scripts/list-incomplete-postgres-migrations.ts)
+  if ! printf '%s\n' "$incomplete_migrations" | grep -Fxq "$SOURCE_ARTIFACT_MIGRATION"; then
+    return 0
+  fi
+  source_artifact_schema_state=$(npx tsx scripts/postgres-source-artifact-schema-state.ts)
+  case "$source_artifact_schema_state" in
+    legacy)
+      echo "[migration] 检测到中断且已由 PostgreSQL 回滚的来源制品事务，登记后安全重放。"
+      npx prisma migrate resolve --rolled-back "$SOURCE_ARTIFACT_MIGRATION" --schema "$SCHEMA"
+      ;;
+    expanded)
+      echo "[migration] 检测到已提交但未完成登记的来源制品事务，只读校验后接管。"
+      npm run migrate:source-artifact-report
+      if ! source_artifact_schema_matches_known_state; then
+        echo "[migration] 来源制品 schema 已扩展但与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$SOURCE_ARTIFACT_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] 来源制品 migration 留下部分 schema，必须从认证备份恢复后再试。" >&2
+      exit 1
+      ;;
+  esac
+}
+
+adopt_existing_source_artifact_schema_if_safe() {
+  refresh_applied_migrations
+  if migration_is_applied "$SOURCE_ARTIFACT_MIGRATION"; then
+    return 0
+  fi
+  source_artifact_schema_state=$(npx tsx scripts/postgres-source-artifact-schema-state.ts)
+  case "$source_artifact_schema_state" in
+    uninitialized|legacy) return 0 ;;
+    expanded)
+      echo "[migration] 检测到未登记但完整的来源制品 schema，只读校验后接管。"
+      npm run migrate:source-artifact-report
+      if ! source_artifact_schema_matches_known_state; then
+        echo "[migration] 未登记来源制品 schema 与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$SOURCE_ARTIFACT_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] 检测到未登记的部分来源制品 schema，拒绝继续。" >&2
+      exit 1
+      ;;
+  esac
+}
+
+recover_incomplete_review_batch_migration() {
+  incomplete_migrations=$(npx tsx scripts/list-incomplete-postgres-migrations.ts)
+  if ! printf '%s\n' "$incomplete_migrations" | grep -Fxq "$REVIEW_BATCH_MIGRATION"; then
+    return 0
+  fi
+  review_batch_schema_state=$(npx tsx scripts/postgres-review-batch-schema-state.ts)
+  case "$review_batch_schema_state" in
+    legacy)
+      echo "[migration] 检测到中断且已由 PostgreSQL 回滚的 ReviewBatch 事务，登记后安全重放。"
+      npx prisma migrate resolve --rolled-back "$REVIEW_BATCH_MIGRATION" --schema "$SCHEMA"
+      ;;
+    expanded)
+      echo "[migration] 检测到已提交但未完成登记的 ReviewBatch 事务，只读校验后接管。"
+      npm run migrate:review-batch-report
+      if ! review_batch_schema_matches_known_state; then
+        echo "[migration] ReviewBatch schema 已扩展但与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$REVIEW_BATCH_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] ReviewBatch migration 留下部分 schema，必须从认证备份恢复后再试。" >&2
+      exit 1
+      ;;
+  esac
+}
+
+adopt_existing_review_batch_schema_if_safe() {
+  refresh_applied_migrations
+  if migration_is_applied "$REVIEW_BATCH_MIGRATION"; then
+    return 0
+  fi
+  review_batch_schema_state=$(npx tsx scripts/postgres-review-batch-schema-state.ts)
+  case "$review_batch_schema_state" in
+    uninitialized|legacy) return 0 ;;
+    expanded)
+      echo "[migration] 检测到未登记但完整的 ReviewBatch schema，只读校验后接管。"
+      npm run migrate:review-batch-report
+      if ! review_batch_schema_matches_known_state; then
+        echo "[migration] 未登记 ReviewBatch schema 与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$REVIEW_BATCH_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] 检测到未登记的部分 ReviewBatch schema，拒绝继续。" >&2
+      exit 1
+      ;;
+  esac
+}
+
+recover_incomplete_agent_job_migration() {
+  incomplete_migrations=$(npx tsx scripts/list-incomplete-postgres-migrations.ts)
+  if ! printf '%s\n' "$incomplete_migrations" | grep -Fxq "$AGENT_JOB_MIGRATION"; then
+    return 0
+  fi
+  agent_job_schema_state=$(npx tsx scripts/postgres-agent-job-schema-state.ts)
+  case "$agent_job_schema_state" in
+    legacy)
+      echo "[migration] 检测到中断且已由 PostgreSQL 回滚的 Agent Job 事务，登记后安全重放。"
+      npx prisma migrate resolve --rolled-back "$AGENT_JOB_MIGRATION" --schema "$SCHEMA"
+      ;;
+    expanded)
+      echo "[migration] 检测到已提交但未完成登记的 Agent Job 事务，只读校验后接管。"
+      npm run migrate:agent-job-report
+      if ! agent_job_schema_matches_known_state; then
+        echo "[migration] Agent Job schema 已扩展但与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$AGENT_JOB_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] Agent Job migration 留下部分 schema，必须从认证备份恢复后再试。" >&2
+      exit 1
+      ;;
+  esac
+}
+
+adopt_existing_agent_job_schema_if_safe() {
+  refresh_applied_migrations
+  if migration_is_applied "$AGENT_JOB_MIGRATION"; then
+    return 0
+  fi
+  agent_job_schema_state=$(npx tsx scripts/postgres-agent-job-schema-state.ts)
+  case "$agent_job_schema_state" in
+    uninitialized|legacy) return 0 ;;
+    expanded)
+      echo "[migration] 检测到未登记但完整的 Agent Job schema，只读校验后接管。"
+      npm run migrate:agent-job-report
+      if ! agent_job_schema_matches_known_state; then
+        echo "[migration] 未登记 Agent Job schema 与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$AGENT_JOB_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] 检测到未登记的部分 Agent Job schema，拒绝继续。" >&2
+      exit 1
+      ;;
+  esac
+}
+
+recover_incomplete_research_brief_migration() {
+  incomplete_migrations=$(npx tsx scripts/list-incomplete-postgres-migrations.ts)
+  if ! printf '%s\n' "$incomplete_migrations" | grep -Fxq "$RESEARCH_BRIEF_MIGRATION"; then
+    return 0
+  fi
+  research_brief_schema_state=$(npx tsx scripts/postgres-research-brief-schema-state.ts)
+  case "$research_brief_schema_state" in
+    legacy)
+      echo "[migration] 检测到中断且已由 PostgreSQL 回滚的 ResearchBriefSnapshot 事务，登记后安全重放。"
+      npx prisma migrate resolve --rolled-back "$RESEARCH_BRIEF_MIGRATION" --schema "$SCHEMA"
+      ;;
+    expanded)
+      echo "[migration] 检测到已提交但未完成登记的 ResearchBriefSnapshot 事务，只读校验后接管。"
+      npm run migrate:research-brief-report
+      if ! research_brief_schema_matches_known_state; then
+        echo "[migration] ResearchBriefSnapshot schema 已扩展但与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$RESEARCH_BRIEF_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] ResearchBriefSnapshot migration 留下部分 schema，必须从认证备份恢复后再试。" >&2
+      exit 1
+      ;;
+  esac
+}
+
+adopt_existing_research_brief_schema_if_safe() {
+  refresh_applied_migrations
+  if migration_is_applied "$RESEARCH_BRIEF_MIGRATION"; then
+    return 0
+  fi
+  research_brief_schema_state=$(npx tsx scripts/postgres-research-brief-schema-state.ts)
+  case "$research_brief_schema_state" in
+    uninitialized|legacy) return 0 ;;
+    expanded)
+      echo "[migration] 检测到未登记但完整的 ResearchBriefSnapshot schema，只读校验后接管。"
+      npm run migrate:research-brief-report
+      if ! research_brief_schema_matches_known_state; then
+        echo "[migration] 未登记 ResearchBriefSnapshot schema 与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$RESEARCH_BRIEF_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] 检测到未登记的部分 ResearchBriefSnapshot schema，拒绝继续。" >&2
+      exit 1
+      ;;
+  esac
+}
+
+recover_incomplete_intelligence_focus_migration() {
+  incomplete_migrations=$(npx tsx scripts/list-incomplete-postgres-migrations.ts)
+  if ! printf '%s\n' "$incomplete_migrations" | grep -Fxq "$INTELLIGENCE_FOCUS_MIGRATION"; then
+    return 0
+  fi
+  intelligence_focus_schema_state=$(npx tsx scripts/postgres-intelligence-focus-schema-state.ts)
+  case "$intelligence_focus_schema_state" in
+    legacy)
+      echo "[migration] 检测到中断且已由 PostgreSQL 回滚的 Intelligence/Focus 事务，登记后安全重放。"
+      npx prisma migrate resolve --rolled-back "$INTELLIGENCE_FOCUS_MIGRATION" --schema "$SCHEMA"
+      ;;
+    expanded)
+      echo "[migration] 检测到已提交但未完成登记的 Intelligence/Focus 事务，只读校验后接管。"
+      npm run migrate:intelligence-focus-report
+      if ! intelligence_focus_schema_matches_known_state; then
+        echo "[migration] Intelligence/Focus schema 已扩展但与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$INTELLIGENCE_FOCUS_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] Intelligence/Focus migration 留下部分 schema，必须从认证备份恢复后再试。" >&2
+      exit 1
+      ;;
+  esac
+}
+
+adopt_existing_intelligence_focus_schema_if_safe() {
+  refresh_applied_migrations
+  if migration_is_applied "$INTELLIGENCE_FOCUS_MIGRATION"; then
+    return 0
+  fi
+  intelligence_focus_schema_state=$(npx tsx scripts/postgres-intelligence-focus-schema-state.ts)
+  case "$intelligence_focus_schema_state" in
+    uninitialized|legacy) return 0 ;;
+    expanded)
+      echo "[migration] 检测到未登记但完整的 Intelligence/Focus schema，只读校验后接管。"
+      npm run migrate:intelligence-focus-report
+      if ! intelligence_focus_schema_matches_known_state; then
+        echo "[migration] 未登记 Intelligence/Focus schema 与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$INTELLIGENCE_FOCUS_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] 检测到未登记的部分 Intelligence/Focus schema，拒绝继续。" >&2
+      exit 1
+      ;;
+  esac
+}
+
+recover_incomplete_sales_hypothesis_migration() {
+  incomplete_migrations=$(npx tsx scripts/list-incomplete-postgres-migrations.ts)
+  if ! printf '%s\n' "$incomplete_migrations" | grep -Fxq "$SALES_HYPOTHESIS_MIGRATION"; then
+    return 0
+  fi
+  sales_hypothesis_schema_state=$(npx tsx scripts/postgres-sales-hypothesis-schema-state.ts)
+  case "$sales_hypothesis_schema_state" in
+    legacy)
+      echo "[migration] 检测到中断且已由 PostgreSQL 回滚的 SalesHypothesis 事务，登记后安全重放。"
+      npx prisma migrate resolve --rolled-back "$SALES_HYPOTHESIS_MIGRATION" --schema "$SCHEMA"
+      ;;
+    expanded)
+      echo "[migration] 检测到已提交但未完成登记的 SalesHypothesis 事务，只读校验后接管。"
+      npm run migrate:sales-hypothesis-report
+      if ! sales_hypothesis_schema_matches_known_state; then
+        echo "[migration] SalesHypothesis schema 已扩展但与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$SALES_HYPOTHESIS_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] SalesHypothesis migration 留下部分 schema，必须从认证备份恢复后再试。" >&2
+      exit 1
+      ;;
+  esac
+}
+
+adopt_existing_sales_hypothesis_schema_if_safe() {
+  refresh_applied_migrations
+  if migration_is_applied "$SALES_HYPOTHESIS_MIGRATION"; then
+    return 0
+  fi
+  sales_hypothesis_schema_state=$(npx tsx scripts/postgres-sales-hypothesis-schema-state.ts)
+  case "$sales_hypothesis_schema_state" in
+    uninitialized|legacy) return 0 ;;
+    expanded)
+      echo "[migration] 检测到未登记但完整的 SalesHypothesis schema，只读校验后接管。"
+      npm run migrate:sales-hypothesis-report
+      if ! sales_hypothesis_schema_matches_known_state; then
+        echo "[migration] 未登记 SalesHypothesis schema 与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$SALES_HYPOTHESIS_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] 检测到未登记的部分 SalesHypothesis schema，拒绝继续。" >&2
+      exit 1
+      ;;
+  esac
+}
+
+recover_incomplete_hypothesis_commitment_review_migration() {
+  incomplete_migrations=$(npx tsx scripts/list-incomplete-postgres-migrations.ts)
+  if ! printf '%s\n' "$incomplete_migrations" | grep -Fxq "$HYPOTHESIS_COMMITMENT_REVIEW_MIGRATION"; then
+    return 0
+  fi
+  hypothesis_commitment_review_schema_state=$(npx tsx scripts/postgres-hypothesis-commitment-review-schema-state.ts)
+  case "$hypothesis_commitment_review_schema_state" in
+    legacy)
+      echo "[migration] 检测到中断且已由 PostgreSQL 回滚的 SAAS-208 假设验证事务，登记后安全重放。"
+      npx prisma migrate resolve --rolled-back "$HYPOTHESIS_COMMITMENT_REVIEW_MIGRATION" --schema "$SCHEMA"
+      ;;
+    expanded)
+      echo "[migration] 检测到已提交但未完成登记的 SAAS-208 假设验证事务，只读校验后接管。"
+      npm run migrate:hypothesis-commitment-review-report
+      if ! hypothesis_commitment_review_schema_matches_known_state; then
+        echo "[migration] SAAS-208 假设验证 schema 已扩展但与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$HYPOTHESIS_COMMITMENT_REVIEW_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] SAAS-208 假设验证 migration 留下部分 schema，必须从认证备份恢复后再试。" >&2
+      exit 1
+      ;;
+  esac
+}
+
+adopt_existing_hypothesis_commitment_review_schema_if_safe() {
+  refresh_applied_migrations
+  if migration_is_applied "$HYPOTHESIS_COMMITMENT_REVIEW_MIGRATION"; then
+    return 0
+  fi
+  hypothesis_commitment_review_schema_state=$(npx tsx scripts/postgres-hypothesis-commitment-review-schema-state.ts)
+  case "$hypothesis_commitment_review_schema_state" in
+    uninitialized|legacy) return 0 ;;
+    expanded)
+      echo "[migration] 检测到未登记但完整的 SAAS-208 假设验证 schema，只读校验后接管。"
+      npm run migrate:hypothesis-commitment-review-report
+      if ! hypothesis_commitment_review_schema_matches_known_state; then
+        echo "[migration] 未登记 SAAS-208 假设验证 schema 与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$HYPOTHESIS_COMMITMENT_REVIEW_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] 检测到未登记的部分 SAAS-208 假设验证 schema，拒绝继续。" >&2
+      exit 1
+      ;;
+  esac
+}
+
+recover_incomplete_relationship_radar_migration() {
+  incomplete_migrations=$(npx tsx scripts/list-incomplete-postgres-migrations.ts)
+  if ! printf '%s\n' "$incomplete_migrations" | grep -Fxq "$RELATIONSHIP_RADAR_MIGRATION"; then
+    return 0
+  fi
+  relationship_radar_schema_state=$(npx tsx scripts/postgres-relationship-radar-schema-state.ts)
+  case "$relationship_radar_schema_state" in
+    legacy)
+      echo "[migration] 检测到中断且已由 PostgreSQL 回滚的 SAAS-212 关系雷达事务，登记后安全重放。"
+      npx prisma migrate resolve --rolled-back "$RELATIONSHIP_RADAR_MIGRATION" --schema "$SCHEMA"
+      ;;
+    expanded)
+      echo "[migration] 检测到已提交但未完成登记的 SAAS-212 关系雷达事务，只读校验后接管。"
+      npm run migrate:relationship-radar-report
+      if ! relationship_radar_schema_matches_known_state; then
+        echo "[migration] SAAS-212 关系雷达 schema 已扩展但与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$RELATIONSHIP_RADAR_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] SAAS-212 关系雷达 migration 留下部分 schema，必须从认证备份恢复后再试。" >&2
+      exit 1
+      ;;
+  esac
+}
+
+adopt_existing_relationship_radar_schema_if_safe() {
+  refresh_applied_migrations
+  if migration_is_applied "$RELATIONSHIP_RADAR_MIGRATION"; then
+    return 0
+  fi
+  relationship_radar_schema_state=$(npx tsx scripts/postgres-relationship-radar-schema-state.ts)
+  case "$relationship_radar_schema_state" in
+    uninitialized|legacy) return 0 ;;
+    expanded)
+      echo "[migration] 检测到未登记但完整的 SAAS-212 关系雷达 schema，只读校验后接管。"
+      npm run migrate:relationship-radar-report
+      if ! relationship_radar_schema_matches_known_state; then
+        echo "[migration] 未登记 SAAS-212 关系雷达 schema 与当前模型不一致，拒绝接管：" >&2
+        cat /tmp/postgres-schema-drift.log >&2
+        exit 1
+      fi
+      npx prisma migrate resolve --applied "$RELATIONSHIP_RADAR_MIGRATION" --schema "$SCHEMA"
+      ;;
+    *)
+      echo "[migration] 检测到未登记的部分 SAAS-212 关系雷达 schema，拒绝继续。" >&2
+      exit 1
+      ;;
+  esac
+}
+
 state=$(wait_for_migration_state)
 case "$state" in
   untracked)
     if schema_matches "$SCHEMA"; then
       echo "[migration] 检测到与当前模型一致的未纳管 schema。"
+      npx tsx scripts/assert-untracked-command-runs-empty.ts
+    elif schema_matches "$PRE_RELATIONSHIP_RADAR_SCHEMA"; then
+      echo "[migration] 检测到已批准的 SAAS-208 未纳管 schema。"
+      npx tsx scripts/assert-untracked-command-runs-empty.ts
+    elif schema_matches "$PRE_HYPOTHESIS_COMMITMENT_REVIEW_SCHEMA"; then
+      echo "[migration] 检测到已批准的 SAAS-207 未纳管 schema。"
+      npx tsx scripts/assert-untracked-command-runs-empty.ts
+    elif schema_matches "$PRE_SALES_HYPOTHESIS_SCHEMA"; then
+      echo "[migration] 检测到已批准的 SAAS-206 未纳管 schema。"
+      npx tsx scripts/assert-untracked-command-runs-empty.ts
+    elif schema_matches "$PRE_INTELLIGENCE_FOCUS_SCHEMA"; then
+      echo "[migration] 检测到已批准的 SAAS-204 未纳管 schema。"
+      npx tsx scripts/assert-untracked-command-runs-empty.ts
+    elif schema_matches "$PRE_RESEARCH_BRIEF_SCHEMA"; then
+      echo "[migration] 检测到已批准的 CORE-206 未纳管 schema。"
+      npx tsx scripts/assert-untracked-command-runs-empty.ts
+    elif schema_matches "$PRE_AGENT_JOB_SCHEMA"; then
+      echo "[migration] 检测到已批准的 CORE-205 未纳管 schema。"
+      npx tsx scripts/assert-untracked-command-runs-empty.ts
+    elif schema_matches "$PRE_REVIEW_BATCH_SCHEMA"; then
+      echo "[migration] 检测到已批准的 SAAS-201 未纳管 schema。"
+      npx tsx scripts/assert-untracked-command-runs-empty.ts
+    elif schema_matches "$PRE_SOURCE_ARTIFACT_SCHEMA"; then
+      echo "[migration] 检测到已批准的 CORE-204 未纳管 schema。"
+      npx tsx scripts/assert-untracked-command-runs-empty.ts
+    elif schema_matches "$PRE_SENSITIVE_SCHEMA"; then
+      echo "[migration] 检测到已批准的 CORE-203 未纳管 schema。"
+      npx tsx scripts/assert-untracked-command-runs-empty.ts
+    elif schema_matches "$PRE_CANDIDATE_SCHEMA"; then
+      echo "[migration] 检测到已批准的 CORE-115 未纳管 schema。"
       npx tsx scripts/assert-untracked-command-runs-empty.ts
     elif schema_matches "$PRE_CUSTOMER_SCHEMA"; then
       echo "[migration] 检测到已批准的 CORE-113 未纳管 schema。"
@@ -676,7 +1333,16 @@ case "$state" in
         fi
         echo "[migration] 继续中断的当前 schema 接管。"
         resolve_missing_pre_bridge_migrations
-      elif schema_matches "$PRE_CUSTOMER_SCHEMA" || schema_matches "$PRE_PDE_CONTEXT_SCHEMA" \
+      elif schema_matches "$PRE_RELATIONSHIP_RADAR_SCHEMA" \
+        || schema_matches "$PRE_HYPOTHESIS_COMMITMENT_REVIEW_SCHEMA" \
+        || schema_matches "$PRE_SALES_HYPOTHESIS_SCHEMA" \
+        || schema_matches "$PRE_INTELLIGENCE_FOCUS_SCHEMA" \
+        || schema_matches "$PRE_RESEARCH_BRIEF_SCHEMA" \
+        || schema_matches "$PRE_AGENT_JOB_SCHEMA" || schema_matches "$PRE_REVIEW_BATCH_SCHEMA" \
+        || schema_matches "$PRE_SOURCE_ARTIFACT_SCHEMA" \
+        || schema_matches "$PRE_SENSITIVE_SCHEMA" \
+        || schema_matches "$PRE_CANDIDATE_SCHEMA" || schema_matches "$PRE_CUSTOMER_SCHEMA" \
+        || schema_matches "$PRE_PDE_CONTEXT_SCHEMA" \
         || schema_matches "$PRE_METHODOLOGY_DATA_SCHEMA" \
         || schema_matches "$PRE_METHODOLOGY_SCHEMA" \
         || schema_matches "$PRE_SCOPE_SCHEMA" \
@@ -713,6 +1379,26 @@ recover_incomplete_pde_context_migration
 adopt_existing_pde_context_schema_if_safe
 recover_incomplete_customer_migration
 adopt_existing_customer_schema_if_safe
+recover_incomplete_candidate_migration
+adopt_existing_candidate_schema_if_safe
+recover_incomplete_sensitive_acl_migration
+adopt_existing_sensitive_acl_schema_if_safe
+recover_incomplete_source_artifact_migration
+adopt_existing_source_artifact_schema_if_safe
+recover_incomplete_review_batch_migration
+adopt_existing_review_batch_schema_if_safe
+recover_incomplete_agent_job_migration
+adopt_existing_agent_job_schema_if_safe
+recover_incomplete_research_brief_migration
+adopt_existing_research_brief_schema_if_safe
+recover_incomplete_intelligence_focus_migration
+adopt_existing_intelligence_focus_schema_if_safe
+recover_incomplete_sales_hypothesis_migration
+adopt_existing_sales_hypothesis_schema_if_safe
+recover_incomplete_hypothesis_commitment_review_migration
+adopt_existing_hypothesis_commitment_review_schema_if_safe
+recover_incomplete_relationship_radar_migration
+adopt_existing_relationship_radar_schema_if_safe
 refresh_applied_migrations
 matter_migration_pending=0
 if ! migration_is_applied "$MATTER_MIGRATION"; then
@@ -770,6 +1456,95 @@ if ! migration_is_applied "$PDE_CONTEXT_MIGRATION"; then
   npm run migrate:pde-context-report
 fi
 
+candidate_migration_pending=0
+if ! migration_is_applied "$CANDIDATE_MIGRATION"; then
+  candidate_migration_pending=1
+  echo "[migration] 在 Candidate 基座扩展前执行五来源逐租户只读预演与完整性校验…"
+  npm run migrate:candidate-report
+fi
+
+sensitive_acl_migration_pending=0
+if ! migration_is_applied "$SENSITIVE_ACL_MIGRATION"; then
+  sensitive_acl_migration_pending=1
+  echo "[migration] CORE-204 将扩展敏感资源 ACL；DDL 后先只读预演，再以单事务回填。"
+fi
+
+source_artifact_migration_pending=0
+if ! migration_is_applied "$SOURCE_ARTIFACT_MIGRATION"; then
+  source_artifact_migration_pending=1
+  echo "[migration] SAAS-201 将扩展统一来源制品投影；DDL 后先只读预演，再以单事务回填。"
+fi
+
+if ! migration_is_applied "$REVIEW_BATCH_MIGRATION"; then
+  review_batch_schema_state=$(npx tsx scripts/postgres-review-batch-schema-state.ts)
+  if [ "$review_batch_schema_state" = legacy ]; then
+    echo "[migration] 在 ReviewBatch/Interaction 扩展前执行 Candidate 附着漂移预演…"
+    npm run migrate:review-batch-report
+  else
+    echo "[migration] 新库尚无 Candidate 基座；CORE-205 预演将在版本化 DDL 后执行。"
+  fi
+fi
+
+if ! migration_is_applied "$AGENT_JOB_MIGRATION"; then
+  agent_job_schema_state=$(npx tsx scripts/postgres-agent-job-schema-state.ts)
+  if [ "$agent_job_schema_state" = legacy ]; then
+    echo "[migration] 在 Agent Job/Run 扩展前执行固定注册表与 body-free 审计预演…"
+    npm run migrate:agent-job-report
+  else
+    echo "[migration] 新库尚无 ReviewBatch 基座；CORE-206 预演将在版本化 DDL 后执行。"
+  fi
+fi
+
+if ! migration_is_applied "$RESEARCH_BRIEF_MIGRATION"; then
+  research_brief_schema_state=$(npx tsx scripts/postgres-research-brief-schema-state.ts)
+  if [ "$research_brief_schema_state" = legacy ]; then
+    echo "[migration] 在 ResearchBriefSnapshot 扩展前执行零回填与加密元数据预演…"
+    npm run migrate:research-brief-report
+  else
+    echo "[migration] 新库尚无 AgentRun 基座；SAAS-204 预演将在版本化 DDL 后执行。"
+  fi
+fi
+
+if ! migration_is_applied "$INTELLIGENCE_FOCUS_MIGRATION"; then
+  intelligence_focus_schema_state=$(npx tsx scripts/postgres-intelligence-focus-schema-state.ts)
+  if [ "$intelligence_focus_schema_state" = legacy ]; then
+    echo "[migration] 在 Intelligence/Focus 扩展前执行零回填、证据隔离与方法中立预演…"
+    npm run migrate:intelligence-focus-report
+  else
+    echo "[migration] 新库尚无 ResearchBriefSnapshot 基座；SAAS-206 预演将在版本化 DDL 后执行。"
+  fi
+fi
+
+if ! migration_is_applied "$SALES_HYPOTHESIS_MIGRATION"; then
+  sales_hypothesis_schema_state=$(npx tsx scripts/postgres-sales-hypothesis-schema-state.ts)
+  if [ "$sales_hypothesis_schema_state" = legacy ]; then
+    echo "[migration] 在 SalesHypothesis 扩展前执行人工 assumption、父树与保守状态映射预演…"
+    npm run migrate:sales-hypothesis-report
+  else
+    echo "[migration] 新库尚无 Intelligence/Focus 基座；SAAS-207 预演将在版本化 DDL 后执行。"
+  fi
+fi
+
+if ! migration_is_applied "$HYPOTHESIS_COMMITMENT_REVIEW_MIGRATION"; then
+  hypothesis_commitment_review_schema_state=$(npx tsx scripts/postgres-hypothesis-commitment-review-schema-state.ts)
+  if [ "$hypothesis_commitment_review_schema_state" = legacy ]; then
+    echo "[migration] 在 SAAS-208 假设验证扩展前执行零回填、同行链接与人工审查预演…"
+    npm run migrate:hypothesis-commitment-review-report
+  else
+    echo "[migration] 新库尚无 SalesHypothesis 基座；SAAS-208 预演将在版本化 DDL 后执行。"
+  fi
+fi
+
+if ! migration_is_applied "$RELATIONSHIP_RADAR_MIGRATION"; then
+  relationship_radar_schema_state=$(npx tsx scripts/postgres-relationship-radar-schema-state.ts)
+  if [ "$relationship_radar_schema_state" = legacy ]; then
+    echo "[migration] 在 SAAS-212 关系雷达扩展前执行零回填、body-free 快照与 AgentRun 绑定预演…"
+    npm run migrate:relationship-radar-report
+  else
+    echo "[migration] 新库尚无 SAAS-208 关系工作台基座；SAAS-212 预演将在版本化 DDL 后执行。"
+  fi
+fi
+
 echo "[migration] 在唯一索引迁移前执行同步锚与企微绑定冲突扫描…"
 npm run migrate:sync-anchor-report
 npm run migrate:wecom-bind-report
@@ -806,6 +1581,74 @@ if [ "$pde_context_migration_pending" -eq 1 ]; then
   echo "[migration] 校验 PDE 决策上下文租户父树、profile 与影子迁移完整性…"
   npm run migrate:pde-context-verify
 fi
+
+echo "[migration] 以单事务幂等回填五来源 Candidate，并在最后写入 CORE-203 marker…"
+npm run migrate:candidate-apply
+echo "[migration] 双向校验 Candidate 权威与五张只读兼容投影…"
+npm run migrate:candidate-verify
+
+echo "[migration] 只读预演敏感资源 creator 映射、隔离状态、父树与 reviewer grant…"
+npm run migrate:sensitive-acl-report
+echo "[migration] 以单事务回填敏感资源 ACL，并在最后写入 CORE-204 marker…"
+npm run migrate:sensitive-acl-apply
+echo "[migration] 校验敏感资源 ACL marker、租户父树、可见性与 grant 版本…"
+npm run migrate:sensitive-acl-verify
+
+echo "[migration] 只读预演 Note/Transcript 来源制品投影、父树、指纹与保留状态…"
+npm run migrate:source-artifact-report
+echo "[migration] 以单事务回填统一来源制品投影，并在最后写入 SAAS-201 marker…"
+npm run migrate:source-artifact-apply
+echo "[migration] 校验来源制品 marker、租户父树、唯一身份、指纹与保留状态…"
+npm run migrate:source-artifact-verify
+
+echo "[migration] 只读预演 ReviewBatch、Candidate、SourceArtifact 与 Interaction 父树/ACL/状态一致性…"
+npm run migrate:review-batch-report
+echo "[migration] 写入 CORE-205 marker；正式 CRM 数据保持不变…"
+npm run migrate:review-batch-apply
+echo "[migration] 校验 CORE-205 marker、采纳收据与双向追踪完整性…"
+npm run migrate:review-batch-verify
+
+echo "[migration] 只读预演 Agent Job 固定定义、租户收窄控制与 body-free AgentRun…"
+npm run migrate:agent-job-report
+echo "[migration] 写入 CORE-206 marker；不自动创建或启用任何 Job/Run…"
+npm run migrate:agent-job-apply
+echo "[migration] 校验 CORE-206 marker、定义 hash、scope 引用与运行审计完整性…"
+npm run migrate:agent-job-verify
+
+echo "[migration] 只读预演 ResearchBriefSnapshot 加密元数据、计数和零正式写入契约…"
+npm run migrate:research-brief-report
+echo "[migration] 写入 SAAS-204 marker；不回填快照且不修改正式 CRM 数据…"
+npm run migrate:research-brief-apply
+echo "[migration] 校验 SAAS-204 marker、schema 指纹和不可变快照元数据…"
+npm run migrate:research-brief-verify
+
+echo "[migration] 只读预演 IntelligenceItem/StakeholderFocus 父树、溯源、有效期与零正式写入契约…"
+npm run migrate:intelligence-focus-report
+echo "[migration] 写入 SAAS-206 marker；不回填情报、聚焦、Evidence 或 legacy primary D…"
+npm run migrate:intelligence-focus-apply
+echo "[migration] 校验 SAAS-206 marker、schema 指纹、受检引用与方法中立性…"
+npm run migrate:intelligence-focus-verify
+
+echo "[migration] 只读预演 legacy assumption、SalesHypothesis 修订与 Evidence 链接完整性…"
+npm run migrate:sales-hypothesis-report
+echo "[migration] 以单事务保守回填人工 assumption，并在最后写入 SAAS-207 marker…"
+npm run migrate:sales-hypothesis-apply
+echo "[migration] 校验 SAAS-207 marker、不可变初始修订、父树与正式状态零推断…"
+npm run migrate:sales-hypothesis-verify
+
+echo "[migration] 只读预演 SAAS-208 Commitment 假设链接、结果元数据与 Evidence 闭包…"
+npm run migrate:hypothesis-commitment-review-report
+echo "[migration] 写入 SAAS-208 marker；不回填 Commitment、Evidence 或任何正式状态…"
+npm run migrate:hypothesis-commitment-review-apply
+echo "[migration] 校验 SAAS-208 marker、同行字段、父树与一次性人工审查元数据…"
+npm run migrate:hypothesis-commitment-review-verify
+
+echo "[migration] 只读预演 SAAS-212 不可变关系雷达快照、计数、AgentRun 绑定与零正式写入…"
+npm run migrate:relationship-radar-report
+echo "[migration] 写入 SAAS-212 marker；不回填快照且不修改任何正式 CRM 状态…"
+npm run migrate:relationship-radar-apply
+echo "[migration] 校验 SAAS-212 marker、schema 指纹、规则版本、精确输出引用与 24 小时有效期…"
+npm run migrate:relationship-radar-verify
 
 if ! schema_matches "$SCHEMA"; then
   echo "[migration] 迁移后 schema 与当前模型仍不一致，拒绝启动：" >&2

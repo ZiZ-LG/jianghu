@@ -1,9 +1,13 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { assembleProductAccess, type CapabilityPolicy } from '@jianghu/domain-contracts';
 import { prisma } from './prisma.js';
 import { canReadPrivateBusinessData, visiblePersonLogs, type ReadPrincipal } from './visibility.js';
 import { activePersonWhere } from './activePerson.js';
 import { commitmentFromPlanAction } from './commitment/view.js';
 import { resolveEffectiveResourceScope } from './resourceScope.js';
+import { createSensitiveAccessEvaluator, noteDescriptor } from './sensitiveAccess.js';
+
+const INTERNAL_CAPABILITY_POLICY = assembleProductAccess({ edition: 'internal' }).policy;
 
 const J = (s: string | null | undefined, d: unknown) => { try { return s ? JSON.parse(s) : d; } catch { return d; } };
 
@@ -16,6 +20,7 @@ export interface StateSecurityWarning {
 
 export interface AssembleStateOptions {
   onSecurityWarning?: (warning: StateSecurityWarning) => void;
+  capabilityPolicy?: CapabilityPolicy;
 }
 
 class StateDropCollector {
@@ -137,6 +142,7 @@ export async function assembleState(
   if (principal.tenantId !== tenantId) return { accounts: [], unfiledNotes: [] };
 
   const scope = await resolveEffectiveResourceScope(prisma, principal);
+  const capabilityPolicy = options.capabilityPolicy ?? INTERNAL_CAPABILITY_POLICY;
   const effectivePrincipal: ReadPrincipal = {
     tenantId,
     userId: scope.actorUserId,
@@ -402,27 +408,81 @@ export async function assembleState(
       ...(canReadUnfiledNotes ? [{ accountId: null, opportunityId: null }] : []),
     ],
   };
-  const notes = await prisma.note.findMany({
-    where: { tenantId, ...noteParentWhere },
-    orderBy: { createdAt: 'desc' },
+  // Tenant-wide readers retain the existing content-free corruption signal without
+  // loading Note bodies. Narrow-scope actors do not receive counts/IDs for rows outside
+  // their effective tree.
+  const tenantNoteRefs = hasTenantWideRead
+    ? await prisma.note.findMany({
+        where: { tenantId },
+        select: {
+          id: true, tenantId: true, accountId: true, opportunityId: true, personId: true,
+        },
+      })
+    : [];
+  for (const n of tenantNoteRefs) {
+    if (inArchivedBranch(n.accountId, n.opportunityId)) continue;
+    const reasons: string[] = [];
+    if (n.accountId && !accountIds.has(n.accountId)) reasons.push('account_mismatch');
+    if (n.opportunityId && opportunityAccount.get(n.opportunityId) !== n.accountId) {
+      reasons.push('opportunity_mismatch');
+    }
+    if (n.personId && personAccount.get(n.personId) !== n.accountId) {
+      reasons.push('person_mismatch');
+    }
+    drops.keep('Note', n.id, reasons);
+  }
+  const notes = await prisma.$transaction(async (tx) => {
+    const evaluator = await createSensitiveAccessEvaluator(
+      tx, effectivePrincipal, capabilityPolicy,
+    );
+    const aclWhere = await evaluator.metadataWhere('note', 'read', {
+      matterId: 'opportunityId',
+    });
+    const noteMetadata = await tx.note.findMany({
+      where: { tenantId, ...noteParentWhere, ...aclWhere },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true, tenantId: true, accountId: true, opportunityId: true, personId: true,
+        createdByUserId: true, visibility: true, aclVersion: true,
+      },
+    });
+    const decisions = await evaluator.authorizeMany(noteMetadata.map(noteDescriptor), 'read');
+    const readableNoteRefs: Array<{ id: string; aclVersion: number }> = [];
+    for (const [index, n] of noteMetadata.entries()) {
+      if (n.tenantId === tenantId && inArchivedBranch(n.accountId, n.opportunityId)) continue;
+      const reasons: string[] = [];
+      if (n.tenantId !== tenantId) reasons.push('tenant_mismatch');
+      if (n.accountId) {
+        if (!accountIds.has(n.accountId)) reasons.push('account_mismatch');
+        if (n.opportunityId && opportunityAccount.get(n.opportunityId) !== n.accountId) {
+          reasons.push('opportunity_mismatch');
+        }
+        if (n.personId && personAccount.get(n.personId) !== n.accountId) reasons.push('person_mismatch');
+      } else {
+        if (n.opportunityId) reasons.push('opportunity_mismatch');
+        if (n.personId) reasons.push('person_mismatch');
+      }
+      if (!drops.keep('Note', n.id, reasons)) continue;
+      const access = decisions[index];
+      if (!access.allowed) {
+        drops.keep('Note', n.id, ['sensitive_acl_' + (access.reason ?? 'denied')]);
+        continue;
+      }
+      readableNoteRefs.push({ id: n.id, aclVersion: n.aclVersion });
+    }
+    // Bodies are loaded in the same serializable snapshot and only for the ACL generation reviewed above.
+    return readableNoteRefs.length === 0 ? [] : tx.note.findMany({
+      where: { tenantId, OR: readableNoteRefs },
+      orderBy: { createdAt: 'desc' },
+    });
+  }, {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    maxWait: 5_000,
+    timeout: 30_000,
   });
   const notesByAccount = new Map<string, ReturnType<typeof noteView>[]>();
   const unfiledNotes: ReturnType<typeof noteView>[] = [];
   for (const n of notes) {
-    if (n.tenantId === tenantId && inArchivedBranch(n.accountId, n.opportunityId)) continue;
-    const reasons: string[] = [];
-    if (n.tenantId !== tenantId) reasons.push('tenant_mismatch');
-    if (n.accountId) {
-      if (!accountIds.has(n.accountId)) reasons.push('account_mismatch');
-      if (n.opportunityId && opportunityAccount.get(n.opportunityId) !== n.accountId) {
-        reasons.push('opportunity_mismatch');
-      }
-      if (n.personId && personAccount.get(n.personId) !== n.accountId) reasons.push('person_mismatch');
-    } else {
-      if (n.opportunityId) reasons.push('opportunity_mismatch');
-      if (n.personId) reasons.push('person_mismatch');
-    }
-    if (!drops.keep('Note', n.id, reasons)) continue;
     if (n.accountId) {
       const arr = notesByAccount.get(n.accountId) ?? [];
       arr.push(noteView(n));

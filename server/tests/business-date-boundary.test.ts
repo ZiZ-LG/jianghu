@@ -5,6 +5,7 @@ import { executeInboxBatch } from '../src/mutation/compoundCommands.js';
 import { applyAction } from '../src/mutate.js';
 import { ingestVoiceText } from '../src/voice.js';
 import { runPatrol } from '../src/jobs.js';
+import { seedLegacyCandidateAuthority } from './helpers/candidateAuthority.js';
 
 const BEIJING_0030 = new Date('2026-07-14T16:30:00.000Z');
 
@@ -83,6 +84,9 @@ describe('Asia/Shanghai business-day writes at Beijing 00:30', () => {
       id: 'evidence-review-date', tenantId: test.tenant.id, accountId: tree.accountId,
       opportunityId: tree.opportunityId, personId: tree.personId, signalKey: 'test', status: 'pending_review',
     } });
+    await seedLegacyCandidateAuthority(
+      test.prisma, test.tenant.id, 'EvidenceEvent', 'evidence-review-date',
+    );
 
     const response = await test.app.inject({
       method: 'POST',
@@ -102,6 +106,9 @@ describe('Asia/Shanghai business-day writes at Beijing 00:30', () => {
       id: 'evidence-batch-date', tenantId: test.tenant.id, accountId: tree.accountId,
       opportunityId: tree.opportunityId, personId: tree.personId, signalKey: 'test', status: 'pending_review',
     } });
+    await seedLegacyCandidateAuthority(
+      test.prisma, test.tenant.id, 'EvidenceEvent', 'evidence-batch-date',
+    );
 
     await executeInboxBatch(ctx, {
       items: [{ kind: 'evidence', id: 'evidence-batch-date', decision: 'reject' }],

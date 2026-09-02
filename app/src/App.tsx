@@ -935,6 +935,7 @@ export default function App() {
           accounts={state.accounts}
           crmContextState={commercialContextState}
           actorUserId={auth.user.id}
+          actorRole={auth.user.role}
           readonly={readonly}
           onNavigate={navigateCommercial}
           onOpenLegacy={salesWorkspaceEnabled ? openAccount : () => setSyncErr('当前版本未启用复杂销售工作台')}

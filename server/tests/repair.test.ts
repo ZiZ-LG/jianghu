@@ -191,6 +191,111 @@ describe('INT-301 minimum data repair', () => {
     }
   });
 
+  it('denies hidden Matter repair and checks both source and target scope for VisitNote rebind', async () => {
+    const context = await createTestContext();
+    try {
+      const actor = await context.prisma.user.create({ data: {
+        tenantId: context.tenant.id,
+        email: `repair-matter-actor-${randomUUID()}@example.test`,
+        passwordHash: 'unused',
+        name: 'Repair matter actor',
+        role: 'member',
+      } });
+      const other = await context.prisma.user.create({ data: {
+        tenantId: context.tenant.id,
+        email: `repair-matter-other-${randomUUID()}@example.test`,
+        passwordHash: 'unused',
+        name: 'Repair matter other',
+        role: 'member',
+      } });
+      await context.prisma.tenant.update({
+        where: { id: context.tenant.id },
+        data: { dataScopePolicy: 'scoped' },
+      });
+      const visibleAccountId = `repair-matter-visible-account-${randomUUID()}`;
+      const hiddenAccountId = `repair-matter-hidden-account-${randomUUID()}`;
+      const visibleMatterId = `repair-matter-visible-${randomUUID()}`;
+      const hiddenMatterId = `repair-matter-hidden-${randomUUID()}`;
+      await context.prisma.account.createMany({ data: [
+        {
+          id: visibleAccountId, tenantId: context.tenant.id, name: 'Visible repair account',
+          primaryOwnerUserId: actor.id, primaryOwner: actor.name,
+        },
+        {
+          id: hiddenAccountId, tenantId: context.tenant.id, name: 'Hidden repair account',
+          primaryOwnerUserId: other.id, primaryOwner: other.name,
+        },
+      ] });
+      await context.prisma.opportunity.createMany({ data: [
+        {
+          id: visibleMatterId, tenantId: context.tenant.id, accountId: visibleAccountId,
+          name: 'Visible repair matter', customerType: 1, pipelineStage: '线索',
+          engageStage: '需求调研立项', primaryOwnerUserId: actor.id,
+        },
+        {
+          id: hiddenMatterId, tenantId: context.tenant.id, accountId: hiddenAccountId,
+          name: 'Hidden repair matter', customerType: 1, pipelineStage: '线索',
+          engageStage: '需求调研立项', primaryOwnerUserId: other.id,
+        },
+      ] });
+      const token = context.app.jwt.sign({
+        userId: actor.id, tenantId: context.tenant.id, role: 'member',
+      });
+
+      const repair = await context.app.inject({
+        method: 'PATCH',
+        url: `/api/repair/opportunity/${hiddenMatterId}`,
+        headers: auth(token),
+        payload: { baseVersion: 0, name: 'Must not change' },
+      });
+      expect(repair.statusCode, repair.body).toBe(404);
+      expect(repair.json()).toEqual({ error: '资源不存在' });
+      await expect(context.prisma.opportunity.findUniqueOrThrow({ where: { id: hiddenMatterId } }))
+        .resolves.toMatchObject({ name: 'Hidden repair matter', version: 0 });
+
+      const hiddenVisitId = `repair-hidden-visit-${randomUUID()}`;
+      const visibleVisitId = `repair-visible-visit-${randomUUID()}`;
+      await context.prisma.visitNote.createMany({ data: [
+        {
+          id: hiddenVisitId, tenantId: context.tenant.id, accountId: hiddenAccountId,
+          opportunityId: hiddenMatterId, summary: 'hidden source',
+        },
+        {
+          id: visibleVisitId, tenantId: context.tenant.id, accountId: visibleAccountId,
+          opportunityId: visibleMatterId, summary: 'visible source',
+        },
+      ] });
+      for (const payload of [
+        {
+          kind: 'visitNote', id: hiddenVisitId,
+          accountId: visibleAccountId, opportunityId: visibleMatterId,
+        },
+        {
+          kind: 'visitNote', id: visibleVisitId,
+          accountId: hiddenAccountId, opportunityId: hiddenMatterId,
+        },
+      ]) {
+        const response = await context.app.inject({
+          method: 'POST', url: '/api/repair/rebind', headers: auth(token), payload,
+        });
+        expect(response.statusCode, response.body).toBe(404);
+        expect(response.json()).toEqual({ error: '资源不存在' });
+      }
+      await expect(context.prisma.visitNote.findUniqueOrThrow({ where: { id: hiddenVisitId } }))
+        .resolves.toMatchObject({ accountId: hiddenAccountId, opportunityId: hiddenMatterId });
+      await expect(context.prisma.visitNote.findUniqueOrThrow({ where: { id: visibleVisitId } }))
+        .resolves.toMatchObject({ accountId: visibleAccountId, opportunityId: visibleMatterId });
+      await expect(context.prisma.auditEvent.count({
+        where: {
+          tenantId: context.tenant.id,
+          entityId: { in: [hiddenMatterId, hiddenVisitId, visibleVisitId] },
+        },
+      })).resolves.toBe(0);
+    } finally {
+      await context.cleanup();
+    }
+  });
+
   it('transactionally rebinds VisitNote and Note redundant account/opportunity references and audits each repair', async () => {
     const context = await createTestContext();
     try {
@@ -215,7 +320,11 @@ describe('INT-301 minimum data repair', () => {
         context.prisma.note.findUniqueOrThrow({ where: { id: tree.noteId } }),
       ])).resolves.toEqual([
         expect.objectContaining({ accountId: tree.targetAccountId, opportunityId: tree.targetOpportunityId }),
-        expect.objectContaining({ accountId: tree.targetAccountId, opportunityId: tree.targetOpportunityId }),
+        expect.objectContaining({
+          accountId: tree.targetAccountId,
+          opportunityId: tree.targetOpportunityId,
+          aclVersion: 2,
+        }),
       ]);
 
       const audits = await context.prisma.auditEvent.findMany({
@@ -228,7 +337,7 @@ describe('INT-301 minimum data repair', () => {
         sourceRef: audit.sourceRef,
         changedFields: JSON.parse(audit.changedFields),
       }))).toEqual([
-        { entityKind: 'note', sourceRef: null, changedFields: ['accountId', 'opportunityId'] },
+        { entityKind: 'note', sourceRef: null, changedFields: ['accountId', 'opportunityId', 'aclVersion'] },
         { entityKind: 'visitNote', sourceRef: 'visit-success', changedFields: ['accountId', 'opportunityId'] },
       ]);
     } finally {

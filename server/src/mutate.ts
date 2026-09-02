@@ -1,8 +1,16 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
-import { ACCOUNT_PROFILE_FIELDS, ActionSchema, CommandContextSchema, type Action, type CommandContext } from '@jianghu/domain-contracts';
+import {
+  ACCOUNT_PROFILE_FIELDS,
+  ActionSchema,
+  CommandContextSchema,
+  assembleProductAccess,
+  type Action,
+  type CapabilityPolicy,
+  type CommandContext,
+} from '@jianghu/domain-contracts';
 import { prisma } from './prisma.js';
 import { enqueueEnrichJob, enqueueProfileJob } from './jobs.js';
-import { requireActionScope } from './mutation/actionScope.js';
+import { LegacyAssumptionFrozenError, requireActionScope } from './mutation/actionScope.js';
 import { requireScopedRow, ScopedNotFoundError, type DbClient } from './mutation/scopeGuards.js';
 import { isTrustedHumanAssertion, normalizeActionTrust } from './ingestTrust.js';
 import { activePersonWhere } from './activePerson.js';
@@ -11,10 +19,20 @@ import { businessYmd } from './businessDate.js';
 import { mapLegacyOpportunityStatus } from './matter/lifecycle.js';
 import { mapLegacyPlanActionToCommitmentFields } from './commitment/legacy.js';
 import { createPdeDecisionContext } from './pde/context.js';
+import {
+  assertEvidenceDeletionAllowed,
+  createEvidenceCandidate,
+} from './candidates/reviewItems.js';
+import { authorizeSensitiveResource, noteDescriptor } from './sensitiveAccess.js';
+import {
+  ensureSourceArtifactForNote,
+  markSourceArtifactRetentionForBacking,
+} from './sourceArtifacts/service.js';
 
 export type { DbClient } from './mutation/scopeGuards.js';
 
 const ACCOUNT_PROFILE_SERVER_KEYS = new Set<string>([...ACCOUNT_PROFILE_FIELDS, '_mcpOrigin']);
+const INTERNAL_CAPABILITY_POLICY = assembleProductAccess({ edition: 'internal' }).policy;
 
 type MachineActionPolicy = 'allow' | 'conditional_opp_role' | 'deny';
 const MACHINE_ACTION_POLICY: Record<Action['type'], MachineActionPolicy> = {
@@ -123,8 +141,9 @@ async function runTopLevelTransaction(
   db: PrismaClient,
   ctx: CommandContext,
   action: Action,
+  capabilityPolicy: CapabilityPolicy,
 ): Promise<PostCommitEffect> {
-  return runSerializableTransaction(db, (tx) => applyActionInTransaction(ctx, action, tx));
+  return runSerializableTransaction(db, (tx) => applyActionInTransaction(ctx, action, tx, capabilityPolicy));
 }
 
 export async function runPostCommitEffect(effect: PostCommitEffect): Promise<void> {
@@ -137,7 +156,12 @@ export async function runPostCommitEffect(effect: PostCommitEffect): Promise<voi
 
 
 /** 把经共享契约验证的 Action 落到数据库（全程按服务端 CommandContext.tenantId 隔离）。 */
-export async function applyAction(ctx: CommandContext, action: Action, db: DbClient = prisma): Promise<PostCommitEffect> {
+export async function applyAction(
+  ctx: CommandContext,
+  action: Action,
+  db: DbClient = prisma,
+  capabilityPolicy: CapabilityPolicy = INTERNAL_CAPABILITY_POLICY,
+): Promise<PostCommitEffect> {
   CommandContextSchema.parse(ctx);
   const trustedAction = normalizeActionTrust(ctx, ActionSchema.parse(action));
   if (ctx.actorRole === 'viewer') throw new Error('mutation forbidden');
@@ -159,14 +183,19 @@ export async function applyAction(ctx: CommandContext, action: Action, db: DbCli
   }
 
   if (isTopLevelClient(db)) {
-    const effect = await runTopLevelTransaction(db, ctx, trustedAction);
+    const effect = await runTopLevelTransaction(db, ctx, trustedAction, capabilityPolicy);
     if (db === prisma) await runPostCommitEffect(effect);
     return effect;
   }
-  return applyActionInTransaction(ctx, trustedAction, db);
+  return applyActionInTransaction(ctx, trustedAction, db, capabilityPolicy);
 }
 
-async function applyActionInTransaction(ctx: CommandContext, action: Action, db: DbClient): Promise<PostCommitEffect> {
+async function applyActionInTransaction(
+  ctx: CommandContext,
+  action: Action,
+  db: DbClient,
+  capabilityPolicy: CapabilityPolicy,
+): Promise<PostCommitEffect> {
   const { tenantId } = ctx;
   const t = action.type;
   const S = (v: unknown) => JSON.stringify(v ?? null);
@@ -184,6 +213,22 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
     const user = await db.user.findFirst({ where: { id: userId, tenantId }, select: { id: true } });
     if (!user) throw new Error('primary owner not found in tenant');
     return user.id;
+  };
+  const requireNoteManage = async (noteId: string) => {
+    const row = await requireScopedRow(db.note.findFirst({
+      where: { id: noteId, tenantId },
+      select: {
+        id: true, tenantId: true, accountId: true, opportunityId: true, personId: true,
+        createdByUserId: true, visibility: true, aclVersion: true,
+      },
+    }));
+    const decision = await authorizeSensitiveResource(db, {
+      tenantId,
+      userId: ctx.actorId,
+      role: ctx.actorRole,
+    }, capabilityPolicy, noteDescriptor(row), 'manage');
+    if (!decision.allowed) throw new ScopedNotFoundError();
+    return row;
   };
 
   switch (t) {
@@ -503,22 +548,81 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
     // ── 自由文本层 · 通用笔记（Note，挂载对象可空）──
     case 'ADD_NOTE': {
       const n = action.note;
+      const access = await authorizeSensitiveResource(db, {
+        tenantId,
+        userId: ctx.actorId,
+        role: ctx.actorRole,
+      }, capabilityPolicy, noteDescriptor({
+        id: n.id,
+        tenantId,
+        accountId: action.accId,
+        opportunityId: n.opportunityId ?? null,
+        personId: n.personId ?? null,
+        createdByUserId: ctx.actorId,
+        visibility: 'private',
+        aclVersion: 1,
+      }), 'manage');
+      if (!access.allowed) throw new ScopedNotFoundError();
       await db.note.create({ data: {
         id: n.id, tenantId, accountId: action.accId, opportunityId: n.opportunityId ?? null,
         personId: n.personId ?? null, content: n.content ?? '', source: n.source ?? 'manual',
         tags: S(n.tags ?? []), createdBy: ctx.actorId,
+        createdByUserId: ctx.actorId, visibility: 'private', aclVersion: 1,
       } });
+      await ensureSourceArtifactForNote(db, tenantId, n.id);
       return;
     }
     case 'UPDATE_NOTE': {
+      const current = await requireNoteManage(action.noteId);
+      const opportunityId = action.patch.opportunityId !== undefined
+        ? action.patch.opportunityId
+        : current.opportunityId;
+      const personId = action.patch.personId !== undefined
+        ? action.patch.personId
+        : current.personId;
+      const parentChanged = opportunityId !== current.opportunityId || personId !== current.personId;
+      if (parentChanged) {
+        const prospective = noteDescriptor({ ...current, opportunityId, personId });
+        const targetDecision = await authorizeSensitiveResource(db, {
+          tenantId,
+          userId: ctx.actorId,
+          role: ctx.actorRole,
+        }, capabilityPolicy, prospective, 'manage');
+        if (!targetDecision.allowed) throw new ScopedNotFoundError();
+      }
       const d = pick(action.patch, ['opportunityId', 'personId', 'content', 'source']);
       if (action.patch?.tags !== undefined) d.tags = S(action.patch.tags);
-      await db.note.updateMany({ where: { id: action.noteId, tenantId, accountId: action.accId }, data: d });
+      if (parentChanged) d.aclVersion = { increment: 1 };
+      const changed = await db.note.updateMany({
+        where: {
+          id: action.noteId,
+          tenantId,
+          accountId: action.accId,
+          aclVersion: current.aclVersion,
+        },
+        data: d,
+      });
+      if (changed.count !== 1) throw new ScopedNotFoundError();
+      await ensureSourceArtifactForNote(db, tenantId, action.noteId);
       return;
     }
-    case 'DELETE_NOTE':
-      await db.note.deleteMany({ where: { id: action.noteId, tenantId, accountId: action.accId } });
+    case 'DELETE_NOTE': {
+      const current = await requireNoteManage(action.noteId);
+      await ensureSourceArtifactForNote(db, tenantId, action.noteId);
+      const changed = await db.note.deleteMany({
+        where: {
+          id: action.noteId,
+          tenantId,
+          accountId: action.accId,
+          aclVersion: current.aclVersion,
+        },
+      });
+      if (changed.count !== 1) throw new ScopedNotFoundError();
+      await markSourceArtifactRetentionForBacking(db, {
+        tenantId, backingKind: 'note', backingId: action.noteId, retentionState: 'deleted',
+      });
       return;
+    }
 
     // ── 商机策划 · 行动计划（PlanAction）──
     case 'ADD_PLAN_ACTION': {
@@ -703,6 +807,7 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
     // ── 策略沙盘 · 风险/假设（StrategyRisk）──
     case 'ADD_STRATEGY_RISK': {
       const r = action.risk;
+      if (r.kind === 'assumption') throw new LegacyAssumptionFrozenError();
       await db.strategyRisk.create({ data: {
         id: r.id, tenantId, accountId: action.accId, opportunityId: action.oppId,
         kind: r.kind ?? 'risk', text: r.text ?? '', severity: r.severity ?? 'mid',
@@ -711,13 +816,26 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
       return;
     }
     case 'UPDATE_STRATEGY_RISK': {
+      const existing = await requireScopedRow(db.strategyRisk.findFirst({
+        where: { id: action.riskId, tenantId, accountId: action.accId },
+        select: { kind: true },
+      }));
+      if (existing.kind === 'assumption' || action.patch.kind === 'assumption') {
+        throw new LegacyAssumptionFrozenError();
+      }
       const d = pick(action.patch, ['kind', 'text', 'severity', 'mitigation', 'status', 'origin']);
       await db.strategyRisk.updateMany({ where: { id: action.riskId, tenantId, accountId: action.accId }, data: d });
       return;
     }
-    case 'DELETE_STRATEGY_RISK':
+    case 'DELETE_STRATEGY_RISK': {
+      const existing = await requireScopedRow(db.strategyRisk.findFirst({
+        where: { id: action.riskId, tenantId, accountId: action.accId },
+        select: { kind: true },
+      }));
+      if (existing.kind === 'assumption') throw new LegacyAssumptionFrozenError();
       await db.strategyRisk.deleteMany({ where: { id: action.riskId, tenantId, accountId: action.accId } });
       return;
+    }
 
     // ── 策略沙盘 · 轻量弹药（StrategyResource）──
     case 'ADD_STRATEGY_RESOURCE': {
@@ -739,15 +857,38 @@ async function applyActionInTransaction(ctx: CommandContext, action: Action, db:
 
     case 'ADD_EVIDENCE': {
       const x = action.evidence;
+      if ((x.status ?? 'approved') === 'pending_review') {
+        const rawContent = x.rawContent?.trim() || '机器候选未附原文，必须由人工核实';
+        await createEvidenceCandidate(db, {
+          id: x.id,
+          tenantId,
+          accountId: action.accId,
+          matterId: action.oppId,
+          personId: x.personId,
+          signalKey: x.signalKey,
+          direction: x.direction ?? 0,
+          tier: x.tier ?? 'mid',
+          rawContent,
+          occurredAt: x.occurredAt ?? '',
+          source: x.origin ?? 'ai',
+          sourceRef: ctx.sourceRef?.trim()
+            || `${x.origin ?? ctx.channel}:${ctx.requestId ?? x.id}:evidence:${x.id}`,
+          confidence: 0.5,
+          createdByUserId: ctx.actorId,
+        });
+        return;
+      }
       await db.evidenceEvent.create({ data: {
         id: x.id, tenantId, accountId: action.accId, opportunityId: action.oppId, personId: x.personId,
         signalKey: x.signalKey, direction: x.direction ?? 0, tier: x.tier ?? 'mid',
         rawContent: x.rawContent ?? '', occurredAt: x.occurredAt ?? '',
         status: x.status ?? 'approved', origin: x.origin ?? 'manual', // M3：人工直落 approved；机器路径显式 pending_review
+        createdBy: ctx.actorId,
       } });
       return;
     }
     case 'DELETE_EVIDENCE':
+      await assertEvidenceDeletionAllowed(db, { tenantId, id: action.evidenceId });
       await db.evidenceEvent.deleteMany({ where: { id: action.evidenceId, tenantId, accountId: action.accId, opportunityId: action.oppId } });
       return;
 

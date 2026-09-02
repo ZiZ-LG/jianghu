@@ -29,9 +29,44 @@ type CommandInput = {
   reservationToken?: string;
   /** Caller opt-in: a scoped recheck miss cancels this exact running reservation instead of recording a business failure. */
   discardReservationOnScopedError?: boolean;
+  /** Reauthorize a completed transport replay inside the same database snapshot before returning its receipt. */
+  authorizeReplay?: (tx: Prisma.TransactionClient) => Promise<void>;
 };
 const TRANSACTION_ATTEMPTS = 3;
 const LEASE_MS = 2 * 60_000;
+
+class ReplayAuthorizationFailure {
+  constructor(readonly reason: unknown) {}
+}
+
+async function authorizeReplayInSnapshot(
+  input: CommandInput,
+  tx: Prisma.TransactionClient,
+): Promise<void> {
+  if (!input.authorizeReplay) return;
+  try {
+    await input.authorizeReplay(tx);
+  } catch (error) {
+    throw new ReplayAuthorizationFailure(error);
+  }
+}
+
+async function authorizeReplayInNewSnapshot(
+  db: PrismaClient,
+  input: CommandInput,
+): Promise<void> {
+  if (!input.authorizeReplay) return;
+  try {
+    await db.$transaction((tx) => authorizeReplayInSnapshot(input, tx), {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      maxWait: 5_000,
+      timeout: 15_000,
+    });
+  } catch (error) {
+    if (error instanceof ReplayAuthorizationFailure) throw error.reason;
+    throw error;
+  }
+}
 
 const REDACTED_KEYS = new Set([
   'text', 'content', 'summary', 'raw', 'rawNote', 'rawContent', 'evidence', 'note', 'form', 'logs', 'priorText', 'oldValue', 'newValue',
@@ -77,7 +112,10 @@ export async function readCommandReplay<T>(
   const existing = await findExistingCommand(db, ctx, input);
   if (!existing) return undefined;
   if (existing.requestHash !== requestHashOf(input.payload)) throw new IdempotencyConflictError();
-  if (existing.status === 'completed') return { replayed: true, result: parseStored<T>(existing.resultSummary) };
+  if (existing.status === 'completed') {
+    await authorizeReplayInNewSnapshot(db, input);
+    return { replayed: true, result: parseStored<T>(existing.resultSummary) };
+  }
   if (existing.status === 'running') {
     const activeUntil = existing.leaseExpiresAt ?? new Date(existing.updatedAt.getTime() + LEASE_MS);
     if (activeUntil > new Date()) throw new CommandInProgressError();
@@ -160,7 +198,10 @@ export async function reserveCommand<T>(
         const existing = await findExistingCommand(tx, ctx, input);
         if (existing && existing.requestHash !== requestHash) throw new IdempotencyConflictError();
         if (existing) await migrateLegacyKey(tx, existing, input);
-        if (existing?.status === 'completed') return { replayed: true as const, result: parseStored<T>(existing.resultSummary) };
+        if (existing?.status === 'completed') {
+          await authorizeReplayInSnapshot(input, tx);
+          return { replayed: true as const, result: parseStored<T>(existing.resultSummary) };
+        }
         if (existing?.status === 'running') {
           const activeUntil = existing.leaseExpiresAt ?? new Date(existing.updatedAt.getTime() + LEASE_MS);
           if (activeUntil > now) throw new CommandInProgressError();
@@ -178,11 +219,15 @@ export async function reserveCommand<T>(
         return { replayed: false as const, reservationToken };
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5_000, timeout: 10_000 });
     } catch (error) {
+      if (error instanceof ReplayAuthorizationFailure) throw error.reason;
       if (error instanceof CommandInProgressError || error instanceof IdempotencyConflictError) throw error;
       if (prismaCode(error) === 'P2002') {
         const existing = await findExistingCommand(db, ctx, input);
         if (existing && existing.requestHash !== requestHash) throw new IdempotencyConflictError();
-        if (existing?.status === 'completed') return { replayed: true, result: parseStored<T>(existing.resultSummary) };
+        if (existing?.status === 'completed') {
+          await authorizeReplayInNewSnapshot(db, input);
+          return { replayed: true, result: parseStored<T>(existing.resultSummary) };
+        }
         throw new CommandInProgressError();
       }
       if (!isRetryableDatabaseError(error) || attempt === TRANSACTION_ATTEMPTS) throw new CommandRetryableError();
@@ -252,6 +297,7 @@ export async function runCommand<T>(
       if (existing && existing.requestHash !== requestHash) throw new IdempotencyConflictError();
       if (existing) await migrateLegacyKey(tx, existing, input);
       if (existing?.status === 'completed') {
+        await authorizeReplayInSnapshot(input, tx);
         return { replayed: true, result: parseStored<T>(existing.resultSummary) };
       }
       if (existing?.status === 'running' && existing.leaseToken !== (input.reservationToken ?? '')) throw new CommandInProgressError();
@@ -275,6 +321,7 @@ export async function runCommand<T>(
       return { replayed: false, result };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 5_000, timeout: 115_000 });
     } catch (error) {
+      if (error instanceof ReplayAuthorizationFailure) throw error.reason;
       if (error instanceof CommandInProgressError || error instanceof IdempotencyConflictError) throw error;
       if (input.discardReservationOnScopedError && input.reservationToken && isScopedNotFound(error)) {
         await cancelReservedCommand(ctx, input, input.reservationToken, db);
@@ -283,16 +330,28 @@ export async function runCommand<T>(
       if (prismaCode(error) === 'P2002') {
         const existing = await findExistingCommand(db, ctx, input);
         if (existing && existing.requestHash !== requestHash) throw new IdempotencyConflictError();
-        if (existing?.status === 'completed') return { replayed: true, result: parseStored<T>(existing.resultSummary) };
+        if (existing?.status === 'completed') {
+          await authorizeReplayInNewSnapshot(db, input);
+          return { replayed: true, result: parseStored<T>(existing.resultSummary) };
+        }
         throw new CommandInProgressError();
       }
       if (isRetryableDatabaseError(error)) {
+        let completedResult: T | undefined;
+        let hasCompletedResult = false;
         try {
           const existing = await findExistingCommand(db, ctx, input);
-          if (existing?.status === 'completed') return { replayed: true, result: parseStored<T>(existing.resultSummary) };
+          if (existing?.status === 'completed') {
+            completedResult = parseStored<T>(existing.resultSummary);
+            hasCompletedResult = true;
+          }
           if (existing?.status === 'running' && existing.leaseToken !== (input.reservationToken ?? '')) throw new CommandInProgressError();
         } catch (reconcileError) {
           if (reconcileError instanceof CommandInProgressError) throw reconcileError;
+        }
+        if (hasCompletedResult) {
+          await authorizeReplayInNewSnapshot(db, input);
+          return { replayed: true, result: completedResult as T };
         }
         if (attempt < TRANSACTION_ATTEMPTS) { await pause(attempt); continue; }
         throw new CommandRetryableError();

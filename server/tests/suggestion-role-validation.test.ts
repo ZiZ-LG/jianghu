@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createTestContext } from './helpers/testApp.js';
+import { seedLegacyCandidateAuthority } from './helpers/candidateAuthority.js';
 
 describe('PersonSuggestion role revalidation', () => {
   it.each(['TB', 'root'])('keeps a historical %s candidate pending instead of writing an invalid formal role', async (suggestedRole) => {
@@ -23,6 +24,9 @@ describe('PersonSuggestion role revalidation', () => {
           name: '虚构候选人', title: '虚构岗位', suggestedRole, status: 'pending',
         },
       });
+      await seedLegacyCandidateAuthority(
+        context.prisma, context.tenant.id, 'PersonSuggestion', suggestionId,
+      );
 
       const response = await context.app.inject({
         method: 'POST', url: `/api/suggest/persons/${suggestionId}/accept`,

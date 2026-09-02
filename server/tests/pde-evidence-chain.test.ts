@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { createTestContext, type TestContext } from './helpers/testApp.js';
 import { loadSeeds } from '../src/pde/pack.js';
+import { seedLegacyCandidateAuthority } from './helpers/candidateAuthority.js';
 
 async function seedDeal(context: TestContext, suffix: string) {
   const accountId = `acc-pde-${suffix}`;
@@ -59,6 +60,9 @@ async function addEvidence(
       signalKey, direction, tier: 'strong', status,
     },
   });
+  if (status === 'pending_review' && tenantId === context.tenant.id) {
+    await seedLegacyCandidateAuthority(context.prisma, tenantId, 'EvidenceEvent', id);
+  }
 }
 
 describe('approved Evidence -> PDE -> durable evidence_review snapshot', () => {

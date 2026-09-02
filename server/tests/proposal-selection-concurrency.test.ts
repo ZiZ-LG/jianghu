@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { CommandContext } from '@jianghu/domain-contracts';
 import { acceptProposal } from '../src/proposals.js';
 import { createTestContext } from './helpers/testApp.js';
+import { seedLegacyCandidateAuthorities, seedLegacyCandidateAuthority } from './helpers/candidateAuthority.js';
 
 describe('proposal selection concurrency', () => {
   it('accepts competing P4 proposals atomically and leaves at most one legal selection', async () => {
@@ -27,6 +28,10 @@ describe('proposal selection concurrency', () => {
         id: `proposal-p4-${index}`, tenantId: context.tenant.id, accountId, opportunityId,
         entityKind: 'oppRole', entityId: personId, field: 'isKeyInfluencer', oldValue: 'false', newValue: 'true',
       })) });
+      await seedLegacyCandidateAuthorities(context.prisma, context.tenant.id, [
+        { sourceKind: 'ChangeProposal', sourceId: 'proposal-p4-0' },
+        { sourceKind: 'ChangeProposal', sourceId: 'proposal-p4-1' },
+      ]);
       const commandContext: CommandContext = {
         tenantId: context.tenant.id, actorId: context.owner.id, actorRole: 'owner', channel: 'web',
         requestId: 'proposal-p4-concurrency', assertionMode: 'user_asserted',
@@ -73,6 +78,9 @@ describe('proposal selection concurrency', () => {
         id: 'proposal-serializable', tenantId: context.tenant.id, accountId, opportunityId,
         entityKind: 'oppRole', entityId: personId, field: 'sentiment', oldValue: 'neutral', newValue: 'plus',
       } });
+      await seedLegacyCandidateAuthority(
+        context.prisma, context.tenant.id, 'ChangeProposal', 'proposal-serializable',
+      );
 
       await acceptProposal({
         tenantId: context.tenant.id, actorId: context.owner.id, actorRole: 'owner', channel: 'web',

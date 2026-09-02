@@ -118,6 +118,7 @@ describe('SAAS-106 commercial Free first-day stage gate', () => {
             confirmationDueAtUtc: '2026-08-23T18:00:00.000Z',
             source: 'manual_quick_capture',
             sourceRef: null,
+            hypothesisRef: null,
           },
         },
       };

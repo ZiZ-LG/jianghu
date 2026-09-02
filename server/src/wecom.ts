@@ -5,7 +5,12 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
-import { ActorRoleSchema, type Action } from '@jianghu/domain-contracts';
+import {
+  ActorRoleSchema,
+  capabilityPolicyAllows,
+  type Action,
+  type CapabilityPolicy,
+} from '@jianghu/domain-contracts';
 import { prisma } from './prisma.js';
 import { denyViewer } from './scope.js';
 import { enc, dec } from './ai.js';
@@ -13,6 +18,7 @@ import { scoreFromState } from './g64111.js';
 import { wecomSignature, decryptWecomMsg, xmlTag } from './wecomCrypt.js';
 import { deploymentOutboundPolicy, fetchOutbound } from './security/outboundUrl.js';
 import { activePersonWhere } from './activePerson.js';
+import { authorizeSensitiveResource, candidateDescriptor } from './sensitiveAccess.js';
 
 const QYAPI = 'https://qyapi.weixin.qq.com';
 
@@ -447,28 +453,62 @@ async function sentimentImpact(tenantId: string, oppId: string, personId: string
 const FIELD_LABEL: Record<string, string> = { sentiment: '支持度' };
 
 /**
- * 新字段提案 → 推企微模板卡给全租户已绑定成员（v1 小团队全员，后续按 deal owner 收窄）。
+ * 新字段提案 → 仅推企微模板卡给当前 Candidate ACL 允许审阅的已绑定成员。
  * PIPL 从严：卡片只含 人名 / 字段类型 / 趋赢力影响 / 来源置信——不含新旧值明细（态度值不出应用，点开 App 才见全量）。
  * 全程静默失败（fire-and-forget，绝不影响提案落库）。
  */
-export async function pushProposalCard(tenantId: string, proposalId: string): Promise<void> {
+export async function pushProposalCard(
+  tenantId: string,
+  proposalId: string,
+  capabilityPolicy: CapabilityPolicy,
+): Promise<void> {
   try {
+    if (!capabilityPolicyAllows(capabilityPolicy, { entitlement: 'sales.workspace' })) return;
+    const candidate = await prisma.candidate.findUnique({
+      where: {
+        tenantId_legacySourceKind_legacySourceId: {
+          tenantId,
+          legacySourceKind: 'ChangeProposal',
+          legacySourceId: proposalId,
+        },
+      },
+      select: {
+        id: true, tenantId: true, kind: true, status: true, accountId: true, matterId: true,
+        createdByUserId: true, visibility: true, aclVersion: true, legacySourceId: true,
+      },
+    });
+    if (!candidate || candidate.kind !== 'field_change' || candidate.status !== 'pending') return;
     const cfg = await prisma.weComConfig.findUnique({ where: { tenantId } });
     if (!cfg?.corpId || !cfg.secretEnc || !cfg.callbackToken) return; // 未配企微或未配回调（按钮卡需要回调）→ 不推
-    const cp = await prisma.changeProposal.findFirst({ where: { id: proposalId, tenantId } });
-    if (!cp || cp.status !== 'pending') return;
     const rawBinds = await prisma.weComUserBind.findMany({ where: { tenantId } });
     if (!rawBinds.length) return;
     const users = await prisma.user.findMany({ where: { tenantId, id: { in: rawBinds.map((b) => b.userId) } }, select: { id: true, role: true } });
-    const roleByUser = new Map(users.map((u) => [u.id, ActorRoleSchema.safeParse(u.role)]));
+    const userById = new Map(users.map((user) => [user.id, user]));
     const counts = new Map<string, number>();
     for (const bind of rawBinds) counts.set(bind.wecomUserid, (counts.get(bind.wecomUserid) ?? 0) + 1);
-    // 提案属于 account 敏感内容；只向当前有效且可审批的非 viewer 成员发送。重复 bind fail closed。
-    const binds = rawBinds.filter((b) => {
-      const role = roleByUser.get(b.userId);
-      return counts.get(b.wecomUserid) === 1 && role?.success && role.data !== 'viewer';
-    });
+    // Candidate ACL metadata is evaluated before ChangeProposal body fields are selected.
+    const binds = [] as typeof rawBinds;
+    for (const bind of rawBinds) {
+      if (counts.get(bind.wecomUserid) !== 1) continue;
+      const user = userById.get(bind.userId);
+      const role = ActorRoleSchema.safeParse(user?.role);
+      if (!user || !role.success) continue;
+      const access = await authorizeSensitiveResource(prisma, {
+        tenantId,
+        userId: user.id,
+        role: role.data,
+      }, capabilityPolicy, candidateDescriptor(candidate), 'review');
+      if (access.allowed) binds.push(bind);
+    }
     if (!binds.length) return;
+    const cp = await prisma.changeProposal.findFirst({ where: {
+      id: proposalId,
+      tenantId,
+      accountId: candidate.accountId,
+      opportunityId: candidate.matterId,
+      status: 'pending',
+    } });
+    if (!cp) return;
 
     const person = cp.entityKind === 'oppRole' ? await prisma.person.findFirst({ where: { id: cp.entityId, tenantId, ...activePersonWhere }, select: { name: true } }) : null;
     let impact = '';
@@ -506,8 +546,13 @@ async function loadCallbackCfg(tenantId: string): Promise<{ token: string; aesKe
 }
 
 /** 处理解密后的回调事件（导出供 E2E 直测）。当前只关心模板卡按钮：test:ok / cp:accept:<id> / cp:reject:<id>。 */
-export async function handleWecomEvent(tenantId: string, xml: string): Promise<void> {
+export async function handleWecomEvent(
+  tenantId: string,
+  xml: string,
+  capabilityPolicy: CapabilityPolicy,
+): Promise<void> {
   if (xmlTag(xml, 'MsgType') !== 'event' || xmlTag(xml, 'Event') !== 'template_card_event') return;
+  if (!capabilityPolicyAllows(capabilityPolicy, { entitlement: 'sales.workspace' })) return;
   const key = xmlTag(xml, 'EventKey');
   const responseCode = xmlTag(xml, 'ResponseCode');
   const fromUser = xmlTag(xml, 'FromUserName');
@@ -523,12 +568,14 @@ export async function handleWecomEvent(tenantId: string, xml: string): Promise<v
   // 鉴权：点按钮的企微成员必须已绑定江湖账号（绑定 = 本工作区成员，人审授权有效）
   const { reviewProposalFromWecom } = await import('./proposals.js'); // 动态 import 破循环
   try {
-    const r = await reviewProposalFromWecom(tenantId, fromUser, m[2], m[1] as 'accept' | 'reject');
+    const r = await reviewProposalFromWecom(
+      tenantId, fromUser, m[2], m[1] as 'accept' | 'reject', capabilityPolicy,
+    );
     await finish(r === 'ok' ? (m[1] === 'accept' ? '✓ 已采纳' : '已驳回') : r === 'already' ? '已处理过' : r === 'unauthorized' ? '⚠️ 绑定账号无权操作' : '提案不存在');
   } catch { await finish('处理失败'); }
 }
 
-export function wecomRoutes(app: FastifyInstance) {
+export function wecomRoutes(app: FastifyInstance, capabilityPolicy: CapabilityPolicy) {
   const canManage = (req: any) => ['owner', 'admin'].includes(req.user.role);
 
   const callbackUrlOf = (req: any, tenantId: string) => {
@@ -602,7 +649,7 @@ export function wecomRoutes(app: FastifyInstance) {
       }
       const { msg, receiveId } = decryptWecomMsg(cb.aesKey, encrypt);
       if (cb.corpId && receiveId && receiveId !== cb.corpId) return reply.code(403).type('text/plain').send('');
-      void handleWecomEvent(tenantId, msg).catch(() => {});
+      void handleWecomEvent(tenantId, msg, capabilityPolicy).catch(() => {});
       return reply.type('text/plain').send('success');
     } catch { return reply.type('text/plain').send('success'); } // 异常也回 success，防企微重试风暴
   });

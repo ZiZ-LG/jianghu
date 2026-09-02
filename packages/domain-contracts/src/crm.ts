@@ -40,6 +40,7 @@ const localDate = LocalDateSchema;
 export const MatterLifecycleStatusSchema = z.enum(['active', 'paused', 'completed', 'canceled']);
 export const CommitmentExecutionStatusSchema = z.enum(['planned', 'completed', 'canceled', 'missed']);
 export const CommitmentConfirmationStatusSchema = z.enum(['not_required', 'pending', 'confirmed', 'declined']);
+export const HypothesisVerificationDispositionSchema = z.enum(['kept', 'revised', 'retired']);
 
 export const CustomerV2Schema = z.object({
   id,
@@ -305,6 +306,17 @@ const commitmentFields = {
   sourceRef: z.string().min(1).nullable(),
   archivedAt: instant.nullable(),
   version,
+  hypothesisId: id.nullable().default(null),
+  hypothesisRevisionId: id.nullable().default(null),
+  completionResult: z.string().max(2_000).refine(
+    (value) => value.length === 0 || value.trim() === value,
+    'completion result must be empty or trimmed',
+  ).default(''),
+  completionResultRecordedAtUtc: instant.nullable().default(null),
+  completionResultRecordedByUserId: id.nullable().default(null),
+  verificationReviewDisposition: HypothesisVerificationDispositionSchema.nullable().default(null),
+  verificationReviewedAtUtc: instant.nullable().default(null),
+  verificationReviewedByUserId: id.nullable().default(null),
 } satisfies z.ZodRawShape;
 
 function validateSchedule(
@@ -411,6 +423,40 @@ export const CommitmentV2Schema = z.object(commitmentFields).strict().superRefin
   }
   if (!isConfirmed && (value.confirmedAtUtc || value.confirmedByUserId)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['confirmedAtUtc'], message: 'only confirmed commitment may carry current confirmation metadata' });
+  }
+  if ((value.hypothesisId === null) !== (value.hypothesisRevisionId === null)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: value.hypothesisId === null ? ['hypothesisId'] : ['hypothesisRevisionId'],
+      message: 'hypothesis and revision pointers must be paired',
+    });
+  }
+  const hasResult = value.completionResult.length > 0;
+  const hasCompleteResultMetadata = value.completionResultRecordedAtUtc !== null
+    && value.completionResultRecordedByUserId !== null;
+  if (hasResult !== hasCompleteResultMetadata) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['completionResultRecordedAtUtc'],
+      message: 'completion result and recorder metadata must be complete or empty',
+    });
+  }
+  const hasReview = value.verificationReviewDisposition !== null;
+  const hasCompleteReviewMetadata = value.verificationReviewedAtUtc !== null
+    && value.verificationReviewedByUserId !== null;
+  if (hasReview !== hasCompleteReviewMetadata) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['verificationReviewedAtUtc'],
+      message: 'verification review and reviewer metadata must be complete or empty',
+    });
+  }
+  if ((hasResult || hasReview) && value.hypothesisId === null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['hypothesisId'],
+      message: 'verification metadata requires a linked hypothesis revision',
+    });
   }
 });
 
@@ -549,7 +595,20 @@ const commitmentCreateFields = {
   sourceRef: z.string().min(1).nullable(),
 } satisfies z.ZodRawShape;
 
-const commitmentCreate = z.object(commitmentCreateFields).strict().superRefine((value, ctx) => {
+export const HypothesisCommitmentRefSchema = z.object({
+  hypothesisId: id,
+  hypothesisRevisionId: id,
+}).strict();
+
+const commitmentCreate = z.object({
+  ...commitmentCreateFields,
+  hypothesisRef: HypothesisCommitmentRefSchema.nullable().default(null),
+}).strict().superRefine((value, ctx) => {
+  validateSchedule(value, ctx);
+  validateConfirmationDeadline(value, value.confirmationStatus === 'pending' ? 'required' : 'forbidden', ctx);
+});
+
+const unlinkedCommitmentCreate = z.object(commitmentCreateFields).strict().superRefine((value, ctx) => {
   validateSchedule(value, ctx);
   validateConfirmationDeadline(value, value.confirmationStatus === 'pending' ? 'required' : 'forbidden', ctx);
 });
@@ -613,6 +672,7 @@ export const QUICK_CAPTURE_TITLE_MAX_LENGTH = 200;
 
 const quickCaptureCommitmentCreate = z.object({
   ...commitmentCreateFields,
+  hypothesisRef: z.null().default(null),
   title: z.string().trim().min(1).max(QUICK_CAPTURE_TITLE_MAX_LENGTH),
   kind: z.literal('follow_up'),
   scheduledAtUtc: instant,
@@ -683,7 +743,7 @@ export const CRM_COMMAND_TYPES = [
   'ADD_MATTER_PARTICIPANT', 'REMOVE_MATTER_PARTICIPANT',
   'CREATE_COMMITMENT', 'RESCHEDULE_COMMITMENT', 'CONFIRM_COMMITMENT',
   'DECLINE_COMMITMENT', 'COMPLETE_COMMITMENT', 'CANCEL_COMMITMENT',
-  'MARK_COMMITMENT_MISSED', 'CREATE_NEXT_COMMITMENT',
+  'MARK_COMMITMENT_MISSED', 'CREATE_NEXT_COMMITMENT', 'RECORD_COMMITMENT_RESULT',
 ] as const;
 
 export type CrmCommandType = (typeof CRM_COMMAND_TYPES)[number];
@@ -726,10 +786,15 @@ const crmCommandSchemas = [
   command({ type: z.literal('CANCEL_COMMITMENT'), ...scheduledCommitmentCommand, canceledAtUtc: instant, reason: z.string().trim().min(1).optional() }),
   command({ type: z.literal('MARK_COMMITMENT_MISSED'), ...scheduledCommitmentCommand, missedAtUtc: instant }),
   command({
+    type: z.literal('RECORD_COMMITMENT_RESULT'),
+    ...scheduledCommitmentCommand,
+    result: z.string().trim().min(1).max(2_000),
+  }),
+  command({
     type: z.literal('CREATE_NEXT_COMMITMENT'),
     previousCommitmentId: id,
     expectedPreviousVersion: version,
-    commitment: commitmentCreate,
+    commitment: unlinkedCommitmentCreate,
   }).superRefine((value, ctx) => {
     if (value.previousCommitmentId === value.commitment.id) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['commitment', 'id'], message: 'next commitment cannot reference itself' });
@@ -755,7 +820,7 @@ export type CustomerCommandReceipt = z.infer<typeof CustomerCommandReceiptSchema
 export const COMMITMENT_COMMAND_TYPES = [
   'CREATE_COMMITMENT', 'RESCHEDULE_COMMITMENT', 'CONFIRM_COMMITMENT',
   'DECLINE_COMMITMENT', 'COMPLETE_COMMITMENT', 'CANCEL_COMMITMENT',
-  'MARK_COMMITMENT_MISSED', 'CREATE_NEXT_COMMITMENT',
+  'MARK_COMMITMENT_MISSED', 'CREATE_NEXT_COMMITMENT', 'RECORD_COMMITMENT_RESULT',
 ] as const;
 export type CommitmentCommandType = (typeof COMMITMENT_COMMAND_TYPES)[number];
 export type CommitmentCommand = Extract<CrmCommand, { type: CommitmentCommandType }>;
@@ -785,9 +850,27 @@ export const CommitmentCommandReceiptSchema = z.object({
   scheduleVersion: version,
   nextCommitmentId: id.nullable(),
   linkedFromCommitmentId: id.nullable(),
+  hypothesisId: id.nullable().default(null),
+  hypothesisRevisionId: id.nullable().default(null),
+  resultRecorded: z.boolean().default(false),
   undoable: z.literal(false),
   repairCommands: z.array(CommitmentRepairCommandSchema),
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  if ((value.hypothesisId === null) !== (value.hypothesisRevisionId === null)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['hypothesisRevisionId'],
+      message: 'receipt hypothesis pointers must be paired',
+    });
+  }
+  if (value.resultRecorded && value.hypothesisId === null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['resultRecorded'],
+      message: 'only a linked verification Commitment can record a result',
+    });
+  }
+});
 
 export type CommitmentCommandReceipt = z.infer<typeof CommitmentCommandReceiptSchema>;
 
@@ -808,6 +891,9 @@ export function commitmentReceiptMatchesCommand(
     const linkedFromCommitmentId = command.type === 'CREATE_NEXT_COMMITMENT'
       ? command.previousCommitmentId
       : null;
+    const hypothesisRef = command.type === 'CREATE_COMMITMENT'
+      ? command.commitment.hypothesisRef
+      : null;
     return receipt.commitmentId === command.commitment.id
       && receipt.customerId === command.commitment.customerId
       && receipt.matterId === command.commitment.matterId
@@ -817,6 +903,9 @@ export function commitmentReceiptMatchesCommand(
       && receipt.scheduleVersion === 0
       && receipt.nextCommitmentId === null
       && receipt.linkedFromCommitmentId === linkedFromCommitmentId
+      && receipt.hypothesisId === (hypothesisRef?.hypothesisId ?? null)
+      && receipt.hypothesisRevisionId === (hypothesisRef?.hypothesisRevisionId ?? null)
+      && receipt.resultRecorded === false
       && receipt.undoable === false
       && hasExactRepairCommands(receipt, ['RESCHEDULE_COMMITMENT', 'CANCEL_COMMITMENT']);
   }
@@ -847,6 +936,13 @@ export function commitmentReceiptMatchesCommand(
   }
   if (command.type === 'COMPLETE_COMMITMENT') {
     return receipt.executionStatus === 'completed'
+      && receipt.resultRecorded === false
+      && hasExactRepairCommands(receipt, ['CREATE_NEXT_COMMITMENT']);
+  }
+  if (command.type === 'RECORD_COMMITMENT_RESULT') {
+    return receipt.executionStatus === 'completed'
+      && receipt.resultRecorded === true
+      && receipt.hypothesisId !== null
       && hasExactRepairCommands(receipt, ['CREATE_NEXT_COMMITMENT']);
   }
   if (command.type === 'CANCEL_COMMITMENT') {

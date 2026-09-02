@@ -27,6 +27,11 @@ import {
   requirePerson,
 } from './mutation/scopeGuards.js';
 import { requireSalesCustomerType } from './salesClassification.js';
+import {
+  createPersonCandidate,
+  createRelationCandidate,
+  sourceCandidateDedupeKey,
+} from './candidates/personRelation.js';
 
 const applyIngestActionWithDb = async (ctx: CommandContext, input: unknown, db: DbClient): Promise<void> => {
   await applyAction(ctx, ActionSchema.parse(input), db);
@@ -393,7 +398,7 @@ export async function ingestVoiceText(
     receipt.rolesSet.push({ name, role: S(per.suggestedRole) });
   };
 
-  for (const per of ex.persons ?? []) {
+  for (const [personIndex, per] of (ex.persons ?? []).entries()) {
     const name = S(per.name, 40);
     if (!name) continue;
     const existingId = formalId.get(name);
@@ -440,14 +445,31 @@ export async function ingestVoiceText(
       await setRoleIf(pid, per, name);
     } else { // AI 补充 → 候选 PersonSuggestion
       const sid = 'ps_' + randomUUID().replaceAll('-', '');
-      await db.personSuggestion.create({ data: { id: sid, tenantId, accountId: acc.id, opportunityId: opp?.id ?? null, name, title: S(per.title, 60), orgLevel: clampLevel(per.orgLevel), origin: src.origin, evidence: S(per.evidence, 500), confidence: N(per.confidence) ?? 0.5, status: 'pending', proposedBy: userId, suggestedRole: VALID_ROLE.includes(S(per.suggestedRole)) ? S(per.suggestedRole) : null, suggestedSentiment: VALID_SENT.includes(S(per.suggestedSentiment)) ? S(per.suggestedSentiment) : null } });
-      suggId.set(name, sid);
-      receipt.candidates.persons.push({ id: sid, name });
+      const sourceRef = `voice:${baseCtx.requestId || sid}:person:${personIndex}`;
+      const created = await createPersonCandidate(db, {
+        id: sid,
+        tenantId,
+        accountId: acc.id,
+        matterId: opp?.id ?? null,
+        name,
+        title: S(per.title, 60),
+        orgLevel: clampLevel(per.orgLevel),
+        source: src.origin,
+        sourceRef,
+        evidence: S(per.evidence, 500) || `${src.word}抽取到候选人物，未提供具体依据，必须人工核实`,
+        confidence: N(per.confidence) ?? 0.5,
+        createdByUserId: userId,
+        dedupeKey: sourceCandidateDedupeKey(src.origin, sourceRef),
+        suggestedRole: VALID_ROLE.includes(S(per.suggestedRole)) ? S(per.suggestedRole) : null,
+        suggestedSentiment: VALID_SENT.includes(S(per.suggestedSentiment)) ? S(per.suggestedSentiment) : null,
+      });
+      suggId.set(name, created.row.id);
+      receipt.candidates.persons.push({ id: created.row.id, name });
     }
   }
 
   // ── 4) 关系（两端皆正式 Person 且 explicit → 直落 Edge；否则候选 RelSuggestion）──
-  for (const rel of ex.relationships ?? []) {
+  for (const [relationIndex, rel] of (ex.relationships ?? []).entries()) {
     const sName = S(rel.source, 40), tName = S(rel.target, 40);
     if (!sName || !tName || sName === tName) continue;
     const layer = ['L1', 'L2', 'L3', 'L4'].includes(S(rel.layer)) ? S(rel.layer) : 'L3';
@@ -487,7 +509,22 @@ export async function ingestVoiceText(
     } else { // 含候选端点 / inferred 关系 → 候选（须有商机，RelSuggestion 挂 opportunityId）
       if (!opp) { receipt.skipped.push({ rel: `${sName}→${tName}`, reason: '无商机上下文，候选关系跳过' }); continue; }
       const rid = 'rs_' + randomUUID().replaceAll('-', '');
-      await db.relSuggestion.create({ data: { id: rid, tenantId, opportunityId: opp.id, sourcePersonId: sEnd.id, sourceKind: sEnd.kind, targetPersonId: tEnd.id, targetKind: tEnd.kind, layer, label, confidence: N(rel.confidence) ?? 0.5, origin: src.origin, evidence: S(rel.evidence, 500), status: 'pending' } });
+      const sourceRef = `voice:${baseCtx.requestId || rid}:relation:${relationIndex}`;
+      await createRelationCandidate(db, {
+        id: rid,
+        tenantId,
+        matterId: opp.id,
+        source: { kind: sEnd.kind as 'person' | 'suggestion', id: sEnd.id },
+        target: { kind: tEnd.kind as 'person' | 'suggestion', id: tEnd.id },
+        layer,
+        label,
+        sourceType: src.origin,
+        sourceRef,
+        evidence: S(rel.evidence, 500) || `${src.word}抽取到候选关系，未提供具体依据，必须人工核实`,
+        confidence: N(rel.confidence) ?? 0.5,
+        createdByUserId: userId,
+        dedupeKey: sourceCandidateDedupeKey(src.origin, sourceRef),
+      });
       receipt.candidates.relationships.push({ source: sName, target: tName, label });
     }
   }

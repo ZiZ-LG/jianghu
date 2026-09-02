@@ -19,7 +19,11 @@ function findExecutableConsumers(tokens) {
   const roots = ['app/src', 'server/src', 'server/scripts', 'packages/domain-contracts/src'];
   return roots
     .flatMap((root) => executableTypeScriptFiles(join(REPO_ROOT, root)))
-    .filter((file) => relative(REPO_ROOT, file) !== 'packages/domain-contracts/src/authority.ts')
+    .filter((file) => {
+      const path = relative(REPO_ROOT, file);
+      return path !== 'packages/domain-contracts/src/authority.ts'
+        && !path.split('/').includes('testFixtures');
+    })
     .filter((file) => tokens.some((token) => readFileSync(file, 'utf8').includes(token)))
     .map((file) => relative(REPO_ROOT, file).split('\\').join('/'))
     .sort();

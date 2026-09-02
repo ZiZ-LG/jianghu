@@ -43,6 +43,14 @@ function accWith(items: CommitmentSeed[]): Account {
     sourceRef: null,
     archivedAt: null,
     version: 0,
+    hypothesisId: null,
+    hypothesisRevisionId: null,
+    completionResult: '',
+    completionResultRecordedAtUtc: null,
+    completionResultRecordedByUserId: null,
+    verificationReviewDisposition: null,
+    verificationReviewedAtUtc: null,
+    verificationReviewedByUserId: null,
   }));
   return account;
 }

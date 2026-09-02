@@ -8,6 +8,7 @@ import { syncIntelBundle } from '../src/mcp/syncBundle.js';
 import { findSyncAnchorConflicts } from '../src/mcp/syncAnchorConflicts.js';
 import { createTestContext, type TestContext } from './helpers/testApp.js';
 import { internalProductPolicy } from './helpers/productPolicy.js';
+import { candidateDedupeKeyForCreator } from '../src/candidates/dedupe.js';
 
 const handleMcpBody = (ctx: CommandContext, body: unknown) => handleMcpBodyWithPolicy(ctx, body, internalProductPolicy);
 
@@ -410,9 +411,69 @@ describe('WorkBuddy atomic sync bundle', () => {
       idempotencyKey: 'unresolved-account-id',
       bundle: { account: { id: 'acc-outside-scope', name: '不应创建', customerType: 2 } },
     };
-    await expect(syncIntelBundle(ctx, args, test.prisma)).rejects.toThrow('account id does not exist in the current tenant');
+    await expect(syncIntelBundle(ctx, args, test.prisma)).rejects.toThrow('scoped resource not found');
     expect(await test.prisma.account.count({ where: { tenantId: test.tenant.id } })).toBe(0);
-    expect(await test.prisma.syncRun.findFirstOrThrow({ where: { tenantId: test.tenant.id } })).toMatchObject({ status: 'failed' });
+    expect(await test.prisma.syncRun.count({ where: { tenantId: test.tenant.id } })).toBe(0);
+  });
+
+  it('hides an out-of-scope Account behind every supported anchor before reserving a SyncRun', async () => {
+    await test.prisma.tenant.update({
+      where: { id: test.tenant.id }, data: { dataScopePolicy: 'scoped' },
+    });
+    const [ownerA, memberB] = await Promise.all([
+      test.prisma.user.create({ data: {
+        tenantId: test.tenant.id, email: 'sync-owner-a@example.test', passwordHash: 'unused',
+        name: 'Sync owner A', role: 'member',
+      } }),
+      test.prisma.user.create({ data: {
+        tenantId: test.tenant.id, email: 'sync-member-b@example.test', passwordHash: 'unused',
+        name: 'Sync member B', role: 'member',
+      } }),
+    ]);
+    await test.prisma.account.create({ data: {
+      id: 'sync-hidden-account', tenantId: test.tenant.id, name: 'A 私有客户', customerType: 2,
+      externalRef: 'sync-hidden-external', unifiedCreditCode: '91110000SYNC204HID',
+      primaryOwnerUserId: ownerA.id, primaryOwner: ownerA.name,
+    } });
+    const memberCtx: CommandContext = {
+      ...ctx, actorId: memberB.id, actorRole: 'member', requestId: 'sync-hidden-member',
+    };
+    const anchors = [
+      { id: 'sync-hidden-account', name: 'A 私有客户' },
+      { externalRef: 'sync-hidden-external', name: 'A 私有客户' },
+      { unifiedCreditCode: '91110000SYNC204HID', name: 'A 私有客户' },
+    ];
+    for (const [index, account] of anchors.entries()) {
+      await expect(syncIntelBundle(memberCtx, {
+        idempotencyKey: `sync-hidden-anchor-${index}`,
+        bundle: { account },
+      }, test.prisma)).rejects.toThrow('scoped resource not found');
+    }
+    expect(await test.prisma.syncRun.count({ where: { tenantId: test.tenant.id } })).toBe(0);
+    expect(await test.prisma.account.count({ where: { tenantId: test.tenant.id } })).toBe(1);
+    expect(await test.prisma.changeProposal.count({ where: { tenantId: test.tenant.id } })).toBe(0);
+  });
+
+  it('reauthorizes a completed replay against the actor current role', async () => {
+    const args = {
+      idempotencyKey: 'sync-replay-current-role',
+      bundle: { account: { externalRef: 'sync-replay-current-role-account', name: '重放授权客户', customerType: 2 } },
+    };
+    const first = await syncIntelBundle(ctx, args, test.prisma);
+    await test.prisma.user.update({ where: { id: test.owner.id }, data: { role: 'viewer' } });
+
+    await expect(syncIntelBundle(ctx, args, test.prisma)).rejects.toThrow('scoped resource not found');
+    await expect(test.prisma.syncRun.findUniqueOrThrow({
+      where: {
+        tenantId_idempotencyKey: {
+          tenantId: test.tenant.id,
+          idempotencyKey: storedKey(args.idempotencyKey),
+        },
+      },
+    })).resolves.toMatchObject({ id: first.syncRunId, status: 'completed' });
+    expect(await test.prisma.account.count({ where: {
+      tenantId: test.tenant.id, externalRef: 'sync-replay-current-role-account',
+    } })).toBe(1);
   });
 
   it('rejects a supplied account anchor that conflicts with an existing non-null anchor', async () => {
@@ -512,14 +573,39 @@ describe('WorkBuddy atomic sync bundle', () => {
     expect(await test.prisma.evidenceEvent.findFirstOrThrow({ where: { tenantId: test.tenant.id } }))
       .toMatchObject({ status: 'pending_review', origin: 'mcp', createdBy: test.owner.id });
     expect(await test.prisma.evidenceEvent.count({ where: { tenantId: test.tenant.id } })).toBe(1);
+    await expect(test.prisma.candidate.findFirstOrThrow({ where: {
+      tenantId: test.tenant.id, legacySourceKind: 'EvidenceEvent',
+    } })).resolves.toMatchObject({
+      kind: 'evidence_create', status: 'pending', accountId: 'acc-evidence-sync',
+      matterId: 'opp-evidence-sync', targetKind: 'person', targetId: 'person-evidence-sync',
+      source: 'mcp', createdByUserId: test.owner.id, visibility: 'private', version: 0,
+    });
+    expect(await test.prisma.candidate.count({ where: {
+      tenantId: test.tenant.id, legacySourceKind: 'EvidenceEvent',
+    } })).toBe(1);
   });
 
-  it('fails the whole bundle when the tenant pending-candidate capacity is exhausted', async () => {
+  it('fails the whole bundle when the current creator pending-candidate capacity is exhausted', async () => {
     await test.prisma.account.create({ data: {
       id: 'acc-capacity', tenantId: test.tenant.id, externalRef: 'capacity-account', name: '容量客户', customerType: 2,
     } });
     await test.prisma.personSuggestion.createMany({ data: Array.from({ length: 200 }, (_, index) => ({
       id: `ps-capacity-${index}`, tenantId: test.tenant.id, accountId: 'acc-capacity', name: `候选${index}`, status: 'pending',
+    })) });
+    await test.prisma.candidate.createMany({ data: Array.from({ length: 200 }, (_, index) => ({
+      id: `candidate-capacity-${index}`,
+      tenantId: test.tenant.id,
+      kind: 'person_create',
+      accountId: 'acc-capacity',
+      targetKind: 'person',
+      source: 'legacy-test',
+      sourceRef: `legacy-test:ps-capacity-${index}`,
+      createdByUserId: test.owner.id,
+      visibility: 'private',
+      aclVersion: 1,
+      dedupeKey: candidateDedupeKeyForCreator(`legacy-test:ps-capacity-${index}`, test.owner.id),
+      legacySourceKind: 'PersonSuggestion',
+      legacySourceId: `ps-capacity-${index}`,
     })) });
     const args = {
       idempotencyKey: 'candidate-capacity-full', bundle: {

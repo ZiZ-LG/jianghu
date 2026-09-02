@@ -10,7 +10,6 @@ import { z } from 'zod';
 import {
   ActionSchema,
   ActorRoleSchema,
-  assembleProductAccess,
   capabilityRequirementForActionType,
   capabilityPolicyAllows,
   type CapabilityRequirement,
@@ -49,6 +48,32 @@ import { repairRoutes } from './repair.js';
 import { personMergeRoutes } from './personMerge.js';
 import { todayRoutes } from './today.js';
 import { crmContextRoutes } from './crmContext.js';
+import { deploymentProductAccess } from './productPolicy.js';
+import { sourceArtifactRoutes } from './sourceArtifacts/routes.js';
+import { reviewBatchRoutes } from './reviewBatches/routes.js';
+import { agentJobRoutes } from './agents/routes.js';
+import type {
+  AgentCandidateCommitAdapter,
+  AgentJobHandlers,
+  AgentRelationshipRadarCommitAdapter,
+  AgentResearchBriefCommitAdapter,
+} from './agents/model.js';
+import { productionPostMeetingHandlers } from './postMeeting/handler.js';
+import { createPostMeetingCandidateCommitAdapter } from './postMeeting/commit.js';
+import { productionPreMeetingHandlers } from './preMeeting/handler.js';
+import { createPreMeetingResearchBriefCommitAdapter } from './preMeeting/commit.js';
+import { postMeetingImportRoutes } from './postMeeting/importRoutes.js';
+import { researchBriefRoutes } from './researchBriefs/routes.js';
+import { intelligenceFocusRoutes } from './intelligenceFocus/routes.js';
+import { salesHypothesisRoutes } from './hypotheses/routes.js';
+import { relationshipWorkspaceRoutes } from './relationshipWorkspace/routes.js';
+import { productionRelationshipRadarHandlers } from './relationshipRadar/handler.js';
+import { createRelationshipRadarCommitAdapter } from './relationshipRadar/commit.js';
+import { relationshipRadarRoutes } from './relationshipRadar/routes.js';
+import {
+  productionFeishuImportProvider,
+  type FeishuImportProvider,
+} from './postMeeting/feishuImport.js';
 
 async function registerSecurityPlugins(app: FastifyInstance): Promise<void> {
   const isProd = process.env.NODE_ENV === 'production';
@@ -158,7 +183,17 @@ function registerCapabilityEnforcement(app: FastifyInstance, product: ProductAcc
   });
 }
 
-function registerRoutes(app: FastifyInstance, readinessProbe: ReadinessProbe, product: ProductAccess): void {
+function registerRoutes(
+  app: FastifyInstance,
+  readinessProbe: ReadinessProbe,
+  product: ProductAccess,
+  agentHandlers: AgentJobHandlers,
+  agentCandidateCommitAdapter?: AgentCandidateCommitAdapter,
+  agentResearchBriefCommitAdapter?: AgentResearchBriefCommitAdapter,
+  agentRelationshipRadarCommitAdapter?: AgentRelationshipRadarCommitAdapter,
+  feishuImportProvider: FeishuImportProvider = productionFeishuImportProvider,
+  publicBaseUrl?: string,
+): void {
   app.get('/api/health/live', async () => ({ ok: true }));
   const readinessHandler = async (_req: unknown, reply: { code: (status: number) => { send: (body: { ok: boolean }) => unknown } }) => {
     try {
@@ -174,18 +209,18 @@ function registerRoutes(app: FastifyInstance, readinessProbe: ReadinessProbe, pr
 
   authRoutes(app, product);
   aiRoutes(app);
-  suggestRoutes(app);
-  proposalRoutes(app);
+  suggestRoutes(app, product.policy);
+  proposalRoutes(app, product.policy);
   strategyRoutes(app);
   advisorRoutes(app);
   enrichRoutes(app);
   jobRoutes(app);
   voiceRoutes(app);
-  recordingRoutes(app);
+  recordingRoutes(app, product.policy, { feishuImportProvider, publicBaseUrl });
   curatedRoutes(app);
   opportunityRoutes(app);
   accessTokenRoutes(app);
-  wecomRoutes(app); // 企微日历：配置/绑定（江湖→企微同步在 mutate 落库后触发）
+  wecomRoutes(app, product.policy); // 企微日历：配置/绑定（江湖→企微同步在 mutate 落库后触发）
   pdeRoutes(app); // PDE 决策引擎（M3 评估主链）：ev / intel-priorities / action-ranking / snapshot
   compoundCommandRoutes(app, product);
   matterOwnershipRoutes(app);
@@ -193,15 +228,32 @@ function registerRoutes(app: FastifyInstance, readinessProbe: ReadinessProbe, pr
   customerRoutes(app, product.policy);
   commitmentRoutes(app);
   methodologyCommandRoutes(app);
-  repairRoutes(app);
-  personMergeRoutes(app);
-  todayRoutes(app);
+  repairRoutes(app, product.policy);
+  personMergeRoutes(app, product.policy);
+  todayRoutes(app, product.policy);
   crmContextRoutes(app);
+  sourceArtifactRoutes(app, product.policy);
+  reviewBatchRoutes(app, product.policy);
+  agentJobRoutes(
+    app,
+    product.policy,
+    agentHandlers,
+    agentCandidateCommitAdapter,
+    agentResearchBriefCommitAdapter,
+    agentRelationshipRadarCommitAdapter,
+  );
+  postMeetingImportRoutes(app, product.policy, { feishuImportProvider });
+  researchBriefRoutes(app, product.policy);
+  intelligenceFocusRoutes(app, product.policy);
+  salesHypothesisRoutes(app, product.policy);
+  relationshipWorkspaceRoutes(app, product.policy);
+  relationshipRadarRoutes(app, product.policy);
 
   // ── 数据：拉取整树 / 应用变更 ──
   // 服务端组装时传入当前身份，统一执行归属与敏感字段 ACL。
   app.get('/api/state', { preHandler: [app.authenticate] }, async (req) => {
     const stateOptions = {
+      capabilityPolicy: product.policy,
       onSecurityWarning: (warning: StateSecurityWarning) => {
         req.log.warn(warning, 'state scope rows dropped');
       },
@@ -233,7 +285,7 @@ function registerRoutes(app: FastifyInstance, readinessProbe: ReadinessProbe, pr
       assertionMode: 'user_asserted',
     };
     try {
-      await applyAction(ctx, parsed.data);
+      await applyAction(ctx, parsed.data, prisma, product.policy);
       void syncFromAction(req.user.tenantId, req.user.userId, parsed.data).catch(() => {}); // 江湖→企微日历同步：不阻塞、失败不影响落库
       return { ok: true };
     } catch (e: any) {
@@ -249,7 +301,7 @@ function registerRoutes(app: FastifyInstance, readinessProbe: ReadinessProbe, pr
 
   app.post('/api/demo', { preHandler: [app.authenticate] }, async (req, reply) => {
     if (!requireRole(req, reply, ['owner', 'admin', 'member'])) return; // viewer 只读
-    await createDemoForTenant(req.user.tenantId);
+    await createDemoForTenant(req.user.tenantId, req.user.userId);
     return { ok: true };
   });
 
@@ -437,29 +489,43 @@ export interface BuildAppOptions {
   logger?: boolean;
   readinessProbe?: ReadinessProbe;
   productAccess?: unknown;
-}
-
-function productAccessFrom(options: BuildAppOptions): ProductAccess {
-  if (options.productAccess !== undefined) return assembleProductAccess(options.productAccess);
-  const enabledEntitlements = process.env.PRODUCT_ENTITLEMENTS
-    ?.split(',')
-    .map((key) => key.trim())
-    .filter(Boolean);
-  return assembleProductAccess({
-    edition: process.env.PRODUCT_EDITION ?? 'commercial',
-    ...(enabledEntitlements && enabledEntitlements.length > 0 ? { enabledEntitlements } : {}),
-  });
+  /** Test/extension overrides layered over the code-owned production registry. */
+  agentHandlers?: AgentJobHandlers;
+  /** Narrow transaction adapter for candidate jobs; never exposed as Prisma to handlers. */
+  agentCandidateCommitAdapter?: AgentCandidateCommitAdapter;
+  /** Narrow transaction adapter for the immutable ResearchBriefSnapshot producer. */
+  agentResearchBriefCommitAdapter?: AgentResearchBriefCommitAdapter;
+  /** Narrow transaction adapter for one immutable RelationshipRadarSnapshot. */
+  agentRelationshipRadarCommitAdapter?: AgentRelationshipRadarCommitAdapter;
+  /** Narrow exact-minute provider seam; production uses the existing Feishu adapter. */
+  feishuImportProvider?: FeishuImportProvider;
+  /** Redirect origin authority for Feishu OAuth. */
+  publicBaseUrl?: string;
 }
 
 export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyInstance> {
   // trustProxy：部署在 Nginx 反代之后，据此识别真实客户端 IP（限流/日志才准确）
   const logger = options.logger === true ? { level: 'warn' } : false;
   const app = Fastify({ logger, trustProxy: true });
-  const product = productAccessFrom(options);
+  const product = deploymentProductAccess(options.productAccess);
+  const agentHandlers = Object.freeze({
+    ...productionPreMeetingHandlers(prisma, product.policy),
+    ...productionPostMeetingHandlers(prisma, product.policy),
+    ...productionRelationshipRadarHandlers(prisma, product.policy),
+    ...(options.agentHandlers ?? {}),
+  });
+  const agentCandidateCommitAdapter = options.agentCandidateCommitAdapter
+    ?? createPostMeetingCandidateCommitAdapter({ policy: product.policy });
+  const agentResearchBriefCommitAdapter = options.agentResearchBriefCommitAdapter
+    ?? createPreMeetingResearchBriefCommitAdapter({ policy: product.policy });
+  const agentRelationshipRadarCommitAdapter = options.agentRelationshipRadarCommitAdapter
+    ?? createRelationshipRadarCommitAdapter({ policy: product.policy });
   await registerSecurityPlugins(app);
   registerCapabilityEnforcement(app, product);
   registerRoutes(app, options.readinessProbe ?? (async () => {
     await prisma.$queryRaw`SELECT 1`;
-  }), product);
+  }), product, agentHandlers, agentCandidateCommitAdapter, agentResearchBriefCommitAdapter,
+  agentRelationshipRadarCommitAdapter,
+  options.feishuImportProvider, options.publicBaseUrl);
   return app;
 }

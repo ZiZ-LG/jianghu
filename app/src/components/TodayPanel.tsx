@@ -74,7 +74,7 @@ function InterventionCard({
   item: InterventionItem;
   readonly: boolean;
   onAction?: (item: InterventionItem, action: TodayCommitmentAction, origin: HTMLButtonElement) => void;
-  onOpenSource: (source: InterventionSourceRef) => void;
+  onOpenSource: (item: InterventionItem, source: InterventionSourceRef) => void;
 }) {
   const headingId = useId();
   const itemTimeZone = 'timeZone' in item.time ? item.time.timeZone : undefined;
@@ -112,7 +112,7 @@ function InterventionCard({
                   data-source-id={source.entityId}
                   data-source-version={source.version}
                   data-source-schedule-version={source.scheduleVersion ?? undefined}
-                  onClick={() => onOpenSource(source)}
+                  onClick={() => onOpenSource(item, source)}
                 >
                   <span>{sourceKindLabels[source.entityKind] ?? '正式来源'}</span>
                   <span>查看当前来源</span>
@@ -166,7 +166,7 @@ export function TodayView({
   model: TodayReadModel;
   readonly?: boolean;
   onAction?: (item: InterventionItem, action: TodayCommitmentAction, origin: HTMLButtonElement) => void;
-  onOpenSource: (source: InterventionSourceRef) => void;
+  onOpenSource: (item: InterventionItem, source: InterventionSourceRef) => void;
 }) {
   return (
     <div className="today-read-model" data-today-state="ready">
@@ -221,7 +221,7 @@ export function TodayPanelStateView({
   readonly?: boolean;
   onAction?: (item: InterventionItem, action: TodayCommitmentAction, origin: HTMLButtonElement) => void;
   onRetry: () => void;
-  onOpenSource: (source: InterventionSourceRef) => void;
+  onOpenSource: (item: InterventionItem, source: InterventionSourceRef) => void;
 }) {
   if (state.status === 'loading') {
     return (
@@ -422,11 +422,13 @@ export function TodayPanel({
     if (readonly && activeActionRef.current) closeAction();
   }, [closeAction, readonly]);
 
-  const openSource = (sourceRef: InterventionSourceRef) => {
+  const openSource = (item: InterventionItem, sourceRef: InterventionSourceRef) => {
     const request = sourceRequest.current + 1;
     sourceRequest.current = request;
     setSourceState({ status: 'loading', sourceRef });
-    void api.todaySource(sourceRef).then(
+    void api.todaySource(sourceRef, item.providerKey === 'relationship_radar' && item.target.matterId
+      ? { customerId: item.target.customerId, matterId: item.target.matterId }
+      : undefined).then(
       (source) => { if (sourceRequest.current === request) setSourceState({ status: 'ready', source }); },
       (cause) => {
         if (sourceRequest.current === request) {

@@ -3,10 +3,14 @@ import { copyFile, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { PrismaClient } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
+import { candidateDedupeKeyForCreator } from '../src/candidates/dedupe.js';
 
 const serverRoot = resolve('.');
 const prismaBin = resolve('node_modules/.bin/prisma');
 const tsxBin = resolve('node_modules/.bin/tsx');
+// Each case launches the full cumulative SQLite upgrade in subprocesses. CORE-206
+// adds another report/apply/verify stage, so CI runners need deterministic headroom.
+const SQLITE_UPGRADE_TEST_TIMEOUT_MS = 90_000;
 const methodologyFoundationTables = [
   'MethodologyPack',
   'MethodologyPackVersion',
@@ -26,6 +30,34 @@ const methodologyDataTables = [
   'MethodologyMigrationRun',
 ] as const;
 const methodologyTables = [...methodologyFoundationTables, ...methodologyDataTables] as const;
+const legacyAccountIndexSpecs = [
+  {
+    name: 'Account_tenantId_id_key', unique: true, columns: ['tenantId', 'id'],
+    sql: 'CREATE UNIQUE INDEX IF NOT EXISTS "Account_tenantId_id_key" ON "Account"("tenantId", "id")',
+  },
+  {
+    name: 'Account_tenantId_externalRef_key', unique: true, columns: ['tenantId', 'externalRef'],
+    sql: 'CREATE UNIQUE INDEX IF NOT EXISTS "Account_tenantId_externalRef_key" ON "Account"("tenantId", "externalRef")',
+  },
+  {
+    name: 'Account_tenantId_unifiedCreditCode_key', unique: true,
+    columns: ['tenantId', 'unifiedCreditCode'],
+    sql: 'CREATE UNIQUE INDEX IF NOT EXISTS "Account_tenantId_unifiedCreditCode_key" ON "Account"("tenantId", "unifiedCreditCode")',
+  },
+  {
+    name: 'Account_tenantId_idx', unique: false, columns: ['tenantId'],
+    sql: 'CREATE INDEX IF NOT EXISTS "Account_tenantId_idx" ON "Account"("tenantId")',
+  },
+  {
+    name: 'Account_tenantId_primaryOwnerUserId_idx', unique: false,
+    columns: ['tenantId', 'primaryOwnerUserId'],
+    sql: 'CREATE INDEX IF NOT EXISTS "Account_tenantId_primaryOwnerUserId_idx" ON "Account"("tenantId", "primaryOwnerUserId")',
+  },
+  {
+    name: 'Account_tenantId_archivedAt_idx', unique: false, columns: ['tenantId', 'archivedAt'],
+    sql: 'CREATE INDEX IF NOT EXISTS "Account_tenantId_archivedAt_idx" ON "Account"("tenantId", "archivedAt")',
+  },
+] as const;
 
 function run(command: string, args: string[], databaseUrl: string) {
   const result = spawnSync(command, args, {
@@ -66,6 +98,29 @@ async function createLegacyFixture(databasePath: string, databaseUrl: string): P
 
   const client = new PrismaClient({ datasourceUrl: databaseUrl });
   try {
+    await client.$executeRawUnsafe('DROP TABLE "AgentRun"');
+    await client.$executeRawUnsafe('DROP TABLE "AgentJobDefinition"');
+    await client.$executeRawUnsafe('DROP TABLE "SensitiveResourceGrant"');
+    await client.$executeRawUnsafe('DROP TABLE "SourceArtifact"');
+    for (const indexName of [
+      'Note_tenantId_createdByUserId_visibility_idx',
+      'Note_tenantId_visibility_aclVersion_idx',
+      'Transcript_tenantId_createdByUserId_visibility_idx',
+      'Transcript_tenantId_visibility_aclVersion_idx',
+      'Transcript_tenantId_idempotencyDomain_source_externalRef_key',
+    ]) {
+      await client.$executeRawUnsafe(`DROP INDEX "${indexName}"`);
+    }
+    await client.$executeRawUnsafe(
+      'CREATE UNIQUE INDEX "Transcript_tenantId_source_externalRef_key" ON "Transcript"("tenantId", "source", "externalRef")',
+    );
+    for (const table of ['Note', 'Transcript']) {
+      await client.$executeRawUnsafe(`ALTER TABLE "${table}" DROP COLUMN "aclVersion"`);
+      await client.$executeRawUnsafe(`ALTER TABLE "${table}" DROP COLUMN "visibility"`);
+      await client.$executeRawUnsafe(`ALTER TABLE "${table}" DROP COLUMN "createdByUserId"`);
+    }
+    await client.$executeRawUnsafe('ALTER TABLE "Transcript" DROP COLUMN "idempotencyDomain"');
+    await client.$executeRawUnsafe('DROP TABLE IF EXISTS "Candidate"');
     await client.$executeRawUnsafe('DROP TABLE "PdeDecisionContext"');
     for (const table of [...methodologyTables].reverse()) {
       await client.$executeRawUnsafe(`DROP TABLE "${table}"`);
@@ -144,6 +199,12 @@ async function createLegacyFixture(databasePath: string, databaseUrl: string): P
     // Reconstruct the actual pre-CORE-115 Account contract. Dropping only the
     // two new fields would leave customerType nullable and create a false
     // legacy fixture that never proves the constraint release.
+    // Explicitly remove global SQLite index names before replacing the table.
+    // A slow CI run once retained one of these names after DROP TABLE, so the
+    // fixture clears its exact namespace instead of relying on implicit cleanup.
+    for (const spec of legacyAccountIndexSpecs) {
+      await client.$executeRawUnsafe(`DROP INDEX IF EXISTS "${spec.name}"`);
+    }
     await client.$executeRawUnsafe('DROP TABLE "Account"');
     await client.$executeRawUnsafe(`CREATE TABLE "Account" (
       "id" TEXT NOT NULL PRIMARY KEY,
@@ -163,12 +224,29 @@ async function createLegacyFixture(databasePath: string, databaseUrl: string): P
       "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       CONSTRAINT "Account_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant" ("id") ON DELETE CASCADE ON UPDATE CASCADE
     )`);
-    await client.$executeRawUnsafe('CREATE UNIQUE INDEX "Account_tenantId_id_key" ON "Account"("tenantId", "id")');
-    await client.$executeRawUnsafe('CREATE UNIQUE INDEX "Account_tenantId_externalRef_key" ON "Account"("tenantId", "externalRef")');
-    await client.$executeRawUnsafe('CREATE UNIQUE INDEX "Account_tenantId_unifiedCreditCode_key" ON "Account"("tenantId", "unifiedCreditCode")');
-    await client.$executeRawUnsafe('CREATE INDEX "Account_tenantId_idx" ON "Account"("tenantId")');
-    await client.$executeRawUnsafe('CREATE INDEX "Account_tenantId_primaryOwnerUserId_idx" ON "Account"("tenantId", "primaryOwnerUserId")');
-    await client.$executeRawUnsafe('CREATE INDEX "Account_tenantId_archivedAt_idx" ON "Account"("tenantId", "archivedAt")');
+    // Re-clear the namespace after CREATE TABLE, then use idempotent DDL. Slow
+    // CI runners have previously surfaced a transient stale sqlite_master name
+    // after the pre-drop. Exact shape validation below prevents IF NOT EXISTS
+    // from hiding a wrong or foreign index.
+    for (const spec of legacyAccountIndexSpecs) {
+      await client.$executeRawUnsafe(`DROP INDEX IF EXISTS "${spec.name}"`);
+      await client.$executeRawUnsafe(spec.sql);
+    }
+    const accountIndexes = await client.$queryRawUnsafe<Array<{ name: string; unique: number }>>(
+      'PRAGMA index_list("Account")',
+    );
+    const accountIndexesByName = new Map(accountIndexes.map((row) => [row.name, row]));
+    for (const spec of legacyAccountIndexSpecs) {
+      const row = accountIndexesByName.get(spec.name);
+      const columns = await client.$queryRawUnsafe<Array<{ name: string }>>(
+        `PRAGMA index_info("${spec.name}")`,
+      );
+      if (!row || Boolean(row.unique) !== spec.unique
+        || columns.length !== spec.columns.length
+        || columns.some((column, index) => column.name !== spec.columns[index])) {
+        throw new Error(`legacy Account index reconstruction failed: ${spec.name}`);
+      }
+    }
     await client.$executeRawUnsafe(
       `INSERT INTO "Tenant" (id, name) VALUES ('sqlite-upgrade-tenant', 'SQLite Upgrade Tenant')`,
     );
@@ -195,6 +273,36 @@ async function createLegacyFixture(databasePath: string, databaseUrl: string): P
        VALUES
          ('sqlite-upgrade-person-one', 'sqlite-upgrade-tenant', 'sqlite-upgrade-account', 'One', 'One'),
          ('sqlite-upgrade-person-two', 'sqlite-upgrade-tenant', 'sqlite-upgrade-account', 'Two', 'Two')`,
+    );
+    await client.$executeRawUnsafe(
+      `INSERT INTO "Note"
+         (id, "tenantId", "accountId", "opportunityId", "personId", content, source, tags, "createdBy")
+       VALUES
+         ('sqlite-upgrade-note-known', 'sqlite-upgrade-tenant', 'sqlite-upgrade-account',
+          'sqlite-upgrade-active', 'sqlite-upgrade-person-one', 'legacy private note', 'manual', '[]',
+          'sqlite-upgrade-user'),
+         ('sqlite-upgrade-note-quarantine', 'sqlite-upgrade-tenant', 'sqlite-upgrade-account',
+          'sqlite-upgrade-active', NULL, 'legacy unknown note', 'import', '[]', 'unknown-user')`,
+    );
+    await client.$executeRawUnsafe(
+      `INSERT INTO "Transcript"
+         (id, "tenantId", "accountId", "opportunityId", source, "externalRef", title,
+          "contentEnc", "createdBy")
+       VALUES
+         ('sqlite-upgrade-transcript-known', 'sqlite-upgrade-tenant', 'sqlite-upgrade-account',
+          'sqlite-upgrade-active', 'manual', 'sqlite-known', 'Known creator', 'ciphertext-known',
+          'sqlite-upgrade-user'),
+         ('sqlite-upgrade-transcript-quarantine', 'sqlite-upgrade-tenant', 'sqlite-upgrade-account',
+          'sqlite-upgrade-active', 'manual', 'sqlite-unknown', 'Unknown creator', 'ciphertext-unknown',
+          '')`,
+    );
+    await client.$executeRawUnsafe(
+      `INSERT INTO "PersonSuggestion"
+         (id, "tenantId", "accountId", "opportunityId", name, origin, evidence, confidence, status, "proposedBy")
+       VALUES
+         ('sqlite-upgrade-person-suggestion', 'sqlite-upgrade-tenant', 'sqlite-upgrade-account',
+          'sqlite-upgrade-active', 'Legacy candidate', 'mcp', 'legacy evidence stays in source', 0.8,
+          'pending', 'sqlite-upgrade-user')`,
     );
     await client.$executeRawUnsafe(
       `INSERT INTO "OppRole" (id, "tenantId", "opportunityId", "personId", role, sentiment, confidence)
@@ -272,15 +380,40 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       await expect(client.methodologyBinding.count()).resolves.toBe(0);
       await expect(client.methodologyPilotAssignment.count()).resolves.toBe(0);
       await expect(client.pdeDecisionContext.count()).resolves.toBe(0);
+      const candidateColumns = await client.$queryRawUnsafe<Array<{ name: string }>>(
+        'PRAGMA table_info("Candidate")',
+      );
+      expect(candidateColumns.map((column) => column.name)).toEqual(expect.arrayContaining([
+        'id', 'tenantId', 'kind', 'status', 'accountId', 'matterId', 'targetKind', 'targetId',
+        'fieldKey', 'oldValue', 'newValue', 'payload', 'source', 'sourceRef', 'evidence',
+        'confidence', 'sourceArtifactId', 'reviewBatchId', 'createdByUserId', 'visibility',
+        'aclVersion', 'dedupeKey', 'legacySourceKind', 'legacySourceId', 'version', 'createdAt', 'updatedAt',
+      ]));
+      await expect(client.candidate.count()).resolves.toBe(0);
+      await expect(client.sourceArtifact.count()).resolves.toBe(0);
+      await expect(client.sensitiveResourceGrant.count()).resolves.toBe(0);
+      await expect(client.reviewBatch.count()).resolves.toBe(0);
+      await expect(client.interaction.count()).resolves.toBe(0);
+      await expect(client.agentJobDefinition.count()).resolves.toBe(0);
+      await expect(client.agentRun.count()).resolves.toBe(0);
       await expect(client.dataMigrationState.findUnique({
         where: { key: 'CORE-113-pde-decision-context-shadow-v1' },
       })).resolves.toMatchObject({ key: 'CORE-113-pde-decision-context-shadow-v1' });
+      await expect(client.dataMigrationState.findUnique({
+        where: { key: 'CORE-204-sensitive-acl-v1' },
+      })).resolves.toMatchObject({ key: 'CORE-204-sensitive-acl-v1' });
+      await expect(client.dataMigrationState.findUnique({
+        where: { key: 'CORE-205-review-batch-interaction-v1' },
+      })).resolves.toMatchObject({ key: 'CORE-205-review-batch-interaction-v1' });
+      await expect(client.dataMigrationState.findUnique({
+        where: { key: 'CORE-206-agent-job-run-v1' },
+      })).resolves.toMatchObject({ key: 'CORE-206-agent-job-run-v1' });
       await expect(readdir(join(directory, 'backups'))).rejects.toThrow();
     } finally {
       await client?.$disconnect();
       await rm(directory, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
 
   it('backs up, upgrades, backfills, verifies, and leaves a restorable legacy snapshot', async () => {
     // Prisma resolves relative SQLite URLs from the schema directory. Keeping
@@ -366,6 +499,112 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
         { opportunityId: 'sqlite-upgrade-paused', stageKey: 'initiation', decisionProfileRef: null, source: 'legacy_shadow' },
         { opportunityId: 'sqlite-upgrade-won', stageKey: 'initiation', decisionProfileRef: null, source: 'legacy_shadow' },
       ]);
+      await expect(upgradedClient.candidate.count()).resolves.toBe(1);
+      await expect(upgradedClient.candidate.findFirstOrThrow({
+        where: {
+          tenantId: 'sqlite-upgrade-tenant',
+          legacySourceKind: 'PersonSuggestion',
+          legacySourceId: 'sqlite-upgrade-person-suggestion',
+        },
+      })).resolves.toMatchObject({
+        kind: 'person_create', status: 'pending', accountId: 'sqlite-upgrade-account',
+        matterId: 'sqlite-upgrade-active', evidence: 'legacy evidence stays in source',
+      });
+      await expect(upgradedClient.dataMigrationState.findUnique({
+        where: { key: 'CORE-203-candidate-backfill-v1' },
+      })).resolves.toMatchObject({ key: 'CORE-203-candidate-backfill-v1' });
+      await expect(upgradedClient.note.findMany({
+        where: { id: { in: ['sqlite-upgrade-note-known', 'sqlite-upgrade-note-quarantine'] } },
+        orderBy: { id: 'asc' },
+        select: { id: true, createdByUserId: true, visibility: true, aclVersion: true },
+      })).resolves.toEqual([
+        {
+          id: 'sqlite-upgrade-note-known', createdByUserId: 'sqlite-upgrade-user',
+          visibility: 'private', aclVersion: 1,
+        },
+        {
+          id: 'sqlite-upgrade-note-quarantine', createdByUserId: null,
+          visibility: 'owner_admin_only', aclVersion: 1,
+        },
+      ]);
+      await expect(upgradedClient.transcript.findMany({
+        where: { id: { in: ['sqlite-upgrade-transcript-known', 'sqlite-upgrade-transcript-quarantine'] } },
+        orderBy: { id: 'asc' },
+        select: {
+          id: true, createdByUserId: true, visibility: true, aclVersion: true,
+          idempotencyDomain: true,
+        },
+      })).resolves.toEqual([
+        {
+          id: 'sqlite-upgrade-transcript-known', createdByUserId: 'sqlite-upgrade-user',
+          visibility: 'private', aclVersion: 1,
+          idempotencyDomain: 'creator-private-v1:"sqlite-upgrade-user"',
+        },
+        {
+          id: 'sqlite-upgrade-transcript-quarantine', createdByUserId: null,
+          visibility: 'owner_admin_only', aclVersion: 1,
+          idempotencyDomain: 'system-quarantine-v1',
+        },
+      ]);
+      await expect(upgradedClient.dataMigrationState.findUnique({
+        where: { key: 'CORE-204-sensitive-acl-v1' },
+      })).resolves.toMatchObject({ key: 'CORE-204-sensitive-acl-v1' });
+      await expect(upgradedClient.sourceArtifact.findMany({
+        where: { tenantId: 'sqlite-upgrade-tenant' },
+        orderBy: [{ backingKind: 'asc' }, { backingId: 'asc' }],
+        select: {
+          backingKind: true, backingId: true, artifactKind: true, source: true,
+          fingerprintKind: true, sourceFingerprint: true, retentionState: true,
+          createdByUserId: true, visibility: true, aclVersion: true,
+        },
+      })).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          backingKind: 'note', backingId: 'sqlite-upgrade-note-known', artifactKind: 'note',
+          fingerprintKind: 'content_sha256_v1', retentionState: 'available',
+          createdByUserId: 'sqlite-upgrade-user', visibility: 'private', aclVersion: 1,
+        }),
+        expect.objectContaining({
+          backingKind: 'note', backingId: 'sqlite-upgrade-note-quarantine', artifactKind: 'note',
+          fingerprintKind: 'content_sha256_v1', retentionState: 'available',
+          createdByUserId: null, visibility: 'owner_admin_only', aclVersion: 1,
+        }),
+        expect.objectContaining({
+          backingKind: 'transcript', backingId: 'sqlite-upgrade-transcript-known', artifactKind: 'transcript',
+          fingerprintKind: 'content_sha256_v1', retentionState: 'available',
+          createdByUserId: 'sqlite-upgrade-user', visibility: 'private', aclVersion: 1,
+        }),
+        expect.objectContaining({
+          backingKind: 'transcript', backingId: 'sqlite-upgrade-transcript-quarantine', artifactKind: 'transcript',
+          fingerprintKind: 'content_sha256_v1', retentionState: 'available',
+          createdByUserId: null, visibility: 'owner_admin_only', aclVersion: 1,
+        }),
+      ]));
+      await expect(upgradedClient.sourceArtifact.count({
+        where: { tenantId: 'sqlite-upgrade-tenant' },
+      })).resolves.toBe(4);
+      const sourceArtifactColumns = await upgradedClient.$queryRawUnsafe<Array<{ name: string }>>(
+        'PRAGMA table_info("SourceArtifact")',
+      );
+      expect(sourceArtifactColumns.map((column) => column.name)).not.toEqual(expect.arrayContaining([
+        'content', 'contentEnc', 'body', 'payload',
+      ]));
+      await expect(upgradedClient.dataMigrationState.findUnique({
+        where: { key: 'SAAS-201-source-artifact-projection-v1' },
+      })).resolves.toMatchObject({ key: 'SAAS-201-source-artifact-projection-v1' });
+      await expect(upgradedClient.dataMigrationState.findUnique({
+        where: { key: 'CORE-205-review-batch-interaction-v1' },
+      })).resolves.toMatchObject({ key: 'CORE-205-review-batch-interaction-v1' });
+      await expect(upgradedClient.reviewBatch.count()).resolves.toBe(0);
+      await expect(upgradedClient.interaction.count()).resolves.toBe(0);
+      await expect(upgradedClient.dataMigrationState.findUnique({
+        where: { key: 'CORE-206-agent-job-run-v1' },
+      })).resolves.toMatchObject({ key: 'CORE-206-agent-job-run-v1' });
+      await expect(upgradedClient.agentJobDefinition.count()).resolves.toBe(0);
+      await expect(upgradedClient.agentRun.count()).resolves.toBe(0);
+      await expect(upgradedClient.personSuggestion.findUniqueOrThrow({
+        where: { id: 'sqlite-upgrade-person-suggestion' },
+        select: { status: true, evidence: true },
+      })).resolves.toEqual({ status: 'pending', evidence: 'legacy evidence stays in source' });
       const upgradedPlanColumns = await upgradedClient.$queryRawUnsafe<Array<{ name: string; notnull: number }>>(
         'PRAGMA table_info("PlanAction")',
       );
@@ -425,6 +664,34 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
         `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'PdeDecisionContext'`,
       );
       expect(restoredPdeContextTables).toEqual([]);
+      const restoredCandidateTables = await restoredClient.$queryRawUnsafe<Array<{ name: string }>>(
+        `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'Candidate'`,
+      );
+      expect(restoredCandidateTables).toEqual([]);
+      const restoredSensitiveTables = await restoredClient.$queryRawUnsafe<Array<{ name: string }>>(
+        `SELECT name FROM sqlite_master WHERE type = 'table'
+          AND name IN ('SourceArtifact', 'SensitiveResourceGrant')`,
+      );
+      expect(restoredSensitiveTables).toEqual([]);
+      const restoredAgentTables = await restoredClient.$queryRawUnsafe<Array<{ name: string }>>(
+        `SELECT name FROM sqlite_master WHERE type = 'table'
+          AND name IN ('AgentJobDefinition', 'AgentRun')`,
+      );
+      expect(restoredAgentTables).toEqual([]);
+      const restoredNoteColumns = await restoredClient.$queryRawUnsafe<Array<{ name: string }>>(
+        'PRAGMA table_info("Note")',
+      );
+      expect(restoredNoteColumns.map((column) => column.name)).not.toEqual(expect.arrayContaining([
+        'createdByUserId', 'visibility', 'aclVersion',
+      ]));
+      const restoredTranscriptColumns = await restoredClient.$queryRawUnsafe<Array<{ name: string }>>(
+        'PRAGMA table_info("Transcript")',
+      );
+      expect(restoredTranscriptColumns.map((column) => column.name)).not.toContain('idempotencyDomain');
+      await expect(restoredClient.personSuggestion.findUniqueOrThrow({
+        where: { id: 'sqlite-upgrade-person-suggestion' },
+        select: { status: true, evidence: true },
+      })).resolves.toEqual({ status: 'pending', evidence: 'legacy evidence stays in source' });
       const restoredStatuses = await restoredClient.$queryRawUnsafe<Array<{ status: string }>>(
         'SELECT status FROM "Opportunity" ORDER BY status',
       );
@@ -434,7 +701,7 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       await restoredClient?.$disconnect();
       await rm(directory, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
 
   it('resumes safely when schema expansion committed before the Matter backfill', async () => {
     const directory = await mkdtemp(resolve('prisma/.matter-resume-test-'));
@@ -483,7 +750,7 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       await client?.$disconnect();
       await rm(directory, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
 
   it('fails closed when only part of the Customer expansion exists', async () => {
     const directory = await mkdtemp(resolve('prisma/.customer-partial-test-'));
@@ -510,7 +777,34 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       await client?.$disconnect();
       await rm(directory, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
+
+  it('fails closed when only one SAAS-206 authority table survives', async () => {
+    const directory = await mkdtemp(resolve('prisma/.intelligence-focus-partial-test-'));
+    const relativeDirectory = basename(directory);
+    const databaseUrl = `file:./${relativeDirectory}/partial.db`;
+    let client: PrismaClient | null = null;
+    try {
+      run(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], databaseUrl);
+      client = new PrismaClient({ datasourceUrl: databaseUrl });
+      await client.$executeRawUnsafe('DROP TABLE "StakeholderFocus"');
+      await client.$disconnect();
+      client = null;
+
+      const failed = spawnSync(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], {
+        cwd: serverRoot,
+        encoding: 'utf8',
+        env: { ...process.env, DATABASE_URL: databaseUrl, JIANGHU_SKIP_PRISMA_GENERATE: '1' },
+      });
+      expect(failed.status).not.toBe(0);
+      expect(`${failed.stdout}\n${failed.stderr}`).toContain(
+        'partial IntelligenceItem/StakeholderFocus expansion detected; restore the latest backup before retrying',
+      );
+    } finally {
+      await client?.$disconnect();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
 
   it('does not re-derive generic participation from new legacy visibility rows after cutover', async () => {
     const directory = await mkdtemp(resolve('prisma/.participant-cutover-test-'));
@@ -548,7 +842,7 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       await client?.$disconnect();
       await rm(directory, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
 
   it('fails before DDL for an invalid legacy PlanAction date and succeeds after repair', async () => {
     const directory = await mkdtemp(resolve('prisma/.commitment-invalid-test-'));
@@ -591,7 +885,7 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       await client?.$disconnect();
       await rm(directory, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
 
   it('fails before methodology DDL for an unmanaged active pointer and succeeds after repair', async () => {
     const directory = await mkdtemp(resolve('prisma/.methodology-pointer-test-'));
@@ -640,7 +934,7 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       await client?.$disconnect();
       await rm(directory, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
 
   it('fails closed when only part of the methodology schema exists', async () => {
     const directory = await mkdtemp(resolve('prisma/.methodology-partial-test-'));
@@ -672,7 +966,7 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       await client?.$disconnect();
       await rm(directory, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
 
   it('fails closed when only part of the methodology data schema exists', async () => {
     const directory = await mkdtemp(resolve('prisma/.methodology-data-partial-test-'));
@@ -699,7 +993,7 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       await client?.$disconnect();
       await rm(directory, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
 
   it('fails closed when only part of the PDE decision context schema exists', async () => {
     const directory = await mkdtemp(resolve('prisma/.pde-context-partial-test-'));
@@ -726,5 +1020,238 @@ describe('CORE-103/105/106/108/109/110/111/113/115 SQLite schema upgrade', () =>
       await client?.$disconnect();
       await rm(directory, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
+
+  it('fails closed when only part of the Candidate foundation exists', async () => {
+    const directory = await mkdtemp(resolve('prisma/.candidate-partial-test-'));
+    const relativeDirectory = basename(directory);
+    const databaseUrl = `file:./${relativeDirectory}/partial.db`;
+    let client: PrismaClient | null = null;
+    try {
+      run(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], databaseUrl);
+      client = new PrismaClient({ datasourceUrl: databaseUrl });
+      await client.$executeRawUnsafe('ALTER TABLE "Candidate" DROP COLUMN "sourceRef"');
+      await client.$disconnect();
+      client = null;
+
+      const failed = spawnSync(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], {
+        cwd: serverRoot,
+        encoding: 'utf8',
+        env: { ...process.env, DATABASE_URL: databaseUrl, JIANGHU_SKIP_PRISMA_GENERATE: '1' },
+      });
+      expect(failed.status).not.toBe(0);
+      expect(`${failed.stdout}\n${failed.stderr}`).toContain(
+        'partial Candidate foundation detected; restore the latest backup before retrying',
+      );
+    } finally {
+      await client?.$disconnect();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
+
+  it('fails closed when only part of the sensitive resource ACL expansion exists', async () => {
+    const directory = await mkdtemp(resolve('prisma/.sensitive-acl-partial-test-'));
+    const relativeDirectory = basename(directory);
+    const databaseUrl = `file:./${relativeDirectory}/partial.db`;
+    let client: PrismaClient | null = null;
+    try {
+      run(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], databaseUrl);
+      client = new PrismaClient({ datasourceUrl: databaseUrl });
+      await client.$executeRawUnsafe('DROP TABLE "SensitiveResourceGrant"');
+      await client.$disconnect();
+      client = null;
+
+      const failed = spawnSync(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], {
+        cwd: serverRoot,
+        encoding: 'utf8',
+        env: { ...process.env, DATABASE_URL: databaseUrl, JIANGHU_SKIP_PRISMA_GENERATE: '1' },
+      });
+      expect(failed.status).not.toBe(0);
+      expect(`${failed.stdout}\n${failed.stderr}`).toContain(
+        'partial sensitive resource ACL expansion detected; restore the latest backup before retrying',
+      );
+    } finally {
+      await client?.$disconnect();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
+
+  it('fails closed when only part of the SourceArtifact projection expansion exists', async () => {
+    const directory = await mkdtemp(resolve('prisma/.source-artifact-partial-test-'));
+    const relativeDirectory = basename(directory);
+    const databaseUrl = `file:./${relativeDirectory}/partial.db`;
+    let client: PrismaClient | null = null;
+    try {
+      run(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], databaseUrl);
+      client = new PrismaClient({ datasourceUrl: databaseUrl });
+      await client.$executeRawUnsafe('DROP INDEX "SourceArtifact_tenantId_retentionState_updatedAt_idx"');
+      await client.$disconnect();
+      client = null;
+
+      const failed = spawnSync(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], {
+        cwd: serverRoot,
+        encoding: 'utf8',
+        env: { ...process.env, DATABASE_URL: databaseUrl, JIANGHU_SKIP_PRISMA_GENERATE: '1' },
+      });
+      expect(failed.status).not.toBe(0);
+      expect(`${failed.stdout}\n${failed.stderr}`).toContain(
+        'partial SourceArtifact projection expansion detected; restore the latest backup before retrying',
+      );
+    } finally {
+      await client?.$disconnect();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
+
+  it('rejects pre-DDL Candidate attachment drift before recreating ReviewBatch tables', async () => {
+    const directory = await mkdtemp(resolve('prisma/.review-batch-attachment-drift-test-'));
+    const relativeDirectory = basename(directory);
+    const databaseUrl = `file:./${relativeDirectory}/drift.db`;
+    let client: PrismaClient | null = null;
+    try {
+      run(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], databaseUrl);
+      client = new PrismaClient({ datasourceUrl: databaseUrl });
+      await client.tenant.create({ data: { id: 'review-batch-drift-tenant', name: 'Drift tenant' } });
+      await client.user.create({ data: {
+        id: 'review-batch-drift-user', tenantId: 'review-batch-drift-tenant',
+        email: 'review-batch-drift@example.test', passwordHash: 'unused', name: 'Drift owner', role: 'owner',
+      } });
+      await client.account.create({ data: {
+        id: 'review-batch-drift-account', tenantId: 'review-batch-drift-tenant', name: 'Drift account',
+      } });
+      await client.sourceArtifact.create({ data: {
+        id: 'review-batch-drift-source', tenantId: 'review-batch-drift-tenant',
+        accountId: 'review-batch-drift-account', backingKind: 'external_reference',
+        backingId: 'review-batch-drift-source', artifactKind: 'external_reference', source: 'test',
+        externalRef: 'review-batch-drift-source',
+        idempotencyDomain: `creator-private-v1:${JSON.stringify('review-batch-drift-user')}`,
+        fingerprintKind: 'reference_sha256_v1', sourceFingerprint: 'a'.repeat(64),
+        retentionState: 'reference_only', createdByUserId: 'review-batch-drift-user',
+        visibility: 'private', aclVersion: 1,
+      } });
+      await client.candidate.create({ data: {
+        id: 'review-batch-drift-candidate', tenantId: 'review-batch-drift-tenant',
+        kind: 'person_create', accountId: 'review-batch-drift-account', targetKind: 'person',
+        source: 'test', sourceRef: 'review-batch-drift:candidate', evidence: 'private evidence',
+        confidence: 0.8, sourceArtifactId: 'review-batch-drift-source',
+        createdByUserId: 'review-batch-drift-user', visibility: 'private', aclVersion: 1,
+        dedupeKey: candidateDedupeKeyForCreator(
+          'review-batch-drift-candidate', 'review-batch-drift-user',
+        ),
+        version: 0,
+      } });
+      await client.dataMigrationState.delete({
+        where: { key: 'CORE-205-review-batch-interaction-v1' },
+      });
+      await client.$executeRawUnsafe('DROP TABLE "Interaction"');
+      await client.$executeRawUnsafe('DROP TABLE "ReviewBatch"');
+      await client.$disconnect();
+      client = null;
+
+      const failed = spawnSync(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], {
+        cwd: serverRoot,
+        encoding: 'utf8',
+        env: { ...process.env, DATABASE_URL: databaseUrl, JIANGHU_SKIP_PRISMA_GENERATE: '1' },
+      });
+      expect(failed.status).not.toBe(0);
+      expect(`${failed.stdout}\n${failed.stderr}`).toContain(
+        'review-batch-drift-tenant:candidate:review-batch-drift-candidate:batch_missing',
+      );
+      const tables = new PrismaClient({ datasourceUrl: databaseUrl });
+      try {
+        const names = await tables.$queryRawUnsafe<Array<{ name: string }>>(
+          `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('ReviewBatch', 'Interaction')`,
+        );
+        expect(names).toEqual([]);
+      } finally {
+        await tables.$disconnect();
+      }
+    } finally {
+      await client?.$disconnect();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
+
+  it('fails closed when only part of the ReviewBatch/Interaction expansion exists', async () => {
+    const directory = await mkdtemp(resolve('prisma/.review-batch-partial-test-'));
+    const relativeDirectory = basename(directory);
+    const databaseUrl = `file:./${relativeDirectory}/partial.db`;
+    let client: PrismaClient | null = null;
+    try {
+      run(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], databaseUrl);
+      client = new PrismaClient({ datasourceUrl: databaseUrl });
+      await client.$executeRawUnsafe('DROP TABLE "Interaction"');
+      await client.$disconnect();
+      client = null;
+
+      const failed = spawnSync(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], {
+        cwd: serverRoot,
+        encoding: 'utf8',
+        env: { ...process.env, DATABASE_URL: databaseUrl, JIANGHU_SKIP_PRISMA_GENERATE: '1' },
+      });
+      expect(failed.status).not.toBe(0);
+      expect(`${failed.stdout}\n${failed.stderr}`).toContain(
+        'partial ReviewBatch/Interaction expansion detected; restore the latest backup before retrying',
+      );
+    } finally {
+      await client?.$disconnect();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
+
+  it('fails closed when only part of the AgentJobDefinition/AgentRun expansion exists', async () => {
+    const directory = await mkdtemp(resolve('prisma/.agent-job-partial-test-'));
+    const relativeDirectory = basename(directory);
+    const databaseUrl = `file:./${relativeDirectory}/partial.db`;
+    let client: PrismaClient | null = null;
+    try {
+      run(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], databaseUrl);
+      client = new PrismaClient({ datasourceUrl: databaseUrl });
+      await client.$executeRawUnsafe('DROP TABLE "AgentRun"');
+      await client.$disconnect();
+      client = null;
+
+      const failed = spawnSync(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], {
+        cwd: serverRoot,
+        encoding: 'utf8',
+        env: { ...process.env, DATABASE_URL: databaseUrl, JIANGHU_SKIP_PRISMA_GENERATE: '1' },
+      });
+      expect(failed.status).not.toBe(0);
+      expect(`${failed.stdout}\n${failed.stderr}`).toContain(
+        'partial AgentJobDefinition/AgentRun expansion detected; restore the latest backup before retrying',
+      );
+    } finally {
+      await client?.$disconnect();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
+
+  it('fails closed when the ResearchBriefSnapshot expansion loses an approved index', async () => {
+    const directory = await mkdtemp(resolve('prisma/.research-brief-partial-test-'));
+    const relativeDirectory = basename(directory);
+    const databaseUrl = `file:./${relativeDirectory}/partial.db`;
+    let client: PrismaClient | null = null;
+    try {
+      run(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], databaseUrl);
+      client = new PrismaClient({ datasourceUrl: databaseUrl });
+      await client.$executeRawUnsafe(
+        'DROP INDEX "ResearchBriefSnapshot_tenantId_createdByUserId_matterId_generatedAt_idx"',
+      );
+      await client.$disconnect();
+      client = null;
+
+      const failed = spawnSync(tsxBin, ['scripts/upgrade-sqlite-schema.ts'], {
+        cwd: serverRoot,
+        encoding: 'utf8',
+        env: { ...process.env, DATABASE_URL: databaseUrl, JIANGHU_SKIP_PRISMA_GENERATE: '1' },
+      });
+      expect(failed.status).not.toBe(0);
+      expect(`${failed.stdout}\n${failed.stderr}`).toContain(
+        'partial ResearchBriefSnapshot expansion detected; restore the latest backup before retrying',
+      );
+    } finally {
+      await client?.$disconnect();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, SQLITE_UPGRADE_TEST_TIMEOUT_MS);
 });

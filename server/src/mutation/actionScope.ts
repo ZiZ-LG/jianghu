@@ -9,6 +9,15 @@ import {
   type DbClient,
 } from './scopeGuards.js';
 
+export class LegacyAssumptionFrozenError extends Error {
+  readonly code = 'legacy_assumption_frozen';
+
+  constructor() {
+    super('Legacy StrategyRisk assumptions are frozen; use SalesHypothesis commands');
+    this.name = 'LegacyAssumptionFrozenError';
+  }
+}
+
 function parseIdReferences(raw: string): string[] {
   try {
     const parsed: unknown = JSON.parse(raw || '[]');
@@ -410,6 +419,7 @@ export async function requireActionScope(db: DbClient, tenantId: string, action:
       return;
 
     case 'ADD_STRATEGY_RISK':
+      if (action.risk.kind === 'assumption') throw new LegacyAssumptionFrozenError();
       await requireOpportunity(db, tenantId, action.accId, action.oppId);
       return;
 
@@ -417,9 +427,13 @@ export async function requireActionScope(db: DbClient, tenantId: string, action:
     case 'DELETE_STRATEGY_RISK': {
       const row = await requireScopedRow(db.strategyRisk.findFirst({
         where: { id: action.riskId, tenantId, accountId: action.accId },
-        select: { opportunityId: true },
+        select: { opportunityId: true, kind: true },
       }));
       await requireOpportunity(db, tenantId, action.accId, row.opportunityId);
+      if (row.kind === 'assumption'
+        || (action.type === 'UPDATE_STRATEGY_RISK' && action.patch.kind === 'assumption')) {
+        throw new LegacyAssumptionFrozenError();
+      }
       return;
     }
 

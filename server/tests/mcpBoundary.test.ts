@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { CommandContext } from '@jianghu/domain-contracts';
 import { handleMcpBody } from '../src/mcpServer.js';
+import { createPersonCandidate } from '../src/candidates/personRelation.js';
 import { createTestContext } from './helpers/testApp.js';
 import { internalProductPolicy } from './helpers/productPolicy.js';
+import { setSensitiveResourceVisibility } from '../src/sensitiveAcl/service.js';
 
 const ctx: CommandContext = {
   tenantId: 'tenant-mcp-boundary',
@@ -31,6 +33,28 @@ async function callMcpTool(
   args: Record<string, unknown>,
 ) {
   return handleMcpBody(liveMcpContext(context), {
+    jsonrpc: '2.0',
+    id,
+    method: 'tools/call',
+    params: { name, arguments: args },
+  }, internalProductPolicy);
+}
+
+async function callMcpToolAs(
+  context: Awaited<ReturnType<typeof createTestContext>>,
+  actor: { id: string; role: 'owner' | 'admin' | 'member' | 'viewer' },
+  id: number,
+  name: string,
+  args: Record<string, unknown>,
+) {
+  return handleMcpBody({
+    tenantId: context.tenant.id,
+    actorId: actor.id,
+    actorRole: actor.role,
+    channel: 'mcp',
+    requestId: `request-mcp-${id}`,
+    assertionMode: 'machine_proposed',
+  }, {
     jsonrpc: '2.0',
     id,
     method: 'tools/call',
@@ -237,6 +261,261 @@ describe('MCP public JSON-RPC boundary', () => {
     }
   });
 
+  it('creates the caller private Candidate without revealing another creator semantic match', async () => {
+    const context = await createTestContext();
+    try {
+      const accountId = 'mcp-private-dedupe-account';
+      await context.prisma.account.create({ data: {
+        id: accountId, tenantId: context.tenant.id, name: 'Private dedupe', customerType: 1,
+      } });
+      const other = await context.prisma.user.create({ data: {
+        tenantId: context.tenant.id,
+        email: 'mcp-private-other@test.invalid',
+        passwordHash: 'x',
+        name: 'Other member',
+        role: 'member',
+      } });
+      const privateCandidate = await createPersonCandidate(context.prisma, {
+        id: 'mcp-private-dedupe-candidate',
+        tenantId: context.tenant.id,
+        accountId,
+        name: '同名私有候选',
+        source: 'mcp',
+        sourceRef: 'mcp-private-dedupe-source',
+        evidence: 'PRIVATE_EVIDENCE_MUST_NOT_LEAK',
+        confidence: 0.61,
+        createdByUserId: context.owner.id,
+        dedupeKey: `person-pending-v1:${accountId}:同名私有候选`,
+      });
+
+      const response = await callMcpToolAs(context, { id: other.id, role: 'member' }, 51, 'propose_person', {
+        accountId,
+        name: '同名私有候选',
+        title: 'must not take over',
+        evidence: 'must not replace private evidence',
+        confidence: 0.99,
+      });
+      const baseline = await callMcpToolAs(context, { id: other.id, role: 'member' }, 52, 'propose_person', {
+        accountId,
+        name: '无预存私有候选',
+        title: 'baseline',
+        evidence: 'baseline evidence',
+        confidence: 0.7,
+      });
+      const text = JSON.stringify(response);
+      const result = JSON.parse((response as any).result.content[0].text) as Record<string, unknown>;
+      const baselineResult = JSON.parse((baseline as any).result.content[0].text) as Record<string, unknown>;
+
+      expect(response).not.toMatchObject({ result: { isError: true } });
+      expect(Object.keys(result).sort()).toEqual(Object.keys(baselineResult).sort());
+      expect(result.note).toBe(baselineResult.note);
+      expect(text).not.toContain(privateCandidate.row.id);
+      expect(text).not.toContain('PRIVATE_EVIDENCE_MUST_NOT_LEAK');
+      await expect(context.prisma.personSuggestion.findUniqueOrThrow({ where: { id: privateCandidate.row.id } }))
+        .resolves.toMatchObject({
+          title: '',
+          evidence: 'PRIVATE_EVIDENCE_MUST_NOT_LEAK',
+          confidence: 0.61,
+        });
+      await expect(context.prisma.candidate.findUniqueOrThrow({ where: { id: privateCandidate.candidateId } }))
+        .resolves.toMatchObject({
+          createdByUserId: context.owner.id,
+          visibility: 'private',
+          version: 0,
+        });
+      await expect(context.prisma.candidate.count({ where: {
+        tenantId: context.tenant.id,
+        kind: 'person_create',
+        status: 'pending',
+        createdByUserId: other.id,
+      } })).resolves.toBe(2);
+    } finally {
+      await context.cleanup();
+    }
+  });
+
+  it('filters MCP list_pending by Candidate creator ACL before returning legacy projection bodies', async () => {
+    const context = await createTestContext();
+    try {
+      const accountId = 'mcp-private-list-account';
+      await context.prisma.account.create({ data: {
+        id: accountId, tenantId: context.tenant.id, name: 'Private list', customerType: 1,
+      } });
+      const member = await context.prisma.user.create({ data: {
+        tenantId: context.tenant.id,
+        email: 'mcp-private-list-member@test.invalid',
+        passwordHash: 'x',
+        name: 'Private list member',
+        role: 'member',
+      } });
+      await createPersonCandidate(context.prisma, {
+        id: 'mcp-private-list-own', tenantId: context.tenant.id, accountId,
+        name: 'OWN_PRIVATE_VISIBLE', source: 'mcp', sourceRef: 'mcp-private-list-own-source',
+        evidence: 'OWN_PRIVATE_EVIDENCE', confidence: 0.6, createdByUserId: member.id,
+        dedupeKey: `person-pending-v1:${accountId}:own_private_visible`,
+      });
+      await createPersonCandidate(context.prisma, {
+        id: 'mcp-private-list-other', tenantId: context.tenant.id, accountId,
+        name: 'OTHER_PRIVATE_SECRET', source: 'mcp', sourceRef: 'mcp-private-list-other-source',
+        evidence: 'OTHER_PRIVATE_EVIDENCE_SECRET', confidence: 0.6, createdByUserId: context.owner.id,
+        dedupeKey: `person-pending-v1:${accountId}:other_private_secret`,
+      });
+      await createPersonCandidate(context.prisma, {
+        id: 'mcp-private-list-system', tenantId: context.tenant.id, accountId,
+        name: 'SYSTEM_QUARANTINE_SECRET', source: 'ai', sourceRef: 'mcp-private-list-system-source',
+        evidence: 'SYSTEM_QUARANTINE_EVIDENCE_SECRET', confidence: 0.6, createdByUserId: null,
+        dedupeKey: `person-pending-v1:${accountId}:system_quarantine_secret`,
+      });
+
+      const response = await callMcpToolAs(context, { id: member.id, role: 'member' }, 52, 'list_pending', { accountId });
+      const text = (response as { result: { content: Array<{ text: string }> } }).result.content[0]!.text;
+      const body = JSON.parse(text) as { pendingPersons: Array<{ id: string }> };
+
+      expect(body.pendingPersons.map((row) => row.id)).toEqual(['mcp-private-list-own']);
+      expect(text).not.toContain('OTHER_PRIVATE_SECRET');
+      expect(text).not.toContain('OTHER_PRIVATE_EVIDENCE_SECRET');
+      expect(text).not.toContain('SYSTEM_QUARANTINE_SECRET');
+      expect(text).not.toContain('SYSTEM_QUARANTINE_EVIDENCE_SECRET');
+    } finally {
+      await context.cleanup();
+    }
+  });
+
+  it('does not let 200 newer private Candidates starve an older readable shared Candidate', async () => {
+    const context = await createTestContext();
+    try {
+      const accountId = 'mcp-shared-starvation-account';
+      await context.prisma.account.create({ data: {
+        id: accountId, tenantId: context.tenant.id, name: 'Shared starvation', customerType: 1,
+      } });
+      const matterId = 'mcp-shared-starvation-matter';
+      await context.prisma.opportunity.create({ data: {
+        id: matterId, tenantId: context.tenant.id, accountId,
+        name: 'Shared starvation matter', customerType: 1,
+        pipelineStage: 'lead', engageStage: 'discover',
+      } });
+      const reader = await context.prisma.user.create({ data: {
+        tenantId: context.tenant.id,
+        email: 'mcp-starvation-reader@test.invalid',
+        passwordHash: 'x',
+        name: 'Starvation reader',
+        role: 'member',
+      } });
+      const older = await createPersonCandidate(context.prisma, {
+        id: 'mcp-older-shared-candidate', tenantId: context.tenant.id, accountId, matterId,
+        name: 'OLDER_SHARED_CANDIDATE', source: 'mcp', sourceRef: 'mcp:older-shared',
+        evidence: 'older shared evidence', confidence: 0.7,
+        createdByUserId: context.owner.id,
+        dedupeKey: `person-pending-v1:${accountId}:older_shared_candidate`,
+      });
+      await context.prisma.$transaction([
+        context.prisma.personSuggestion.update({
+          where: { id: older.row.id }, data: { createdAt: new Date('2020-01-01') },
+        }),
+        context.prisma.candidate.update({
+          where: { id: older.candidateId },
+          data: { createdAt: new Date('2020-01-01') },
+        }),
+      ]);
+      await setSensitiveResourceVisibility(context.prisma, {
+        tenantId: context.tenant.id,
+        actorId: context.owner.id,
+        actorRole: 'owner',
+        kind: 'candidate',
+        resourceId: older.candidateId,
+        visibility: 'matter_shared',
+        expectedAclVersion: 1,
+      }, internalProductPolicy);
+      await context.prisma.personSuggestion.createMany({ data: Array.from({ length: 200 }, (_, index) => ({
+        id: `mcp-new-private-projection-${index}`,
+        tenantId: context.tenant.id,
+        accountId,
+        opportunityId: matterId,
+        name: `PRIVATE_STARVATION_${index}`,
+        origin: 'mcp',
+        evidence: `PRIVATE_STARVATION_EVIDENCE_${index}`,
+        confidence: 0.5,
+        status: 'pending',
+        proposedBy: context.owner.id,
+      })) });
+      await context.prisma.candidate.createMany({ data: Array.from({ length: 200 }, (_, index) => ({
+        id: `mcp-new-private-candidate-${index}`,
+        tenantId: context.tenant.id,
+        kind: 'person_create',
+        status: 'pending',
+        accountId,
+        matterId,
+        targetKind: 'person',
+        source: 'mcp',
+        sourceRef: `mcp:new-private:${index}`,
+        evidence: `PRIVATE_STARVATION_EVIDENCE_${index}`,
+        confidence: 0.5,
+        createdByUserId: context.owner.id,
+        visibility: 'private',
+        aclVersion: 1,
+        dedupeKey: `mcp-new-private-dedupe-${index}`,
+        legacySourceKind: 'PersonSuggestion',
+        legacySourceId: `mcp-new-private-projection-${index}`,
+      })) });
+
+      const response = await callMcpToolAs(context, { id: reader.id, role: 'member' }, 53, 'list_pending', {});
+      const serialized = JSON.stringify(response);
+      expect(serialized).toContain('OLDER_SHARED_CANDIDATE');
+      expect(serialized).not.toContain('PRIVATE_STARVATION_EVIDENCE_');
+    } finally {
+      await context.cleanup();
+    }
+  });
+
+  it('rejects a relationship proposal that references another creator private Candidate endpoint', async () => {
+    const context = await createTestContext();
+    try {
+      const accountId = 'mcp-private-endpoint-account';
+      const matterId = 'mcp-private-endpoint-matter';
+      await context.prisma.account.create({ data: {
+        id: accountId, tenantId: context.tenant.id, name: 'Private endpoint', customerType: 1,
+      } });
+      await context.prisma.opportunity.create({ data: {
+        id: matterId, tenantId: context.tenant.id, accountId, name: 'Private endpoint matter', customerType: 1,
+        pipelineStage: '线索', engageStage: '需求调研立项',
+      } });
+      await context.prisma.person.create({ data: {
+        id: 'mcp-private-endpoint-formal', tenantId: context.tenant.id, accountId, name: 'Formal endpoint', title: '',
+      } });
+      const other = await context.prisma.user.create({ data: {
+        tenantId: context.tenant.id,
+        email: 'mcp-private-endpoint-other@test.invalid',
+        passwordHash: 'x',
+        name: 'Endpoint other',
+        role: 'member',
+      } });
+      await createPersonCandidate(context.prisma, {
+        id: 'mcp-private-endpoint-candidate', tenantId: context.tenant.id, accountId, matterId,
+        name: 'PRIVATE_ENDPOINT_SECRET', source: 'mcp', sourceRef: 'mcp-private-endpoint-source',
+        evidence: 'PRIVATE_ENDPOINT_EVIDENCE_SECRET', confidence: 0.64, createdByUserId: context.owner.id,
+        dedupeKey: `person-pending-v1:${accountId}:private_endpoint_secret`,
+      });
+
+      const response = await callMcpToolAs(context, { id: other.id, role: 'member' }, 53, 'propose_relationship', {
+        opportunityId: matterId,
+        source: { kind: 'suggestion', id: 'mcp-private-endpoint-candidate' },
+        target: { kind: 'person', id: 'mcp-private-endpoint-formal' },
+        evidence: 'must not attach to private endpoint',
+      });
+      const text = JSON.stringify(response);
+
+      expect(response).toMatchObject({ result: { isError: true } });
+      expect(text).not.toContain('PRIVATE_ENDPOINT_SECRET');
+      expect(text).not.toContain('PRIVATE_ENDPOINT_EVIDENCE_SECRET');
+      await expect(context.prisma.relSuggestion.count({ where: { tenantId: context.tenant.id } })).resolves.toBe(0);
+      await expect(context.prisma.candidate.count({ where: {
+        tenantId: context.tenant.id, kind: 'relation_create',
+      } })).resolves.toBe(0);
+    } finally {
+      await context.cleanup();
+    }
+  });
+
   it('rejects propose_relationship formal and suggestion endpoints outside the Opportunity Account without creating rows', async () => {
     const context = await createTestContext();
     try {
@@ -323,6 +602,25 @@ describe('MCP public JSON-RPC boundary', () => {
           },
         ],
       });
+      await context.prisma.candidate.createMany({ data: [
+        ['mcp-read-valid', 'mcp-read-candidate-valid'],
+        ['mcp-read-invalid-formal', 'mcp-read-candidate-invalid-formal'],
+        ['mcp-read-invalid-suggestion', 'mcp-read-candidate-invalid-suggestion'],
+      ].map(([legacySourceId, id]) => ({
+        id,
+        tenantId: context.tenant.id,
+        kind: 'relation_create',
+        accountId: 'mcp-read-acc-left',
+        matterId: 'mcp-read-opp-left',
+        targetKind: 'relation',
+        source: 'legacy-test',
+        sourceRef: `legacy-test:${legacySourceId}`,
+        createdByUserId: context.owner.id,
+        visibility: 'private',
+        dedupeKey: `legacy-test:${legacySourceId}`,
+        legacySourceKind: 'RelSuggestion',
+        legacySourceId,
+      })) });
 
       const response = await callMcpTool(context, 8, 'list_pending', { accountId: 'mcp-read-acc-left' });
       const text = (response as { result: { content: Array<{ text: string }> } }).result.content[0].text;

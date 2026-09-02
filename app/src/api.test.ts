@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { assembleProductAccess } from '@jianghu/domain-contracts';
+import {
+  assembleProductAccess,
+  type AgentManualRunRequest,
+  type PostMeetingReviewRequest,
+} from '@jianghu/domain-contracts';
 import { ApiError, api, isConfirmedAuthFailure, request } from './api';
 
 const response = (status: number, body: unknown) => ({
@@ -316,6 +320,7 @@ describe('typed API failures', () => {
         title: '下一步', kind: 'task', ownerUserId: 'user-1', confirmationStatus: 'not_required' as const,
         scheduledAtUtc: null, dueAtUtc: null, timeZone: 'Asia/Shanghai', isAllDay: true,
         localDate: '2026-09-10', confirmationDueAtUtc: null, source: 'manual', sourceRef: null,
+        hypothesisRef: null,
       },
     };
 
@@ -402,6 +407,7 @@ describe('typed API failures', () => {
           scheduledAtUtc: '2026-08-27T07:00:00.000Z', dueAtUtc: null,
           timeZone: 'Asia/Shanghai', isAllDay: false as const, localDate: null,
           confirmationDueAtUtc: null, source: 'manual_quick_capture' as const, sourceRef: null,
+          hypothesisRef: null,
         },
       },
     };
@@ -429,6 +435,7 @@ describe('typed API failures', () => {
           scheduledAtUtc: '2026-08-27T07:00:00.000Z', dueAtUtc: null,
           timeZone: 'Asia/Shanghai', isAllDay: false as const, localDate: null,
           confirmationDueAtUtc: null, source: 'manual_quick_capture' as const, sourceRef: null,
+          hypothesisRef: null,
         },
       },
     };
@@ -565,6 +572,38 @@ describe('typed API failures', () => {
     expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual(longSourceRef);
   });
 
+  it('uses strict parent-scoped relationship-radar projection, source, and history transports', async () => {
+    const sourceRef = {
+      entityKind: 'matter' as const, entityId: 'matter-1', version: 3, scheduleVersion: null,
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(200, {
+        status: 'missing', customerId: 'customer-1', matterId: 'matter-1',
+      }))
+      .mockResolvedValueOnce(response(200, {
+        sourceRef, customerId: 'customer-1', matterId: 'matter-1',
+        label: '当前事项', detail: '版本 3',
+      }))
+      .mockResolvedValueOnce(response(200, { items: [], nextCursor: null }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.relationshipRadar('customer-1', 'matter-1')).resolves.toMatchObject({ status: 'missing' });
+    await expect(api.relationshipRadarSource('customer-1', 'matter-1', sourceRef)).resolves.toMatchObject({
+      sourceRef, customerId: 'customer-1', matterId: 'matter-1',
+    });
+    await expect(api.relationshipRadarRuns('customer-1', 'matter-1')).resolves.toEqual({
+      items: [], nextCursor: null,
+    });
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'http://localhost:3001/api/relationship-radar?customerId=customer-1&matterId=matter-1',
+      'http://localhost:3001/api/relationship-radar/source',
+      'http://localhost:3001/api/agent-runs?limit=50',
+    ]);
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      customerId: 'customer-1', matterId: 'matter-1', sourceRef,
+    });
+  });
+
   it('sends minimum repair commands to the dedicated audited endpoints', async () => {
     const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => response(200, {
       source: 'workbuddy', sourceRef: 'acc-ref', syncedAt: null, syncRuns: [], auditEvents: [],
@@ -615,5 +654,380 @@ describe('typed API failures', () => {
     expect(url).toBe('http://localhost:3001/api/access-tokens');
     expect((init as RequestInit).method).toBe('POST');
     expect(JSON.parse(String((init as RequestInit).body))).toEqual({ name: 'Research', preset: 'research_proposal' });
+  });
+
+  it('uses strict post-meeting endpoints and keeps command idempotency keys stable across network retry', async () => {
+    const job = {
+      jobKey: 'post_meeting_extract', jobVersion: 'core-206.v1', purpose: '会后候选提取',
+      triggers: ['manual'],
+      scopeManifest: {
+        customer: 'required', matter: 'required', sourceArtifact: 'required',
+        allowedSourceKinds: ['transcript', 'uploaded_file', 'note'],
+        allowedInputRefKinds: ['customer', 'matter', 'source_artifact'],
+      },
+      actionMode: 'candidate',
+      evidencePolicy: { required: true, minimumRefs: 1, maximumRefs: 20, requireSourceFingerprint: true },
+      outputRefKinds: ['review_batch'], modelRef: 'tenant_byo_model', connectorRefs: [],
+      budget: { maxInputRefs: 3, maxEvidenceRefs: 20, maxOutputRefs: 1, maxCostUnits: 2_000 },
+      timeoutMs: 45_000, maxAttempts: 2, available: true, enabled: true,
+      controlState: 'valid', controlVersion: 1,
+      limits: { maxCostUnits: 2_000, timeoutMs: 45_000, maxAttempts: 2 },
+    };
+    const run = {
+      id: 'agent_run_1', jobKey: 'post_meeting_extract', jobVersion: 'core-206.v1',
+      actionMode: 'candidate', trigger: 'manual', status: 'succeeded',
+      customerId: 'customer/1', matterId: 'matter/1', sourceArtifactId: 'source/1', actorId: 'user-1',
+      attemptCount: 1, maxAttempts: 2, budgetLimit: 2_000, costUsed: 5, timeoutMs: 45_000,
+      authorizationFingerprint: 'a'.repeat(64), modelRef: 'tenant_byo_model', connectorRefs: [],
+      inputRefs: [
+        { kind: 'customer', id: 'customer/1', version: 2 },
+        { kind: 'matter', id: 'matter/1', version: 3 },
+        { kind: 'source_artifact', id: 'source/1', version: 4 },
+      ],
+      evidenceRefs: [{
+        sourceArtifactId: 'source/1', locatorId: 'item-001:chars:0-4',
+        sourceFingerprint: 'b'.repeat(64), observedAt: '2026-08-25T18:00:00.000Z',
+      }],
+      outputRefs: [{ kind: 'review_batch', id: 'review/batch-1', version: 0 }], failureCode: '',
+      createdAt: '2026-08-25T18:00:00.000Z', startedAt: '2026-08-25T18:00:00.000Z',
+      completedAt: '2026-08-25T18:00:01.000Z', version: 1,
+    };
+    const source = {
+      id: 'source/1', accountId: 'customer/1', matterId: 'matter/1', personId: null,
+      backingKind: 'note', artifactKind: 'note', source: 'manual', externalRef: null,
+      title: '会谈', occurredAt: '2026-08-25T18:00:00.000Z', fingerprintKind: 'content_sha256_v1',
+      sourceFingerprint: 'b'.repeat(64), retentionState: 'available',
+      retentionUpdatedAt: '2026-08-25T18:00:00.000Z', createdByUserId: 'user-1', visibility: 'private',
+      aclVersion: 4, createdAt: '2026-08-25T18:00:00.000Z', updatedAt: '2026-08-25T18:00:00.000Z',
+      backingPresent: true, contentAvailable: true, canDegrade: false, canDelete: true,
+      explanation: 'local_body_available',
+    };
+    const detail = {
+      id: 'review/batch-1',
+      source: { id: 'source/1', title: '会谈', kind: 'note', fingerprint: 'b'.repeat(64), occurredAt: '2026-08-25T18:00:00.000Z' },
+      customerId: 'customer/1', matterId: 'matter/1', status: 'pending', activityKind: null,
+      occurredAt: null, interactionId: null, acceptanceVersion: 0, version: 0,
+      createdAt: '2026-08-25T18:00:01.000Z', updatedAt: '2026-08-25T18:00:01.000Z',
+      items: [{
+        kind: 'field', candidateId: 'candidate-field', status: 'pending', itemRef: 'item-001',
+        expectedVersion: 1, expectedAclVersion: 4, sourceLocator: 'item-001:chars:0-4',
+        sourceQuote: '优先级 high', confidence: 0.8, defaultSelected: false,
+        target: { kind: 'matter', field: 'priority' }, before: 'normal', after: 'high',
+      }],
+    };
+    const reviewRequest: PostMeetingReviewRequest = {
+      expectedVersion: 0, expectedAcceptanceVersion: 0,
+      customerId: 'customer/1', matterId: 'matter/1', activityKind: 'customer_meeting',
+      occurredAt: '2026-08-25T18:00:00.000Z', existingInteractionId: null,
+      decisions: [{
+        kind: 'field', candidateId: 'candidate-field', expectedVersion: 1,
+        expectedAclVersion: 4, decision: 'accept', edit: { value: 'high' },
+      }],
+    };
+    const success = {
+      batchId: 'review/batch-1', status: 'accepted', interactionId: 'interaction-1',
+      version: 1, acceptanceVersion: 1, items: [{
+        candidateId: 'candidate-field', decision: 'accept', status: 'accepted',
+        formalKind: 'matter', formalId: 'matter/1',
+      }], businessReplayed: false, replayed: false,
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(200, { items: [job] }))
+      .mockResolvedValueOnce(response(200, { items: [run], nextCursor: null }))
+      .mockResolvedValueOnce(response(200, { items: [source], nextCursor: null }))
+      .mockResolvedValueOnce(response(200, detail))
+      .mockResolvedValueOnce(response(200, { ...job, enabled: false, controlVersion: 2, replayed: false }))
+      .mockRejectedValueOnce(new TypeError('run response lost'))
+      .mockResolvedValueOnce(response(200, { run, replayed: true }))
+      .mockRejectedValueOnce(new TypeError('review response lost'))
+      .mockResolvedValueOnce(response(200, { ...success, replayed: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.postMeetingJobCards()).resolves.toEqual({ items: [job] });
+    await expect(api.postMeetingRuns()).resolves.toEqual({ items: [run], nextCursor: null });
+    await expect(api.postMeetingSources('customer/1', 'matter/1')).resolves.toHaveLength(1);
+    await expect(api.postMeetingReview('review/batch-1')).resolves.toEqual(detail);
+    await expect(api.postMeetingControl('core-206.v1', false, 1, 'control-key'))
+      .resolves.toMatchObject({ card: { enabled: false, controlVersion: 2 }, replayed: false });
+    const runRequest: AgentManualRunRequest = {
+      jobVersion: 'core-206.v1', customerId: 'customer/1', matterId: 'matter/1',
+      sourceArtifactId: 'source/1', inputRefs: [
+        { kind: 'customer', id: 'customer/1', version: 2 },
+        { kind: 'matter', id: 'matter/1', version: 3 },
+        { kind: 'source_artifact', id: 'source/1', version: 4 },
+      ],
+    };
+    await expect(api.postMeetingRun(runRequest, 'run-key'))
+      .resolves.toMatchObject({ replayed: true, run: { id: 'agent_run_1' } });
+    await expect(api.postMeetingAccept('review/batch-1', reviewRequest, 'review-key'))
+      .resolves.toMatchObject({ replayed: true, batchId: 'review/batch-1' });
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'http://localhost:3001/api/agent-jobs',
+      'http://localhost:3001/api/agent-runs?limit=50',
+      'http://localhost:3001/api/source-artifacts?accountId=customer%2F1&matterId=matter%2F1&limit=100',
+      'http://localhost:3001/api/review-batches/review%2Fbatch-1',
+      'http://localhost:3001/api/agent-jobs/post_meeting_extract/control',
+      'http://localhost:3001/api/agent-jobs/post_meeting_extract/runs',
+      'http://localhost:3001/api/agent-jobs/post_meeting_extract/runs',
+      'http://localhost:3001/api/review-batches/review%2Fbatch-1/accept',
+      'http://localhost:3001/api/review-batches/review%2Fbatch-1/accept',
+    ]);
+    for (const index of [5, 6]) {
+      expect(((fetchMock.mock.calls[index]![1] as RequestInit).headers as Headers).get('Idempotency-Key')).toBe('run-key');
+    }
+    for (const index of [7, 8]) {
+      expect(((fetchMock.mock.calls[index]![1] as RequestInit).headers as Headers).get('Idempotency-Key')).toBe('review-key');
+    }
+  });
+
+  it('fails closed on malformed post-meeting responses and preserves typed 409 item conflicts', async () => {
+    const conflict = {
+      code: 'review_batch_conflict',
+      items: [{ candidateId: 'candidate-field', status: 'conflict', reason: 'candidate_version_conflict' }],
+    };
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(response(200, { items: [], rawResponse: 'private' }))
+      .mockResolvedValueOnce(response(409, conflict)));
+    await expect(api.postMeetingJobCards()).rejects.toMatchObject({ code: 'invalid_response' });
+    await expect(api.postMeetingAccept('review-1', {
+      expectedVersion: 0, expectedAcceptanceVersion: 0, customerId: 'customer-1', matterId: null,
+      activityKind: 'meeting', occurredAt: '2026-08-25T18:00:00.000Z', existingInteractionId: null,
+      decisions: [{
+        kind: 'field', candidateId: 'candidate-field', expectedVersion: 1,
+        expectedAclVersion: 1, decision: 'accept', edit: { value: 'high' },
+      }],
+    }, 'conflict-key')).rejects.toMatchObject({
+      status: 409,
+      code: 'review_batch_conflict',
+      cause: conflict,
+    });
+  });
+});
+
+describe('pre-meeting brief API', () => {
+  const job = {
+    jobKey: 'pre_meeting_brief', jobVersion: 'core-206.v1', purpose: '拜访前简报',
+    triggers: ['manual'], scopeManifest: {
+      customer: 'required', matter: 'optional', sourceArtifact: 'optional',
+      allowedSourceKinds: ['note'], allowedInputRefKinds: ['customer', 'matter', 'source_artifact'],
+    }, actionMode: 'read_only', evidencePolicy: {
+      required: true, minimumRefs: 1, maximumRefs: 20, requireSourceFingerprint: true,
+    }, outputRefKinds: ['research_brief'], modelRef: 'tenant-byo-ai', connectorRefs: [],
+    budget: { maxInputRefs: 50, maxEvidenceRefs: 20, maxOutputRefs: 10, maxCostUnits: 1_000 },
+    timeoutMs: 30_000, maxAttempts: 2, available: true, enabled: true,
+    controlState: 'valid', controlVersion: 2,
+    limits: { maxCostUnits: 1_000, timeoutMs: 30_000, maxAttempts: 2 },
+  };
+  const runInput: AgentManualRunRequest = {
+    jobVersion: 'core-206.v1', customerId: 'customer/205', matterId: 'matter/205',
+    sourceArtifactId: 'source/205', inputRefs: [
+      { kind: 'customer', id: 'customer/205', version: 4 },
+      { kind: 'matter', id: 'matter/205', version: 2 },
+      { kind: 'source_artifact', id: 'source/205', version: 3 },
+    ],
+  };
+  const run = {
+    id: 'run-205', jobKey: 'pre_meeting_brief', jobVersion: 'core-206.v1',
+    actionMode: 'read_only', trigger: 'manual', status: 'succeeded',
+    customerId: runInput.customerId, matterId: runInput.matterId,
+    sourceArtifactId: runInput.sourceArtifactId, actorId: 'user-205', attemptCount: 1,
+    maxAttempts: 2, budgetLimit: 1_000, costUsed: 1, timeoutMs: 30_000,
+    authorizationFingerprint: 'b'.repeat(64), modelRef: 'tenant-byo-ai', connectorRefs: [],
+    inputRefs: runInput.inputRefs, evidenceRefs: [{
+      sourceArtifactId: 'source/205', locatorId: 'pre-meeting-source',
+      sourceFingerprint: 'a'.repeat(64), observedAt: '2026-08-27T06:00:00.000Z',
+    }], outputRefs: [{ kind: 'research_brief', id: 'brief/205', version: 1 }],
+    failureCode: '', createdAt: '2026-08-27T08:00:00.000Z',
+    startedAt: '2026-08-27T08:00:00.000Z', completedAt: '2026-08-27T08:01:00.000Z',
+    version: 2,
+  };
+  const source = {
+    id: 'source/205', accountId: 'customer/205', matterId: 'matter/205', personId: null,
+    backingKind: 'note', artifactKind: 'note', source: 'manual', externalRef: null,
+    title: '客户访谈', occurredAt: '2026-08-27T06:00:00.000Z',
+    fingerprintKind: 'content_sha256_v1', sourceFingerprint: 'a'.repeat(64),
+    retentionState: 'available', retentionUpdatedAt: '2026-08-27T08:00:00.000Z',
+    createdByUserId: 'user-205', visibility: 'private', aclVersion: 3,
+    createdAt: '2026-08-27T08:00:00.000Z', updatedAt: '2026-08-27T08:00:00.000Z',
+    backingPresent: true, contentAvailable: true, canDegrade: false, canDelete: true,
+    explanation: 'local_body_available',
+  };
+  const metadata = {
+    id: 'brief/205', customerId: 'customer/205', matterId: 'matter/205', status: 'blocked',
+    subjectStatus: 'matched', sourceCount: 0, sectionCount: 0, unknownCount: 1,
+    failureCount: 0, version: 1, basedOnAt: null, freshUntil: null,
+    generatedAt: '2026-08-27T08:00:00.000Z', createdAt: '2026-08-27T08:01:00.000Z',
+  };
+  const detail = {
+    ...metadata,
+    payload: {
+      subject: {
+        status: 'matched', query: '海岳能源', crmCustomerId: 'customer/205',
+        selected: {
+          legalName: '海岳能源', anchorKind: 'provider_subject_id',
+          anchorValue: 'customer/205', provider: 'jianghu-crm',
+        }, candidates: [],
+      },
+      sources: [], sections: [], unknowns: [{
+        key: 'questions_to_verify', question: '需要确认哪些关键问题？',
+        reasonCode: 'insufficient_evidence', sourceIds: [],
+      }], failures: [],
+      generator: { version: 'saas-204.v1', modelRef: 'tenant-byo-ai', connectorRefs: [] },
+    },
+  };
+
+  it('uses exact read and command endpoints with anchored requests and stable idempotency keys', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(200, { items: [job] }))
+      .mockResolvedValueOnce(response(200, { items: [run], nextCursor: null }))
+      .mockResolvedValueOnce(response(200, { items: [source], nextCursor: null }))
+      .mockResolvedValueOnce(response(200, { items: [metadata], nextCursor: null }))
+      .mockResolvedValueOnce(response(200, { item: detail }))
+      .mockResolvedValueOnce(response(200, { ...job, enabled: false, controlVersion: 3, replayed: false }))
+      .mockResolvedValueOnce(response(200, { run, replayed: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.preMeetingJobCards()).resolves.toEqual({ items: [job] });
+    await expect(api.preMeetingRuns()).resolves.toEqual({ items: [run], nextCursor: null });
+    await expect(api.preMeetingSources('customer/205', 'matter/205')).resolves.toHaveLength(1);
+    await expect(api.preMeetingBriefs('customer/205', 'matter/205')).resolves.toEqual({
+      items: [metadata], nextCursor: null,
+    });
+    await expect(api.preMeetingBrief('brief/205')).resolves.toEqual(detail);
+    await expect(api.preMeetingControl('core-206.v1', false, 2, 'control-205'))
+      .resolves.toMatchObject({ card: { enabled: false, controlVersion: 3 }, replayed: false });
+    await expect(api.preMeetingRun(runInput, 'run-205-key'))
+      .resolves.toMatchObject({ run: { id: 'run-205' }, replayed: true });
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'http://localhost:3001/api/agent-jobs',
+      'http://localhost:3001/api/agent-runs?limit=50',
+      'http://localhost:3001/api/source-artifacts?accountId=customer%2F205&matterId=matter%2F205&limit=100',
+      'http://localhost:3001/api/research-briefs?customerId=customer%2F205&matterId=matter%2F205&limit=50',
+      'http://localhost:3001/api/research-briefs/brief%2F205',
+      'http://localhost:3001/api/agent-jobs/pre_meeting_brief/control',
+      'http://localhost:3001/api/agent-jobs/pre_meeting_brief/runs',
+    ]);
+    expect(((fetchMock.mock.calls[5]![1] as RequestInit).headers as Headers).get('Idempotency-Key')).toBe('control-205');
+    expect(((fetchMock.mock.calls[6]![1] as RequestInit).headers as Headers).get('Idempotency-Key')).toBe('run-205-key');
+    expect(JSON.parse(String((fetchMock.mock.calls[6]![1] as RequestInit).body))).toEqual(runInput);
+  });
+
+  it('fails closed on extra private fields, wrong detail IDs and mismatched run anchors', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(response(200, { items: [metadata], nextCursor: null, payloadEnc: 'private' }))
+      .mockResolvedValueOnce(response(200, { item: { ...detail, id: 'brief-other' } }))
+      .mockResolvedValueOnce(response(200, { run: { ...run, matterId: 'matter-other' }, replayed: false })));
+
+    await expect(api.preMeetingBriefs('customer/205', 'matter/205'))
+      .rejects.toMatchObject({ code: 'invalid_response', retryable: false });
+    await expect(api.preMeetingBrief('brief/205'))
+      .rejects.toMatchObject({ code: 'invalid_response', retryable: false });
+    await expect(api.preMeetingRun(runInput, 'run-205-key'))
+      .rejects.toMatchObject({ code: 'invalid_response', retryable: false });
+  });
+});
+
+describe('post-meeting import API', () => {
+  const anchor = { customerId: 'customer/1', matterId: 'matter/1' };
+  const source = {
+    id: 'source/1', ...anchor, title: '客户会谈.md', kind: 'uploaded_file' as const,
+    fingerprint: 'b'.repeat(64), aclVersion: 4, version: 4,
+    occurredAt: '2026-08-25T18:00:00.000Z',
+  };
+
+  it('uses only the bounded import, provider, OAuth and lifecycle endpoints', async () => {
+    const uploadReceipt = { source, replayed: false };
+    const feishuSource = { ...source, id: 'source/2', title: '飞书妙记', kind: 'transcript' as const };
+    const provider = {
+      configured: true, appId: 'cli_safe', hasSecret: true, enabled: true,
+      redirectUri: 'https://crm.lake2ocean.top/api/recording/oauth/feishu/callback',
+    };
+    const credentials = {
+      credentials: [{
+        source: 'feishu', status: 'active', expiresAt: '2026-08-26T20:00:00.000Z',
+        updatedAt: '2026-08-25T18:00:00.000Z',
+      }],
+    };
+    const lifecycle = {
+      id: source.id, aclVersion: 4, visibility: 'private', retentionState: 'degraded',
+      contentAvailable: false, backingPresent: true, replayed: false,
+    };
+    const deleted = { ...lifecycle, retentionState: 'deleted', backingPresent: false };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(200, uploadReceipt))
+      .mockResolvedValueOnce(response(200, { source: feishuSource, replayed: false }))
+      .mockResolvedValueOnce(response(200, provider))
+      .mockResolvedValueOnce(response(200, credentials))
+      .mockResolvedValueOnce(response(200, { ok: true, redirectUri: provider.redirectUri }))
+      .mockResolvedValueOnce(response(200, {
+        authUrl: 'https://accounts.feishu.cn/open-apis/authen/v1/authorize?app_id=cli_safe',
+      }))
+      .mockResolvedValueOnce(response(200, lifecycle))
+      .mockResolvedValueOnce(response(200, deleted));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const file = new File(['meeting body'], '客户会谈.md', { type: 'text/markdown' });
+    await expect(api.postMeetingImportUpload(file, {
+      ...anchor, occurredAt: '2026-08-25T18:00:00.000Z',
+    }, 'upload-key')).resolves.toEqual(uploadReceipt);
+    await expect(api.postMeetingImportFeishu({
+      url: 'https://team.feishu.cn/minutes/minute_token_001', ...anchor,
+    }, 'feishu-key')).resolves.toEqual({ source: feishuSource, replayed: false });
+    await expect(api.postMeetingFeishuProviderStatus()).resolves.toEqual(provider);
+    await expect(api.postMeetingRecordingCredentialStatus()).resolves.toEqual(credentials);
+    await expect(api.postMeetingSaveFeishuProviderConfig({
+      appId: 'cli_safe',
+    })).resolves.toEqual({ ok: true, redirectUri: provider.redirectUri });
+    await expect(api.postMeetingFeishuOAuthStart()).resolves.toEqual({
+      authUrl: 'https://accounts.feishu.cn/open-apis/authen/v1/authorize?app_id=cli_safe',
+    });
+    await expect(api.postMeetingDegradeSource(source, 'degrade-key')).resolves.toEqual(lifecycle);
+    await expect(api.postMeetingDeleteSource(source, 'delete-key')).resolves.toEqual(deleted);
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'http://localhost:3001/api/post-meeting/import/upload?customerId=customer%2F1&matterId=matter%2F1&occurredAt=2026-08-25T18%3A00%3A00.000Z',
+      'http://localhost:3001/api/post-meeting/import/feishu',
+      'http://localhost:3001/api/recording/provider/feishu',
+      'http://localhost:3001/api/recording/credentials',
+      'http://localhost:3001/api/recording/provider/feishu',
+      'http://localhost:3001/api/recording/oauth/feishu/start',
+      'http://localhost:3001/api/source-artifacts/source%2F1/degrade',
+      'http://localhost:3001/api/source-artifacts/source%2F1',
+    ]);
+    const uploadInit = fetchMock.mock.calls[0]![1] as RequestInit;
+    expect(uploadInit.body).toBeInstanceOf(FormData);
+    expect((uploadInit.headers as Headers).has('Content-Type')).toBe(false);
+    expect((uploadInit.headers as Headers).get('Idempotency-Key')).toBe('upload-key');
+    expect((fetchMock.mock.calls[1]![1] as RequestInit).body).toBe(JSON.stringify({
+      url: 'https://team.feishu.cn/minutes/minute_token_001', ...anchor,
+    }));
+    expect(((fetchMock.mock.calls[6]![1] as RequestInit).headers as Headers).get('Idempotency-Key')).toBe('degrade-key');
+    expect(JSON.parse(String((fetchMock.mock.calls[7]![1] as RequestInit).body))).toEqual({ expectedAclVersion: 4 });
+  });
+
+  it('fails closed on mismatched mounts, lifecycle IDs and secret-bearing status responses', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(response(200, {
+        source: { ...source, matterId: 'matter/2' }, replayed: false,
+      }))
+      .mockResolvedValueOnce(response(200, {
+        configured: true, appId: 'cli_safe', hasSecret: true, enabled: true,
+        redirectUri: 'https://crm.lake2ocean.top/api/recording/oauth/feishu/callback',
+        appSecret: 'must-not-cross',
+      }))
+      .mockResolvedValueOnce(response(200, {
+        id: 'source/other', aclVersion: 4, visibility: 'private', retentionState: 'degraded',
+        contentAvailable: false, backingPresent: true, replayed: false,
+      })));
+
+    await expect(api.postMeetingImportFeishu({
+      url: 'minute_token_001', ...anchor,
+    }, 'feishu-key')).rejects.toMatchObject({ code: 'invalid_response' });
+    await expect(api.postMeetingFeishuProviderStatus())
+      .rejects.toMatchObject({ code: 'invalid_response' });
+    await expect(api.postMeetingDegradeSource(source, 'degrade-key'))
+      .rejects.toMatchObject({ code: 'invalid_response' });
   });
 });

@@ -25,6 +25,14 @@ export type CommitmentPlanActionRow = Pick<PlanAction,
   | 'sourceRef'
   | 'archivedAt'
   | 'version'
+  | 'hypothesisId'
+  | 'hypothesisRevisionId'
+  | 'completionResult'
+  | 'completionResultRecordedAtUtc'
+  | 'completionResultRecordedByUserId'
+  | 'verificationReviewDisposition'
+  | 'verificationReviewedAtUtc'
+  | 'verificationReviewedByUserId'
 >;
 
 /** The only PlanAction-row adapter used by generic Commitment read models. */
@@ -53,6 +61,14 @@ export function commitmentFromPlanAction(row: CommitmentPlanActionRow): Commitme
     sourceRef: row.sourceRef,
     archivedAt: row.archivedAt?.toISOString() ?? null,
     version: row.version,
+    hypothesisId: row.hypothesisId,
+    hypothesisRevisionId: row.hypothesisRevisionId,
+    completionResult: row.completionResult,
+    completionResultRecordedAtUtc: row.completionResultRecordedAtUtc?.toISOString() ?? null,
+    completionResultRecordedByUserId: row.completionResultRecordedByUserId,
+    verificationReviewDisposition: row.verificationReviewDisposition || null,
+    verificationReviewedAtUtc: row.verificationReviewedAtUtc?.toISOString() ?? null,
+    verificationReviewedByUserId: row.verificationReviewedByUserId,
   });
   return parsed.success ? parsed.data : null;
 }

@@ -410,6 +410,7 @@ describe('generic CRM commands', () => {
         kind: 'follow_up',
         source: 'manual_quick_capture',
         sourceRef: null,
+        hypothesisRef: null,
       },
     };
     const createInline = {
@@ -559,9 +560,9 @@ describe('generic CRM commands', () => {
       'ADD_MATTER_PARTICIPANT', 'REMOVE_MATTER_PARTICIPANT',
       'CREATE_COMMITMENT', 'RESCHEDULE_COMMITMENT', 'CONFIRM_COMMITMENT',
       'DECLINE_COMMITMENT', 'COMPLETE_COMMITMENT', 'CANCEL_COMMITMENT',
-      'MARK_COMMITMENT_MISSED', 'CREATE_NEXT_COMMITMENT',
+      'MARK_COMMITMENT_MISSED', 'CREATE_NEXT_COMMITMENT', 'RECORD_COMMITMENT_RESULT',
     ]);
-    expect(CrmCommandSchema.options).toHaveLength(21);
+    expect(CrmCommandSchema.options).toHaveLength(22);
   });
 
   it('accepts one real fixture for every generic command', () => {
@@ -605,6 +606,10 @@ describe('generic CRM commands', () => {
       {
         type: 'CREATE_NEXT_COMMITMENT', previousCommitmentId: 'legacy-plan-action-1', expectedPreviousVersion: 4,
         commitment: { ...COMMITMENT_CREATE_INPUT, id: NEXT_COMMITMENT_ID, title: '发送确认后的方案材料' },
+      },
+      {
+        type: 'RECORD_COMMITMENT_RESULT', customerId: 'legacy-account-1', commitmentId: 'legacy-plan-action-1',
+        baseVersion: 5, expectedScheduleVersion: 3, result: '客户确认下周继续评审',
       },
     ];
     for (const command of validCommands) expect(CrmCommandSchema.safeParse(command).success, command.type).toBe(true);
