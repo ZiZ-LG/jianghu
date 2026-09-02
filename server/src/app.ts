@@ -70,6 +70,7 @@ import { relationshipWorkspaceRoutes } from './relationshipWorkspace/routes.js';
 import { productionRelationshipRadarHandlers } from './relationshipRadar/handler.js';
 import { createRelationshipRadarCommitAdapter } from './relationshipRadar/commit.js';
 import { relationshipRadarRoutes } from './relationshipRadar/routes.js';
+import { matterPortfolioRoutes } from './matterPortfolio/routes.js';
 import {
   productionFeishuImportProvider,
   type FeishuImportProvider,
@@ -248,6 +249,7 @@ function registerRoutes(
   salesHypothesisRoutes(app, product.policy);
   relationshipWorkspaceRoutes(app, product.policy);
   relationshipRadarRoutes(app, product.policy);
+  matterPortfolioRoutes(app, product.policy);
 
   // ── 数据：拉取整树 / 应用变更 ──
   // 服务端组装时传入当前身份，统一执行归属与敏感字段 ACL。

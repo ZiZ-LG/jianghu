@@ -61,7 +61,7 @@ export const CRM_FIELD_AUTHORITY: CrmAuthorityEntry[] = CrmAuthorityMapSchema.pa
     consumers: {
       reads: [
         'app/src/components/CrmContextPages.tsx', 'app/src/lib/crmContext.ts',
-        'server/src/crmContext.ts',
+        'server/src/crmContext.ts', 'server/src/matterPortfolio/service.ts',
       ],
       writes: ['app/src/lib/quickCapture.ts', 'server/src/mutation/customers.ts'],
       adapters: [
@@ -160,6 +160,7 @@ export const CRM_FIELD_AUTHORITY: CrmAuthorityEntry[] = CrmAuthorityMapSchema.pa
     consumers: {
       reads: [
         'server/src/resourceScope.ts', 'server/src/state.ts', 'server/src/ai.ts',
+        'server/src/matterPortfolio/service.ts',
         'server/src/strategy.ts', 'server/src/advisor.ts', 'server/src/pde/assemble.ts',
         'server/src/pde/routes.ts', 'server/src/mcpServer.ts', 'server/src/personMerge.ts',
         'server/src/suggest.ts', 'server/src/curated.ts', 'server/src/recording.ts',
@@ -195,6 +196,7 @@ export const CRM_FIELD_AUTHORITY: CrmAuthorityEntry[] = CrmAuthorityMapSchema.pa
         'app/src/lib/mdProfile.ts', 'app/src/lib/pde/adapter.ts', 'app/src/store.ts',
         'server/src/ai.ts', 'server/src/mcp/syncBundle.ts', 'server/src/mcpServer.ts',
         'server/src/opp.ts', 'server/src/repair.ts', 'server/src/state.ts',
+        'server/src/matterPortfolio/service.ts',
       ],
       writes: ['app/src/wireAction.ts', 'server/src/mutate.ts', 'server/src/voice.ts'],
       adapters: ['app/src/types.ts', 'packages/domain-contracts/src/actions.ts'],
@@ -291,6 +293,7 @@ export const CRM_FIELD_AUTHORITY: CrmAuthorityEntry[] = CrmAuthorityMapSchema.pa
       reads: [
         'app/src/components/RelationshipWorkspacePanel.tsx',
         'server/src/intelligenceFocus/routes.ts',
+        'server/src/matterPortfolio/service.ts',
         'server/src/relationshipWorkspace/model.ts',
       ],
       writes: ['server/src/intelligenceFocus/service.ts'],
@@ -349,6 +352,36 @@ export const CRM_FIELD_AUTHORITY: CrmAuthorityEntry[] = CrmAuthorityMapSchema.pa
     ],
   },
   {
+    logicalField: 'matter.portfolio_projection',
+    currentAuthority: { kind: 'none', path: null },
+    targetAuthority: { kind: 'none', path: null },
+    consumers: {
+      reads: [
+        'app/src/components/MatterPortfolioPanel.tsx',
+        'server/src/matterPortfolio/routes.ts',
+      ],
+      writes: [],
+      adapters: [
+        'app/src/api.ts',
+        'app/src/lib/matterPortfolio.ts',
+        'packages/domain-contracts/src/matterPortfolio.ts',
+        'server/src/matterPortfolio/model.ts',
+        'server/src/matterPortfolio/service.ts',
+      ],
+      migrations: [],
+      planned: [],
+    },
+    shadowComparison: 'The portfolio is a transient read composition and creates no score, snapshot, shadow field, action write, or alternate authority.',
+    cutoverCondition: 'Current role, tenant scope, exact source revision, active methodology binding, body-free projection, viewer and zero-write tests pass.',
+    stopCondition: 'Every row is rebuilt from current formal authorities; missing or revoked sources only remove attention and drafts remain uncommitted.',
+    removalPhase: 'No stored authority or migration; introduced as a G4 read model in SAAS-209.',
+    forbidden: [
+      'Persisting an aggregate portfolio score or snapshot',
+      'Treating a draft or AI output as formal Commitment, Focus, Hypothesis, stage, forecast, Relation, or key-person state',
+      'Reading pipelineStage, engageStage, primaryDPersonId, ADURC, or a G64111 score as a generic portfolio fallback',
+    ],
+  },
+  {
     logicalField: 'sales.hypothesis',
     currentAuthority: {
       kind: 'core_path',
@@ -362,6 +395,7 @@ export const CRM_FIELD_AUTHORITY: CrmAuthorityEntry[] = CrmAuthorityMapSchema.pa
       reads: [
         'app/src/components/RelationshipWorkspacePanel.tsx',
         'server/src/hypotheses/routes.ts',
+        'server/src/matterPortfolio/service.ts',
         'server/src/relationshipWorkspace/model.ts',
         'server/src/relationshipWorkspace/routes.ts',
       ],
@@ -391,7 +425,6 @@ export const CRM_FIELD_AUTHORITY: CrmAuthorityEntry[] = CrmAuthorityMapSchema.pa
         'server/src/seed-demo.ts',
       ],
       planned: [
-        'SAAS-209 portfolio',
         'SAAS-212 relationship radar',
       ],
     },
@@ -416,6 +449,7 @@ export const CRM_FIELD_AUTHORITY: CrmAuthorityEntry[] = CrmAuthorityMapSchema.pa
         'app/src/lib/pde/adapter.ts', 'server/src/ai.ts', 'server/src/mcp/syncBundle.ts',
         'server/src/mcpServer.ts', 'server/src/pde/assemble.ts', 'server/src/repair.ts',
         'server/src/state.ts', 'server/src/strategy.ts',
+        'server/src/matterPortfolio/service.ts',
       ],
       writes: ['app/src/wireAction.ts', 'server/src/mutate.ts'],
       adapters: ['app/src/types.ts', 'packages/domain-contracts/src/actions.ts'],

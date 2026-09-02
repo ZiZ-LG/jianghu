@@ -27,7 +27,7 @@ function LegacyAccountList({ accounts, onOpenLegacy }: { accounts: Account[]; on
 }
 
 function ProductPanel({
-  id, accounts, crmContextState, quickCaptureAccounts, actorUserId, actorRole, readonly, onNavigate, onOpenLegacy, onOpenTeam, onQuickCaptureSaved,
+  id, accounts, crmContextState, quickCaptureAccounts, actorUserId, actorRole, readonly, portfolioEnabled, onNavigate, onOpenLegacy, onOpenTeam, onQuickCaptureSaved,
 }: {
   id: ProductEntryId;
   accounts: Account[];
@@ -36,6 +36,7 @@ function ProductPanel({
   actorUserId: string;
   actorRole: CommandContext['actorRole'];
   readonly: boolean;
+  portfolioEnabled: boolean;
   onNavigate: (path: string) => void;
   onOpenLegacy: (accountId: string) => void;
   onOpenTeam: () => void;
@@ -55,6 +56,9 @@ function ProductPanel({
       state={crmContextState}
       onRetry={() => { void onQuickCaptureSaved().catch(() => undefined); }}
       onQuickCapture={() => onNavigate('/quick-capture')}
+      readonly={readonly}
+      onNavigate={onNavigate}
+      portfolioEnabled={portfolioEnabled}
     />;
   }
   if (id === 'quick-capture') {
@@ -173,6 +177,7 @@ export function CommercialShell({
           actorUserId={actorUserId}
           actorRole={actorRole}
           readonly={readonly}
+          portfolioEnabled={access.policy.entitlements.includes('sales.workspace')}
           onNavigate={onNavigate}
           onOpenLegacy={onOpenLegacy}
           onOpenTeam={onOpenTeam}
