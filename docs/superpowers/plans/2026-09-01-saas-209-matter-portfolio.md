@@ -156,6 +156,13 @@ An action draft has `state: uncommitted`, the exact top `InterventionItem` ident
 - Scope: 24 business files in App, Server and Domain Contracts; no schema, migration, package/lock/Vite, `App.tsx`, Docker Compose, root script, workflow, deployment, shared high-conflict or self-cultivation change. Production, Aliyun, Mac mini and `main` were not touched.
 - Rollback: hide the `/matters` portfolio toggle and revert the business commit. Preserve all pre-existing radar, intelligence, focus, hypothesis, commitment, agent/audit and migration history; never restore legacy stage/key-person fallbacks or delete data.
 
+## Pre-PR hardening (reopened 2026-09-02)
+
+- [ ] Reproduce the legacy sales-estimate poisoning path and add an explicit body-free unavailable projection that never fabricates or rewrites formal values.
+- [ ] Replace per-candidate Intelligence/Focus/Hypothesis authority calls with one request-local, tenant-scoped batch authorization pass whose query count does not grow with candidate count.
+- [ ] Restrict source drill composition to the exact Customer/Matter while preserving current-role, `sales.workspace`, EffectiveResourceScope, sensitive ACL and exact-revision checks.
+- [ ] Rerun focused and full Domain/Server/App/G64111/PDE gates, create a separate hardening business commit, push it and wait for exact-SHA CI before re-closing governance.
+
 ## Rollback
 
 Hide the `/matters` portfolio toggle and revert the SAAS-209 business commit. Because the task adds no schema, migration, stored snapshot or writer, rollback removes only read/API/UI consumers. Preserve all existing SAAS-212 RelationshipRadarSnapshot, AgentRun/AuditEvent, IntelligenceItem, StakeholderFocus, SalesHypothesis/Revision/EvidenceLink and Commitment data/history. Never delete those rows, rewrite source revisions or restore a legacy-stage/key-person fallback. Production rollback or deployment remains a separately approved operation.
