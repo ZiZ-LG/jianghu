@@ -159,13 +159,18 @@ function PortfolioEntry({
         <div><dt>事项优先级</dt><dd>{entry.matter.priority ?? '未设置'}</dd></div>
       </dl>
 
-      {entry.salesEstimate ? (
+      {entry.salesEstimate?.kind === 'sales_entered_estimate' ? (
         <section className="matter-portfolio-sales" aria-label="销售录入估算">
           <strong>销售录入估算</strong>
           <span>预期金额 {entry.salesEstimate.expectedAmountW} 万元</span>
           <span>主观胜率 {entry.salesEstimate.winProbability}%</span>
           <span>预期签约 {entry.salesEstimate.expectedSignDate ?? '未设置'}</span>
           <small>仅展示人工录入值，不代表预测、已签收入或概率加权金额。</small>
+        </section>
+      ) : entry.salesEstimate ? (
+        <section className="matter-portfolio-sales" aria-label="销售估算数据需修复">
+          <strong>销售估算数据需修复</strong>
+          <small>已隐藏无法验证的存量值；请从正式事项编辑入口重新确认。</small>
         </section>
       ) : null}
 

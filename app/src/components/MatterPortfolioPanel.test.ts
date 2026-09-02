@@ -171,6 +171,28 @@ describe('SAAS-209 Matter portfolio panel', () => {
     expect(html).not.toContain('data-matter-portfolio-action="true"');
   });
 
+  it('shows a bounded repair state instead of fabricated sales estimate values', () => {
+    const model = MatterPortfolioReadModelSchema.parse({
+      ...PORTFOLIO,
+      entries: PORTFOLIO.entries.map((entry) => (
+        entry.matter.kind === 'sales_opportunity'
+          ? {
+              ...entry,
+              salesEstimate: {
+                kind: 'sales_estimate_unavailable',
+                reason: 'invalid_stored_values',
+              },
+            }
+          : entry
+      )),
+    });
+    const html = renderView({ status: 'ready', model, refreshing: false, refreshError: null });
+
+    expect(html).toContain('销售估算数据需修复');
+    expect(html).not.toContain('预期金额 undefined');
+    expect(html).not.toContain('主观胜率 undefined');
+  });
+
   it('renders loading, error, empty, retained refresh-error and source-error states', () => {
     expect(renderView({ status: 'loading' })).toContain('data-matter-portfolio="loading"');
     expect(renderView({ status: 'error', message: '事项组合加载失败' })).toContain('事项组合加载失败');

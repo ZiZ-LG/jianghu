@@ -311,6 +311,10 @@ export async function resolveTodaySource(
   });
 }
 
+interface TodayReadOptions {
+  target?: { customerId: string; matterId: string };
+}
+
 export async function buildTodayReadModel(
   principal: ReadPrincipal,
   now: Date,
@@ -319,13 +323,22 @@ export async function buildTodayReadModel(
   // structured facts/source refs and rebuild all visible prose from validated
   // tenant-scoped projections; never trust provider-authored display content.
   additionalItems: readonly unknown[] = [],
+  options: TodayReadOptions = {},
 ): Promise<TodayReadModel> {
   if (!Number.isFinite(now.getTime())) throw new RangeError('Invalid Today observation time');
   const generatedAtUtc = now.toISOString();
   const scope = await resolveEffectiveResourceScope(db, principal);
-  const accountIds = [...scope.accountIds];
-  const fullAccountIds = [...scope.fullAccountIds];
-  const matterIds = [...scope.matterIds];
+  const targetIsReadable = options.target
+    ? scope.canReadMatter(options.target.matterId)
+      && scope.canReadAccountContainer(options.target.customerId)
+    : false;
+  const accountIds = options.target
+    ? targetIsReadable ? [options.target.customerId] : []
+    : [...scope.accountIds];
+  const fullAccountIds = options.target ? [] : [...scope.fullAccountIds];
+  const matterIds = options.target
+    ? targetIsReadable ? [options.target.matterId] : []
+    : [...scope.matterIds];
   const completionDateCandidates = possibleLocalDates(now);
 
   const [accounts, matters, planRows] = await Promise.all([

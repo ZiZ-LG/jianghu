@@ -1,8 +1,8 @@
 import {
   CommandContextSchema,
-  LocalDateSchema,
   MATTER_PORTFOLIO_RULE_VERSION,
   MatterPortfolioReadModelSchema,
+  MatterPortfolioSalesEstimateSchema,
   TodaySourceViewSchema,
   capabilityPolicyAllows,
   type CapabilityPolicy,
@@ -14,7 +14,6 @@ import {
   type TodaySourceView,
 } from '@jianghu/domain-contracts';
 import type { DbClient } from '../mutation/scopeGuards.js';
-import { resolveEffectiveResourceScope } from '../resourceScope.js';
 import { buildTodayReadModel, resolveTodaySource } from '../today.js';
 import {
   relationshipRadarSourceView,
@@ -23,19 +22,16 @@ import {
 } from '../relationshipRadar/service.js';
 import {
   intelligenceItemDetail,
-  stakeholderFocusDetail,
-  IntelligenceFocusError,
 } from '../intelligenceFocus/service.js';
 import {
   salesHypothesisDetail,
-  SalesHypothesisError,
 } from '../hypotheses/service.js';
+import { createSensitiveAccessEvaluator } from '../sensitiveAccess.js';
 import {
   buildMatterPortfolio,
-  type MatterPortfolioHypothesisFact,
-  type MatterPortfolioIntelligenceFact,
   type MatterPortfolioMatterFacts,
 } from './model.js';
+import { loadMatterPortfolioAuthorizedFacts } from './authorizedFacts.js';
 
 export class MatterPortfolioReadError extends Error {
   constructor(
@@ -70,86 +66,29 @@ function sourceKey(source: InterventionSourceRef): string {
   return `${source.entityKind}\0${source.entityId}\0${source.version}\0${source.scheduleVersion ?? ''}`;
 }
 
-async function latestReadableIntelligence(
-  db: DbClient,
-  ctx: CommandContext,
-  policy: CapabilityPolicy,
-  candidates: readonly { id: string; customerId: string; matterId: string }[],
-): Promise<Map<string, MatterPortfolioIntelligenceFact>> {
-  const latest = new Map<string, MatterPortfolioIntelligenceFact>();
-  for (const candidate of candidates) {
-    if (latest.has(candidate.matterId)) continue;
-    try {
-      const detail = await intelligenceItemDetail(db, ctx, policy, candidate.id);
-      if (!detail || detail.item.status !== 'active'
-        || detail.item.customerId !== candidate.customerId
-        || detail.item.matterId !== candidate.matterId) continue;
-      latest.set(candidate.matterId, {
-        id: detail.item.id,
-        version: detail.item.version,
-        learnedAtUtc: detail.item.learnedAt,
-      });
-    } catch (error) {
-      if (error instanceof IntelligenceFocusError && error.scopedNotFound) continue;
-      storageInvalid();
-    }
-  }
-  return latest;
+function salesEstimateFor(row: {
+  kind: string;
+  expectedAmountW: number;
+  winProbability: number;
+  expectedSignDate: string;
+}) {
+  if (row.kind !== 'sales_opportunity') return null;
+  const signDate = row.expectedSignDate.trim();
+  const parsed = MatterPortfolioSalesEstimateSchema.safeParse({
+    kind: 'sales_entered_estimate',
+    expectedAmountW: row.expectedAmountW,
+    winProbability: row.winProbability,
+    expectedSignDate: signDate.length === 0 ? null : signDate,
+  });
+  return parsed.success ? parsed.data : {
+    kind: 'sales_estimate_unavailable' as const,
+    reason: 'invalid_stored_values' as const,
+  };
 }
 
-async function currentFocusPeople(
-  db: DbClient,
-  ctx: CommandContext,
-  policy: CapabilityPolicy,
-  candidates: readonly { id: string; matterId: string }[],
-  now: Date,
-): Promise<Map<string, string>> {
-  const people = new Map<string, string>();
-  for (const candidate of candidates) {
-    if (people.has(candidate.matterId)) continue;
-    try {
-      const detail = await stakeholderFocusDetail(db, ctx, policy, candidate.id, now);
-      if (detail?.item.status === 'active' && detail.item.matterId === candidate.matterId) {
-        people.set(candidate.matterId, detail.item.personId);
-      }
-    } catch (error) {
-      if (error instanceof IntelligenceFocusError && error.scopedNotFound) continue;
-      storageInvalid();
-    }
-  }
-  return people;
-}
-
-async function readableHypotheses(
-  db: DbClient,
-  ctx: CommandContext,
-  policy: CapabilityPolicy,
-  candidates: readonly { id: string; matterId: string; customerId: string }[],
-): Promise<Map<string, MatterPortfolioHypothesisFact[]>> {
-  const hypotheses = new Map<string, MatterPortfolioHypothesisFact[]>();
-  for (const candidate of candidates) {
-    try {
-      const detail = await salesHypothesisDetail(db, ctx, policy, candidate.id, {
-        beforeRevisionNumber: null,
-        limit: 1,
-      });
-      if (!detail || detail.item.customerId !== candidate.customerId
-        || detail.item.matterId !== candidate.matterId) continue;
-      const values = hypotheses.get(candidate.matterId) ?? [];
-      values.push({
-        id: detail.item.id,
-        version: detail.item.version,
-        status: detail.item.status,
-        personId: detail.item.personId,
-        nextReviewAtUtc: detail.item.nextReviewAt,
-      });
-      hypotheses.set(candidate.matterId, values);
-    } catch (error) {
-      if (error instanceof SalesHypothesisError && error.scopedNotFound) continue;
-      storageInvalid();
-    }
-  }
-  return hypotheses;
+interface MatterPortfolioReadOptions {
+  target?: { customerId: string; matterId: string };
+  providerKey?: MatterPortfolioSourceRequest['providerKey'];
 }
 
 export async function buildMatterPortfolioReadModel(
@@ -157,18 +96,22 @@ export async function buildMatterPortfolioReadModel(
   ctx: CommandContext,
   policy: CapabilityPolicy,
   now = new Date(),
+  options: MatterPortfolioReadOptions = {},
 ): Promise<MatterPortfolioReadModel> {
   CommandContextSchema.parse(ctx);
   requireCapability(policy);
   if (!Number.isFinite(now.getTime())) throw new RangeError('Invalid Matter portfolio observation time');
-  const scope = await resolveEffectiveResourceScope(db, {
+  const evaluator = await createSensitiveAccessEvaluator(db, {
     tenantId: ctx.tenantId,
     userId: ctx.actorId,
     role: ctx.actorRole,
-  });
+  }, policy);
+  const scope = evaluator.scope;
   if (!scope.valid) notFound();
 
-  const visibleMatterIds = [...scope.matterIds];
+  const visibleMatterIds = options.target
+    ? scope.canReadMatter(options.target.matterId) ? [options.target.matterId] : []
+    : [...scope.matterIds];
   if (visibleMatterIds.length === 0) {
     return MatterPortfolioReadModelSchema.parse({
       generatedAtUtc: now.toISOString(),
@@ -181,6 +124,7 @@ export async function buildMatterPortfolioReadModel(
     where: {
       tenantId: ctx.tenantId,
       id: { in: visibleMatterIds },
+      ...(options.target ? { accountId: options.target.customerId } : {}),
       lifecycleStatus: 'active',
       archivedAt: null,
       account: { tenantId: ctx.tenantId, archivedAt: null },
@@ -257,66 +201,48 @@ export async function buildMatterPortfolioReadModel(
     userId: ctx.actorId,
     role: scope.actorRole,
   };
+  const includeRadar = options.providerKey === undefined
+    || options.providerKey === 'relationship_radar';
+  const includeCoreToday = options.providerKey === undefined
+    || options.providerKey === 'core.today';
   let radarItems: InterventionItem[] = [];
-  try {
-    radarItems = await relationshipRadarTodayItems(db, {
-      tenantId: ctx.tenantId,
-      actorId: ctx.actorId,
-      actorRole: scope.actorRole,
-    }, policy, now);
-  } catch (error) {
-    if (!(error instanceof RelationshipRadarReadError)) throw error;
-    // A missing/expired/invalid provider projection can never elevate portfolio urgency.
-    radarItems = [];
+  if (includeRadar) {
+    try {
+      radarItems = await relationshipRadarTodayItems(db, {
+        tenantId: ctx.tenantId,
+        actorId: ctx.actorId,
+        actorRole: scope.actorRole,
+      }, policy, now, options.target);
+    } catch (error) {
+      if (!(error instanceof RelationshipRadarReadError)) throw error;
+      // A missing/expired/invalid provider projection can never elevate portfolio urgency.
+      radarItems = [];
+    }
   }
-  const today = await buildTodayReadModel(principal, now, db, radarItems);
+  const providerItems = includeCoreToday
+    ? (await buildTodayReadModel(
+        principal,
+        now,
+      db,
+      options.providerKey === undefined ? radarItems : [],
+      options.target ? { target: options.target } : {},
+    )).sections.flatMap((section) => section.items)
+    : radarItems;
   const interventionByMatterId = new Map<string, InterventionItem[]>();
-  for (const item of today.sections.flatMap((section) => section.items)) {
+  for (const item of providerItems) {
     if (!item.target.matterId || !activeMatterIds.includes(item.target.matterId)) continue;
     const values = interventionByMatterId.get(item.target.matterId) ?? [];
     values.push(item);
     interventionByMatterId.set(item.target.matterId, values);
   }
 
-  const [intelligenceCandidates, focusCandidates, hypothesisCandidates] = await Promise.all([
-    activeMatterIds.length === 0 ? Promise.resolve([]) : db.intelligenceItem.findMany({
-      where: {
-        tenantId: ctx.tenantId,
-        matterId: { in: activeMatterIds },
-        customerId: { in: customerIds },
-        archivedAt: null,
-      },
-      orderBy: [{ learnedAt: 'desc' }, { id: 'desc' }],
-      select: { id: true, customerId: true, matterId: true },
-    }),
-    activeMatterIds.length === 0 ? Promise.resolve([]) : db.stakeholderFocus.findMany({
-      where: {
-        tenantId: ctx.tenantId,
-        matterId: { in: activeMatterIds },
-        customerId: { in: customerIds },
-        retiredAt: null,
-        activeMatterKey: { not: null },
-      },
-      orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
-      select: { id: true, matterId: true },
-    }),
-    activeMatterIds.length === 0 ? Promise.resolve([]) : db.salesHypothesis.findMany({
-      where: {
-        tenantId: ctx.tenantId,
-        matterId: { in: activeMatterIds },
-        customerId: { in: customerIds },
-        status: { in: ['untested', 'testing'] },
-        nextReviewAt: { not: null, lte: new Date(now.getTime() + 7 * 86_400_000) },
-      },
-      orderBy: [{ nextReviewAt: 'asc' }, { id: 'asc' }],
-      select: { id: true, customerId: true, matterId: true },
-    }),
-  ]);
-  const [latestIntelligence, focusPeople, hypotheses] = await Promise.all([
-    latestReadableIntelligence(db, ctx, policy, intelligenceCandidates),
-    currentFocusPeople(db, ctx, policy, focusCandidates, now),
-    readableHypotheses(db, ctx, policy, hypothesisCandidates),
-  ]);
+  const { latestIntelligence, focusPeople, hypotheses } = await loadMatterPortfolioAuthorizedFacts(
+    db,
+    ctx,
+    evaluator,
+    matterRows.map((row) => ({ id: row.id, customerId: row.accountId })),
+    now,
+  );
 
   const facts: MatterPortfolioMatterFacts[] = [];
   for (const row of matterRows) {
@@ -355,7 +281,6 @@ export async function buildMatterPortfolioReadModel(
           updatedAtUtc: stageState.updatedAt.toISOString(),
         }
       : null;
-    const signDate = row.expectedSignDate.trim();
     facts.push({
       customer: {
         id: customer.id,
@@ -367,14 +292,7 @@ export async function buildMatterPortfolioReadModel(
       },
       matter,
       methodologyStage,
-      salesEstimate: row.kind === 'sales_opportunity' ? {
-        kind: 'sales_entered_estimate',
-        expectedAmountW: row.expectedAmountW,
-        winProbability: row.winProbability,
-        expectedSignDate: signDate.length === 0
-          ? null
-          : LocalDateSchema.parse(signDate),
-      } : null,
+      salesEstimate: salesEstimateFor(row),
       latestIntelligence: latestIntelligence.get(row.id) ?? null,
       focusPersonId: focusPeople.get(row.id) ?? null,
       hypotheses: hypotheses.get(row.id) ?? [],
@@ -400,7 +318,10 @@ async function exactPortfolioEntry(
   input: MatterPortfolioSourceRequest,
   now: Date,
 ) {
-  const portfolio = await buildMatterPortfolioReadModel(db, ctx, policy, now);
+  const portfolio = await buildMatterPortfolioReadModel(db, ctx, policy, now, {
+    target: { customerId: input.customerId, matterId: input.matterId },
+    providerKey: input.providerKey,
+  });
   const entry = portfolio.entries.find((candidate) => (
     candidate.customer.id === input.customerId && candidate.matter.id === input.matterId
   ));

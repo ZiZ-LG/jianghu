@@ -44,12 +44,22 @@ export const MatterPortfolioStageSchema = z.object({
   updatedAtUtc: UtcInstantSchema,
 }).strict();
 
-export const MatterPortfolioSalesEstimateSchema = z.object({
+const MatterPortfolioEnteredSalesEstimateSchema = z.object({
   kind: z.literal('sales_entered_estimate'),
   expectedAmountW: z.number().finite().nonnegative(),
   winProbability: z.number().finite().min(0).max(100),
   expectedSignDate: LocalDateSchema.nullable(),
 }).strict();
+
+const MatterPortfolioUnavailableSalesEstimateSchema = z.object({
+  kind: z.literal('sales_estimate_unavailable'),
+  reason: z.literal('invalid_stored_values'),
+}).strict();
+
+export const MatterPortfolioSalesEstimateSchema = z.discriminatedUnion('kind', [
+  MatterPortfolioEnteredSalesEstimateSchema,
+  MatterPortfolioUnavailableSalesEstimateSchema,
+]);
 
 export const MatterPortfolioActionDraftSchema = z.object({
   state: z.literal('uncommitted'),

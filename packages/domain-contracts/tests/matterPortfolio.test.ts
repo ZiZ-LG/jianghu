@@ -171,6 +171,23 @@ describe('SAAS-209 Matter portfolio contract', () => {
         salesEstimate: { ...entry.salesEstimate, winProbability: 101 },
       }],
     }).success).toBe(false);
+
+    const unavailable = {
+      kind: 'sales_estimate_unavailable',
+      reason: 'invalid_stored_values',
+    };
+    expect(schema!.safeParse({
+      ...readModel,
+      entries: [{ ...entry, salesEstimate: unavailable }],
+    }).success).toBe(true);
+    expect(schema!.safeParse({
+      ...readModel,
+      entries: [{
+        ...entry,
+        matter: { ...matter, kind: 'customer_success' },
+        salesEstimate: unavailable,
+      }],
+    }).success).toBe(false);
   });
 
   it('rejects broken parent closure, duplicate identities and item-target drift', () => {

@@ -334,17 +334,21 @@ export async function relationshipRadarTodayItems(
   ctx: Pick<CommandContext, 'tenantId' | 'actorId' | 'actorRole'>,
   policy: CapabilityPolicy,
   now = new Date(),
+  target?: { customerId: string; matterId: string },
 ): Promise<InterventionItem[]> {
   const scope = await resolveEffectiveResourceScope(db, {
     tenantId: ctx.tenantId,
     userId: ctx.actorId,
     role: ctx.actorRole,
   });
-  if (!scope.valid || scope.matterIds.size === 0) return [];
+  if (!scope.valid || scope.matterIds.size === 0
+    || (target && !scope.canReadMatter(target.matterId))) return [];
+  const readableMatterIds = target ? [target.matterId] : [...scope.matterIds];
   const candidates = await db.relationshipRadarSnapshot.findMany({
     where: {
       tenantId: ctx.tenantId,
-      matterId: { in: [...scope.matterIds] },
+      ...(target ? { customerId: target.customerId } : {}),
+      matterId: { in: readableMatterIds },
       expiresAt: { gt: now },
     },
     orderBy: [{ generatedAt: 'desc' }, { id: 'desc' }],
