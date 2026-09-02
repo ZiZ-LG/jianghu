@@ -7,6 +7,7 @@ import type { DbClient } from './mutation/scopeGuards.js';
 import type { ReadPrincipal, VisibilityRole } from './visibility.js';
 
 export interface EffectiveResourceScope {
+  valid: boolean;
   tenantId: string;
   actorUserId: string;
   actorRole: VisibilityRole;
@@ -20,6 +21,7 @@ export interface EffectiveResourceScope {
 }
 
 function createScope(input: {
+  valid?: boolean;
   tenantId: string;
   actorUserId: string;
   actorRole: VisibilityRole;
@@ -32,6 +34,7 @@ function createScope(input: {
   const fullAccountIds = new Set(input.fullAccountIds);
   const matterIds = new Set(input.matterIds);
   return {
+    valid: input.valid ?? true,
     tenantId: input.tenantId,
     actorUserId: input.actorUserId,
     actorRole: input.actorRole,
@@ -48,6 +51,7 @@ function createScope(input: {
 /** Invalid current database state is represented by the strictest effective policy and empty sets. */
 function emptyScope(principal: ReadPrincipal): EffectiveResourceScope {
   return createScope({
+    valid: false,
     tenantId: principal.tenantId,
     actorUserId: principal.userId,
     actorRole: 'viewer',

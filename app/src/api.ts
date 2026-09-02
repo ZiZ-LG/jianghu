@@ -3,20 +3,84 @@ import type { AccountState, CommitmentCommand, CommitmentCommandReceipt, Pipelin
 import type { AiContextOptions, ContextManifest } from './aiContext';
 import { toWireAction } from './wireAction';
 import {
+  parsePostMeetingJobCards,
+  parsePostMeetingReviewDetail,
+  parsePostMeetingReviewReceipt,
+  parsePostMeetingRuns,
+  parsePostMeetingSourceOptions,
+} from './lib/postMeetingReview';
+import { exactPostMeetingImportReceipt } from './lib/postMeetingImport';
+import {
+  parsePreMeetingBriefDetail,
+  parsePreMeetingBriefList,
+  parsePreMeetingJobCards,
+  parsePreMeetingRuns,
+} from './lib/preMeetingBrief';
+import {
+  parseHypothesisVerificationReviewReceipt,
+  parseRelationshipWorkspace,
+  parseSalesHypothesisCommandReceipt,
+} from './lib/relationshipWorkspace';
+import {
+  parseRelationshipRadar,
+  parseRelationshipRadarJobCards,
+  parseRelationshipRadarRunReceipt,
+  parseRelationshipRadarRuns,
+} from './lib/relationshipRadar';
+import {
   ActorRoleSchema,
+  AgentJobCardSchema,
+  AgentJobControlRequestSchema,
+  AgentManualRunRequestSchema,
+  AgentRunReceiptSchema,
   CommitmentCommandReceiptSchema,
   commitmentReceiptMatchesCommand,
   CrmContextSnapshotSchema,
+  PostMeetingReviewRequestSchema,
+  PostMeetingFeishuImportRequestSchema,
+  PostMeetingFeishuOAuthStartResponseSchema,
+  PostMeetingFeishuProviderConfigReceiptSchema,
+  PostMeetingFeishuProviderConfigRequestSchema,
+  PostMeetingFeishuProviderStatusSchema,
+  PostMeetingRecordingCredentialStatusResponseSchema,
+  PostMeetingSourceLifecycleReceiptSchema,
+  PostMeetingUploadMetadataSchema,
   ProductAccessSchema,
   QuickCaptureCommandReceiptSchema,
+  ReviewHypothesisVerificationCommandSchema,
+  SalesHypothesisCommandSchema,
   TodayReadModelSchema,
   TodaySourceViewSchema,
+  type AgentJobCard,
+  type AgentManualRunRequest,
+  type AgentRunReceipt,
   type InterventionSourceRef,
   type CrmContextSnapshot,
   type CommandContext,
   type ProductAccess,
+  type PostMeetingReviewBatchDetail,
+  type PostMeetingReviewReceipt,
+  type PostMeetingReviewRequest,
+  type PostMeetingFeishuImportRequest,
+  type PostMeetingFeishuOAuthStartResponse,
+  type PostMeetingFeishuProviderConfigReceipt,
+  type PostMeetingFeishuProviderConfigRequest,
+  type PostMeetingFeishuProviderStatus,
+  type PostMeetingRecordingCredentialStatusResponse,
+  type PostMeetingSourceImportReceipt,
+  type PostMeetingSourceLifecycleReceipt,
+  type PostMeetingSourceOption,
+  type PostMeetingUploadMetadata,
   type QuickCaptureCommand,
   type QuickCaptureCommandReceipt,
+  type RelationshipWorkspaceResponse,
+  type RelationshipRadarResponse,
+  type ResearchBriefSnapshotDetail,
+  type ResearchBriefSnapshotListResponse,
+  type ReviewHypothesisVerificationCommand,
+  type ReviewHypothesisVerificationReceipt,
+  type SalesHypothesisCommand,
+  type SalesHypothesisCommandReceipt,
   type TodayReadModel,
   type TodaySourceView,
 } from '@jianghu/domain-contracts';
@@ -107,6 +171,7 @@ export async function request<T = unknown>(
         code: data.code ?? (res.status === 409 ? 'version_conflict' : `http_${res.status}`),
         message: data.error || data.message || `请求失败（HTTP ${res.status}）`,
         retryable: res.status === 408 || res.status === 429 || res.status >= 500,
+        cause: data,
       });
       if (res.status === 401 && requestBearerToken === token && requestTokenGeneration === tokenGeneration) {
         unauthorizedListeners.forEach((listener) => listener(error));
@@ -169,6 +234,50 @@ const invalidCrmContextResponse = (cause?: unknown): ApiError => new ApiError({
   retryable: false,
   cause,
 });
+
+const invalidPostMeetingResponse = (cause?: unknown): ApiError => new ApiError({
+  code: 'invalid_response',
+  message: '服务返回的会后速审数据无效，请刷新后重试。',
+  retryable: false,
+  cause,
+});
+
+const invalidPreMeetingResponse = (cause?: unknown): ApiError => new ApiError({
+  code: 'invalid_response',
+  message: '服务返回的拜访前简报数据无效，请刷新后重试。',
+  retryable: false,
+  cause,
+});
+
+const invalidRelationshipWorkspaceResponse = (cause?: unknown): ApiError => new ApiError({
+  code: 'invalid_response',
+  message: '服务返回的关系工作台数据无效，请刷新后重试。',
+  retryable: false,
+  cause,
+});
+
+const invalidRelationshipRadarResponse = (cause?: unknown): ApiError => new ApiError({
+  code: 'invalid_response',
+  message: '服务返回的关系雷达数据无效，请刷新后重试。',
+  retryable: false,
+  cause,
+});
+
+function postMeetingParse<T>(parse: () => T): T {
+  try { return parse(); } catch (cause) { throw invalidPostMeetingResponse(cause); }
+}
+
+function preMeetingParse<T>(parse: () => T): T {
+  try { return parse(); } catch (cause) { throw invalidPreMeetingResponse(cause); }
+}
+
+function relationshipWorkspaceParse<T>(parse: () => T): T {
+  try { return parse(); } catch (cause) { throw invalidRelationshipWorkspaceResponse(cause); }
+}
+
+function relationshipRadarParse<T>(parse: () => T): T {
+  try { return parse(); } catch (cause) { throw invalidRelationshipRadarResponse(cause); }
+}
 
 function parseCrmContextResponse(raw: unknown): CrmContextSnapshot {
   const parsed = CrmContextSnapshotSchema.safeParse(raw);
@@ -422,9 +531,383 @@ export const api = {
   crmContext: async (): Promise<CrmContextSnapshot> => parseCrmContextResponse(
     await req<unknown>('/api/crm/context'),
   ),
+  relationshipWorkspace: async (
+    customerId: string,
+    matterId: string,
+  ): Promise<RelationshipWorkspaceResponse> => {
+    const query = new URLSearchParams({ customerId, matterId });
+    const raw = await req<unknown>(`/api/relationship-workspace?${query.toString()}`);
+    return relationshipWorkspaceParse(() => parseRelationshipWorkspace(raw, customerId, matterId));
+  },
+  relationshipRadar: async (
+    customerId: string,
+    matterId: string,
+  ): Promise<RelationshipRadarResponse> => {
+    const query = new URLSearchParams({ customerId, matterId });
+    const raw = await req<unknown>(`/api/relationship-radar?${query.toString()}`);
+    return relationshipRadarParse(() => parseRelationshipRadar(raw, customerId, matterId));
+  },
+  relationshipRadarSource: async (
+    customerId: string,
+    matterId: string,
+    sourceRef: InterventionSourceRef,
+  ): Promise<TodaySourceView> => {
+    const raw = await req<unknown>('/api/relationship-radar/source', {
+      method: 'POST', body: JSON.stringify({ customerId, matterId, sourceRef }),
+    });
+    const source = relationshipRadarParse(() => parseTodaySourceResponse(raw, sourceRef));
+    if (source.customerId !== customerId || source.matterId !== matterId) {
+      throw invalidRelationshipRadarResponse(new Error('Relationship radar source parent mismatch'));
+    }
+    return source;
+  },
+  relationshipRadarJobCards: async (): Promise<{ items: AgentJobCard[] }> => {
+    const raw = await req<unknown>('/api/agent-jobs');
+    return relationshipRadarParse(() => parseRelationshipRadarJobCards(raw));
+  },
+  relationshipRadarRuns: async (
+    customerId: string,
+    matterId: string,
+  ): Promise<{ items: AgentRunReceipt['run'][]; nextCursor: string | null }> => {
+    const raw = await req<unknown>('/api/agent-runs?limit=50');
+    return relationshipRadarParse(() => parseRelationshipRadarRuns(raw, customerId, matterId));
+  },
+  relationshipRadarControl: async (
+    enabled: boolean,
+    expectedVersion: number,
+    idempotencyKey: string,
+  ): Promise<{ card: AgentJobCard; replayed: boolean }> => {
+    const payload = AgentJobControlRequestSchema.parse({
+      jobVersion: 'saas-212.v1', enabled, expectedVersion,
+    });
+    const raw = await commandReq<unknown>('/api/agent-jobs/relationship_radar/control', {
+      method: 'PUT',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(payload),
+    });
+    return relationshipRadarParse(() => {
+      if (!isRecord(raw) || typeof raw.replayed !== 'boolean') throw new Error('control envelope');
+      const { replayed, ...cardValue } = raw;
+      const card = AgentJobCardSchema.safeParse(cardValue);
+      if (!card.success
+        || card.data.jobKey !== 'relationship_radar'
+        || card.data.jobVersion !== 'saas-212.v1') throw new Error('control card');
+      return { card: card.data, replayed };
+    });
+  },
+  relationshipRadarRun: async (
+    input: AgentManualRunRequest,
+    idempotencyKey: string,
+  ): Promise<AgentRunReceipt> => {
+    const payload = AgentManualRunRequestSchema.parse(input);
+    const raw = await commandReq<unknown>('/api/agent-jobs/relationship_radar/runs', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(payload),
+    }, { timeoutMs: 120_000 });
+    return relationshipRadarParse(() => parseRelationshipRadarRunReceipt(raw, payload));
+  },
+  preMeetingJobCards: async (): Promise<{ items: AgentJobCard[] }> => {
+    const raw = await req<unknown>('/api/agent-jobs');
+    return preMeetingParse(() => parsePreMeetingJobCards(raw));
+  },
+  preMeetingRuns: async (): Promise<{ items: AgentRunReceipt['run'][]; nextCursor: string | null }> => {
+    const raw = await req<unknown>('/api/agent-runs?limit=50');
+    return preMeetingParse(() => parsePreMeetingRuns(raw));
+  },
+  preMeetingSources: async (
+    customerId: string,
+    matterId: string,
+  ): Promise<PostMeetingSourceOption[]> => {
+    const raw = await req<unknown>(`/api/source-artifacts?accountId=${encodeURIComponent(customerId)}&matterId=${encodeURIComponent(matterId)}&limit=100`);
+    return preMeetingParse(() => parsePostMeetingSourceOptions(raw, { customerId, matterId }));
+  },
+  preMeetingBriefs: async (
+    customerId: string,
+    matterId: string,
+  ): Promise<ResearchBriefSnapshotListResponse> => {
+    const query = new URLSearchParams({ customerId, matterId, limit: '50' });
+    const raw = await req<unknown>(`/api/research-briefs?${query.toString()}`);
+    return preMeetingParse(() => parsePreMeetingBriefList(raw));
+  },
+  preMeetingBrief: async (briefId: string): Promise<ResearchBriefSnapshotDetail> => {
+    const raw = await req<unknown>(`/api/research-briefs/${encodeURIComponent(briefId)}`);
+    return preMeetingParse(() => parsePreMeetingBriefDetail(raw, briefId));
+  },
+  preMeetingControl: async (
+    jobVersion: string,
+    enabled: boolean,
+    expectedVersion: number,
+    idempotencyKey: string,
+  ): Promise<{ card: AgentJobCard; replayed: boolean }> => {
+    const payload = AgentJobControlRequestSchema.parse({ jobVersion, enabled, expectedVersion });
+    const raw = await commandReq<unknown>('/api/agent-jobs/pre_meeting_brief/control', {
+      method: 'PUT',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(payload),
+    });
+    return preMeetingParse(() => {
+      if (!isRecord(raw) || typeof raw.replayed !== 'boolean') throw new Error('control envelope');
+      const { replayed, ...cardValue } = raw;
+      const card = AgentJobCardSchema.safeParse(cardValue);
+      if (!card.success
+        || card.data.jobKey !== 'pre_meeting_brief'
+        || card.data.jobVersion !== jobVersion) throw new Error('control card');
+      return { card: card.data, replayed };
+    });
+  },
+  preMeetingRun: async (
+    input: AgentManualRunRequest,
+    idempotencyKey: string,
+  ): Promise<AgentRunReceipt> => {
+    const payload = AgentManualRunRequestSchema.parse(input);
+    const raw = await commandReq<unknown>('/api/agent-jobs/pre_meeting_brief/runs', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(payload),
+    }, { timeoutMs: 120_000 });
+    return preMeetingParse(() => {
+      const parsed = AgentRunReceiptSchema.safeParse(raw);
+      if (!parsed.success
+        || parsed.data.run.jobKey !== 'pre_meeting_brief'
+        || parsed.data.run.jobVersion !== payload.jobVersion
+        || parsed.data.run.customerId !== payload.customerId
+        || parsed.data.run.matterId !== payload.matterId
+        || parsed.data.run.sourceArtifactId !== payload.sourceArtifactId
+        || JSON.stringify(parsed.data.run.inputRefs) !== JSON.stringify(payload.inputRefs)) {
+        throw new Error('run receipt mismatch');
+      }
+      return parsed.data;
+    });
+  },
+  postMeetingJobCards: async (): Promise<{ items: AgentJobCard[] }> => {
+    const raw = await req<unknown>('/api/agent-jobs');
+    return postMeetingParse(() => parsePostMeetingJobCards(raw));
+  },
+  postMeetingRuns: async (): Promise<{ items: AgentRunReceipt['run'][]; nextCursor: string | null }> => {
+    const raw = await req<unknown>('/api/agent-runs?limit=50');
+    const page = postMeetingParse(() => parsePostMeetingRuns(raw));
+    return {
+      items: page.items.filter((run) => run.jobKey === 'post_meeting_extract'),
+      nextCursor: page.nextCursor,
+    };
+  },
+  postMeetingSources: async (
+    customerId: string,
+    matterId: string,
+  ): Promise<PostMeetingSourceOption[]> => {
+    const raw = await req<unknown>(`/api/source-artifacts?accountId=${encodeURIComponent(customerId)}&matterId=${encodeURIComponent(matterId)}&limit=100`);
+    return postMeetingParse(() => parsePostMeetingSourceOptions(raw, { customerId, matterId }));
+  },
+  postMeetingImportUpload: async (
+    file: File,
+    metadata: PostMeetingUploadMetadata,
+    idempotencyKey: string,
+  ): Promise<PostMeetingSourceImportReceipt> => {
+    const payload = PostMeetingUploadMetadataSchema.parse(metadata);
+    const query = new URLSearchParams({
+      customerId: payload.customerId,
+      matterId: payload.matterId,
+    });
+    if (payload.occurredAt !== undefined && payload.occurredAt !== null) {
+      query.set('occurredAt', payload.occurredAt);
+    }
+    const form = new FormData();
+    form.append('file', file);
+    const raw = await commandReq<unknown>(`/api/post-meeting/import/upload?${query.toString()}`, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: form,
+    }, { timeoutMs: 120_000 });
+    return postMeetingParse(() => exactPostMeetingImportReceipt(raw, payload, 'uploaded_file'));
+  },
+  postMeetingImportFeishu: async (
+    request: PostMeetingFeishuImportRequest,
+    idempotencyKey: string,
+  ): Promise<PostMeetingSourceImportReceipt> => {
+    const payload = PostMeetingFeishuImportRequestSchema.parse(request);
+    const raw = await commandReq<unknown>('/api/post-meeting/import/feishu', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(payload),
+    }, { timeoutMs: 120_000 });
+    return postMeetingParse(() => exactPostMeetingImportReceipt(raw, payload, 'transcript'));
+  },
+  postMeetingFeishuProviderStatus: async (): Promise<PostMeetingFeishuProviderStatus> => {
+    const raw = await req<unknown>('/api/recording/provider/feishu');
+    return postMeetingParse(() => {
+      const parsed = PostMeetingFeishuProviderStatusSchema.safeParse(raw);
+      if (!parsed.success) throw parsed.error;
+      return parsed.data;
+    });
+  },
+  postMeetingRecordingCredentialStatus: async (): Promise<PostMeetingRecordingCredentialStatusResponse> => {
+    const raw = await req<unknown>('/api/recording/credentials');
+    return postMeetingParse(() => {
+      const parsed = PostMeetingRecordingCredentialStatusResponseSchema.safeParse(raw);
+      if (!parsed.success) throw parsed.error;
+      return parsed.data;
+    });
+  },
+  postMeetingSaveFeishuProviderConfig: async (
+    request: PostMeetingFeishuProviderConfigRequest,
+  ): Promise<PostMeetingFeishuProviderConfigReceipt> => {
+    const payload = PostMeetingFeishuProviderConfigRequestSchema.parse(request);
+    const raw = await req<unknown>('/api/recording/provider/feishu', {
+      method: 'PUT', body: JSON.stringify(payload),
+    });
+    return postMeetingParse(() => {
+      const parsed = PostMeetingFeishuProviderConfigReceiptSchema.safeParse(raw);
+      if (!parsed.success) throw parsed.error;
+      return parsed.data;
+    });
+  },
+  postMeetingFeishuOAuthStart: async (): Promise<PostMeetingFeishuOAuthStartResponse> => {
+    const raw = await req<unknown>('/api/recording/oauth/feishu/start');
+    return postMeetingParse(() => {
+      const parsed = PostMeetingFeishuOAuthStartResponseSchema.safeParse(raw);
+      if (!parsed.success) throw parsed.error;
+      return parsed.data;
+    });
+  },
+  postMeetingDegradeSource: async (
+    source: PostMeetingSourceOption,
+    idempotencyKey: string,
+  ): Promise<PostMeetingSourceLifecycleReceipt> => {
+    const raw = await commandReq<unknown>(`/api/source-artifacts/${encodeURIComponent(source.id)}/degrade`, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify({ expectedAclVersion: source.aclVersion }),
+    });
+    return postMeetingParse(() => {
+      const parsed = PostMeetingSourceLifecycleReceiptSchema.safeParse(raw);
+      if (!parsed.success || parsed.data.id !== source.id
+        || parsed.data.aclVersion !== source.aclVersion
+        || parsed.data.retentionState !== 'degraded'
+        || parsed.data.contentAvailable) throw new Error('source lifecycle mismatch');
+      return parsed.data;
+    });
+  },
+  postMeetingDeleteSource: async (
+    source: PostMeetingSourceOption,
+    idempotencyKey: string,
+  ): Promise<PostMeetingSourceLifecycleReceipt> => {
+    const raw = await commandReq<unknown>(`/api/source-artifacts/${encodeURIComponent(source.id)}`, {
+      method: 'DELETE',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify({ expectedAclVersion: source.aclVersion }),
+    });
+    return postMeetingParse(() => {
+      const parsed = PostMeetingSourceLifecycleReceiptSchema.safeParse(raw);
+      if (!parsed.success || parsed.data.id !== source.id
+        || parsed.data.aclVersion !== source.aclVersion
+        || parsed.data.retentionState !== 'deleted'
+        || parsed.data.contentAvailable
+        || parsed.data.backingPresent) throw new Error('source lifecycle mismatch');
+      return parsed.data;
+    });
+  },
+  postMeetingReview: async (batchId: string): Promise<PostMeetingReviewBatchDetail> => {
+    const raw = await req<unknown>(`/api/review-batches/${encodeURIComponent(batchId)}`);
+    return postMeetingParse(() => parsePostMeetingReviewDetail(raw, batchId));
+  },
+  postMeetingControl: async (
+    jobVersion: string,
+    enabled: boolean,
+    expectedVersion: number,
+    idempotencyKey: string,
+  ): Promise<{ card: AgentJobCard; replayed: boolean }> => {
+    const payload = AgentJobControlRequestSchema.parse({ jobVersion, enabled, expectedVersion });
+    const raw = await commandReq<unknown>('/api/agent-jobs/post_meeting_extract/control', {
+      method: 'PUT',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(payload),
+    });
+    return postMeetingParse(() => {
+      if (!isRecord(raw) || typeof raw.replayed !== 'boolean') throw new Error('control envelope');
+      const { replayed, ...cardValue } = raw;
+      const card = AgentJobCardSchema.safeParse(cardValue);
+      if (!card.success
+        || card.data.jobKey !== 'post_meeting_extract'
+        || card.data.jobVersion !== jobVersion) throw new Error('control card');
+      return { card: card.data, replayed };
+    });
+  },
+  postMeetingRun: async (
+    input: AgentManualRunRequest,
+    idempotencyKey: string,
+  ): Promise<AgentRunReceipt> => {
+    const payload = AgentManualRunRequestSchema.parse(input);
+    const raw = await commandReq<unknown>('/api/agent-jobs/post_meeting_extract/runs', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(payload),
+    }, { timeoutMs: 120_000 });
+    return postMeetingParse(() => {
+      const parsed = AgentRunReceiptSchema.safeParse(raw);
+      if (!parsed.success
+        || parsed.data.run.jobKey !== 'post_meeting_extract'
+        || parsed.data.run.jobVersion !== payload.jobVersion
+        || parsed.data.run.customerId !== payload.customerId
+        || parsed.data.run.matterId !== payload.matterId
+        || parsed.data.run.sourceArtifactId !== payload.sourceArtifactId
+        || JSON.stringify(parsed.data.run.inputRefs) !== JSON.stringify(payload.inputRefs)) {
+        throw new Error('run receipt mismatch');
+      }
+      return parsed.data;
+    });
+  },
+  postMeetingAccept: async (
+    batchId: string,
+    input: PostMeetingReviewRequest,
+    idempotencyKey: string,
+  ): Promise<Exclude<PostMeetingReviewReceipt, { code: 'review_batch_conflict' }>> => {
+    const payload = PostMeetingReviewRequestSchema.parse(input);
+    let raw: unknown;
+    try {
+      raw = await commandReq<unknown>(`/api/review-batches/${encodeURIComponent(batchId)}/accept`, {
+        method: 'POST',
+        headers: { 'Idempotency-Key': idempotencyKey },
+        body: JSON.stringify(payload),
+      });
+    } catch (cause) {
+      const error = toApiError(cause);
+      if (error.status === 409) {
+        const conflict = postMeetingParse(() => parsePostMeetingReviewReceipt(error.cause));
+        if ('code' in conflict) {
+          throw new ApiError({
+            status: 409,
+            code: conflict.code,
+            message: '会后速审项已变化，请刷新后重试。',
+            retryable: false,
+            cause: conflict,
+          });
+        }
+      }
+      throw error;
+    }
+    return postMeetingParse(() => {
+      const receipt = parsePostMeetingReviewReceipt(raw);
+      if ('code' in receipt || receipt.batchId !== batchId) throw new Error('review receipt mismatch');
+      const expected = new Map(payload.decisions.map((decision) => [decision.candidateId, decision.decision]));
+      if (receipt.items.length !== expected.size
+        || receipt.items.some((item) => expected.get(item.candidateId) !== item.decision)) {
+        throw new Error('review item receipt mismatch');
+      }
+      return receipt;
+    });
+  },
   today: async (): Promise<TodayReadModel> => parseTodayResponse(await req<unknown>('/api/today')),
-  todaySource: async (source: InterventionSourceRef): Promise<TodaySourceView> => parseTodaySourceResponse(
-    await req<unknown>('/api/today/source', { method: 'POST', body: JSON.stringify(source) }),
+  todaySource: async (
+    source: InterventionSourceRef,
+    radarParent?: { customerId: string; matterId: string },
+  ): Promise<TodaySourceView> => parseTodaySourceResponse(
+    await req<unknown>('/api/today/source', {
+      method: 'POST',
+      body: JSON.stringify(radarParent ? {
+        providerKey: 'relationship_radar', ...radarParent, sourceRef: source,
+      } : source),
+    }),
     source,
   ),
   mutate: (action: Action): Promise<{ ok: true }> => req('/api/mutate', { method: 'POST', body: JSON.stringify({ action: toWireAction(action) }) }),
@@ -452,6 +935,26 @@ export const api = {
     parseCommitmentResponse(await commandReq<unknown>('/api/commands/commitment', {
       method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(command),
     }), command),
+  salesHypothesisCommand: async (
+    input: SalesHypothesisCommand,
+    idempotencyKey: string,
+  ): Promise<SalesHypothesisCommandReceipt> => {
+    const command = SalesHypothesisCommandSchema.parse(input);
+    const raw = await commandReq<unknown>('/api/commands/sales-hypothesis', {
+      method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(command),
+    });
+    return relationshipWorkspaceParse(() => parseSalesHypothesisCommandReceipt(raw, command));
+  },
+  reviewHypothesisVerification: async (
+    input: ReviewHypothesisVerificationCommand,
+    idempotencyKey: string,
+  ): Promise<ReviewHypothesisVerificationReceipt> => {
+    const command = ReviewHypothesisVerificationCommandSchema.parse(input);
+    const raw = await commandReq<unknown>('/api/commands/hypothesis-verification-review', {
+      method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(command),
+    });
+    return relationshipWorkspaceParse(() => parseHypothesisVerificationReviewReceipt(raw, command));
+  },
   quickCapture: async (command: QuickCaptureCommand, idempotencyKey: string): Promise<QuickCaptureCommandReceipt & { replayed: boolean }> => {
     const raw = await commandReq<unknown>('/api/commands/quick-capture', {
       method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(command),

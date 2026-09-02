@@ -4,6 +4,7 @@ import { assembleProductAccess, type CommandContext } from '@jianghu/domain-cont
 import { handleMcpBody } from '../src/mcpServer.js';
 import { executeOpportunitySkeleton } from '../src/mutation/compoundCommands.js';
 import { createTestContext, type TestContext } from './helpers/testApp.js';
+import { createFieldCandidate } from '../src/candidates/reviewItems.js';
 
 const contexts: TestContext[] = [];
 afterEach(async () => {
@@ -72,6 +73,10 @@ describe('server product capability enforcement', () => {
     });
     await expectDenied(context.app, context.token, 'POST', '/api/commands/methodology', {});
     await expectDenied(context.app, context.token, 'GET', '/api/pde/missing/ev');
+    await expectDenied(context.app, context.token, 'GET', '/api/source-artifacts');
+    await expectDenied(context.app, context.token, 'POST', '/api/source-artifacts/external', {
+      source: 'free-denied', externalRef: 'free-denied-ref',
+    });
     expect(await context.prisma.account.count({ where: { tenantId: context.tenant.id } })).toBe(0);
     expect(await context.prisma.opportunity.count({ where: { tenantId: context.tenant.id } })).toBe(0);
   });
@@ -136,6 +141,63 @@ describe('server product capability enforcement', () => {
     expect((await context.app.inject({ method: 'POST', url: '/api/opportunity/clone', headers: auth(context.token), payload: {} })).statusCode).not.toBe(403);
     expect((await context.app.inject({ method: 'POST', url: '/api/commands/methodology', headers: auth(context.token), payload: {} })).statusCode).not.toBe(403);
     expect((await context.app.inject({ method: 'GET', url: '/api/pde/missing/ev', headers: auth(context.token) })).statusCode).not.toBe(403);
+    expect((await context.app.inject({ method: 'GET', url: '/api/source-artifacts', headers: auth(context.token) })).statusCode).toBe(200);
+    expect((await context.app.inject({
+      method: 'POST', url: '/api/source-artifacts/external', headers: auth(context.token), payload: {},
+    })).statusCode).not.toBe(403);
+  });
+
+  it('returns the same typed 403 when proposal review lacks its generated Action entitlement', async () => {
+    const context = await contextFor({
+      edition: 'commercial',
+      enabledEntitlements: ['sales.workspace'],
+    });
+    await context.prisma.account.create({ data: {
+      id: 'proposal-cap-account', tenantId: context.tenant.id,
+      name: 'Proposal capability account', customerType: 1,
+    } });
+    await context.prisma.opportunity.create({ data: {
+      id: 'proposal-cap-matter', tenantId: context.tenant.id,
+      accountId: 'proposal-cap-account', name: 'Proposal capability matter',
+      customerType: 1, pipelineStage: 'lead', engageStage: 'discover',
+    } });
+    await context.prisma.person.create({ data: {
+      id: 'proposal-cap-person', tenantId: context.tenant.id,
+      accountId: 'proposal-cap-account', name: 'Proposal capability person', title: '',
+    } });
+    await context.prisma.oppRole.create({ data: {
+      tenantId: context.tenant.id, opportunityId: 'proposal-cap-matter',
+      personId: 'proposal-cap-person', role: 'U', sentiment: 'neutral', confidence: '不清',
+    } });
+    const proposal = await createFieldCandidate(context.prisma, {
+      id: 'proposal-capability-denied', tenantId: context.tenant.id,
+      accountId: 'proposal-cap-account', matterId: 'proposal-cap-matter',
+      targetKind: 'oppRole', targetId: 'proposal-cap-person', fieldKey: 'sentiment',
+      oldValue: 'neutral', newValue: 'plus', source: 'voice',
+      sourceRef: 'voice:proposal-capability-denied', evidence: 'human review still needs methodology',
+      confidence: 0.8, createdByUserId: context.owner.id,
+    });
+    const single = await context.app.inject({
+      method: 'POST', url: `/api/proposals/${proposal.row.id}/accept`,
+      headers: auth(context.token),
+    });
+    expect(single.statusCode, single.body).toBe(403);
+    expect(single.json()).toEqual({ error: '能力未启用', code: 'capability_denied' });
+
+    const batch = await context.app.inject({
+      method: 'POST', url: '/api/commands/inbox-batch',
+      headers: { ...auth(context.token), 'idempotency-key': 'proposal-capability-batch' },
+      payload: { items: [{ kind: 'proposal', id: proposal.row.id, decision: 'accept' }] },
+    });
+    expect(batch.statusCode, batch.body).toBe(403);
+    expect(batch.json()).toEqual({ error: '能力未启用', code: 'capability_denied' });
+    await expect(context.prisma.changeProposal.findUniqueOrThrow({ where: { id: proposal.row.id } }))
+      .resolves.toMatchObject({ status: 'pending' });
+    await expect(context.prisma.oppRole.findFirstOrThrow({ where: {
+      tenantId: context.tenant.id,
+      opportunityId: 'proposal-cap-matter',
+      personId: 'proposal-cap-person',
+    } })).resolves.toMatchObject({ sentiment: 'neutral' });
   });
 
   it('keeps the legacy internal adapter policy and service behavior enabled', async () => {

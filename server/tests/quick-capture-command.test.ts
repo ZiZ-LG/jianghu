@@ -32,6 +32,7 @@ const commitment = (customerId: string, id: string, ownerUserId: string) => ({
     confirmationDueAtUtc: null,
     source: 'manual_quick_capture' as const,
     sourceRef: null,
+    hypothesisRef: null,
   },
 });
 

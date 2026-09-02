@@ -81,6 +81,13 @@ describe('CORE-112 G64111 dependency boundary', () => {
       'server/src/mutation/matterParticipants.ts',
       'server/src/resourceScope.ts',
       'server/src/scope.ts',
+      'server/src/intelligenceFocus/model.ts',
+      'server/src/intelligenceFocus/service.ts',
+      'server/src/intelligenceFocus/routes.ts',
+      'packages/domain-contracts/src/hypotheses.ts',
+      'server/src/hypotheses/model.ts',
+      'server/src/hypotheses/service.ts',
+      'server/src/hypotheses/routes.ts',
     ];
     const forbidden = /@jianghu\/g64111|primaryDPersonId|pipelineStage|engageStage|\bADURC\b|from\s+['"].*\/gaps['"]/;
     const violations: string[] = [];
@@ -90,6 +97,29 @@ describe('CORE-112 G64111 dependency boundary', () => {
       if (forbidden.test(source)) violations.push(path);
     }
 
+    expect(violations).toEqual([]);
+  });
+
+  it('keeps machine producers unable to import human-confirmed intelligence/focus/hypothesis writers', async () => {
+    const machineFiles = [
+      'server/src/ai.ts',
+      'server/src/suggest.ts',
+      ...(await sourceFiles(resolve(repositoryRoot, 'server/src/agents')))
+        .map((file) => relative(repositoryRoot, file)),
+      ...(await sourceFiles(resolve(repositoryRoot, 'server/src/candidates')))
+        .map((file) => relative(repositoryRoot, file)),
+      ...(await sourceFiles(resolve(repositoryRoot, 'server/src/preMeeting')))
+        .map((file) => relative(repositoryRoot, file)),
+      ...(await sourceFiles(resolve(repositoryRoot, 'server/src/postMeeting')))
+        .map((file) => relative(repositoryRoot, file)),
+      ...(await sourceFiles(resolve(repositoryRoot, 'server/src/methodology')))
+        .map((file) => relative(repositoryRoot, file)),
+    ];
+    const violations: string[] = [];
+    for (const path of new Set(machineFiles)) {
+      const source = await readFile(resolve(repositoryRoot, path), 'utf8');
+      if (/(?:intelligenceFocus|hypotheses)\/service/.test(source)) violations.push(path);
+    }
     expect(violations).toEqual([]);
   });
 });

@@ -5,9 +5,11 @@ import {
   ActorRoleSchema,
   INTERVENTION_ITEM_ID_MAX_LENGTH,
   InterventionItemSchema,
-  InterventionSourceRefSchema,
+  RELATIONSHIP_RADAR_PROVIDER_KEY,
   TodayReadModelSchema,
+  TodaySourceRequestSchema,
   TodaySourceViewSchema,
+  type CapabilityPolicy,
   type InterventionItem,
   type InterventionSourceRef,
   type InterventionTime,
@@ -24,6 +26,11 @@ import type { DbClient } from './mutation/scopeGuards.js';
 import { prisma } from './prisma.js';
 import { resolveEffectiveResourceScope } from './resourceScope.js';
 import type { ReadPrincipal } from './visibility.js';
+import {
+  relationshipRadarSourceView,
+  relationshipRadarTodayItems,
+  RelationshipRadarReadError,
+} from './relationshipRadar/service.js';
 
 const PROVIDER_KEY = 'core.today';
 const RULE_VERSION = 'core.today.v1';
@@ -53,6 +60,14 @@ const TODAY_PLAN_ACTION_SELECT = {
   sourceRef: true,
   archivedAt: true,
   version: true,
+  hypothesisId: true,
+  hypothesisRevisionId: true,
+  completionResult: true,
+  completionResultRecordedAtUtc: true,
+  completionResultRecordedByUserId: true,
+  verificationReviewDisposition: true,
+  verificationReviewedAtUtc: true,
+  verificationReviewedByUserId: true,
   doneAt: true,
 } satisfies Prisma.PlanActionSelect;
 
@@ -595,7 +610,23 @@ export async function buildTodayReadModel(
   const extras = additionalItems
     .map((item) => InterventionItemSchema.safeParse(item))
     .flatMap((parsed) => parsed.success ? [parsed.data] : [])
-    .filter((item) => targetIsVisible(item) && item.sourceRefs.every(sourceIsVisible));
+    .flatMap((item) => {
+      if (item.providerKey !== RELATIONSHIP_RADAR_PROVIDER_KEY) {
+        return targetIsVisible(item) && item.sourceRefs.every(sourceIsVisible) ? [item] : [];
+      }
+      if (item.section !== 'follow_up'
+        || item.reasonCode === 'next_step_completeness.gap'
+        || item.target.matterId === null) return [];
+      const account = accountById.get(item.target.customerId);
+      const matter = matterById.get(item.target.matterId);
+      if (!account || !matter
+        || matter.accountId !== account.id
+        || !scope.canReadMatter(matter.id)
+        || item.observedAtUtc > generatedAtUtc) return [];
+      if (item.target.entityKind === 'matter'
+        && (item.target.entityId !== matter.id || item.target.version !== matter.version)) return [];
+      return [{ ...item, context: contextFor(account.name, matter) }];
+    });
   const coreBySection = new Map<TodaySectionKey, InterventionItem[]>([
     ['pending_confirmation', sortRanked(pending)],
     ['follow_up', sortRanked(followUp)],
@@ -627,14 +658,23 @@ export async function buildTodayReadModel(
   });
 }
 
-export function todayRoutes(app: FastifyInstance): void {
+export function todayRoutes(app: FastifyInstance, policy: CapabilityPolicy): void {
   app.get('/api/today', { preHandler: [app.authenticate] }, async (req, reply) => {
     reply.header('Cache-Control', 'private, no-store');
-    return buildTodayReadModel({
+    const principal = {
       tenantId: req.user.tenantId,
       userId: req.user.userId,
       role: ActorRoleSchema.parse(req.user.role),
-    }, new Date());
+    };
+    const now = new Date();
+    return prisma.$transaction(async (tx) => {
+      const extras = await relationshipRadarTodayItems(tx, {
+        tenantId: principal.tenantId,
+        actorId: principal.userId,
+        actorRole: principal.role,
+      }, policy, now);
+      return buildTodayReadModel(principal, now, tx, extras);
+    }, { isolationLevel: 'Serializable', maxWait: 5_000, timeout: 30_000 });
   });
 
   app.post<{ Body: unknown }>(
@@ -642,13 +682,39 @@ export function todayRoutes(app: FastifyInstance): void {
     { preHandler: [app.authenticate] },
     async (req, reply) => {
       reply.header('Cache-Control', 'private, no-store');
-      const parsed = InterventionSourceRefSchema.safeParse(req.body);
+      const parsed = TodaySourceRequestSchema.safeParse(req.body);
       if (!parsed.success) return reply.code(400).send({ error: '来源参数无效' });
-      const source = await resolveTodaySource({
+      const principal = {
         tenantId: req.user.tenantId,
         userId: req.user.userId,
         role: ActorRoleSchema.parse(req.user.role),
-      }, parsed.data);
+      };
+      if ('providerKey' in parsed.data && parsed.data.providerKey === RELATIONSHIP_RADAR_PROVIDER_KEY) {
+        const radarRequest = parsed.data as {
+          providerKey: 'relationship_radar';
+          customerId: string;
+          matterId: string;
+          sourceRef: InterventionSourceRef;
+        };
+        try {
+          return await prisma.$transaction((tx) => relationshipRadarSourceView(tx, {
+            tenantId: principal.tenantId,
+            actorId: principal.userId,
+            actorRole: principal.role,
+          }, policy, radarRequest), {
+            isolationLevel: 'Serializable', maxWait: 5_000, timeout: 30_000,
+          });
+        } catch (error) {
+          if (error instanceof RelationshipRadarReadError) {
+            return reply.code(error.code === 'relationship_radar_source_changed' ? 404 : error.statusCode).send({
+              error: error.scopedNotFound ? '来源不存在或无权限' : '来源已变化',
+              code: error.code,
+            });
+          }
+          throw error;
+        }
+      }
+      const source = await resolveTodaySource(principal, parsed.data as InterventionSourceRef);
       if (!source) return reply.code(404).send({ error: '来源不存在或无权限' });
       return source;
     },

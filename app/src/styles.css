@@ -124,8 +124,17 @@ button.commercial-shell-row:hover { background: var(--hover); }
 .crm-relation-canvas svg { width: 100%; height: auto; min-height: 240px; display: block; }
 .crm-relation-line { stroke: var(--muted); stroke-width: 2.5; }
 .crm-relation-arrow { fill: var(--muted); }
+.crm-relation-candidate-line { stroke: var(--faint); stroke-width: 2; stroke-dasharray: 9 7; }
+.crm-relation-candidate-arrow { fill: var(--faint); }
+.crm-relation-candidate-question, .crm-relation-node-question { fill: var(--muted); font-size: 18px; font-weight: 900; }
 .crm-relation-node circle { fill: var(--node-fill); stroke: var(--node-stroke); stroke-width: 2; }
 .crm-relation-node text { fill: var(--node-text); font-size: 14px; font-weight: 700; paint-order: stroke; stroke: var(--node-halo); stroke-width: 3px; stroke-linejoin: round; }
+.crm-relation-node.candidate circle { stroke: var(--faint); stroke-dasharray: 6 5; }
+.crm-relation-node.focused circle { stroke: var(--accent); stroke-width: 4; }
+.crm-relation-node .crm-relation-node-title { fill: var(--muted); font-size: 11px; font-weight: 600; }
+.crm-hypothesis-annotation path { fill: none; stroke: var(--accent); stroke-width: 2; stroke-dasharray: 3 5; }
+.crm-hypothesis-annotation rect { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 3 5; }
+.crm-hypothesis-annotation text { fill: var(--accent-ink); font-size: 11px; font-weight: 700; }
 .crm-relation-list { margin: 0; padding: 0; display: grid; gap: 8px; list-style: none; }
 .crm-relation-list li { min-width: 0; padding: 11px 12px; border: 1px solid var(--line); border-radius: 9px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px 10px; background: var(--panel); }
 .crm-relation-list li > div { min-width: 0; display: grid; gap: 3px; }
@@ -230,6 +239,169 @@ button.commercial-shell-row:hover { background: var(--hover); }
 .quick-capture-message.error { color: var(--danger); border: 1px solid var(--danger); background: var(--panel); }
 .quick-capture-message.success { color: var(--accent-ink); border: 1px solid var(--accent); background: var(--accent-soft); }
 .quick-capture .btn { min-height: 44px; }
+.pre-meeting-brief { margin-bottom: 24px; padding: 20px; border: 1px solid var(--line); border-radius: 14px; display: grid; gap: 16px; background: var(--panel-2); }
+.pre-meeting-heading, .pre-meeting-sheet-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.pre-meeting-heading h2 { margin: 2px 0 0; font-size: 19px; }
+.pre-meeting-heading .eyebrow { color: var(--accent-ink); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.pre-meeting-authority { padding: 7px 10px; border: 1px solid var(--accent); border-radius: 9px; display: grid; gap: 2px; color: var(--accent-ink); background: var(--accent-soft); text-align: right; }
+.pre-meeting-authority span { color: var(--muted); font-size: 11px; }
+.pre-meeting-lede { color: var(--ink-2); line-height: 1.65; }
+.pre-meeting-toolbar { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto auto; gap: 10px; align-items: end; }
+.pre-meeting-toolbar label { min-width: 0; display: grid; gap: 5px; color: var(--ink-2); font-size: 12px; font-weight: 700; }
+.pre-meeting-toolbar select { width: 100%; min-height: 42px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--panel); font: inherit; font-size: 14px; }
+.pre-meeting-toolbar .btn { min-height: 42px; }
+.pre-meeting-message { padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); overflow-wrap: anywhere; }
+.pre-meeting-message.error { border-color: var(--danger); color: var(--danger); }
+.pre-meeting-message.success { border-color: var(--accent); color: var(--accent-ink); background: var(--accent-soft); }
+.pre-meeting-history-row { display: grid; gap: 9px; }
+.pre-meeting-history { display: flex; gap: 8px; overflow-x: auto; }
+.pre-meeting-history button { min-width: 145px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 9px; display: grid; gap: 3px; color: var(--ink); background: var(--panel); text-align: left; }
+.pre-meeting-history button:not(:disabled):hover { background: var(--hover); }
+.pre-meeting-history small, .pre-meeting-run-failures { color: var(--muted); font-size: 12px; }
+.pre-meeting-run-failures { display: flex; flex-wrap: wrap; gap: 6px 12px; }
+.pre-meeting-sheet { padding: 16px; border: 1px solid var(--line); border-radius: 12px; display: grid; gap: 16px; background: var(--panel); }
+.pre-meeting-sheet-head > div { display: grid; gap: 3px; }
+.pre-meeting-sheet-head span { color: var(--accent-ink); font-size: 12px; font-weight: 800; }
+.pre-meeting-sheet-head small { color: var(--muted); text-align: right; }
+.pre-meeting-source-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 9px; }
+.pre-meeting-source-grid > div { min-width: 0; padding: 10px; border: 1px solid var(--line); border-radius: 9px; display: grid; gap: 3px; background: var(--panel-2); }
+.pre-meeting-source-grid span, .pre-meeting-source-grid small { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.pre-meeting-source-grid [data-source-status="fresh"] { border-color: var(--accent); }
+.pre-meeting-source-grid [data-source-status="failed"], .pre-meeting-source-grid [data-source-status="unavailable"] { border-color: var(--danger); }
+.pre-meeting-sections { display: grid; gap: 12px; }
+.pre-meeting-sections > section { padding: 13px; border: 1px solid var(--line); border-radius: 9px; display: grid; gap: 8px; background: var(--panel-2); }
+.pre-meeting-sections > section > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.pre-meeting-sections h3, .pre-meeting-unknowns h3, .pre-meeting-failures h3 { margin: 0; font-size: 15px; }
+.pre-meeting-sections p { color: var(--ink-2); line-height: 1.65; }
+.pre-meeting-sections small, .pre-meeting-sections li, .pre-meeting-unknowns span, .pre-meeting-unknowns small, .pre-meeting-failures span { color: var(--muted); font-size: 12px; }
+.pre-meeting-sections ul { margin: 0; padding-left: 18px; display: grid; gap: 3px; }
+.pre-meeting-unknowns, .pre-meeting-failures { padding: 13px; border: 1px solid var(--line); border-radius: 9px; display: grid; gap: 8px; background: var(--panel-2); }
+.pre-meeting-unknowns > div { display: grid; gap: 3px; }
+.pre-meeting-failures { border-color: var(--danger); }
+.post-meeting-review { margin-bottom: 24px; padding: 20px; border: 1px solid var(--line); border-radius: 14px; display: grid; gap: 16px; background: var(--panel-2); }
+.post-meeting-heading, .post-meeting-item-head, .post-meeting-source-meta, .commercial-legacy-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.post-meeting-heading h2, .commercial-legacy-heading h2 { margin: 2px 0 0; font-size: 19px; }
+.post-meeting-heading .eyebrow { color: var(--accent-ink); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.post-meeting-job-state { padding: 5px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); background: var(--panel); font-size: 12px; font-weight: 700; }
+.post-meeting-job-state.enabled { border-color: var(--accent); color: var(--accent-ink); background: var(--accent-soft); }
+.post-meeting-lede { color: var(--ink-2); line-height: 1.65; }
+.post-meeting-import { padding: 14px; border: 1px solid var(--line); border-radius: 11px; display: grid; gap: 12px; background: var(--panel); }
+.post-meeting-import-heading, .post-meeting-current-source, .post-meeting-oauth { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.post-meeting-import-heading p { margin-top: 3px; color: var(--ink-2); font-size: 13px; }
+.post-meeting-import-heading small, .post-meeting-current-source small, .post-meeting-current-source span { color: var(--muted); overflow-wrap: anywhere; }
+.post-meeting-import-modes { display: flex; flex-wrap: wrap; gap: 8px; }
+.post-meeting-import-modes label { min-height: 38px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; display: flex; align-items: center; gap: 7px; color: var(--ink-2); background: var(--panel-2); font-size: 13px; font-weight: 700; }
+.post-meeting-import-modes input { accent-color: var(--accent); }
+.post-meeting-import-field, .post-meeting-provider-config label { min-width: 0; display: grid; gap: 5px; color: var(--ink-2); font-size: 12px; font-weight: 700; }
+.post-meeting-import-field input, .post-meeting-provider-config input { width: 100%; min-height: 42px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--panel); font: inherit; font-size: 14px; }
+.post-meeting-import-field input[type="file"] { padding: 7px; }
+.post-meeting-import-field small { color: var(--muted); font-weight: 500; }
+.post-meeting-feishu { padding-top: 12px; border-top: 1px solid var(--line); display: grid; gap: 10px; }
+.post-meeting-provider-config { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: end; gap: 10px; }
+.post-meeting-oauth { color: var(--ink-2); font-size: 13px; }
+.post-meeting-oauth > span { margin-right: auto; font-weight: 700; }
+.post-meeting-import-progress { display: grid; grid-template-columns: minmax(100px, 1fr) auto; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
+.post-meeting-import-progress progress { width: 100%; accent-color: var(--accent); }
+.post-meeting-import-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.post-meeting-current-source { padding: 10px 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel-2); }
+.post-meeting-current-source > div { min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.post-meeting-current-source > div:first-child { display: grid; gap: 2px; }
+.post-meeting-toolbar { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; align-items: end; }
+.post-meeting-toolbar label, .post-meeting-submit label, .post-meeting-edit-grid label, .post-meeting-edit-field, .post-meeting-decision-row label { min-width: 0; display: grid; gap: 5px; color: var(--ink-2); font-size: 12px; font-weight: 700; }
+.post-meeting-toolbar input, .post-meeting-toolbar select, .post-meeting-submit input, .post-meeting-submit select, .post-meeting-edit-grid input, .post-meeting-edit-grid select, .post-meeting-edit-field input, .post-meeting-decision-row select { width: 100%; min-height: 42px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--panel); font: inherit; font-size: 14px; }
+.post-meeting-toolbar .btn { min-height: 42px; }
+.post-meeting-message { padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); overflow-wrap: anywhere; }
+.post-meeting-message.error, .post-meeting-conflict { color: var(--danger); }
+.post-meeting-message.error { border-color: var(--danger); }
+.post-meeting-message.success { border-color: var(--accent); color: var(--accent-ink); background: var(--accent-soft); }
+.post-meeting-runs { display: flex; gap: 8px; overflow-x: auto; }
+.post-meeting-runs button { min-width: 150px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 9px; display: grid; gap: 3px; color: var(--ink); background: var(--panel); text-align: left; }
+.post-meeting-runs button:not(:disabled):hover { background: var(--hover); }
+.post-meeting-runs small { color: var(--muted); }
+.post-meeting-sheet { display: grid; gap: 14px; }
+.post-meeting-source-meta { padding: 11px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); }
+.post-meeting-source-meta span { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.post-meeting-items { display: grid; gap: 10px; }
+.post-meeting-item { padding: 14px; border: 1px solid var(--line); border-radius: 11px; display: grid; gap: 11px; background: var(--panel); }
+.post-meeting-item.accepted, .post-meeting-item.rejected { opacity: .72; }
+.post-meeting-item-head > span { color: var(--muted); font-size: 12px; }
+.post-meeting-select { min-height: 32px; display: flex; align-items: center; gap: 9px; }
+.post-meeting-select input { width: 18px; height: 18px; accent-color: var(--accent); }
+.post-meeting-item blockquote { padding: 10px 12px; border-left: 3px solid var(--accent); color: var(--ink-2); background: var(--accent-soft); line-height: 1.6; overflow-wrap: anywhere; }
+.post-meeting-diff { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 10px; }
+.post-meeting-diff > div:not([aria-hidden]) { min-width: 0; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; display: grid; gap: 3px; background: var(--panel-2); }
+.post-meeting-diff small { color: var(--muted); }
+.post-meeting-diff span { overflow-wrap: anywhere; }
+.post-meeting-edit-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.post-meeting-decision-row { display: grid; grid-template-columns: minmax(130px, 220px); }
+.post-meeting-conflict { font-size: 12px; font-weight: 700; }
+.post-meeting-submit { padding-top: 14px; border-top: 1px solid var(--line); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: end; gap: 10px; }
+.post-meeting-submit .btn { min-height: 42px; }
+.relationship-workspace-shell { margin-bottom: 24px; display: grid; gap: 12px; }
+.relationship-radar { min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 12px; display: grid; gap: 12px; background: var(--panel-2); }
+.relationship-radar[data-relationship-radar="loading"], .relationship-radar[data-relationship-radar="error"] { min-height: 88px; place-content: center; justify-items: center; color: var(--ink-2); text-align: center; }
+.relationship-radar-heading, .relationship-radar-signal > header, .relationship-radar-draft-editor > div { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.relationship-radar-heading h3 { margin: 2px 0 0; font-size: 18px; }
+.relationship-radar-heading .eyebrow { color: var(--accent-ink); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.relationship-radar-actions, .relationship-radar-sources { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+.relationship-radar-meta { display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--muted); font-size: 12px; }
+.relationship-radar-history { padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; display: grid; gap: 7px; background: var(--panel); }
+.relationship-radar-history ol { margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 7px 14px; list-style: none; }
+.relationship-radar-history li { display: flex; gap: 7px; color: var(--ink-2); font-size: 12px; }
+.relationship-radar-history li span { color: var(--accent-ink); font-weight: 700; }
+.relationship-radar-history time { color: var(--muted); }
+.relationship-radar-signals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.relationship-radar-signal { min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 9px; display: grid; gap: 8px; background: var(--panel); }
+.relationship-radar-signal > header span { padding: 3px 7px; border-radius: 999px; color: var(--accent-ink); background: var(--accent-soft); font-size: 12px; font-weight: 700; }
+.relationship-radar-signal[data-radar-status="gap"] { border-color: var(--danger); }
+.relationship-radar-signal p, .relationship-radar-draft p { margin: 0; color: var(--ink-2); line-height: 1.55; }
+.relationship-radar-source { padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; display: grid; gap: 4px; color: var(--ink-2); background: var(--panel); }
+.relationship-radar-draft { padding: 12px; border: 1px dashed var(--line); border-radius: 9px; display: grid; gap: 10px; background: var(--panel); }
+.relationship-radar-draft p { display: grid; gap: 3px; }
+.relationship-radar-draft-editor { display: grid; grid-template-columns: minmax(0, 1fr) minmax(190px, .6fr); gap: 10px; }
+.relationship-radar-draft-editor label { display: grid; gap: 5px; color: var(--ink-2); font-size: 12px; font-weight: 700; }
+.relationship-radar-draft-editor input { width: 100%; min-height: 42px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--panel); font: inherit; }
+.relationship-radar-draft-editor > div { grid-column: 1 / -1; justify-content: flex-end; }
+.relationship-selector { padding: 14px; border: 1px solid var(--line); border-radius: 12px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; background: var(--panel-2); }
+.relationship-selector label, .relationship-result-editor label, .relationship-evidence-editor label, .relationship-review-editor label, .relationship-revision-grid label { min-width: 0; display: grid; gap: 5px; color: var(--ink-2); font-size: 12px; font-weight: 700; }
+.relationship-selector select, .relationship-result-editor textarea, .relationship-evidence-editor input, .relationship-evidence-editor select, .relationship-review-editor input, .relationship-revision-grid input, .relationship-revision-grid textarea { width: 100%; min-height: 42px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--panel); font: inherit; font-size: 14px; }
+.relationship-result-editor textarea, .relationship-revision-grid textarea { min-height: 82px; resize: vertical; }
+.relationship-workspace { min-width: 0; padding: 20px; border: 1px solid var(--line); border-radius: 14px; display: grid; gap: 16px; background: var(--panel-2); }
+.relationship-workspace[data-relationship-workspace="idle"], .relationship-workspace[data-relationship-workspace="loading"], .relationship-workspace[data-relationship-workspace="error"] { min-height: 112px; place-content: center; justify-items: center; color: var(--ink-2); text-align: center; }
+.relationship-workspace-heading, .relationship-hypothesis-card > header, .relationship-verification > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.relationship-workspace-heading h2 { margin: 2px 0 0; font-size: 19px; }
+.relationship-workspace-heading .eyebrow { color: var(--accent-ink); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.relationship-workspace-heading p, .relationship-authority-note { color: var(--ink-2); line-height: 1.6; }
+.relationship-layer-toggles { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.relationship-layer-toggles label { min-height: 38px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; display: flex; align-items: center; gap: 7px; color: var(--ink-2); background: var(--panel); font-size: 13px; font-weight: 700; }
+.relationship-layer-toggles input { accent-color: var(--accent); }
+.relationship-message { padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); overflow-wrap: anywhere; }
+.relationship-message.error { border-color: var(--danger); color: var(--danger); }
+.relationship-message.success { border-color: var(--accent); color: var(--accent-ink); background: var(--accent-soft); }
+.relationship-candidates, .relationship-hypotheses, .relationship-workspace-grid > section { min-width: 0; display: grid; gap: 10px; }
+.relationship-candidates > article, .relationship-intelligence, .relationship-focus, .relationship-hypothesis-card, .relationship-verification { min-width: 0; padding: 13px; border: 1px solid var(--line); border-radius: 10px; display: grid; gap: 9px; background: var(--panel); }
+.relationship-candidates > article { border-style: dashed; }
+.relationship-candidates > article span, .relationship-candidates > article small, .relationship-intelligence small, .relationship-focus small, .relationship-hypothesis-card small, .relationship-verification small { color: var(--muted); overflow-wrap: anywhere; }
+.relationship-candidates blockquote { padding-left: 10px; border-left: 3px dashed var(--faint); color: var(--ink-2); line-height: 1.5; }
+.relationship-workspace-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.relationship-intelligence > div { display: flex; justify-content: space-between; gap: 10px; }
+.relationship-intelligence > div span, .relationship-verification > header > span { padding: 4px 8px; border-radius: 999px; color: var(--accent-ink); background: var(--accent-soft); font-size: 12px; font-weight: 700; }
+.relationship-focus { border-color: var(--accent); background: var(--accent-soft); }
+.relationship-focus strong { color: var(--accent-ink); }
+.relationship-hypothesis-card > header > div, .relationship-verification > header > div { min-width: 0; display: grid; gap: 3px; }
+.relationship-hypothesis-checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.relationship-hypothesis-checks > div { padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
+.relationship-hypothesis-checks ul { margin: 6px 0 0; padding-left: 18px; color: var(--ink-2); }
+.relationship-empty { padding: 12px; border: 1px dashed var(--line); border-radius: 8px; color: var(--muted); background: var(--panel); }
+.relationship-result, .relationship-evidence-links { display: grid; gap: 3px; color: var(--ink-2); overflow-wrap: anywhere; }
+.relationship-result-editor, .relationship-review-editor, .relationship-revision-grid { padding-top: 10px; border-top: 1px solid var(--line); display: grid; gap: 10px; }
+.relationship-evidence-editor { display: grid; grid-template-columns: minmax(0, 1fr) minmax(120px, 180px) auto; align-items: end; gap: 9px; }
+.relationship-review-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.relationship-review-editor details { padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
+.relationship-review-editor summary { color: var(--accent-ink); cursor: pointer; font-weight: 700; }
+.relationship-revision-grid { margin-top: 10px; }
+.commercial-legacy-entry { padding-top: 22px; border-top: 1px solid var(--line); display: grid; gap: 12px; }
+.commercial-legacy-heading span { color: var(--muted); font-size: 12px; }
 @media (max-width: 640px) {
   .commercial-shell-header, .commercial-shell-nav { padding-left: 14px; padding-right: 14px; }
   .commercial-shell-panel { margin-top: 14px; padding: 18px; }
@@ -254,6 +426,17 @@ button.commercial-shell-row:hover { background: var(--hover); }
   .crm-context-section header > span, .crm-context-compact-list span { text-align: left; }
   .crm-relation-canvas svg { min-height: 210px; }
   .crm-relation-list li { grid-template-columns: 1fr; }
+  .pre-meeting-brief, .post-meeting-review, .relationship-workspace, .relationship-radar { padding: 14px; }
+  .pre-meeting-heading, .pre-meeting-sheet-head, .post-meeting-heading, .post-meeting-item-head, .post-meeting-source-meta, .post-meeting-import-heading, .post-meeting-current-source, .post-meeting-oauth, .relationship-workspace-heading, .relationship-radar-heading, .relationship-hypothesis-card > header, .relationship-verification > header, .commercial-legacy-heading { align-items: stretch; flex-direction: column; }
+  .pre-meeting-authority, .pre-meeting-sheet-head small { text-align: left; }
+  .pre-meeting-toolbar, .post-meeting-toolbar, .post-meeting-edit-grid, .post-meeting-submit, .post-meeting-provider-config, .relationship-selector, .relationship-workspace-grid, .relationship-radar-signals, .relationship-radar-draft-editor, .relationship-hypothesis-checks, .relationship-evidence-editor { grid-template-columns: 1fr; }
+  .pre-meeting-toolbar .btn { width: 100%; }
+  .post-meeting-toolbar .btn, .post-meeting-submit .btn, .post-meeting-provider-config .btn, .post-meeting-import-actions .btn, .post-meeting-current-source .btn { width: 100%; }
+  .post-meeting-current-source > div:last-child { display: grid; grid-template-columns: 1fr; }
+  .post-meeting-diff { grid-template-columns: 1fr; }
+  .post-meeting-diff > div[aria-hidden] { display: none; }
+  .relationship-layer-toggles { justify-content: flex-start; }
+  .relationship-hypothesis-card > header .btn, .relationship-evidence-editor .btn, .relationship-revision-grid .btn { width: 100%; }
 }
 .app-upper { display: flex; flex: 1; min-height: 0; position: relative; } /* 上半区：侧栏 + 画布并排；坞提出后列①落在左栏正下方。relative=右栏面板(.drawer)的定位锚——面板底边天然止于坞顶（第9刀） */
 

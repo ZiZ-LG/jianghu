@@ -1,6 +1,16 @@
 import { mkdir, readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import type { CandidateSchemaState } from '../src/candidates/migration.js';
+import type { SensitiveAclSchemaState } from '../src/sensitiveAcl/migration.js';
+import type { SourceArtifactSchemaState } from '../src/sourceArtifacts/migration.js';
+import type { ReviewBatchSchemaState } from '../src/reviewBatches/migration.js';
+import type { AgentJobSchemaState } from '../src/agents/migration.js';
+import type { ResearchBriefSchemaState } from '../src/researchBriefs/migration.js';
+import type { IntelligenceFocusSchemaState } from '../src/intelligenceFocus/migration.js';
+import type { SalesHypothesisSchemaState } from '../src/hypotheses/migration.js';
+import type { HypothesisCommitmentReviewSchemaState } from '../src/relationshipWorkspace/migration.js';
+import type { RelationshipRadarSchemaState } from '../src/relationshipRadar/migration.js';
 
 type MatterSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
 type ParticipantSchemaState = 'uninitialized' | 'legacy' | 'expanded' | 'partial';
@@ -262,6 +272,16 @@ let methodologyState: MethodologySchemaState;
 let methodologyDataState: MethodologyDataSchemaState;
 let pdeDecisionContextState: PdeDecisionContextSchemaState;
 let customerState: CustomerSchemaState;
+let candidateState: CandidateSchemaState;
+let sensitiveAclState: SensitiveAclSchemaState;
+let sourceArtifactState: SourceArtifactSchemaState;
+let reviewBatchState: ReviewBatchSchemaState;
+let agentJobState: AgentJobSchemaState;
+let researchBriefState: ResearchBriefSchemaState;
+let intelligenceFocusState: IntelligenceFocusSchemaState;
+let salesHypothesisState: SalesHypothesisSchemaState;
+let hypothesisCommitmentReviewState: HypothesisCommitmentReviewSchemaState;
+let relationshipRadarState: RelationshipRadarSchemaState;
 let backupPath: string | null = null;
 let schemaChanges = false;
 let matterBackfillRequired = false;
@@ -272,6 +292,26 @@ let methodologyDataExpansionRequired = false;
 let pdeDecisionContextExpansionRequired = false;
 let pdeDecisionContextBackfillRequired = false;
 let customerExpansionRequired = false;
+let candidateExpansionRequired = false;
+let candidateBackfillRequired = false;
+let sensitiveAclExpansionRequired = false;
+let sensitiveAclBackfillRequired = false;
+let sourceArtifactExpansionRequired = false;
+let sourceArtifactBackfillRequired = false;
+let reviewBatchExpansionRequired = false;
+let reviewBatchBackfillRequired = false;
+let agentJobExpansionRequired = false;
+let agentJobBackfillRequired = false;
+let researchBriefExpansionRequired = false;
+let researchBriefBackfillRequired = false;
+let intelligenceFocusExpansionRequired = false;
+let intelligenceFocusBackfillRequired = false;
+let salesHypothesisExpansionRequired = false;
+let salesHypothesisBackfillRequired = false;
+let hypothesisCommitmentReviewExpansionRequired = false;
+let hypothesisCommitmentReviewMarkerRequired = false;
+let relationshipRadarExpansionRequired = false;
+let relationshipRadarMarkerRequired = false;
 
 try {
   state = await inspectSchemaState(prisma);
@@ -281,6 +321,26 @@ try {
   methodologyDataState = await inspectMethodologyDataSchemaState(prisma);
   pdeDecisionContextState = await inspectPdeDecisionContextSchemaState(prisma);
   customerState = await inspectCustomerSchemaState(prisma);
+  const { inspectCandidateSchemaState } = await import('../src/candidates/migration.js');
+  candidateState = await inspectCandidateSchemaState(prisma);
+  const { inspectSensitiveAclSchemaState } = await import('../src/sensitiveAcl/migration.js');
+  sensitiveAclState = await inspectSensitiveAclSchemaState(prisma);
+  const { inspectSourceArtifactSchemaState } = await import('../src/sourceArtifacts/migration.js');
+  sourceArtifactState = await inspectSourceArtifactSchemaState(prisma);
+  const { inspectReviewBatchSchemaState } = await import('../src/reviewBatches/migration.js');
+  reviewBatchState = await inspectReviewBatchSchemaState(prisma);
+  const { inspectAgentJobSchemaState } = await import('../src/agents/migration.js');
+  agentJobState = await inspectAgentJobSchemaState(prisma);
+  const { inspectResearchBriefSchemaState } = await import('../src/researchBriefs/migration.js');
+  researchBriefState = await inspectResearchBriefSchemaState(prisma);
+  const { inspectIntelligenceFocusSchemaState } = await import('../src/intelligenceFocus/migration.js');
+  intelligenceFocusState = await inspectIntelligenceFocusSchemaState(prisma);
+  const { inspectSalesHypothesisSchemaState } = await import('../src/hypotheses/migration.js');
+  salesHypothesisState = await inspectSalesHypothesisSchemaState(prisma);
+  const { inspectHypothesisCommitmentReviewSchemaState } = await import('../src/relationshipWorkspace/migration.js');
+  hypothesisCommitmentReviewState = await inspectHypothesisCommitmentReviewSchemaState(prisma);
+  const { inspectRelationshipRadarSchemaState } = await import('../src/relationshipRadar/migration.js');
+  relationshipRadarState = await inspectRelationshipRadarSchemaState(prisma);
   if (state === 'partial') {
     throw new Error('partial Matter column expansion detected; restore the latest backup before retrying');
   }
@@ -302,7 +362,177 @@ try {
   if (customerState === 'partial') {
     throw new Error('partial Customer category expansion detected; restore the latest backup before retrying');
   }
+  if (candidateState === 'partial') {
+    throw new Error('partial Candidate foundation detected; restore the latest backup before retrying');
+  }
+  if (sourceArtifactState === 'partial') {
+    throw new Error('partial SourceArtifact projection expansion detected; restore the latest backup before retrying');
+  }
+  if (sensitiveAclState === 'partial') {
+    throw new Error('partial sensitive resource ACL expansion detected; restore the latest backup before retrying');
+  }
+  if (reviewBatchState === 'partial') {
+    throw new Error('partial ReviewBatch/Interaction expansion detected; restore the latest backup before retrying');
+  }
+  if (agentJobState === 'partial') {
+    throw new Error('partial AgentJobDefinition/AgentRun expansion detected; restore the latest backup before retrying');
+  }
+  if (researchBriefState === 'partial') {
+    throw new Error('partial ResearchBriefSnapshot expansion detected; restore the latest backup before retrying');
+  }
+  if (intelligenceFocusState === 'partial') {
+    throw new Error('partial IntelligenceItem/StakeholderFocus expansion detected; restore the latest backup before retrying');
+  }
+  if (salesHypothesisState === 'partial') {
+    throw new Error('partial SalesHypothesis expansion detected; restore the latest backup before retrying');
+  }
+  if (hypothesisCommitmentReviewState === 'partial') {
+    throw new Error('partial hypothesis Commitment review expansion detected; restore the latest backup before retrying');
+  }
+  if (relationshipRadarState === 'partial') {
+    throw new Error('partial RelationshipRadarSnapshot expansion detected; restore the latest backup before retrying');
+  }
   customerExpansionRequired = customerState === 'uninitialized' || customerState === 'legacy';
+  candidateExpansionRequired = candidateState === 'uninitialized' || candidateState === 'legacy';
+  candidateBackfillRequired = candidateState !== 'expanded';
+  sensitiveAclExpansionRequired = sensitiveAclState === 'uninitialized' || sensitiveAclState === 'legacy';
+  sensitiveAclBackfillRequired = sensitiveAclState !== 'expanded';
+  sourceArtifactExpansionRequired = sourceArtifactState === 'uninitialized' || sourceArtifactState === 'legacy';
+  sourceArtifactBackfillRequired = sourceArtifactState !== 'expanded';
+  reviewBatchExpansionRequired = reviewBatchState === 'uninitialized' || reviewBatchState === 'legacy';
+  reviewBatchBackfillRequired = reviewBatchState !== 'expanded';
+  agentJobExpansionRequired = agentJobState === 'uninitialized' || agentJobState === 'legacy';
+  agentJobBackfillRequired = agentJobState !== 'expanded';
+  researchBriefExpansionRequired = researchBriefState === 'uninitialized' || researchBriefState === 'legacy';
+  researchBriefBackfillRequired = researchBriefState !== 'expanded';
+  intelligenceFocusExpansionRequired = intelligenceFocusState === 'uninitialized' || intelligenceFocusState === 'legacy';
+  intelligenceFocusBackfillRequired = intelligenceFocusState !== 'expanded';
+  salesHypothesisExpansionRequired = salesHypothesisState === 'uninitialized' || salesHypothesisState === 'legacy';
+  salesHypothesisBackfillRequired = salesHypothesisState !== 'expanded';
+  hypothesisCommitmentReviewExpansionRequired = hypothesisCommitmentReviewState === 'uninitialized'
+    || hypothesisCommitmentReviewState === 'legacy';
+  hypothesisCommitmentReviewMarkerRequired = hypothesisCommitmentReviewState !== 'expanded';
+  relationshipRadarExpansionRequired = relationshipRadarState === 'uninitialized'
+    || relationshipRadarState === 'legacy';
+  relationshipRadarMarkerRequired = relationshipRadarState !== 'expanded';
+  if (candidateState === 'legacy') {
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:candidate-report'], url);
+  } else if (candidateState === 'expanded') {
+    const marker = await prisma.dataMigrationState.findUnique({
+      where: { key: 'CORE-203-candidate-backfill-v1' }, select: { key: true },
+    });
+    candidateBackfillRequired = !marker;
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
+      'run', marker ? 'migrate:candidate-verify' : 'migrate:candidate-report',
+    ], url);
+  }
+  if (sensitiveAclState === 'expanded') {
+    const marker = await prisma.dataMigrationState.findUnique({
+      where: { key: 'CORE-204-sensitive-acl-v1' }, select: { key: true },
+    });
+    sensitiveAclBackfillRequired = !marker;
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
+      'run', marker ? 'migrate:sensitive-acl-verify' : 'migrate:sensitive-acl-report',
+    ], url);
+  }
+  if (sourceArtifactState === 'expanded') {
+    const marker = await prisma.dataMigrationState.findUnique({
+      where: { key: 'SAAS-201-source-artifact-projection-v1' }, select: { key: true },
+    });
+    sourceArtifactBackfillRequired = !marker;
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
+      'run', marker ? 'migrate:source-artifact-verify' : 'migrate:source-artifact-report',
+    ], url);
+  }
+  if (reviewBatchState === 'legacy') {
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
+      'run', 'migrate:review-batch-report',
+    ], url);
+  } else if (reviewBatchState === 'expanded') {
+    const marker = await prisma.dataMigrationState.findUnique({
+      where: { key: 'CORE-205-review-batch-interaction-v1' }, select: { key: true },
+    });
+    reviewBatchBackfillRequired = !marker;
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
+      'run', marker ? 'migrate:review-batch-verify' : 'migrate:review-batch-report',
+    ], url);
+  }
+  if (agentJobState === 'legacy') {
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
+      'run', 'migrate:agent-job-report',
+    ], url);
+  } else if (agentJobState === 'expanded') {
+    const marker = await prisma.dataMigrationState.findUnique({
+      where: { key: 'CORE-206-agent-job-run-v1' }, select: { key: true },
+    });
+    agentJobBackfillRequired = !marker;
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
+      'run', marker ? 'migrate:agent-job-verify' : 'migrate:agent-job-report',
+    ], url);
+  }
+  if (researchBriefState === 'legacy') {
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
+      'run', 'migrate:research-brief-report',
+    ], url);
+  } else if (researchBriefState === 'expanded') {
+    const marker = await prisma.dataMigrationState.findUnique({
+      where: { key: 'SAAS-204-research-brief-snapshot-v1' }, select: { key: true },
+    });
+    researchBriefBackfillRequired = !marker;
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
+      'run', marker ? 'migrate:research-brief-verify' : 'migrate:research-brief-report',
+    ], url);
+  }
+  if (intelligenceFocusState === 'legacy') {
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
+      'run', 'migrate:intelligence-focus-report',
+    ], url);
+  } else if (intelligenceFocusState === 'expanded') {
+    const marker = await prisma.dataMigrationState.findUnique({
+      where: { key: 'SAAS-206-intelligence-focus-v1' }, select: { key: true },
+    });
+    intelligenceFocusBackfillRequired = !marker;
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
+      'run', marker ? 'migrate:intelligence-focus-verify' : 'migrate:intelligence-focus-report',
+    ], url);
+  }
+  if (salesHypothesisState === 'legacy') {
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
+      'run', 'migrate:sales-hypothesis-report',
+    ], url);
+  } else if (salesHypothesisState === 'expanded') {
+    const marker = await prisma.dataMigrationState.findUnique({
+      where: { key: 'SAAS-207-sales-hypothesis-v1' }, select: { key: true },
+    });
+    salesHypothesisBackfillRequired = !marker;
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
+      'run', marker ? 'migrate:sales-hypothesis-verify' : 'migrate:sales-hypothesis-report',
+    ], url);
+  }
+  if (hypothesisCommitmentReviewState === 'legacy') {
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
+      'run', 'migrate:hypothesis-commitment-review-report',
+    ], url);
+  } else if (hypothesisCommitmentReviewState === 'expanded') {
+    const marker = await prisma.dataMigrationState.findUnique({
+      where: { key: 'SAAS-208-hypothesis-commitment-review-v1' }, select: { key: true },
+    });
+    hypothesisCommitmentReviewMarkerRequired = !marker;
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
+      'run', marker
+        ? 'migrate:hypothesis-commitment-review-verify'
+        : 'migrate:hypothesis-commitment-review-report',
+    ], url);
+  }
+  if (relationshipRadarState === 'expanded') {
+    const marker = await prisma.dataMigrationState.findUnique({
+      where: { key: 'SAAS-212-relationship-radar-v1' }, select: { key: true },
+    });
+    relationshipRadarMarkerRequired = !marker;
+    run(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
+      'run', marker ? 'migrate:relationship-radar-verify' : 'migrate:relationship-radar-report',
+    ], url);
+  }
   if (state === 'legacy') {
     run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-matter-fields.ts', '--dry-run'], url);
     matterBackfillRequired = true;
@@ -393,7 +623,7 @@ try {
     }
   }
   schemaChanges = state === 'uninitialized' ? true : schemaHasChanges(url);
-  if (state !== 'uninitialized' && (schemaChanges || matterBackfillRequired || participantBackfillRequired || commitmentBackfillRequired || methodologyExpansionRequired || methodologyDataExpansionRequired || pdeDecisionContextExpansionRequired || pdeDecisionContextBackfillRequired || customerExpansionRequired)) {
+  if (state !== 'uninitialized' && (schemaChanges || matterBackfillRequired || participantBackfillRequired || commitmentBackfillRequired || methodologyExpansionRequired || methodologyDataExpansionRequired || pdeDecisionContextExpansionRequired || pdeDecisionContextBackfillRequired || customerExpansionRequired || candidateExpansionRequired || candidateBackfillRequired || sensitiveAclExpansionRequired || sensitiveAclBackfillRequired || sourceArtifactExpansionRequired || sourceArtifactBackfillRequired || reviewBatchExpansionRequired || reviewBatchBackfillRequired || agentJobExpansionRequired || agentJobBackfillRequired || researchBriefExpansionRequired || researchBriefBackfillRequired || intelligenceFocusExpansionRequired || intelligenceFocusBackfillRequired || salesHypothesisExpansionRequired || salesHypothesisBackfillRequired || hypothesisCommitmentReviewExpansionRequired || hypothesisCommitmentReviewMarkerRequired || relationshipRadarExpansionRequired || relationshipRadarMarkerRequired)) {
     backupPath = await createConsistentBackup(prisma, databasePath);
   }
 } finally {
@@ -408,6 +638,46 @@ const postPushPrisma = new PrismaClient();
 try {
   if (await inspectCustomerSchemaState(postPushPrisma) !== 'expanded') {
     throw new Error('Customer category expansion verification failed');
+  }
+  const { inspectCandidateSchemaState } = await import('../src/candidates/migration.js');
+  if (await inspectCandidateSchemaState(postPushPrisma) !== 'expanded') {
+    throw new Error('Candidate foundation expansion verification failed');
+  }
+  const { inspectSensitiveAclSchemaState } = await import('../src/sensitiveAcl/migration.js');
+  if (await inspectSensitiveAclSchemaState(postPushPrisma) !== 'expanded') {
+    throw new Error('sensitive resource ACL expansion verification failed');
+  }
+  const { inspectSourceArtifactSchemaState } = await import('../src/sourceArtifacts/migration.js');
+  if (await inspectSourceArtifactSchemaState(postPushPrisma) !== 'expanded') {
+    throw new Error('SourceArtifact projection expansion verification failed');
+  }
+  const { inspectReviewBatchSchemaState } = await import('../src/reviewBatches/migration.js');
+  if (await inspectReviewBatchSchemaState(postPushPrisma) !== 'expanded') {
+    throw new Error('ReviewBatch/Interaction expansion verification failed');
+  }
+  const { inspectAgentJobSchemaState } = await import('../src/agents/migration.js');
+  if (await inspectAgentJobSchemaState(postPushPrisma) !== 'expanded') {
+    throw new Error('AgentJobDefinition/AgentRun expansion verification failed');
+  }
+  const { inspectResearchBriefSchemaState } = await import('../src/researchBriefs/migration.js');
+  if (await inspectResearchBriefSchemaState(postPushPrisma) !== 'expanded') {
+    throw new Error('ResearchBriefSnapshot expansion verification failed');
+  }
+  const { inspectIntelligenceFocusSchemaState } = await import('../src/intelligenceFocus/migration.js');
+  if (await inspectIntelligenceFocusSchemaState(postPushPrisma) !== 'expanded') {
+    throw new Error('IntelligenceItem/StakeholderFocus expansion verification failed');
+  }
+  const { inspectSalesHypothesisSchemaState } = await import('../src/hypotheses/migration.js');
+  if (await inspectSalesHypothesisSchemaState(postPushPrisma) !== 'expanded') {
+    throw new Error('SalesHypothesis expansion verification failed');
+  }
+  const { inspectHypothesisCommitmentReviewSchemaState } = await import('../src/relationshipWorkspace/migration.js');
+  if (await inspectHypothesisCommitmentReviewSchemaState(postPushPrisma) !== 'expanded') {
+    throw new Error('hypothesis Commitment review expansion verification failed');
+  }
+  const { inspectRelationshipRadarSchemaState } = await import('../src/relationshipRadar/migration.js');
+  if (await inspectRelationshipRadarSchemaState(postPushPrisma) !== 'expanded') {
+    throw new Error('RelationshipRadarSnapshot expansion verification failed');
   }
 } finally {
   await postPushPrisma.$disconnect();
@@ -435,6 +705,46 @@ if (pdeDecisionContextBackfillRequired) {
   run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-pde-decision-context.ts', '--apply'], url);
 }
 run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'scripts/migrate-pde-decision-context.ts', '--verify'], url);
+if (candidateBackfillRequired) {
+  run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:candidate-apply'], url);
+}
+run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:candidate-verify'], url);
+if (sensitiveAclBackfillRequired) {
+  run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:sensitive-acl-apply'], url);
+}
+run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:sensitive-acl-verify'], url);
+if (sourceArtifactBackfillRequired) {
+  run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:source-artifact-apply'], url);
+}
+run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:source-artifact-verify'], url);
+if (reviewBatchBackfillRequired) {
+  run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:review-batch-apply'], url);
+}
+run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:review-batch-verify'], url);
+if (agentJobBackfillRequired) {
+  run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:agent-job-apply'], url);
+}
+run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:agent-job-verify'], url);
+if (researchBriefBackfillRequired) {
+  run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:research-brief-apply'], url);
+}
+run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:research-brief-verify'], url);
+if (intelligenceFocusBackfillRequired) {
+  run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:intelligence-focus-apply'], url);
+}
+run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:intelligence-focus-verify'], url);
+if (salesHypothesisBackfillRequired) {
+  run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:sales-hypothesis-apply'], url);
+}
+run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:sales-hypothesis-verify'], url);
+if (hypothesisCommitmentReviewMarkerRequired) {
+  run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:hypothesis-commitment-review-apply'], url);
+}
+run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:hypothesis-commitment-review-verify'], url);
+if (relationshipRadarMarkerRequired) {
+  run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:relationship-radar-apply'], url);
+}
+run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'migrate:relationship-radar-verify'], url);
 
 console.log(JSON.stringify({
   ok: true,
@@ -445,6 +755,7 @@ console.log(JSON.stringify({
   methodologyDataStateBefore: methodologyDataState,
   pdeDecisionContextStateBefore: pdeDecisionContextState,
   customerStateBefore: customerState,
+  candidateStateBefore: candidateState,
   schemaChanges,
   matterBackfillRequired,
   participantBackfillRequired,
@@ -454,5 +765,34 @@ console.log(JSON.stringify({
   pdeDecisionContextExpansionRequired,
   pdeDecisionContextBackfillRequired,
   customerExpansionRequired,
+  candidateExpansionRequired,
+  candidateBackfillRequired,
+  sensitiveAclStateBefore: sensitiveAclState,
+  sensitiveAclExpansionRequired,
+  sensitiveAclBackfillRequired,
+  sourceArtifactStateBefore: sourceArtifactState,
+  sourceArtifactExpansionRequired,
+  sourceArtifactBackfillRequired,
+  reviewBatchStateBefore: reviewBatchState,
+  reviewBatchExpansionRequired,
+  reviewBatchBackfillRequired,
+  agentJobStateBefore: agentJobState,
+  agentJobExpansionRequired,
+  agentJobBackfillRequired,
+  researchBriefStateBefore: researchBriefState,
+  researchBriefExpansionRequired,
+  researchBriefBackfillRequired,
+  intelligenceFocusStateBefore: intelligenceFocusState,
+  intelligenceFocusExpansionRequired,
+  intelligenceFocusBackfillRequired,
+  salesHypothesisStateBefore: salesHypothesisState,
+  salesHypothesisExpansionRequired,
+  salesHypothesisBackfillRequired,
+  hypothesisCommitmentReviewStateBefore: hypothesisCommitmentReviewState,
+  hypothesisCommitmentReviewExpansionRequired,
+  hypothesisCommitmentReviewMarkerRequired,
+  relationshipRadarStateBefore: relationshipRadarState,
+  relationshipRadarExpansionRequired,
+  relationshipRadarMarkerRequired,
   backupPath,
 }, null, 2));

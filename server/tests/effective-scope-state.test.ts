@@ -162,20 +162,28 @@ describe('CORE-109 scoped state aggregation', () => {
         {
           id: 'scope-state-customer-note', tenantId, accountId,
           content: 'CUSTOMER_LEVEL_NOTE_SECRET',
+          createdBy: customerOwner.user.id, createdByUserId: customerOwner.user.id,
+          visibility: 'private', aclVersion: 1,
         },
         {
           id: 'scope-state-visible-note', tenantId, accountId,
           opportunityId: visibleMatterId, personId: visiblePersonId,
           content: 'VISIBLE_MATTER_A_NOTE',
+          createdBy: matterOwner.user.id, createdByUserId: matterOwner.user.id,
+          visibility: 'private', aclVersion: 1,
         },
         {
           id: 'scope-state-hidden-note', tenantId, accountId,
           opportunityId: hiddenMatterId, personId: hiddenPersonId,
           content: 'HIDDEN_SIBLING_NOTE_SECRET',
+          createdBy: customerOwner.user.id, createdByUserId: customerOwner.user.id,
+          visibility: 'private', aclVersion: 1,
         },
         {
           id: 'scope-state-unfiled-note', tenantId,
           content: 'UNFILED_TENANT_NOTE_SECRET',
+          createdBy: context.owner.id, createdByUserId: context.owner.id,
+          visibility: 'private', aclVersion: 1,
         },
       ] });
       await context.prisma.planAction.createMany({ data: [
@@ -270,7 +278,7 @@ describe('CORE-109 scoped state aggregation', () => {
       expect(legacyResponse.statusCode, legacyResponse.body).toBe(200);
       expect(legacyResponse.body).toContain('CUSTOMER_LEVEL_PROFILE_SECRET');
       expect(legacyResponse.body).toContain('HIDDEN_SIBLING_MATTER_SECRET');
-      expect(legacyResponse.body).toContain('UNFILED_TENANT_NOTE_SECRET');
+      expect(legacyResponse.body).not.toContain('UNFILED_TENANT_NOTE_SECRET');
     } finally {
       await context.cleanup();
     }

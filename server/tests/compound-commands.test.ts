@@ -17,6 +17,11 @@ import {
 import { IngestCommandError, ingestVoiceText } from '../src/voice.js';
 import { hashIdempotencyKey } from '../src/idempotency.js';
 import { internalProductPolicy } from './helpers/productPolicy.js';
+import {
+  createFieldCandidate,
+  upsertReminderCandidate,
+} from '../src/candidates/reviewItems.js';
+import { seedLegacyCandidateAuthorities } from './helpers/candidateAuthority.js';
 
 const executeActionFeedback = (
   ctx: Parameters<typeof executeActionFeedbackWithPolicy>[0],
@@ -254,10 +259,18 @@ describe('atomic idempotent compound commands', () => {
   });
 
   it('rolls back an inbox batch when a later item fails', async () => {
+    await test.prisma.person.create({ data: {
+      id: 'person-inbox-failure', tenantId: test.tenant.id,
+      accountId: 'acc-command', name: 'Batch target', title: '',
+    } });
     for (const id of ['cp-one', 'cp-two']) await test.prisma.changeProposal.create({ data: {
-      id, tenantId: test.tenant.id, accountId: 'acc-command', entityKind: 'person', entityId: 'missing',
+      id, tenantId: test.tenant.id, accountId: 'acc-command', entityKind: 'person', entityId: 'person-inbox-failure',
       field: 'name', oldValue: 'A', newValue: 'B', status: 'pending',
     } });
+    await seedLegacyCandidateAuthorities(test.prisma, test.tenant.id, [
+      { sourceKind: 'ChangeProposal', sourceId: 'cp-one' },
+      { sourceKind: 'ChangeProposal', sourceId: 'cp-two' },
+    ]);
     await expect(runCommand(ctx, { kind: 'inbox-batch', idempotencyKey: 'inbox-failure-key' },
       (tx) => executeInboxBatch(ctx, { items: [
         { kind: 'proposal', id: 'cp-one', decision: 'reject' },
@@ -290,8 +303,16 @@ describe('atomic idempotent compound commands', () => {
     } });
     await test.prisma.reminder.create({ data: {
       id: 'rem-mixed', tenantId: test.tenant.id, accountId: 'acc-command', kind: 'stalled', title: '提醒',
+      opportunityId: 'opp-inbox', oppName: 'Inbox Opp',
       dedupeKey: 'mixed-reminder', status: 'pending',
     } });
+    await seedLegacyCandidateAuthorities(test.prisma, test.tenant.id, [
+      { sourceKind: 'ChangeProposal', sourceId: 'cp-mixed' },
+      { sourceKind: 'PersonSuggestion', sourceId: 'ps-mixed' },
+      { sourceKind: 'RelSuggestion', sourceId: 'rs-mixed' },
+      { sourceKind: 'EvidenceEvent', sourceId: 'ev-mixed' },
+      { sourceKind: 'Reminder', sourceId: 'rem-mixed' },
+    ]);
 
     await expect(runCommand(ctx, { kind: 'inbox-batch', idempotencyKey: 'mixed-inbox-failure' },
       (tx) => executeInboxBatch(ctx, { items: [
@@ -307,6 +328,49 @@ describe('atomic idempotent compound commands', () => {
     expect(await test.prisma.relSuggestion.findUniqueOrThrow({ where: { id: 'rs-mixed' } })).toMatchObject({ status: 'pending' });
     expect(await test.prisma.evidenceEvent.findUniqueOrThrow({ where: { id: 'ev-mixed' } })).toMatchObject({ status: 'pending_review' });
     expect(await test.prisma.reminder.findUniqueOrThrow({ where: { id: 'rem-mixed' } })).toMatchObject({ status: 'pending' });
+  });
+
+  it('rolls back earlier Candidate reviews when a later Candidate CAS is divergent', async () => {
+    await test.prisma.opportunity.create({ data: {
+      id: 'opp-candidate-conflict', tenantId: test.tenant.id, accountId: 'acc-command',
+      name: 'Candidate conflict matter', customerType: 2,
+      pipelineStage: '线索', engageStage: '需求调研立项',
+    } });
+    await test.prisma.person.create({ data: {
+      id: 'person-candidate-conflict', tenantId: test.tenant.id,
+      accountId: 'acc-command', name: 'Candidate conflict person', title: 'Owner',
+    } });
+    const proposal = await createFieldCandidate(test.prisma, {
+      id: 'cp-candidate-conflict', tenantId: test.tenant.id, accountId: 'acc-command',
+      matterId: 'opp-candidate-conflict', targetKind: 'person', targetId: 'person-candidate-conflict',
+      fieldKey: 'title', oldValue: 'Owner', newValue: 'Sponsor', source: 'ai',
+      sourceRef: 'ai:batch:proposal', evidence: '候选字段依据', confidence: 0.7,
+      createdByUserId: test.owner.id,
+    });
+    const reminder = await upsertReminderCandidate(test.prisma, {
+      id: 'rem-candidate-conflict', tenantId: test.tenant.id, accountId: 'acc-command',
+      accountName: 'Command Account', matterId: 'opp-candidate-conflict',
+      matterName: 'Candidate conflict matter', kind: 'stalled', title: '需要跟进',
+      detail: '超过七天没有动作', severity: 'warn', targetId: null,
+      dedupeKey: 'opp-candidate-conflict:stalled',
+    });
+    await test.prisma.candidate.update({
+      where: { id: reminder.candidateId }, data: { status: 'accepted' },
+    });
+
+    await expect(runCommand(ctx, {
+      kind: 'inbox-batch', idempotencyKey: 'candidate-cas-batch-conflict',
+    }, (tx) => executeInboxBatch(ctx, { items: [
+      { kind: 'proposal', id: proposal.row.id, decision: 'reject' },
+      { kind: 'reminder', id: reminder.row.id, decision: 'reject' },
+    ] }, tx), test.prisma)).rejects.toMatchObject({ candidateConflict: true });
+
+    await expect(test.prisma.changeProposal.findUniqueOrThrow({ where: { id: proposal.row.id } }))
+      .resolves.toMatchObject({ status: 'pending' });
+    await expect(test.prisma.candidate.findUniqueOrThrow({ where: { id: proposal.candidateId } }))
+      .resolves.toMatchObject({ status: 'pending', version: 0 });
+    await expect(test.prisma.reminder.findUniqueOrThrow({ where: { id: reminder.row.id } }))
+      .resolves.toMatchObject({ status: 'pending' });
   });
 
   it('replays a completed command without creating a second opportunity', async () => {
@@ -440,6 +504,35 @@ describe('atomic idempotent compound commands', () => {
     await runCommand(ctx, key, async () => ({ ok: true, receipt: { visitNote: true } }), test.prisma);
     await expect(readCommandReplay(ctx, key, test.prisma)).resolves.toMatchObject({ replayed: true, result: { ok: true } });
     await expect(readCommandReplay(ctx, { ...key, payload: { text: 'different' } }, test.prisma)).rejects.toBeInstanceOf(IdempotencyConflictError);
+  });
+
+  it('reauthorizes every completed replay path before returning a stored receipt', async () => {
+    const key = { kind: 'review-batch-accept:test', idempotencyKey: 'replay-authorization-key', payload: { version: 1 } };
+    await runCommand(ctx, key, async () => ({ ok: true, receipt: { batchId: 'batch-1' } }), test.prisma);
+
+    let authorizationChecks = 0;
+    let businessExecutions = 0;
+    const denied = new Error('replay_access_revoked');
+    const authorizeReplay = async () => {
+      authorizationChecks += 1;
+      throw denied;
+    };
+
+    await expect(readCommandReplay(ctx, { ...key, authorizeReplay }, test.prisma)).rejects.toBe(denied);
+    await expect(reserveCommand(ctx, { ...key, authorizeReplay }, test.prisma)).rejects.toBe(denied);
+    await expect(runCommand(ctx, { ...key, authorizeReplay }, async () => {
+      businessExecutions += 1;
+      return { ok: false };
+    }, test.prisma)).rejects.toBe(denied);
+
+    expect(authorizationChecks).toBe(3);
+    expect(businessExecutions).toBe(0);
+    await expect(test.prisma.commandRun.findFirstOrThrow({ where: {
+      tenantId: ctx.tenantId,
+      actorId: ctx.actorId,
+      kind: key.kind,
+      idempotencyKey: hashIdempotencyKey(key.idempotencyKey),
+    } })).resolves.toMatchObject({ status: 'completed' });
   });
 
   it('reserves an external command before preparation and blocks overlapping BYO calls', async () => {

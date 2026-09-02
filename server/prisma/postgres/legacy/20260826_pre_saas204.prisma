@@ -1,0 +1,1614 @@
+// 江湖 多租户数据模型
+// 开发：SQLite。生产：把 provider 改为 "postgresql" 并设置 DATABASE_URL 即可（字段未用原生 enum/json，跨库可移植）。
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Tenant {
+  id                 String       @id
+  name               String
+  plan               String       @default("free") // free | pro
+  subscriptionStatus String       @default("active") // active | past_due | canceled
+  seatLimit          Int          @default(50) // 免费多人协作，宽松上限防滥用（无付费墙）
+  dataScopePolicy    String       @default("legacy_tenant_shared") // legacy_tenant_shared | scoped；运行时未知值失败关闭
+  createdAt          DateTime     @default(now())
+  users              User[]
+  accounts           Account[]
+  auditEvents        AuditEvent[]
+  aiConfig           AiConfig?
+  qccConfig          QccConfig?
+  wecomConfig        WeComConfig?
+  candidates         Candidate[]
+  sourceArtifacts    SourceArtifact[]
+  reviewBatches      ReviewBatch[]
+  interactions       Interaction[]
+  sensitiveGrants    SensitiveResourceGrant[]
+  agentJobDefinitions AgentJobDefinition[]
+  agentRuns           AgentRun[]
+}
+
+// 工作区自配的企查查 OpenAPI 凭证（BYO-key）。secretKey 加密存储。
+model QccConfig {
+  tenantId     String   @id
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  baseUrl      String   @default("https://api.qichacha.com")
+  appKey       String   @default("")
+  secretKeyEnc String   @default("")
+  updatedAt    DateTime @updatedAt
+}
+
+// 工作区自配的 AI 模型（BYO-key）：OpenAI 兼容。key 加密存储，用用户自己的额度调用。
+model AiConfig {
+  tenantId  String   @id
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  provider  String   @default("openai-compatible") // openai-compatible | mock
+  baseUrl   String   @default("")
+  model     String   @default("")
+  apiKeyEnc String   @default("") // AES-256-GCM 密文（base64）
+  updatedAt DateTime @updatedAt
+}
+
+model User {
+  id           String   @id @default(uuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  phone        String?
+  email        String?
+  passwordHash String
+  name         String
+  role         String   @default("member") // owner | admin | member | viewer
+  createdAt    DateTime @default(now())
+
+  // 手机号/邮箱在「同一租户内」唯一（而非全局）——彻底消除跨租户撞号与 DoS，对齐「绝不跨租户」铁律。
+  // 同一手机号可在不同工作区各建独立账号；登录时按 phone/email 定位候选、多工作区则让用户选。
+  // NULL 在 SQLite/Postgres 均按 distinct 处理，故 phone/email 二选一时同租户内多行不冲突。
+  @@unique([tenantId, phone])
+  @@unique([tenantId, email])
+  @@index([tenantId])
+}
+
+// AI 助手接入令牌（长效、可命名、可单独吊销，独立于登录态）。
+// 库里只存哈希(sha256)，明文 jh_xxx 仅在生成时返回一次；用于外部 agent 调 /api/mcp。
+model AccessToken {
+  id           String    @id
+  tenantId     String
+  userId       String // 归属用户（创建者）
+  name         String    @default("") // 用户起的备注名（如"我的Workbuddy"）
+  tokenHash    String    @unique // sha256(明文)，不可逆
+  lastFour     String    @default("") // 明文后4位，仅供列表展示辨认
+  scopes       String    @default("[\"read\"]") // JSON 文本；旧令牌升级后安全降为只读，需重发才能写
+  tokenVersion Int       @default(0) // 0=升级前令牌（安全只读且提示重发）；未知版本 fail closed
+  createdAt    DateTime  @default(now())
+  lastUsedAt   DateTime? // 最近一次用于鉴权的时间
+  revokedAt    DateTime? // 非空=已吊销
+
+  @@index([tenantId])
+  @@index([userId])
+}
+
+model Account {
+  id                 String              @id
+  tenantId           String
+  tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name               String
+  categoryKey        String?
+  customerType       Int?
+  version            Int                 @default(0)
+  unifiedCreditCode  String?
+  externalRef        String? // 销售包 customer_id，跨系统幂等主锚（WorkBuddy 集成）
+  region             String              @default("") // 大区
+  group              String              @default("") // 集团/母公司
+  primaryOwner       String              @default("") // 主负责人（仅展示/兼容，不参与授权）
+  primaryOwnerUserId String? // 稳定归属锨；空=未归属，viewer 不可见
+  profile            String              @default("{}") // JSON：工商基础/集团关系/招投标/风险信号/我方现有合作/销售背景/AI建议
+  archivedAt         DateTime?
+  archivedBy         String?
+  archiveReason      String              @default("")
+  createdAt          DateTime            @default(now())
+  persons            Person[]
+  opportunities      Opportunity[]
+  edges              Edge[]
+  matterParticipants MatterParticipant[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, externalRef])
+  @@unique([tenantId, unifiedCreditCode])
+  @@index([tenantId])
+  @@index([tenantId, primaryOwnerUserId])
+  @@index([tenantId, archivedAt])
+}
+
+model Person {
+  id                 String                      @id
+  tenantId           String
+  accountId          String
+  account            Account                     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  name               String
+  title              String
+  orgLevel           Int                         @default(3)
+  isCompetitor       Boolean                     @default(false)
+  avatarUrl          String?
+  coachLevel         Int?
+  color              String? // 节点高亮色（手动样式）
+  x                  Float                       @default(300)
+  y                  Float                       @default(240)
+  form               String                      @default("{}") // JSON
+  logs               String                      @default("[]") // JSON
+  version            Int                         @default(0) // 乐观锁：内容编辑并发冲突检测（UPDATE_PERSON）
+  archivedAt         DateTime?
+  archivedBy         String?
+  archiveReason      String                      @default("")
+  mergedIntoPersonId String?
+  createdAt          DateTime                    @default(now()) // INT-502：正式人物创建基数，用于重复实体率受控观察
+  matterParticipants MatterParticipant[]
+  methodologyRoles   MethodologyRoleAssignment[]
+
+  @@unique([tenantId, id])
+  @@index([accountId])
+  @@index([tenantId, accountId])
+  @@index([tenantId, accountId, archivedAt])
+  @@index([tenantId, mergedIntoPersonId])
+  @@index([tenantId, createdAt])
+}
+
+model Opportunity {
+  id                         String                       @id
+  tenantId                   String
+  accountId                  String
+  account                    Account                      @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  name                       String
+  kind                       String                       @default("sales_opportunity") // 通用 Matter 类型；开放字符串，未知值必须可读
+  customerType               Int
+  pipelineStage              String
+  engageStage                String
+  changeMode                 String?
+  singleSalesGoal            String                       @default("")
+  customerBusinessGoal       String?
+  buyingMotivation           String?
+  primaryDPersonId           String? // 主拍板人 D；服务端校验同租户/客户/商机当前有效 D
+  externalRef                String? // 销售包商机锚，跨系统幂等(WorkBuddy)
+  status                     String                       @default("active") // active/paused/won/lost
+  lifecycleStatus            String                       @default("active") // active/paused/completed/canceled；迁移期为 status 的影子列
+  outcomeKey                 String? // 开放结果键；销售 won/lost 映射到 completed + outcomeKey
+  priority                   String? // 通用优先级开放键
+  targetDate                 String? // 通用目标日 YYYY-MM-DD
+  primaryOwnerUserId         String? // 稳定 User.id；CORE-104 确认归属并启用授权
+  activeMethodologyBindingId String? // CORE-110 预留的唯一 primary binding 指针
+  productSolution            String                       @default("")
+  competitor                 String                       @default("")
+  competitiveSituation       String                       @default("") // 领先/胶着/落后/未识别
+  winProbability             Float                        @default(0) // ⚠️ 销售在江湖自填，WorkBuddy 永不推/覆盖
+  expectedSignDate           String                       @default("") // YYYY-MM-DD
+  expectedAmountW            Float                        @default(0) // 万元
+  meta                       String                       @default("{}") // JSON 兜底：BANT 辅助分等
+  c3Items                    String                       @default("{}") // JSON
+  c5Items                    String                       @default("{}") // JSON
+  memberScoped               Boolean                      @default(false) // false=全员可见(存量兼容)；true=按 OpportunityMember 过滤
+  archivedAt                 DateTime?
+  archivedBy                 String?
+  archiveReason              String                       @default("")
+  version                    Int                          @default(0) // 乐观锁：内容编辑并发冲突检测（UPDATE_OPP）
+  createdAt                  DateTime                     @default(now()) // 巡检停滞基准 / 排序（补齐：此前缺失，存量行迁移时填当时）
+  roles                      OppRole[]
+  edges                      Edge[]
+  bis                        BurningIssue[]
+  ucvs                       UCV[]
+  suggestions                RelSuggestion[]
+  members                    OpportunityMember[]
+  participants               MatterParticipant[]
+  methodologyBindings        MethodologyBinding[]
+  methodologyPilots          MethodologyPilotAssignment[]
+  methodologyStageStates     MethodologyStageState[]
+  methodologyRoleAssignments MethodologyRoleAssignment[]
+  methodologyValues          MethodologyValue[]
+  methodologyEvaluations     MethodologyEvaluation[]
+  methodologyMigrationRuns   MethodologyMigrationRun[]
+  pdeDecisionContext         PdeDecisionContext?
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, accountId, externalRef])
+  @@index([accountId])
+  @@index([tenantId, accountId])
+  @@index([tenantId, kind, lifecycleStatus])
+  @@index([tenantId, primaryOwnerUserId])
+  @@index([tenantId, targetDate])
+  @@index([tenantId, activeMethodologyBindingId])
+  @@index([tenantId, archivedAt])
+}
+
+// 租户级方法论身份。平台内置模板必须先物化为本租户快照，业务行不得引用跨租户可变模板。
+model MethodologyPack {
+  id                        String                   @id
+  tenantId                  String
+  key                       String
+  name                      String
+  sourceTemplateRef         String?
+  currentPublishedVersionId String?
+  archivedAt                DateTime?
+  version                   Int                      @default(0)
+  createdByUserId           String
+  createdAt                 DateTime                 @default(now())
+  updatedAt                 DateTime                 @updatedAt
+  versions                  MethodologyPackVersion[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, key])
+  @@index([tenantId, currentPublishedVersionId])
+  @@index([tenantId, archivedAt])
+}
+
+// 版本行是不可变快照；发布后不原位修改，后续变更只能追加新 Version。
+model MethodologyPackVersion {
+  id                 String                       @id
+  tenantId           String
+  packId             String
+  pack               MethodologyPack              @relation(fields: [tenantId, packId], references: [tenantId, id], onDelete: Restrict)
+  versionKey         String
+  status             String                       @default("draft")
+  engineRef          String
+  contentHash        String
+  learningContentRef String?
+  sourceTemplateRef  String?
+  createdByUserId    String
+  createdAt          DateTime                     @default(now())
+  publishedByUserId  String?
+  publishedAt        DateTime?
+  bindings           MethodologyBinding[]
+  pilotAssignments   MethodologyPilotAssignment[]
+  fieldDefinitions   MethodologyFieldDefinition[]
+  stageDefinitions   MethodologyStageDefinition[]
+  roleDefinitions    MethodologyRoleDefinition[]
+  ruleDefinitions    MethodologyRuleDefinition[]
+  actionTemplates    MethodologyActionTemplate[]
+  targetMigrations   MethodologyMigrationRun[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, packId, id])
+  @@unique([tenantId, packId, versionKey])
+  @@index([tenantId, packId, status])
+  @@index([tenantId, sourceTemplateRef])
+}
+
+// Binding 只追加历史；当前 primary 仅由 Opportunity.activeMethodologyBindingId 单指针表达。
+model MethodologyBinding {
+  id                 String                       @id
+  tenantId           String
+  opportunityId      String
+  opportunity        Opportunity                  @relation(fields: [tenantId, opportunityId], references: [tenantId, id], onDelete: Restrict)
+  packId             String
+  versionId          String
+  methodologyVersion MethodologyPackVersion       @relation(fields: [tenantId, packId, versionId], references: [tenantId, packId, id], onDelete: Restrict)
+  decisionProfileRef String?
+  decisionProfile    IndustryPack?                @relation("MethodologyDecisionProfile", fields: [decisionProfileRef], references: [id], onDelete: Restrict)
+  createdByUserId    String
+  createdAt          DateTime                     @default(now())
+  pilotBaselineFor   MethodologyPilotAssignment[] @relation("MethodologyPilotBaseline")
+  stageState         MethodologyStageState?
+  roleAssignments    MethodologyRoleAssignment[]
+  values             MethodologyValue[]
+  evaluations        MethodologyEvaluation[]
+  sourceMigrations   MethodologyMigrationRun[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, opportunityId, id, packId, versionId])
+  @@index([tenantId, opportunityId, createdAt])
+  @@index([tenantId, packId, versionId])
+  @@index([tenantId, decisionProfileRef])
+}
+
+// Pilot 与 primary binding 并排存在，绝不修改 activeMethodologyBindingId。
+model MethodologyPilotAssignment {
+  id                 String                 @id
+  tenantId           String
+  opportunityId      String
+  opportunity        Opportunity            @relation(fields: [tenantId, opportunityId], references: [tenantId, id], onDelete: Restrict)
+  candidatePackId    String
+  candidateVersionId String
+  candidateVersion   MethodologyPackVersion @relation(fields: [tenantId, candidatePackId, candidateVersionId], references: [tenantId, packId, id], onDelete: Restrict)
+  baselineBindingId  String?
+  baselineBinding    MethodologyBinding?    @relation("MethodologyPilotBaseline", fields: [baselineBindingId], references: [id], onDelete: Restrict)
+  matterVersion      Int
+  status             String                 @default("active")
+  assignedByUserId   String
+  assignedAt         DateTime               @default(now())
+  completedAt        DateTime?
+
+  @@unique([tenantId, id])
+  @@index([tenantId, opportunityId, status])
+  @@index([tenantId, candidatePackId, candidateVersionId, status])
+  @@index([tenantId, baselineBindingId])
+}
+
+// 方法论版本的结构化字段定义。每个逻辑字段必须唯一声明一个权威存储来源。
+model MethodologyFieldDefinition {
+  id                  String                 @id
+  tenantId            String
+  packId              String
+  versionId           String
+  methodologyVersion  MethodologyPackVersion @relation(fields: [tenantId, packId, versionId], references: [tenantId, packId, id], onDelete: Restrict)
+  key                 String
+  targetKind          String
+  dataType            String
+  valueDomainJson     String                 @default("{}")
+  required            Boolean                @default(false)
+  missingValuePolicy  String
+  storageBindingKind  String
+  storageBindingPath  String
+  legacyStopDate      String?
+  legacyConsumersJson String                 @default("[]")
+  position            Int                    @default(0)
+  values              MethodologyValue[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, packId, versionId, key])
+  @@unique([tenantId, packId, versionId, storageBindingKind, storageBindingPath])
+  @@index([tenantId, packId, versionId, position])
+}
+
+model MethodologyStageDefinition {
+  id                  String                  @id
+  tenantId            String
+  packId              String
+  versionId           String
+  methodologyVersion  MethodologyPackVersion  @relation(fields: [tenantId, packId, versionId], references: [tenantId, packId, id], onDelete: Restrict)
+  key                 String
+  name                String
+  position            Int                     @default(0)
+  entryConditionsJson String                  @default("[]")
+  exitConditionsJson  String                  @default("[]")
+  states              MethodologyStageState[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, packId, versionId, key])
+  @@index([tenantId, packId, versionId, position])
+}
+
+model MethodologyRoleDefinition {
+  id                 String                      @id
+  tenantId           String
+  packId             String
+  versionId          String
+  methodologyVersion MethodologyPackVersion      @relation(fields: [tenantId, packId, versionId], references: [tenantId, packId, id], onDelete: Restrict)
+  key                String
+  name               String
+  appliesTo          String                      @default("person")
+  constraintsJson    String                      @default("{}")
+  minimumAssignments Int                         @default(0)
+  maximumAssignments Int                         @default(1)
+  position           Int                         @default(0)
+  assignments        MethodologyRoleAssignment[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, packId, versionId, key])
+  @@index([tenantId, packId, versionId, position])
+}
+
+model MethodologyRuleDefinition {
+  id                 String                 @id
+  tenantId           String
+  packId             String
+  versionId          String
+  methodologyVersion MethodologyPackVersion @relation(fields: [tenantId, packId, versionId], references: [tenantId, packId, id], onDelete: Restrict)
+  key                String
+  operator           String
+  inputRefsJson      String                 @default("[]")
+  weightsJson        String                 @default("{}")
+  thresholdsJson     String                 @default("{}")
+  outputKey          String
+  position           Int                    @default(0)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, packId, versionId, key])
+  @@index([tenantId, packId, versionId, position])
+}
+
+model MethodologyActionTemplate {
+  id                       String                 @id
+  tenantId                 String
+  packId                   String
+  versionId                String
+  methodologyVersion       MethodologyPackVersion @relation(fields: [tenantId, packId, versionId], references: [tenantId, packId, id], onDelete: Restrict)
+  key                      String
+  gapKey                   String
+  title                    String
+  script                   String                 @default("")
+  evidenceRequirementsJson String                 @default("[]")
+  position                 Int                    @default(0)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, packId, versionId, key])
+  @@index([tenantId, packId, versionId, position])
+}
+
+// 实例行重复携带 Matter/binding/version 锚，并通过组合外键防止跨租户、跨 Matter 或跨版本串写。
+model MethodologyStageState {
+  id              String                     @id
+  tenantId        String
+  opportunityId   String
+  opportunity     Opportunity                @relation(fields: [tenantId, opportunityId], references: [tenantId, id], onDelete: Restrict)
+  bindingId       String
+  packId          String
+  versionId       String
+  binding         MethodologyBinding         @relation(fields: [tenantId, opportunityId, bindingId, packId, versionId], references: [tenantId, opportunityId, id, packId, versionId], onDelete: Restrict)
+  stageKey        String
+  stageDefinition MethodologyStageDefinition @relation(fields: [tenantId, packId, versionId, stageKey], references: [tenantId, packId, versionId, key], onDelete: Restrict)
+  enteredAt       DateTime                   @default(now())
+  humanOverride   Boolean                    @default(false)
+  overrideReason  String?
+  evidenceIdsJson String                     @default("[]")
+  updatedByUserId String
+  updatedAt       DateTime                   @updatedAt
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, opportunityId, bindingId, packId, versionId])
+  @@index([tenantId, bindingId])
+  @@index([tenantId, opportunityId, versionId])
+  @@index([tenantId, packId, versionId, stageKey])
+}
+
+model MethodologyRoleAssignment {
+  id               String                    @id
+  tenantId         String
+  opportunityId    String
+  opportunity      Opportunity               @relation(fields: [tenantId, opportunityId], references: [tenantId, id], onDelete: Restrict)
+  bindingId        String
+  packId           String
+  versionId        String
+  binding          MethodologyBinding        @relation(fields: [tenantId, opportunityId, bindingId, packId, versionId], references: [tenantId, opportunityId, id, packId, versionId], onDelete: Restrict)
+  roleKey          String
+  roleDefinition   MethodologyRoleDefinition @relation(fields: [tenantId, packId, versionId, roleKey], references: [tenantId, packId, versionId, key], onDelete: Restrict)
+  personId         String
+  person           Person                    @relation(fields: [tenantId, personId], references: [tenantId, id], onDelete: Restrict)
+  source           String
+  reviewStatus     String                    @default("pending")
+  evidenceIdsJson  String                    @default("[]")
+  assignedByUserId String
+  assignedAt       DateTime                  @default(now())
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, bindingId, roleKey, personId])
+  @@index([tenantId, opportunityId, versionId])
+  @@index([tenantId, packId, versionId, roleKey])
+  @@index([tenantId, personId])
+}
+
+model MethodologyValue {
+  id                  String                     @id
+  tenantId            String
+  opportunityId       String
+  opportunity         Opportunity                @relation(fields: [tenantId, opportunityId], references: [tenantId, id], onDelete: Restrict)
+  bindingId           String
+  packId              String
+  versionId           String
+  binding             MethodologyBinding         @relation(fields: [tenantId, opportunityId, bindingId, packId, versionId], references: [tenantId, opportunityId, id, packId, versionId], onDelete: Restrict)
+  fieldKey            String
+  fieldDefinition     MethodologyFieldDefinition @relation(fields: [tenantId, packId, versionId, fieldKey], references: [tenantId, packId, versionId, key], onDelete: Restrict)
+  targetKind          String
+  targetId            String
+  normalizedValueJson String
+  source              String
+  reviewStatus        String                     @default("pending")
+  evidenceIdsJson     String                     @default("[]")
+  updatedByUserId     String
+  updatedAt           DateTime                   @updatedAt
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, bindingId, fieldKey, targetKind, targetId])
+  @@index([tenantId, opportunityId, versionId])
+  @@index([tenantId, packId, versionId, fieldKey])
+  @@index([tenantId, targetKind, targetId])
+}
+
+model MethodologyEvaluation {
+  id              String             @id
+  tenantId        String
+  opportunityId   String
+  opportunity     Opportunity        @relation(fields: [tenantId, opportunityId], references: [tenantId, id], onDelete: Restrict)
+  bindingId       String
+  packId          String
+  versionId       String
+  binding         MethodologyBinding @relation(fields: [tenantId, opportunityId, bindingId, packId, versionId], references: [tenantId, opportunityId, id, packId, versionId], onDelete: Restrict)
+  trigger         String
+  inputsJson      String             @default("{}")
+  resultJson      String             @default("{}")
+  evidenceIdsJson String             @default("[]")
+  aclVersion      Int                @default(0)
+  packVersionKey  String
+  engineRef       String
+  inputsHash      String
+  resultHash      String
+  createdByUserId String
+  createdAt       DateTime           @default(now())
+
+  @@unique([tenantId, id])
+  @@index([tenantId, opportunityId, bindingId, createdAt])
+  @@index([tenantId, packId, versionId, createdAt])
+}
+
+model MethodologyMigrationRun {
+  id                 String                 @id
+  tenantId           String
+  opportunityId      String
+  opportunity        Opportunity            @relation(fields: [tenantId, opportunityId], references: [tenantId, id], onDelete: Restrict)
+  sourceBindingId    String
+  sourcePackId       String
+  sourceVersionId    String
+  sourceBinding      MethodologyBinding     @relation(fields: [tenantId, opportunityId, sourceBindingId, sourcePackId, sourceVersionId], references: [tenantId, opportunityId, id, packId, versionId], onDelete: Restrict)
+  targetPackId       String
+  targetVersionId    String
+  targetVersion      MethodologyPackVersion @relation(fields: [tenantId, targetPackId, targetVersionId], references: [tenantId, packId, id], onDelete: Restrict)
+  matterVersion      Int
+  status             String                 @default("planned")
+  dryRunJson         String                 @default("{}")
+  mappingJson        String                 @default("{}")
+  conflictsJson      String                 @default("[]")
+  confirmationJson   String                 @default("{}")
+  executionJson      String                 @default("{}")
+  rollbackJson       String                 @default("{}")
+  confirmedByUserId  String?
+  confirmedAt        DateTime?
+  executedByUserId   String?
+  executedAt         DateTime?
+  rolledBackByUserId String?
+  rolledBackAt       DateTime?
+  createdByUserId    String
+  createdAt          DateTime               @default(now())
+
+  @@unique([tenantId, id])
+  @@index([tenantId, opportunityId, createdAt])
+  @@index([tenantId, sourceBindingId])
+  @@index([tenantId, targetPackId, targetVersionId, status])
+}
+
+// 只记录命令元数据与变更字段名，不复制 FORM/BI/日志/会议正文等敏感业务内容。
+// changedFields 是 JSON 字符串以保持 SQLite ↔ Postgres 可移植。
+model AuditEvent {
+  id            String   @id
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  actorId       String
+  channel       String
+  action        String
+  entityKind    String
+  entityId      String
+  requestId     String?
+  sourceRef     String?
+  changedFields String   @default("[]")
+  metadata      String   @default("{}") // 非敏感结构化命令元数据；禁止存正文
+  createdAt     DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, entityKind, entityId])
+}
+
+// 事务命令幂等记录：只保存非敏感结果摘要，不复制口述、FORM、BI、证据原文。
+model CommandRun {
+  id             String    @id @default(uuid())
+  tenantId       String
+  actorId        String
+  kind           String
+  idempotencyKey String // SHA-256(raw key)，不保存调用方原始 key
+  requestHash    String    @default("")
+  status         String    @default("running") // running | completed | failed
+  leaseToken     String    @default("")
+  leaseExpiresAt DateTime?
+  resultSummary  String    @default("{}")
+  errorCode      String    @default("")
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([tenantId, actorId, kind, idempotencyKey])
+  @@index([tenantId, createdAt])
+}
+
+// SQLite 使用 db push，无法借 _prisma_migrations 识别数据回填是否已原子完成；此表提供跨库恢复锚。
+model DataMigrationState {
+  key         String   @id
+  completedAt DateTime @default(now())
+  details     String   @default("{}")
+}
+
+// G4 统一候选层。CORE-201 只建立跨库可移植的物理基座；旧候选表仍是在线权威，
+// 不双写、不回填、不切换收件箱。机器结果继续经过人审后才能进入正式业务表。
+model Candidate {
+  id               String   @id
+  tenantId         String
+  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  kind             String
+  status           String   @default("pending")
+  accountId        String
+  matterId         String?
+  targetKind       String
+  targetId         String?
+  fieldKey         String?
+  oldValue         String?
+  newValue         String?
+  payload          String   @default("{}")
+  source           String
+  sourceRef        String
+  evidence         String   @default("")
+  confidence       Float    @default(0.5)
+  sourceArtifactId String?
+  reviewBatchId    String?
+  createdByUserId  String?
+  visibility       String   @default("owner_admin_only")
+  aclVersion       Int      @default(1)
+  dedupeKey        String
+  legacySourceKind String?
+  legacySourceId   String?
+  version          Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([tenantId, dedupeKey])
+  @@unique([tenantId, legacySourceKind, legacySourceId])
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, accountId, status, createdAt])
+  @@index([tenantId, matterId, status, createdAt])
+  @@index([tenantId, sourceArtifactId])
+  @@index([tenantId, reviewBatchId])
+  @@index([tenantId, createdByUserId, visibility])
+  @@index([tenantId, visibility, aclVersion])
+}
+
+// G4 敏感来源基座。CORE-204 只建立 ACL-ready 物理模型；产品导入、投影与挂载 API 由 SAAS-201 开放。
+model SourceArtifact {
+  id                 String   @id
+  tenantId           String
+  tenant             Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  accountId          String?
+  matterId           String?
+  personId           String?
+  backingKind        String
+  backingId          String
+  artifactKind       String   @default("external_reference")
+  source             String   @default("legacy")
+  externalRef        String?
+  idempotencyDomain  String   @default("system-quarantine-v1")
+  title              String   @default("")
+  occurredAt         DateTime?
+  fingerprintKind    String   @default("reference_sha256_v1")
+  sourceFingerprint  String   @default("0000000000000000000000000000000000000000000000000000000000000000")
+  retentionState     String   @default("reference_only")
+  retentionUpdatedAt DateTime @default(now())
+  createdByUserId    String?
+  visibility         String   @default("owner_admin_only")
+  aclVersion         Int      @default(1)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([tenantId, backingKind, backingId])
+  @@unique([tenantId, idempotencyDomain, source, externalRef], map: "SourceArtifact_tenantId_domain_source_externalRef_key")
+  @@index([tenantId, accountId])
+  @@index([tenantId, matterId])
+  @@index([tenantId, personId])
+  @@index([tenantId, createdByUserId, visibility])
+  @@index([tenantId, visibility, aclVersion])
+  @@index([tenantId, artifactKind, createdAt])
+  @@index([tenantId, retentionState, updatedAt])
+}
+
+// G4 会后速审父锚。只保存来源、归属、ACL、版本和不含正文的采纳收据；
+// ReviewCandidate 继续使用唯一 Candidate 物理表，不建立平行候选表。
+model ReviewBatch {
+  id                    String   @id
+  tenantId              String
+  tenant                Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sourceArtifactId      String
+  accountId             String
+  matterId              String?
+  status                String   @default("pending") // pending | accepted | rejected
+  activityKind          String   @default("")
+  occurredAt            DateTime?
+  interactionId         String?
+  createdByUserId       String?
+  visibility            String   @default("owner_admin_only")
+  aclVersion            Int      @default(1)
+  acceptanceVersion     Int      @default(0)
+  version               Int      @default(0)
+  lastAcceptanceVersion Int?
+  lastAcceptanceHash    String   @default("")
+  lastAcceptanceResult  String   @default("{}")
+  reviewedByUserId      String?
+  reviewedAt            DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([tenantId, sourceArtifactId, status])
+  @@index([tenantId, accountId, status, createdAt])
+  @@index([tenantId, matterId, status, createdAt])
+  @@index([tenantId, createdByUserId, visibility])
+  @@index([tenantId, interactionId])
+}
+
+// 经用户确认的活动元数据；原始正文继续只属于 SourceArtifact 的 Note/Transcript backing。
+model Interaction {
+  id                String   @id
+  tenantId          String
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  accountId         String
+  matterId          String?
+  sourceArtifactId  String
+  activityKind      String
+  occurredAt        DateTime
+  title             String   @default("")
+  createdByUserId   String?
+  confirmedByUserId String
+  version           Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([tenantId, sourceArtifactId])
+  @@index([tenantId, accountId, occurredAt])
+  @@index([tenantId, matterId, occurredAt])
+  @@index([tenantId, createdByUserId])
+}
+
+// 显式敏感资源授权。正文、证据和密文绝不复制到授权记录；resourceAclVersion 绑定当前 ACL 世代。
+model SensitiveResourceGrant {
+  id                 String    @id
+  tenantId           String
+  tenant             Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  resourceKind       String
+  resourceId         String
+  granteeUserId      String
+  grantedByUserId    String
+  grantKind          String
+  resourceAclVersion Int
+  grantedAt          DateTime  @default(now())
+  revokedAt          DateTime?
+  revokedByUserId    String?
+
+  @@unique([tenantId, resourceKind, resourceId, granteeUserId, grantKind])
+  @@index([tenantId, resourceKind, resourceId, resourceAclVersion])
+  @@index([tenantId, granteeUserId, grantKind, revokedAt])
+}
+
+// 固定内置 Agent Job 的租户控制快照。definitionJson/hash 必须逐字匹配代码注册表；
+// 租户只能停用或收窄预算，不能扩展 trigger、scope、actionMode 或输出权限。
+model AgentJobDefinition {
+  id                String   @id
+  tenantId          String
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  jobKey            String
+  jobVersion        String
+  definitionJson    String
+  definitionHash    String
+  enabled           Boolean  @default(false)
+  tenantLimitsJson  String
+  version           Int      @default(1)
+  createdByUserId   String
+  updatedByUserId   String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([tenantId, jobKey, jobVersion])
+  @@index([tenantId, enabled, jobKey])
+  @@index([tenantId, updatedAt])
+}
+
+// Agent 运行审计只保存版本、授权指纹、预算计数与 body-free 引用；
+// 禁止写入 prompt、模型原文、Transcript/Note 正文、凭据、token 或错误堆栈。
+model AgentRun {
+  id                           String    @id
+  tenantId                     String
+  tenant                       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  definitionId                 String
+  jobKey                       String
+  jobVersion                   String
+  definitionHash               String
+  definitionControlVersion     Int
+  actionMode                   String
+  trigger                      String
+  status                       String    @default("running")
+  customerId                   String
+  matterId                     String?
+  sourceArtifactId             String?
+  actorId                      String
+  idempotencyKey               String
+  requestHash                  String
+  attemptCount                 Int       @default(0)
+  maxAttempts                  Int
+  leaseToken                   String    @default("")
+  leaseExpiresAt               DateTime?
+  budgetLimit                  Int
+  costUsed                     Int       @default(0)
+  timeoutMs                    Int
+  authorizationFingerprint     String
+  inputRefs                    String
+  evidenceRefs                 String    @default("[]")
+  outputRefs                   String    @default("[]")
+  modelRef                     String
+  connectorRefs                String    @default("[]")
+  failureCode                  String    @default("")
+  startedAt                    DateTime?
+  completedAt                  DateTime?
+  version                      Int       @default(0)
+  createdAt                    DateTime  @default(now())
+  updatedAt                    DateTime  @updatedAt
+
+  @@unique([tenantId, actorId, jobKey, jobVersion, idempotencyKey])
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, customerId, createdAt])
+  @@index([tenantId, matterId, createdAt])
+  @@index([tenantId, sourceArtifactId, createdAt])
+  @@index([tenantId, actorId, createdAt])
+  @@index([tenantId, definitionId])
+}
+
+// WorkBuddy 原子同步执行记录：保存非敏感引用回执，支持同 key 安全重放。
+model SyncRun {
+  id             String   @id @default(uuid())
+  tenantId       String
+  actorId        String
+  idempotencyKey String
+  requestHash    String
+  status         String   @default("running") // running | completed | failed
+  receipt        String   @default("{}")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, createdAt])
+}
+
+// AI 关系推断候选（待人审）。绝不自动写库，accept 后才生成正式 Edge。
+model RelSuggestion {
+  id             String      @id
+  tenantId       String
+  opportunityId  String
+  opportunity    Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  sourcePersonId String // 存 Person.id 或 PersonSuggestion.id（由 sourceKind 区分）
+  targetPersonId String // 同上
+  // 端点类型：person=正式干系人 / suggestion=尚未采纳的候选人物。默认 person（存量数据零迁移）。
+  sourceKind     String      @default("person") // person | suggestion
+  targetKind     String      @default("person") // person | suggestion
+  layer          String
+  label          String
+  confidence     Float       @default(0.5)
+  origin         String      @default("graph") // graph | llm | qcc | mcp
+  evidence       String      @default("")
+  status         String      @default("pending") // pending | accepted | rejected
+  createdAt      DateTime    @default(now())
+
+  @@index([opportunityId])
+}
+
+// AI/外部 agent 提议的「候选干系人」（待人审）。绝不自动写库，accept 后才生成正式 Person。
+// 独立表存放：候选数据天然不在任何 Person 查询路径上，不会泄漏进侦探墙/趋赢力/只读 MCP（PIPL 红线）。
+// 不存 form/family7/籍贯等敏感项；evidence 仅自由文本摘要，采纳后由用户补 FORM。
+model PersonSuggestion {
+  id                 String   @id
+  tenantId           String
+  accountId          String // 候选人物归属的客户（采纳时据此建正式 Person）
+  opportunityId      String? // 可选：提议时关联的商机
+  name               String
+  title              String   @default("")
+  orgLevel           Int      @default(3)
+  origin             String   @default("mcp") // mcp | ai | qcc
+  evidence           String   @default("") // 自由文本（来源/依据摘要）
+  sourceUrl          String? // 调研来源链接（外部 agent 联网调研时带上）
+  confidence         Float    @default(0.5)
+  status             String   @default("pending") // pending | accepted | rejected
+  proposedBy         String   @default("") // 提议者 userId（审计）
+  resolvedPersonId   String? // 采纳后指向真实 Person.id（保证级联采纳幂等、去重）
+  suggestedRole      String? // WorkBuddy 提议的 ADURC 角色 A/D/U/R/C（采纳时落 OppRole，需配合 opportunityId）
+  suggestedSentiment String? // 提议的支持度 star/plus/neutral/unknown/minus/x
+  createdAt          DateTime @default(now())
+
+  @@index([accountId])
+  @@index([opportunityId])
+}
+
+model OppRole {
+  id                String      @id @default(uuid())
+  tenantId          String
+  opportunityId     String
+  opportunity       Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  personId          String
+  role              String
+  sentiment         String
+  sentimentValue    Int?
+  confidence        String
+  isKeyInfluencer   Boolean     @default(false)
+  procurementType   String?
+  procurementStatus String?
+  // ── PDE 立场评估承载（裁决B：不建平行 StanceAssessment 表）──
+  assessedAt        DateTime? // 立场评估时点（时间衰减基准；null=未记录→不衰减，SET_ROLE 改 sentiment/confidence 时自动刷新）
+  sourceQuality     Float       @default(1.0) // 信源质量（教练五级映射预留，v1 恒 1.0）
+
+  @@unique([tenantId, opportunityId, personId])
+  @@index([tenantId, opportunityId])
+  @@index([tenantId, personId])
+}
+
+// 商机成员：哪些干系人在该商机可见（仅当 Opportunity.memberScoped=true 生效）。关联表，跨库可移植。
+model OpportunityMember {
+  id            String      @id @default(uuid())
+  tenantId      String
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  personId      String
+
+  @@unique([tenantId, opportunityId, personId])
+  @@index([opportunityId])
+  @@index([tenantId, opportunityId])
+  @@index([tenantId, personId])
+}
+
+// 通用 Matter 参与关系的唯一真相源。OppRole 仅保留方法论角色，OpportunityMember 仅保留 legacy visibility。
+model MatterParticipant {
+  id            String      @id @default(uuid())
+  tenantId      String
+  accountId     String
+  account       Account     @relation(fields: [tenantId, accountId], references: [tenantId, id], onDelete: Cascade)
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [tenantId, opportunityId], references: [tenantId, id], onDelete: Cascade)
+  personId      String
+  person        Person      @relation(fields: [tenantId, personId], references: [tenantId, id], onDelete: Cascade)
+  createdAt     DateTime    @default(now())
+
+  @@unique([tenantId, opportunityId, personId])
+  @@index([tenantId, accountId, opportunityId])
+  @@index([tenantId, accountId, personId])
+  @@index([tenantId, personId])
+}
+
+model Edge {
+  id            String       @id
+  tenantId      String
+  accountId     String
+  account       Account      @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  opportunityId String?
+  opportunity   Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  source        String
+  target        String
+  kind          String       @default("related") // 通用开放关系类型；未知值必须可读
+  layer         String
+  label         String
+  color         String?
+  style         String?
+  width         Float?
+  directed      Boolean      @default(false)
+  origin        String       @default("manual")
+  shape         String? // 直线 straight / 折线 orthogonal / 曲线 curved（缺省按 layer 推断）
+  bend          Float? // 曲线弯曲度：控制点相对中点的垂直偏移(px，带符号)
+  version       Int          @default(0) // 乐观锁：连线编辑并发冲突检测（UPDATE_EDGE）
+
+  @@index([accountId])
+  @@index([tenantId, accountId])
+  @@index([tenantId, opportunityId])
+  @@index([tenantId, source])
+  @@index([tenantId, target])
+}
+
+model BurningIssue {
+  id            String      @id
+  tenantId      String
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  personId      String
+  description   String
+  category      String
+  isPrivate     Boolean     @default(true)
+  confidence    String
+
+  @@index([tenantId, opportunityId, personId])
+  @@index([tenantId, personId])
+}
+
+model UCV {
+  id               String      @id
+  tenantId         String
+  opportunityId    String
+  opportunity      Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  targetBiId       String
+  description      String
+  competitorCannot String
+  status           String
+
+  @@index([tenantId, opportunityId, targetBiId])
+  @@index([tenantId, targetBiId])
+}
+
+// 拜访记录（销售包核心产出，做一等模型）。与 Account 不建 Prisma relation——
+// 候选/查询路径解耦，state.ts 单独按 accountId 挂载；participants 走 String 存 JSON（跨库可移植）。
+model VisitNote {
+  id            String   @id // visit_xxx
+  tenantId      String
+  accountId     String
+  opportunityId String?
+  externalRef   String? // 销售包拜访记录锚，幂等
+  date          String   @default("") // YYYY-MM-DD
+  topic         String   @default("")
+  summary       String   @default("") // WorkBuddy 提炼正文
+  participants  String   @default("[]") // JSON: [{name, side: our|customer}]
+  origin        String   @default("workbuddy")
+  createdBy     String   @default("") // 提交者 userId
+  createdAt     DateTime @default(now())
+
+  @@unique([tenantId, accountId, externalRef])
+  @@index([accountId])
+  @@index([opportunityId])
+  @@index([tenantId, accountId])
+  @@index([tenantId, opportunityId])
+}
+
+// 通用「自由文本层」载体（P0 · 架构纲领 §4.2）：零散/长尾信息的家。
+// 三挂载对象皆可空——可挂客户/商机/人，也可先不挂(未归类)；挂 person/opp 时冗余存 accountId 便于按客户聚合。
+model Note {
+  id            String   @id // note_xxx
+  tenantId      String
+  accountId     String? // 主挂载(冗余)：挂客户/商机/人时填该客户；未归类则空
+  opportunityId String?
+  personId      String?
+  content       String   @default("") // 自由文本(原始零散信息·保真层)
+  source        String   @default("manual") // 来源溯源：manual/voice/ai/import
+  tags          String   @default("[]") // JSON 字符串数组(跨库可移植，不用原生 array)
+  createdBy     String   @default("")
+  createdByUserId String?
+  visibility    String   @default("owner_admin_only")
+  aclVersion    Int      @default(1)
+  createdAt     DateTime @default(now())
+
+  @@index([accountId])
+  @@index([opportunityId])
+  @@index([personId])
+  @@index([tenantId, accountId])
+  @@index([tenantId, opportunityId])
+  @@index([tenantId, personId])
+  @@index([tenantId, createdByUserId, visibility])
+  @@index([tenantId, visibility, aclVersion])
+}
+
+// 商机策划 · 行动计划（🎯）。与 Account 不建 relation，state.ts 按 accountId 挂载（同 VisitNote）。
+// 字段全 String/Float/DateTime/Boolean，无 enum/json（跨库可移植）。
+model PlanAction {
+  id            String   @id // act_xxx
+  tenantId      String
+  accountId     String // 冗余存：客户级日历直接按 accountId 聚合，免 join
+  opportunityId String? // 通用 Commitment 可仅属客户；legacy PlanAction 入口仍强制销售商机
+  gapItem       String   @default("") // 关联 G64111 低分项：C1..C6 | P1..P4 | 1K（空=非补分动作）
+  personId      String? // 目标干系人
+  title         String
+  scene         String   @default("")
+  scripts       String   @default("") // 话术（741 行动宝典可预填）
+  target        String   @default("") // 期望达成
+  ownerId       String   @default("")
+  startDate     String   @default("") // YYYY-MM-DD ← 日历主锚（起）
+  endDate       String   @default("") // YYYY-MM-DD（止；单日则 == startDate）
+  half          String   @default("am") // 时段：am 上午 | pm 下午 | eve 晚上
+  done          Boolean  @default(false) // 是否完成（仅行动有完成态）
+  doneAt        String? // 完成日期 YYYY-MM-DD
+  draft         Boolean  @default(false) // 第4刀：坞内草稿（true=只在坞列④，不挂画布；false=已上桌）。语义反转图纸的 staged——存量默认 false=已上桌，零迁移
+  review        String   @default("") // 复盘（喂周复盘）
+  resources     String   @default("") // 所需资源（牌·六要素）
+  cautions      String   @default("") // 注意要点（牌·六要素）
+  props         String   @default("") // 道具：方案/POC/报告/会议大纲…（P3 由 WorkBuddy 产）
+  origin        String   @default("manual") // manual | ai(741) | workbuddy
+  createdBy     String   @default("")
+  createdAt     DateTime @default(now())
+
+  // CORE-106 Commitment 同行扩展。旧 PlanAction 字段在兼容期仍是 legacy authority；
+  // 新字段是同一物理行的受检影子，不建立第二张 Commitment 主表。
+  kind                 String    @default("task")
+  ownerUserId          String?
+  executionStatus      String    @default("planned") // planned | completed | canceled | missed
+  confirmationStatus   String    @default("not_required") // not_required | pending | confirmed | declined
+  scheduledAtUtc       DateTime?
+  dueAtUtc             DateTime?
+  timeZone             String    @default("Asia/Shanghai")
+  isAllDay             Boolean   @default(true)
+  localDate            String?
+  confirmationDueAtUtc DateTime?
+  confirmedAtUtc       DateTime?
+  confirmedByUserId    String?
+  scheduleVersion      Int       @default(0)
+  nextCommitmentId     String?
+  source               String    @default("manual")
+  sourceRef            String?
+  archivedAt           DateTime?
+  version              Int       @default(0)
+
+  @@index([accountId])
+  @@index([opportunityId])
+  @@index([tenantId, accountId])
+  @@index([tenantId, opportunityId])
+  @@index([tenantId, personId])
+  @@index([tenantId, ownerUserId, executionStatus])
+  @@index([tenantId, confirmationStatus, confirmationDueAtUtc])
+  @@index([tenantId, executionStatus, dueAtUtc])
+  @@index([tenantId, executionStatus, localDate])
+  @@index([tenantId, nextCommitmentId])
+}
+
+// 商机策划 · 商机里程碑（🚩）。轻量，可多个/自由增删。同样按 accountId 挂载。
+model OppMilestone {
+  id            String   @id // ms_xxx
+  tenantId      String
+  accountId     String
+  opportunityId String
+  title         String // 开标 / 立项评审 / 预计签约…
+  startDate     String   @default("") // YYYY-MM-DD
+  endDate       String   @default("") // 多为单日：== startDate
+  half          String   @default("am")
+  createdAt     DateTime @default(now())
+
+  @@index([accountId])
+  @@index([opportunityId])
+  @@index([tenantId, accountId])
+  @@index([tenantId, opportunityId])
+}
+
+// 商机策划 · 阶段段（年视图，模型 B）。商机阶段 = 时间轴上一串阶段段，允许同名重复/降级回退。
+model OppStage {
+  id            String   @id // st_xxx
+  tenantId      String
+  accountId     String // 冗余存：照 PlanAction/OppMilestone 按 accountId 挂载
+  opportunityId String
+  stageKey      String // 需求引导|方案认可|客户立项|招投标|合同谈判|合同双签（可重复=降级回退）
+  startDate     String   @default("") // YYYY-MM-DD
+  endDate       String   @default("")
+  createdAt     DateTime @default(now())
+
+  @@index([accountId])
+  @@index([opportunityId])
+  @@index([tenantId, accountId])
+  @@index([tenantId, opportunityId])
+}
+
+// ───────── 策略沙盘（推演段：关系地图 → 沙盘 → 行动策划 的中间「桥」）─────────
+// 三表全 opp 级（带 opportunityId），accountId 冗余列照 PlanAction 按 accountId 挂载。
+// 字段全 String/Int/Boolean/DateTime，无 enum/json（跨库可移植）。
+
+// 策略卡（打法卡）。挂靠 G64111 低分项。origin=ai 时 status=pending 为顺推候选，人审采纳后 active。
+model StrategyCard {
+  id                  String   @id // sc_xxx
+  tenantId            String
+  accountId           String // 冗余存：照 PlanAction 按 accountId 挂载
+  opportunityId       String // 沙盘根（1 商机 1 沙盘）
+  gapItem             String   @default("") // 挂靠 G64111 低分项 C1..C6|P1..P4|1K（空=非补分打法）
+  title               String   @default("")
+  basis               String   @default("") // 依据
+  alternatives        String   @default("") // 备选打法
+  personId            String? // 目标干系人（仅引用已存在 Person，AI 不得造新人）
+  status              String   @default("active") // active | pending(AI候选待采纳) | dismissed
+  origin              String   @default("manual") // manual | ai
+  orderIndex          Int      @default(0)
+  dispatchedActionIds String   @default("[]") // JSON：已派生的 PlanAction id（防重复派发）
+  createdAt           DateTime @default(now())
+
+  @@index([accountId])
+  @@index([opportunityId])
+  @@index([tenantId, accountId])
+  @@index([tenantId, opportunityId])
+  @@index([tenantId, personId])
+}
+
+// 风险/假设。kind 区分二者（语义正交，不塞并列文本字段）。
+model StrategyRisk {
+  id            String   @id // sr_xxx
+  tenantId      String
+  accountId     String
+  opportunityId String
+  kind          String   @default("risk") // risk 风险 | assumption 假设
+  text          String   @default("") // 风险描述 / 假设前提
+  severity      String   @default("mid") // low | mid | high
+  mitigation    String   @default("") // 缓解措施（assumption 时可空）
+  status        String   @default("open") // open | resolved | dismissed
+  origin        String   @default("manual") // manual | ai
+  createdAt     DateTime @default(now())
+
+  @@index([accountId])
+  @@index([opportunityId])
+  @@index([tenantId, accountId])
+  @@index([tenantId, opportunityId])
+}
+
+// 轻量弹药清单（沙盘内自由列举，不建全局资源库/配额调度）。
+model StrategyResource {
+  id            String   @id // sx_xxx
+  tenantId      String
+  accountId     String
+  opportunityId String
+  label         String   @default("")
+  kind          String   @default("") // 自由文本 product/relation/case/commercial…（不枚举）
+  note          String   @default("")
+  createdAt     DateTime @default(now())
+
+  @@index([accountId])
+  @@index([opportunityId])
+  @@index([tenantId, accountId])
+  @@index([tenantId, opportunityId])
+}
+
+// 策略引擎 · 证据事件（E2）。每条证据 → 三态伪计数增量，喂局势分布。
+// E2 简化：录入即生效（录入者即审核者）；status/审核轨迹（pending_review）留 E2.5。
+// 不级联删除（审计资产）；signalKey 取自前端信号库常量（租户表化 SignalCatalog 留后续）。
+model EvidenceEvent {
+  id            String   @id // ev_xxx
+  tenantId      String
+  accountId     String // 冗余存：照 PlanAction 按 accountId 挂载
+  opportunityId String
+  personId      String
+  signalKey     String // intro_referral / spec_alignment ...
+  direction     Int      @default(0) // +1 利好 / -1 不利（中性信号录入时人工定向）
+  tier          String   @default("mid") // weak | mid | strong
+  rawContent    String   @default("") // 原文/纪要片段，可追溯
+  occurredAt    String   @default("") // YYYY-MM-DD
+  status        String   @default("approved") // M3 审核流：pending_review | approved | rejected。默认 approved=人工直落语义，存量零迁移；机器抽取显式 pending_review
+  origin        String   @default("manual") // manual | voice | recording（溯源）
+  reviewedBy    String   @default("") // 审计：谁审的
+  reviewedAt    String   @default("") // 审计：何时审的 YYYY-MM-DD
+  createdBy     String   @default("")
+  createdAt     DateTime @default(now())
+
+  @@index([accountId])
+  @@index([opportunityId])
+  @@index([tenantId, accountId])
+  @@index([tenantId, opportunityId])
+  @@index([tenantId, personId])
+}
+
+// 统一变更提案（机器写初稿·人审 v2.0）：机器对【已有实体字段】的更新先进此表（非静默覆盖），
+// 人在收件箱看 改前→改后 diff + 趋赢力影响预览后采纳/改后采纳/驳回。采纳走既有 applyAction 落库。
+// 跨库可移植：值一律 String 字符串化，不用原生 enum/json。
+model ChangeProposal {
+  id            String   @id
+  tenantId      String
+  accountId     String // 归属客户（收件箱分组 + 隔离）
+  opportunityId String? // oppRole/商机字段提案带上
+  entityKind    String // oppRole | bi | opportunity | person（v2.0 先 oppRole）
+  entityId      String // 目标定位：oppRole 用 personId（配合 opportunityId）
+  field         String // 字段名，如 sentiment / confidence
+  oldValue      String   @default("") // 改前值（字符串化，diff 展示）
+  newValue      String // 改后值
+  origin        String   @default("voice") // voice | mcp | ai | qcc | engine
+  evidence      String   @default("")
+  confidence    Float    @default(0.5)
+  status        String   @default("pending") // pending | accepted | rejected
+  dedupeKey     String?  @unique // pending 时占用；处理后清空，跨 SQLite/Postgres 防并发重复草稿
+  proposedBy    String   @default("")
+  createdAt     DateTime @default(now())
+
+  @@index([accountId])
+  @@index([tenantId, status])
+}
+
+// 江湖自算 · 轻量后台任务队列（DB-backed，单实例 setInterval worker 消费）。
+// 任务类型：enrich_account（建客户后企查查/AI 发现干系人 → PersonSuggestion 候选）；
+//          suggest_relations（建/选商机后图算法+LLM 推断关系 → RelSuggestion 候选）。
+// 产物一律走候选人审（铁律②）。不用原生 enum/json，全 String 跨库可移植；result 存 JSON 摘要。
+model EnrichJob {
+  id            String    @id
+  tenantId      String
+  dedupeKey     String? // 存量行可空；新任务写租户内业务幂等键
+  enqueueToken  String? // 存量行可空；新任务用于准确返回并发 enqueued
+  type          String    @default("enrich_account") // enrich_account | suggest_relations | pull_recording | account_profile(P9)
+  accountId     String // 目标客户（两类任务都带，便于隔离/分组）
+  opportunityId String? // suggest_relations 的目标商机
+  mode          String    @default("auto") // auto | web（enrich 数据源）
+  status        String    @default("pending") // pending | processing | done | failed
+  attemptCount  Int       @default(0) @map("attempts")
+  leaseOwner    String    @default("")
+  leaseToken    String    @default("") // 每次 claim 唯一 fencing token，阻止旧 worker 晚到提交
+  leaseUntil    DateTime?
+  nextAttemptAt DateTime  @default(now())
+  result        String    @default("") // JSON 摘要：{source, created, deduped, note} 或 {added}
+  error         String    @default("")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([tenantId, dedupeKey])
+  @@index([status, nextAttemptAt])
+  @@index([tenantId, status])
+  @@index([accountId])
+}
+
+// ── 录音转写原始层（PIPL 红线 · P2 录音接入）─────────────────────────────
+// 从录音源（得到大脑 MCP / 飞书妙记 · 钉钉听记 OpenAPI / mock）拉来的转写文字。
+// 「三层信息」里的【原始 raw】层：保真、不可变、带溯源；抽取出的结构化字段一律走提案人审（铁律②）。
+// PIPL 配套：contentEnc = AES-256-GCM 密文（绝不明文落库）；status 控制最小留存（抽取后可降解/删除）；
+// 全程 tenantId 强隔离。跨库可移植：全 String/Int/DateTime，无 enum/json。
+model Transcript {
+  id            String    @id // tr_xxx
+  tenantId      String
+  accountId     String? // 可空挂载（拜访录音通常挂客户/商机；未归类可空）
+  opportunityId String?
+  personId      String?
+  source        String    @default("mock") // 录音源：getnote(得到大脑) | feishu | dingtalk | manual | mock
+  externalRef   String? // 外部录音/笔记 id（幂等去重，避免重复拉取；空=本地/mock 不去重）
+  idempotencyDomain String @default("system-quarantine-v1") // creator-private 或 system quarantine；分享时保持不变
+  title         String    @default("") // 录音/会议标题（非隐私，可明文，列表展示用）
+  contentEnc    String    @default("") // 转写全文密文（AES-256-GCM base64）—— PIPL 加密，绝不明文落库
+  durationSec   Int       @default(0) // 录音时长（秒，溯源）
+  recordedAt    DateTime? // 录音发生时间（溯源：何时）
+  status        String    @default("active") // active(待抽取) | extracted(已抽取) | redacted(原文已降解/删除)
+  extractedAt   DateTime? // 抽取时间（用完即可降解原文）
+  createdBy     String    @default("") // 拉取/导入者 userId（溯源：谁）
+  createdByUserId String?
+  visibility    String    @default("owner_admin_only")
+  aclVersion    Int       @default(1)
+  createdAt     DateTime  @default(now())
+
+  @@unique([tenantId, idempotencyDomain, source, externalRef]) // 同 ACL creator 域幂等；externalRef=NULL 时不约束多行
+  @@index([tenantId, status])
+  @@index([accountId])
+  @@index([tenantId, createdByUserId, visibility])
+  @@index([tenantId, visibility, aclVersion])
+}
+
+// ── 录音源凭据（P2-b · BYO + OAuth）─────────────────────────────────────
+// 凭据分两层（铁律④：全 AES-256-GCM 加密，绝不明文落库/外发）：
+//   · 租户级 RecordingProviderConfig：企业应用 App 凭据（飞书 App ID/Secret），管理员配一次。
+//   · per-user RecordingCredential：每个销售自己的授权（飞书 OAuth user token / 得到大脑 token）。
+// 钉钉听记无转写开放 API → 改「文件上传(md/txt)」入口，不走凭据。跨库可移植：无 enum/json。
+model RecordingProviderConfig {
+  tenantId     String
+  provider     String // feishu（企业应用 OAuth 源）
+  appId        String   @default("") // 飞书 App ID（非密钥，可明文）
+  appSecretEnc String   @default("") // App Secret 密文（AES-256-GCM，绝不明文）
+  enabled      Boolean  @default(true)
+  updatedAt    DateTime @updatedAt
+
+  @@id([tenantId, provider])
+}
+
+model RecordingCredential {
+  id              String    @id // rc_xxx
+  tenantId        String
+  userId          String // per-user：授权的销售本人
+  source          String // feishu（OAuth user token） | getnote（得到大脑·手填 token）
+  accessTokenEnc  String    @default("") // access/user token 密文
+  refreshTokenEnc String    @default("") // refresh token 密文（飞书续期用）
+  expiresAt       DateTime? // access token 过期时间（用于自动 refresh）
+  meta            String    @default("") // JSON：源特定信息（如得到大脑 endpoint）
+  status          String    @default("active") // active | expired | revoked
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([tenantId, userId, source]) // 一个销售一个源一条凭据（幂等覆盖）
+  @@index([tenantId, userId])
+}
+
+// ── AI 梳理层（P3）─────────────────────────────────────────────────────
+// 「三层信息」的【梳理 curated】层：AI 把原始(笔记/拜访纪要/录音转写/人物动态)按模板整理成有条理叙述。
+// 红线：不覆盖原始(只加一层) · 不写分(趋赢力仍由 g64111 算) · 标"AI 整理·待核" · tenantId 隔离。
+// 懒生成+按实体缓存：basedOnAt=梳理所基于的原始层最新时间，打开时与原始最新时间比较决定是否重梳理。
+// human-wins：editedByHuman=true(人改过)→锁定，AI 不再重生成覆盖。跨库可移植：无 enum/json。
+model CuratedSummary {
+  id            String    @id // cs_xxx
+  tenantId      String
+  entityKind    String // account | opportunity
+  entityId      String
+  content       String    @default("") // 梳理叙述(markdown 段)
+  model         String    @default("") // 生成所用模型(溯源)
+  basedOnAt     DateTime? // 所基于的原始层最新时间戳(懒生成判过期)
+  editedByHuman Boolean   @default(false) // 人改过→锁定，AI 不覆盖(human-wins)
+  editedBy      String    @default("")
+  aclVersion    Int       @default(0) // 1+=已按服务端 visibility ACL 重建 AI 上下文
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([tenantId, entityKind, entityId])
+}
+
+// 巡检提醒（提案层·提醒型）：确定性后台巡检发现「该动了」(商机停滞 / 缺决策人 / 支持度待复查) → 进收件箱人审（铁律②）。
+// 与 ChangeProposal（机器改字段值）不同：提醒只读——人「忽略 / 去处理」，巡检绝不直接改库。跨库可移植(全 String，无 enum/json)。
+model Reminder {
+  id            String   @id // rem_xxx
+  tenantId      String
+  accountId     String
+  accountName   String   @default("") // 冗余：收件箱按客户分组展示，免 join
+  opportunityId String?
+  oppName       String   @default("")
+  kind          String // stalled | no_decider | sentiment_recheck
+  title         String // 一句话摘要（收件箱主文案）
+  detail        String   @default("") // 详情 / 建议动作
+  severity      String   @default("info") // info | warn
+  entityId      String? // 关联干系人（支持度复查指向某人）
+  dedupeKey     String // 去重键 tenantId:oppId:kind:entityId，同类不重复刷屏
+  status        String   @default("pending") // pending | dismissed | done
+  createdAt     DateTime @default(now())
+
+  @@unique([tenantId, dedupeKey])
+  @@index([tenantId, status])
+}
+
+// P8 参谋会话历史：右栏参谋 tab 的问答流落库（原阅后即焚→可回看）。
+// 会话按 商机×焦点人 分桶；纯分析文本，不参与任何计算（沉淀结论走 ADD_LOG 挂人动态）。
+model AdvisorMsg {
+  id            String   @id // adv_xxx
+  tenantId      String
+  accountId     String
+  opportunityId String
+  personId      String // 焦点人
+  role          String // user | assistant
+  text          String
+  createdAt     DateTime @default(now())
+
+  @@index([tenantId, opportunityId, personId, createdAt])
+}
+
+// ── 企业微信日历双向同步（交互升级纲领 P2·出口闭环）──
+// 租户级 BYO 凭据：用租户自己企微自建应用凭据，江湖代调其日程 API（平台不需公司资质，照 QccConfig/AiConfig 范式）。
+model WeComConfig {
+  tenantId          String   @id
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  corpId            String   @default("")
+  agentId           String   @default("") // 自建应用 AgentId（日程权限）
+  secretEnc         String   @default("") // AES-256-GCM 密文（应用 Secret，绝不明文落库/外发/入提交）
+  callbackToken     String   @default("") // 「接收消息」回调校验 Token（场景 B 消息推送+一键采纳）
+  callbackAesKeyEnc String   @default("") // EncodingAESKey 的 AES-256-GCM 密文（解回调消息用）
+  updatedAt         DateTime @updatedAt
+}
+
+// 江湖 user ↔ 企微 userid 映射（写对人的日程必须绑定）。P2-a 手填，P2-b OAuth 扫码自动绑。
+model WeComUserBind {
+  id          String   @id // wb_xxx
+  tenantId    String
+  userId      String // 江湖 user.id
+  wecomUserid String // 企微 userid
+  createdAt   DateTime @default(now())
+
+  @@unique([tenantId, userId])
+  @@unique([tenantId, wecomUserid])
+}
+
+model WeComOAuthState {
+  id                 String    @id // provider state: only present in the redirect URL
+  requestId          String?   @unique // confirmation handle returned only to the authenticated initiating app
+  tenantId           String
+  userId             String
+  pendingWecomUserid String    @default("")
+  pendingAt          DateTime?
+  expiresAt          DateTime
+  consumedAt         DateTime?
+  createdAt          DateTime  @default(now())
+
+  @@index([tenantId, userId, expiresAt])
+}
+
+// 日程映射：江湖 Commitment / OppMilestone ↔ 企微 scheduleId（幂等防重复建 + 双向同步锚）。
+model ScheduleSync {
+  id              String   @id // ss_xxx
+  tenantId        String
+  kind            String // commitment | milestone（旧 plan_action 由 adapter 原位接管）
+  refId           String // commitmentId 或 milestoneId
+  wecomScheduleId String   @default("")
+  status          String   @default("synced") // synced | pending | failed | deleted
+  lastError       String   @default("")
+  updatedAt       DateTime @updatedAt
+
+  @@unique([tenantId, kind, refId])
+}
+
+// ═══════════ PDE 决策引擎（M2 数据层 · docs/pde-handoff/SPEC §4 按裁决B修订版）═══════════
+// 铁律③跨库可移植：不用原生 enum/Json/数组——类型/状态用 String，结构化走 String 存 JSON 文本。
+
+// E 类必清项的「已知/可信度」元层（双轨分输入；itemKey 对齐 g64111 十一项，subItemKey=""表示项级）
+model ScoringItemState {
+  id            String    @id // sis_xxx
+  tenantId      String
+  opportunityId String
+  itemKey       String // C1..C6 / P1..P4 / 1K
+  subItemKey    String    @default("") // 子项如 form7/budget；空串=项级（不用 null，保 unique 语义跨库一致）
+  known         Boolean   @default(false)
+  confidence    String    @default("不清") // 四档中文，对齐 OppRole.confidence（共识/明确/推理/不清）
+  sourceQuality Float     @default(1.0)
+  collectedAt   DateTime?
+  note          String    @default("")
+
+  @@unique([tenantId, opportunityId, itemKey, subItemKey])
+  @@index([tenantId, opportunityId])
+}
+
+// PDE 决策上下文是独立于任何方法论包的显式输入权威。解绑 G64111 不得删除本行。
+model PdeDecisionContext {
+  id                 String        @id
+  tenantId           String
+  opportunityId      String
+  opportunity        Opportunity   @relation(fields: [tenantId, opportunityId], references: [tenantId, id], onDelete: Restrict)
+  stageKey           String
+  decisionProfileRef String?
+  decisionProfile    IndustryPack? @relation("PdeDecisionProfile", fields: [tenantId, decisionProfileRef], references: [tenantId, id], onDelete: Restrict)
+  source             String        @default("legacy_shadow")
+  version            Int           @default(0)
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, opportunityId])
+  @@index([tenantId, decisionProfileRef])
+  @@index([tenantId, stageKey])
+}
+
+// 商机级 PDE 配置（彩池/成本/竞争系数；stage 由 PdeDecisionContext 独立保存）
+model DealPdeConfig {
+  id              String   @id // pde_xxx
+  tenantId        String
+  opportunityId   String   @unique
+  potValue        Float? // 万元；null → 回退 Opportunity.expectedAmountW
+  plannedCost     Float    @default(0)
+  sunkCost        Float    @default(0)
+  cComp           Float    @default(1.0)
+  industryPackKey String   @default("digital-energy")
+  updatedAt       DateTime @updatedAt
+
+  @@index([tenantId])
+}
+
+// 行业包：schema+params+signals+actions+roles 的版本化容器（租户级，惰性装载）
+model IndustryPack {
+  id                  String               @id // pack_xxx
+  tenantId            String
+  packKey             String // "digital-energy"
+  schemaVersion       String // "1.1"
+  payload             String               @default("{}") // 五个 seed 文件的合并快照（JSON 文本）
+  active              Boolean              @default(true)
+  createdAt           DateTime             @default(now())
+  methodologyBindings MethodologyBinding[] @relation("MethodologyDecisionProfile")
+  pdeDecisionContexts PdeDecisionContext[] @relation("PdeDecisionProfile")
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, packKey, schemaVersion])
+}
+
+// 动作库（由行业包展开，便于查询与租户级增删）
+model ActionCatalog {
+  id          String @id // ac_xxx
+  tenantId    String
+  packId      String
+  actionKey   String // "act-form7"
+  category    String // info | relationship
+  title       String @default("")
+  effectJson  String @default("{}") // {type: item_resolve|cred_upgrade|mark_shift, targetItem?/targetMark?/targetCred?/resolvedCred?}
+  costTier    String @default("mid") // low/mid/high
+  costWan     Float  @default(0) // 展开时按 params.costTierWan 换算（租户可单独调）
+  stageWindow String @default("any") // any / "initiation..feasibility"
+  targetSlots String @default("[]") // JSON 数组文本，如 ["D","KEY_INFLUENCER","any"]
+  gist        String @default("")
+  scriptRef   String @default("") // 源宝典引用（⑥#1）
+
+  @@unique([tenantId, packId, actionKey])
+  @@index([tenantId])
+}
+
+// 行为信号库（证据→立场分布增量的映射；审核流管线的判定依据，随包展开）
+model SignalCatalog {
+  id         String  @id // sig_xxx
+  tenantId   String
+  packId     String
+  signalKey  String // "co_plan_budget"
+  label      String  @default("")
+  groupKey   String  @default("") // p3_plus 等
+  direction  Int     @default(1) // ±1
+  tier       String  @default("mid") // weak/mid/strong → deltaAlpha 0.5/1/2
+  behavioral Boolean @default(true)
+
+  @@unique([tenantId, packId, signalKey])
+  @@index([tenantId])
+}
+
+// 评估快照：inputsJson 完整留痕（DECISIONS#4 硬要求·未来校准训练集）；复盘=还原决策时点
+model EVSnapshot {
+  id             String   @id // evs_xxx
+  tenantId       String
+  opportunityId  String
+  trigger        String // manual | evidence_approved | stage_gate | scheduled | import
+  inputsJson     String   @default("{}") // 组装后的完整 Deal 输入 + 参数版本
+  resultJson     String   @default("{}") // evaluate + score + recommendation 输出
+  schemaId       String   @default("")
+  schemaVersion  String   @default("")
+  confidenceFlag String   @default("") // low_confidence / no_pot 等
+  aclVersion     Int      @default(0) // 1+=快照输入已按当前敏感 ACL 版本生成
+  createdBy      String   @default("")
+  createdAt      DateTime @default(now())
+
+  @@index([tenantId, opportunityId, createdAt])
+}

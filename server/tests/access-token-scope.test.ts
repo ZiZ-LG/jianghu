@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createPersonCandidate, personCandidateDedupeKey } from '../src/candidates/personRelation.js';
 import { createTestContext, type TestContext } from './helpers/testApp.js';
 
 type TokenPreset = 'workbuddy_sync' | 'readonly_analysis' | 'research_proposal';
@@ -68,10 +69,20 @@ async function seedViewerProjection(context: TestContext) {
     { id: 'viewer-owned-opp', tenantId: context.tenant.id, accountId: 'viewer-owned-account', name: 'Owned opportunity', customerType: 1, pipelineStage: '线索', engageStage: '需求调研立项' },
     { id: 'viewer-unowned-opp', tenantId: context.tenant.id, accountId: 'viewer-unowned-account', name: 'Unowned opportunity', customerType: 1, pipelineStage: '线索', engageStage: '需求调研立项' },
   ] });
-  await context.prisma.personSuggestion.createMany({ data: [
-    { id: 'viewer-owned-candidate', tenantId: context.tenant.id, accountId: 'viewer-owned-account', opportunityId: 'viewer-owned-opp', name: 'Owned candidate' },
-    { id: 'viewer-unowned-candidate', tenantId: context.tenant.id, accountId: 'viewer-unowned-account', opportunityId: 'viewer-unowned-opp', name: 'Unowned candidate' },
-  ] });
+  await createPersonCandidate(context.prisma, {
+    id: 'viewer-owned-candidate', tenantId: context.tenant.id, accountId: 'viewer-owned-account',
+    matterId: 'viewer-owned-opp', name: 'Owned candidate', source: 'test',
+    sourceRef: 'viewer-owned-candidate', evidence: 'viewer-owned-candidate', confidence: 0.5,
+    createdByUserId: context.owner.id,
+    dedupeKey: personCandidateDedupeKey('viewer-owned-account', 'Owned candidate'),
+  });
+  await createPersonCandidate(context.prisma, {
+    id: 'viewer-unowned-candidate', tenantId: context.tenant.id, accountId: 'viewer-unowned-account',
+    matterId: 'viewer-unowned-opp', name: 'Unowned candidate', source: 'test',
+    sourceRef: 'viewer-unowned-candidate', evidence: 'viewer-unowned-candidate', confidence: 0.5,
+    createdByUserId: other.id,
+    dedupeKey: personCandidateDedupeKey('viewer-unowned-account', 'Unowned candidate'),
+  });
   await context.prisma.person.create({
     data: { id: 'viewer-owned-person', tenantId: context.tenant.id, accountId: 'viewer-owned-account', name: 'Private BI holder', title: 'Decision maker' },
   });

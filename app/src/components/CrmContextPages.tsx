@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useState } from 'react';
 import type {
   CrmContextSnapshot,
   PersonSummaryV2,
@@ -12,6 +12,7 @@ import {
   selectCustomerContext,
   selectMatterContext,
 } from '../lib/crmContext';
+import { CrmRelationshipGraph } from './CrmRelationshipGraph';
 
 export const CRM_CONTEXT_REFRESH_INTERVAL_MS = 60_000;
 
@@ -27,23 +28,6 @@ export type CrmContextPanelState =
 
 type ContextMode = 'customers' | 'matters';
 
-function relationPositions(people: readonly PersonSummaryV2[]) {
-  const width = 640;
-  const height = 280;
-  const centerX = width / 2;
-  const centerY = height / 2;
-  const radiusX = 245;
-  const radiusY = 92;
-  return new Map(people.map((person, index) => {
-    if (people.length === 1) return [person.id, { x: centerX, y: centerY }] as const;
-    const angle = (-Math.PI / 2) + ((2 * Math.PI * index) / people.length);
-    return [person.id, {
-      x: centerX + (Math.cos(angle) * radiusX),
-      y: centerY + (Math.sin(angle) * radiusY),
-    }] as const;
-  }));
-}
-
 function RelationContext({
   people,
   relations,
@@ -53,8 +37,6 @@ function RelationContext({
   relations: RelationV2[];
   onQuickCapture: () => void;
 }) {
-  const titleId = useId();
-  const markerId = `crm-arrow-${useId().split(':').join('')}`;
   if (relations.length === 0) {
     return (
       <div className="crm-relation-empty" data-relation-context="empty">
@@ -70,46 +52,13 @@ function RelationContext({
   }
 
   const personById = new Map(people.map((person) => [person.id, person]));
-  const positions = relationPositions(people);
   return (
     <div className="crm-relation-context" data-relation-context="ready">
-      <div className="crm-relation-canvas">
-        <svg viewBox="0 0 640 280" role="img" aria-labelledby={titleId} preserveAspectRatio="xMidYMid meet">
-          <title id={titleId}>当前权限范围内的人物关系图</title>
-          <defs>
-            <marker id={markerId} viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-              <path className="crm-relation-arrow" d="M 0 0 L 10 5 L 0 10 z" />
-            </marker>
-          </defs>
-          {relations.map((relation) => {
-            const source = positions.get(relation.sourcePersonId);
-            const target = positions.get(relation.targetPersonId);
-            if (!source || !target) return null;
-            return (
-              <g key={relation.id} data-relation-id={relation.id}>
-                <line
-                  className="crm-relation-line"
-                  x1={source.x}
-                  y1={source.y}
-                  x2={target.x}
-                  y2={target.y}
-                  markerEnd={relation.directed ? `url(#${markerId})` : undefined}
-                />
-              </g>
-            );
-          })}
-          {people.map((person) => {
-            const position = positions.get(person.id);
-            if (!position) return null;
-            return (
-              <g key={person.id} className="crm-relation-node" transform={`translate(${position.x} ${position.y})`}>
-                <circle r="34" />
-                <text textAnchor="middle" dominantBaseline="middle">{person.name.slice(0, 6)}</text>
-              </g>
-            );
-          })}
-        </svg>
-      </div>
+      <CrmRelationshipGraph
+        people={people}
+        formalRelations={relations}
+        title="当前权限范围内的人物关系图"
+      />
       <ul className="crm-relation-list" aria-label="关系清单">
         {relations.map((relation) => {
           const source = personById.get(relation.sourcePersonId);

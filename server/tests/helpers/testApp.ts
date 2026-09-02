@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { PrismaClient, Tenant, User } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
-import { buildApp } from '../../src/app.js';
+import { buildApp, type BuildAppOptions } from '../../src/app.js';
 import { prisma } from '../../src/prisma.js';
 import {
   assertDevDbUnchanged,
@@ -25,7 +25,14 @@ interface RegistrationBody {
   user: { id: string };
 }
 
-export async function createTestContext(options: { productAccess?: unknown } = {}): Promise<TestContext> {
+export async function createTestContext(
+  options: Pick<
+    BuildAppOptions,
+    'productAccess' | 'agentHandlers' | 'agentCandidateCommitAdapter'
+    | 'agentResearchBriefCommitAdapter' | 'agentRelationshipRadarCommitAdapter'
+    | 'feishuImportProvider' | 'publicBaseUrl'
+  > = {},
+): Promise<TestContext> {
   assertTestDatabaseUrl();
   await assertDevDbUnchanged(devDbBaseline);
   await clearTestDatabase(prisma);
@@ -33,7 +40,24 @@ export async function createTestContext(options: { productAccess?: unknown } = {
 
   // Existing integration fixtures exercise the internal compatibility adapter.
   // Commercial tests opt in explicitly so the production default can remain commercial Free.
-  const app = await buildApp({ logger: false, productAccess: options.productAccess ?? { edition: 'internal' } });
+  const app = await buildApp({
+    logger: false,
+    productAccess: options.productAccess ?? { edition: 'internal' },
+    ...(options.agentHandlers ? { agentHandlers: options.agentHandlers } : {}),
+    ...(options.agentCandidateCommitAdapter
+      ? { agentCandidateCommitAdapter: options.agentCandidateCommitAdapter }
+      : {}),
+    ...(options.agentResearchBriefCommitAdapter
+      ? { agentResearchBriefCommitAdapter: options.agentResearchBriefCommitAdapter }
+      : {}),
+    ...(options.agentRelationshipRadarCommitAdapter
+      ? { agentRelationshipRadarCommitAdapter: options.agentRelationshipRadarCommitAdapter }
+      : {}),
+    ...(options.feishuImportProvider
+      ? { feishuImportProvider: options.feishuImportProvider }
+      : {}),
+    publicBaseUrl: options.publicBaseUrl ?? 'http://localhost:3001',
+  });
   try {
     const suffix = randomUUID();
     const response = await app.inject({

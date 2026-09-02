@@ -23,6 +23,20 @@ model Tenant {
   aiConfig           AiConfig?
   qccConfig          QccConfig?
   wecomConfig        WeComConfig?
+  candidates         Candidate[]
+  sourceArtifacts    SourceArtifact[]
+  reviewBatches      ReviewBatch[]
+  interactions       Interaction[]
+  sensitiveGrants    SensitiveResourceGrant[]
+  agentJobDefinitions AgentJobDefinition[]
+  agentRuns           AgentRun[]
+  researchBriefSnapshots ResearchBriefSnapshot[]
+  relationshipRadarSnapshots RelationshipRadarSnapshot[]
+  intelligenceItems  IntelligenceItem[]
+  stakeholderFocuses StakeholderFocus[]
+  salesHypotheses    SalesHypothesis[]
+  salesHypothesisRevisions SalesHypothesisRevision[]
+  hypothesisEvidenceLinks HypothesisEvidenceLink[]
 }
 
 // 工作区自配的企查查 OpenAPI 凭证（BYO-key）。secretKey 加密存储。
@@ -606,6 +620,428 @@ model DataMigrationState {
   details     String   @default("{}")
 }
 
+// G4 统一候选层。CORE-201 只建立跨库可移植的物理基座；旧候选表仍是在线权威，
+// 不双写、不回填、不切换收件箱。机器结果继续经过人审后才能进入正式业务表。
+model Candidate {
+  id               String   @id
+  tenantId         String
+  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  kind             String
+  status           String   @default("pending")
+  accountId        String
+  matterId         String?
+  targetKind       String
+  targetId         String?
+  fieldKey         String?
+  oldValue         String?
+  newValue         String?
+  payload          String   @default("{}")
+  source           String
+  sourceRef        String
+  evidence         String   @default("")
+  confidence       Float    @default(0.5)
+  sourceArtifactId String?
+  reviewBatchId    String?
+  createdByUserId  String?
+  visibility       String   @default("owner_admin_only")
+  aclVersion       Int      @default(1)
+  dedupeKey        String
+  legacySourceKind String?
+  legacySourceId   String?
+  version          Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([tenantId, dedupeKey])
+  @@unique([tenantId, legacySourceKind, legacySourceId])
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, accountId, status, createdAt])
+  @@index([tenantId, matterId, status, createdAt])
+  @@index([tenantId, sourceArtifactId])
+  @@index([tenantId, reviewBatchId])
+  @@index([tenantId, createdByUserId, visibility])
+  @@index([tenantId, visibility, aclVersion])
+}
+
+// G4 敏感来源基座。CORE-204 只建立 ACL-ready 物理模型；产品导入、投影与挂载 API 由 SAAS-201 开放。
+model SourceArtifact {
+  id                 String   @id
+  tenantId           String
+  tenant             Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  accountId          String?
+  matterId           String?
+  personId           String?
+  backingKind        String
+  backingId          String
+  artifactKind       String   @default("external_reference")
+  source             String   @default("legacy")
+  externalRef        String?
+  idempotencyDomain  String   @default("system-quarantine-v1")
+  title              String   @default("")
+  occurredAt         DateTime?
+  fingerprintKind    String   @default("reference_sha256_v1")
+  sourceFingerprint  String   @default("0000000000000000000000000000000000000000000000000000000000000000")
+  retentionState     String   @default("reference_only")
+  retentionUpdatedAt DateTime @default(now())
+  createdByUserId    String?
+  visibility         String   @default("owner_admin_only")
+  aclVersion         Int      @default(1)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([tenantId, backingKind, backingId])
+  @@unique([tenantId, idempotencyDomain, source, externalRef], map: "SourceArtifact_tenantId_domain_source_externalRef_key")
+  @@index([tenantId, accountId])
+  @@index([tenantId, matterId])
+  @@index([tenantId, personId])
+  @@index([tenantId, createdByUserId, visibility])
+  @@index([tenantId, visibility, aclVersion])
+  @@index([tenantId, artifactKind, createdAt])
+  @@index([tenantId, retentionState, updatedAt])
+}
+
+// G4 会后速审父锚。只保存来源、归属、ACL、版本和不含正文的采纳收据；
+// ReviewCandidate 继续使用唯一 Candidate 物理表，不建立平行候选表。
+model ReviewBatch {
+  id                    String   @id
+  tenantId              String
+  tenant                Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sourceArtifactId      String
+  accountId             String
+  matterId              String?
+  status                String   @default("pending") // pending | accepted | rejected
+  activityKind          String   @default("")
+  occurredAt            DateTime?
+  interactionId         String?
+  createdByUserId       String?
+  visibility            String   @default("owner_admin_only")
+  aclVersion            Int      @default(1)
+  acceptanceVersion     Int      @default(0)
+  version               Int      @default(0)
+  lastAcceptanceVersion Int?
+  lastAcceptanceHash    String   @default("")
+  lastAcceptanceResult  String   @default("{}")
+  reviewedByUserId      String?
+  reviewedAt            DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([tenantId, sourceArtifactId, status])
+  @@index([tenantId, accountId, status, createdAt])
+  @@index([tenantId, matterId, status, createdAt])
+  @@index([tenantId, createdByUserId, visibility])
+  @@index([tenantId, interactionId])
+}
+
+// 经用户确认的活动元数据；原始正文继续只属于 SourceArtifact 的 Note/Transcript backing。
+model Interaction {
+  id                String   @id
+  tenantId          String
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  accountId         String
+  matterId          String?
+  sourceArtifactId  String
+  activityKind      String
+  occurredAt        DateTime
+  title             String   @default("")
+  createdByUserId   String?
+  confirmedByUserId String
+  version           Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([tenantId, sourceArtifactId])
+  @@index([tenantId, accountId, occurredAt])
+  @@index([tenantId, matterId, occurredAt])
+  @@index([tenantId, createdByUserId])
+}
+
+// 显式敏感资源授权。正文、证据和密文绝不复制到授权记录；resourceAclVersion 绑定当前 ACL 世代。
+model SensitiveResourceGrant {
+  id                 String    @id
+  tenantId           String
+  tenant             Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  resourceKind       String
+  resourceId         String
+  granteeUserId      String
+  grantedByUserId    String
+  grantKind          String
+  resourceAclVersion Int
+  grantedAt          DateTime  @default(now())
+  revokedAt          DateTime?
+  revokedByUserId    String?
+
+  @@unique([tenantId, resourceKind, resourceId, granteeUserId, grantKind])
+  @@index([tenantId, resourceKind, resourceId, resourceAclVersion])
+  @@index([tenantId, granteeUserId, grantKind, revokedAt])
+}
+
+// 固定内置 Agent Job 的租户控制快照。definitionJson/hash 必须逐字匹配代码注册表；
+// 租户只能停用或收窄预算，不能扩展 trigger、scope、actionMode 或输出权限。
+model AgentJobDefinition {
+  id                String   @id
+  tenantId          String
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  jobKey            String
+  jobVersion        String
+  definitionJson    String
+  definitionHash    String
+  enabled           Boolean  @default(false)
+  tenantLimitsJson  String
+  version           Int      @default(1)
+  createdByUserId   String
+  updatedByUserId   String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([tenantId, jobKey, jobVersion])
+  @@index([tenantId, enabled, jobKey])
+  @@index([tenantId, updatedAt])
+}
+
+// Agent 运行审计只保存版本、授权指纹、预算计数与 body-free 引用；
+// 禁止写入 prompt、模型原文、Transcript/Note 正文、凭据、token 或错误堆栈。
+model AgentRun {
+  id                           String    @id
+  tenantId                     String
+  tenant                       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  definitionId                 String
+  jobKey                       String
+  jobVersion                   String
+  definitionHash               String
+  definitionControlVersion     Int
+  actionMode                   String
+  trigger                      String
+  status                       String    @default("running")
+  customerId                   String
+  matterId                     String?
+  sourceArtifactId             String?
+  actorId                      String
+  idempotencyKey               String
+  requestHash                  String
+  attemptCount                 Int       @default(0)
+  maxAttempts                  Int
+  leaseToken                   String    @default("")
+  leaseExpiresAt               DateTime?
+  budgetLimit                  Int
+  costUsed                     Int       @default(0)
+  timeoutMs                    Int
+  authorizationFingerprint     String
+  inputRefs                    String
+  evidenceRefs                 String    @default("[]")
+  outputRefs                   String    @default("[]")
+  modelRef                     String
+  connectorRefs                String    @default("[]")
+  failureCode                  String    @default("")
+  startedAt                    DateTime?
+  completedAt                  DateTime?
+  version                      Int       @default(0)
+  createdAt                    DateTime  @default(now())
+  updatedAt                    DateTime  @updatedAt
+
+  @@unique([tenantId, actorId, jobKey, jobVersion, idempotencyKey])
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, customerId, createdAt])
+  @@index([tenantId, matterId, createdAt])
+  @@index([tenantId, sourceArtifactId, createdAt])
+  @@index([tenantId, actorId, createdAt])
+  @@index([tenantId, definitionId])
+}
+
+// 会前研究简报的不可变加密快照。明文仅在当前授权下解密投影；本表不建立到
+// Customer/Matter/User 的级联关系，历史主体由服务层按租户和当前权限重新校验。
+model ResearchBriefSnapshot {
+  id                 String   @id
+  tenantId           String
+  tenant             Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customerId         String
+  matterId           String?
+  createdByUserId    String
+  generationKey      String
+  status             String
+  subjectStatus      String
+  payloadEnc         String
+  payloadFingerprint String
+  sourceSetHash      String
+  sourceCount        Int
+  sectionCount       Int
+  unknownCount       Int
+  failureCount       Int
+  version            Int      @default(1)
+  basedOnAt          DateTime?
+  freshUntil         DateTime?
+  generatedAt        DateTime
+  createdAt          DateTime @default(now())
+
+  @@unique([tenantId, createdByUserId, generationKey])
+  @@index([tenantId, createdByUserId, customerId, generatedAt])
+  @@index([tenantId, createdByUserId, matterId, generatedAt])
+}
+
+// SAAS-212 关系雷达只保存 body-free、可过期的派生快照。正式 CRM 权威
+// 与 AgentRun 历史始终由服务层按租户、当前角色和精确 source revision 重新校验。
+model RelationshipRadarSnapshot {
+  id                 String   @id
+  tenantId           String
+  tenant             Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customerId         String
+  matterId           String
+  createdByUserId    String
+  agentRunId         String
+  generationKey      String
+  payloadJson        String
+  payloadFingerprint String
+  sourceSetHash      String
+  signalCount        Int
+  interventionCount  Int
+  draftCount         Int
+  ruleVersion        String
+  generatedAt        DateTime
+  expiresAt          DateTime
+  version            Int      @default(1)
+  createdAt          DateTime @default(now())
+
+  @@unique([tenantId, agentRunId], map: "rrs_tenant_run_key")
+  @@unique([tenantId, createdByUserId, generationKey], map: "rrs_tenant_creator_generation_key")
+  @@index([tenantId, customerId, matterId, generatedAt], map: "rrs_tenant_customer_matter_generated_idx")
+  @@index([tenantId, matterId, expiresAt], map: "rrs_tenant_matter_expires_idx")
+}
+
+// 人工确认的可追溯情报。reported/inferred 仍是 Intelligence，绝不因存储或迁移
+// 自动升格为 Evidence；结构化目标以受检 JSON 文本保持 SQLite/PostgreSQL 可移植。
+model IntelligenceItem {
+  id                String    @id
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customerId        String
+  matterId          String
+  assertionType     String    @default("reported")
+  statement         String
+  sourceKind        String
+  sourceDescription String
+  sourceRefId       String?
+  sourceRefVersion  Int?
+  occurredAt        DateTime?
+  learnedAt         DateTime
+  confidence        Float     @default(0.5)
+  targetRefs        String    @default("[]")
+  createdByUserId   String
+  version           Int       @default(0)
+  archivedAt        DateTime?
+  archivedByUserId  String?
+  archiveReason     String    @default("")
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([tenantId, id])
+  @@index([tenantId, customerId, learnedAt])
+  @@index([tenantId, matterId, learnedAt])
+  @@index([tenantId, assertionType, learnedAt])
+  @@index([tenantId, archivedAt, learnedAt])
+}
+
+// Matter 在一个时点只有一个当前干系人聚焦。服务层确认 Person 为当前
+// MatterParticipant；通用聚焦不引用、不回填、不降级到 legacy primaryDPersonId。
+model StakeholderFocus {
+  id                String    @id
+  tenantId          String
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customerId        String
+  matterId          String
+  personId          String
+  desiredChange     String
+  rationale         String
+  evidenceGap       String?
+  basisRefs         String    @default("[]")
+  validUntil        DateTime
+  activeMatterKey   String?
+  confirmedByUserId String
+  confirmedAt       DateTime
+  retiredByUserId   String?
+  retiredAt         DateTime?
+  retireReason      String    @default("")
+  version           Int       @default(0)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, activeMatterKey])
+  @@index([tenantId, customerId, updatedAt])
+  @@index([tenantId, matterId, updatedAt])
+  @@index([tenantId, personId, updatedAt])
+}
+
+// 经人工确认的销售假设权威记录。机器只能给出候选建议，不能自动修改 status。
+// legacyStrategyRiskId 仅用于 SAAS-207 一次性迁移与回滚追溯；不再双写旧 assumption。
+model SalesHypothesis {
+  id                      String    @id
+  tenantId                String
+  tenant                  Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customerId              String
+  matterId                String
+  personId                String?
+  status                  String    @default("untested")
+  ownerUserId             String?
+  nextReviewAt            DateTime?
+  currentRevisionId       String
+  legacyStrategyRiskId    String?
+  createdByUserId         String?
+  statusConfirmedByUserId String?
+  statusConfirmedAt       DateTime?
+  version                 Int       @default(0)
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, legacyStrategyRiskId])
+  @@index([tenantId, customerId, updatedAt])
+  @@index([tenantId, matterId, updatedAt])
+  @@index([tenantId, personId, updatedAt])
+  @@index([tenantId, ownerUserId, nextReviewAt])
+  @@index([tenantId, status, nextReviewAt])
+}
+
+// 假设语义修订历史为 append-only；服务层禁止更新和删除。
+model SalesHypothesisRevision {
+  id                      String   @id
+  tenantId                String
+  tenant                  Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  hypothesisId            String
+  revisionNumber          Int
+  claim                   String
+  reason                  String   @default("")
+  expectedSignals         String   @default("[]")
+  falsificationConditions String   @default("[]")
+  origin                  String   @default("user")
+  createdByUserId         String?
+  createdAt               DateTime @default(now())
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, hypothesisId, revisionNumber])
+  @@index([tenantId, hypothesisId, createdAt])
+}
+
+// 仅允许绑定当前修订与已批准 EvidenceEvent；绑定后为 append-only。
+model HypothesisEvidenceLink {
+  id                   String   @id
+  tenantId             String
+  tenant               Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  hypothesisId         String
+  hypothesisRevisionId String
+  evidenceId           String
+  evidenceVersion      Int      @default(0)
+  direction            String
+  verificationCommitmentId String?
+  linkedByUserId       String
+  linkedAt             DateTime @default(now())
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, hypothesisRevisionId, evidenceId])
+  @@index([tenantId, hypothesisId, linkedAt])
+  @@index([tenantId, evidenceId])
+  @@index([tenantId, verificationCommitmentId])
+}
+
 // WorkBuddy 原子同步执行记录：保存非敏感引用回执，支持同 key 安全重放。
 model SyncRun {
   id             String   @id @default(uuid())
@@ -816,6 +1252,9 @@ model Note {
   source        String   @default("manual") // 来源溯源：manual/voice/ai/import
   tags          String   @default("[]") // JSON 字符串数组(跨库可移植，不用原生 array)
   createdBy     String   @default("")
+  createdByUserId String?
+  visibility    String   @default("owner_admin_only")
+  aclVersion    Int      @default(1)
   createdAt     DateTime @default(now())
 
   @@index([accountId])
@@ -824,6 +1263,8 @@ model Note {
   @@index([tenantId, accountId])
   @@index([tenantId, opportunityId])
   @@index([tenantId, personId])
+  @@index([tenantId, createdByUserId, visibility])
+  @@index([tenantId, visibility, aclVersion])
 }
 
 // 商机策划 · 行动计划（🎯）。与 Account 不建 relation，state.ts 按 accountId 挂载（同 VisitNote）。
@@ -875,6 +1316,16 @@ model PlanAction {
   archivedAt           DateTime?
   version              Int       @default(0)
 
+  // SAAS-208 假设验证仍使用同一 PlanAction/Commitment 行；空值表示普通 Commitment。
+  hypothesisId                       String?
+  hypothesisRevisionId               String?
+  completionResult                   String    @default("")
+  completionResultRecordedAtUtc      DateTime?
+  completionResultRecordedByUserId   String?
+  verificationReviewDisposition      String    @default("") // kept | revised | retired
+  verificationReviewedAtUtc          DateTime?
+  verificationReviewedByUserId       String?
+
   @@index([accountId])
   @@index([opportunityId])
   @@index([tenantId, accountId])
@@ -885,6 +1336,7 @@ model PlanAction {
   @@index([tenantId, executionStatus, dueAtUtc])
   @@index([tenantId, executionStatus, localDate])
   @@index([tenantId, nextCommitmentId])
+  @@index([tenantId, hypothesisId, hypothesisRevisionId])
 }
 
 // 商机策划 · 商机里程碑（🚩）。轻量，可多个/自由增删。同样按 accountId 挂载。
@@ -1083,6 +1535,7 @@ model Transcript {
   personId      String?
   source        String    @default("mock") // 录音源：getnote(得到大脑) | feishu | dingtalk | manual | mock
   externalRef   String? // 外部录音/笔记 id（幂等去重，避免重复拉取；空=本地/mock 不去重）
+  idempotencyDomain String @default("system-quarantine-v1") // creator-private 或 system quarantine；分享时保持不变
   title         String    @default("") // 录音/会议标题（非隐私，可明文，列表展示用）
   contentEnc    String    @default("") // 转写全文密文（AES-256-GCM base64）—— PIPL 加密，绝不明文落库
   durationSec   Int       @default(0) // 录音时长（秒，溯源）
@@ -1090,11 +1543,16 @@ model Transcript {
   status        String    @default("active") // active(待抽取) | extracted(已抽取) | redacted(原文已降解/删除)
   extractedAt   DateTime? // 抽取时间（用完即可降解原文）
   createdBy     String    @default("") // 拉取/导入者 userId（溯源：谁）
+  createdByUserId String?
+  visibility    String    @default("owner_admin_only")
+  aclVersion    Int       @default(1)
   createdAt     DateTime  @default(now())
 
-  @@unique([tenantId, source, externalRef]) // 同租户同源同外部id 幂等（externalRef 为 NULL 时 distinct，不约束多行）
+  @@unique([tenantId, idempotencyDomain, source, externalRef]) // 同 ACL creator 域幂等；externalRef=NULL 时不约束多行
   @@index([tenantId, status])
   @@index([accountId])
+  @@index([tenantId, createdByUserId, visibility])
+  @@index([tenantId, visibility, aclVersion])
 }
 
 // ── 录音源凭据（P2-b · BYO + OAuth）─────────────────────────────────────

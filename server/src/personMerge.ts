@@ -2,12 +2,38 @@ import type { FastifyInstance } from 'fastify';
 import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { ActorRoleSchema, type CommandContext } from '@jianghu/domain-contracts';
+import {
+  ActorRoleSchema,
+  assembleProductAccess,
+  type CapabilityPolicy,
+  type CommandContext,
+} from '@jianghu/domain-contracts';
 import { prisma } from './prisma.js';
 import { runCommand } from './mutation/commandRunner.js';
 import { activePersonWhere } from './activePerson.js';
-import { resolveScopedRelSuggestions } from './suggestionScope.js';
 import { resolveEffectiveResourceScope } from './resourceScope.js';
+import { redirectCandidatePersonReferences } from './candidates/personRelation.js';
+import {
+  prepareFieldCandidatesForPersonMerge,
+  redirectEvidenceCandidatesForPersonMerge,
+  redirectFieldCandidateForPersonMerge,
+  redirectReminderCandidateForPersonMerge,
+} from './candidates/reviewItems.js';
+import {
+  createSensitiveAccessEvaluator,
+  noteDescriptor,
+  requireCandidateReviewAccess,
+  sourceArtifactDescriptor,
+  transcriptDescriptor,
+} from './sensitiveAccess.js';
+import {
+  ensureSourceArtifactForNote,
+  ensureSourceArtifactForTranscript,
+  SOURCE_ARTIFACT_METADATA_SELECT,
+  sourceArtifactMetadataIsValid,
+} from './sourceArtifacts/service.js';
+
+const INTERNAL_CAPABILITY_POLICY = assembleProductAccess({ edition: 'internal' }).policy;
 
 const roleDecisionSchema = z.enum(['keep_target', 'keep_source']);
 export const PersonMergeDecisionSchema = z.object({
@@ -208,6 +234,7 @@ export async function executePersonMerge(
   input: PersonMergeDecision,
   tx: Tx,
   hooks: PersonMergeTestHooks = {},
+  capabilityPolicy: CapabilityPolicy = INTERNAL_CAPABILITY_POLICY,
 ): Promise<PersonMergeReceipt> {
   if (input.sourcePersonId === input.targetPersonId) throw new MergeInputError('源人物和目标人物必须不同');
   const accountId = await requireFullMergeAccount(ctx, input, tx);
@@ -219,6 +246,11 @@ export async function executePersonMerge(
   if (!target || !source || target.accountId !== source.accountId) throw new MergeNotFoundError('人物不存在或不属于同一客户');
   const account = await tx.account.findFirst({ where: { id: target.accountId, tenantId: ctx.tenantId, archivedAt: null }, select: { id: true } });
   if (!account) throw new MergeNotFoundError('客户不存在');
+  const candidateReview = {
+    actorId: ctx.actorId,
+    actorRole: ctx.actorRole,
+    capabilityPolicy,
+  };
 
   const opportunities = await tx.opportunity.findMany({
     where: { tenantId: ctx.tenantId, accountId: account.id }, select: { id: true, accountId: true },
@@ -236,8 +268,9 @@ export async function executePersonMerge(
     throw new MergeInputError('每个实际角色冲突都必须提供且仅提供一个明确决策');
   }
 
-  const [members, participants, edges, burningIssues, evidenceEvents, notes, planActions, strategyCards, transcripts, advisorMsgs,
-    relSuggestions, personSuggestions, changeProposals, reminders] = await Promise.all([
+  const [members, participants, edges, burningIssues, evidenceEvents, notes, planActions, strategyCards, transcripts,
+    detachedSourceArtifacts, advisorMsgs,
+    relSuggestionRefs, personSuggestions, changeProposalRefs, reminderRefs] = await Promise.all([
     tx.opportunityMember.findMany({ where: { tenantId: ctx.tenantId, personId: { in: [target.id, source.id] } }, orderBy: { id: 'asc' } }),
     tx.matterParticipant.findMany({ where: { tenantId: ctx.tenantId, personId: { in: [target.id, source.id] } }, orderBy: { id: 'asc' } }),
     tx.edge.findMany({ where: { tenantId: ctx.tenantId, OR: [
@@ -245,23 +278,35 @@ export async function executePersonMerge(
     ] }, orderBy: { id: 'asc' } }),
     tx.burningIssue.findMany({ where: { tenantId: ctx.tenantId, personId: source.id }, select: { id: true, opportunityId: true } }),
     tx.evidenceEvent.findMany({ where: { tenantId: ctx.tenantId, personId: source.id }, select: { id: true, accountId: true, opportunityId: true } }),
-    tx.note.findMany({ where: { tenantId: ctx.tenantId, personId: source.id }, select: { id: true, accountId: true, opportunityId: true } }),
+    tx.note.findMany({ where: { tenantId: ctx.tenantId, personId: source.id }, select: {
+      id: true, tenantId: true, accountId: true, opportunityId: true, personId: true,
+      createdByUserId: true, visibility: true, aclVersion: true,
+    } }),
     tx.planAction.findMany({ where: { tenantId: ctx.tenantId, personId: source.id }, select: { id: true, accountId: true, opportunityId: true } }),
     tx.strategyCard.findMany({ where: { tenantId: ctx.tenantId, personId: source.id }, select: { id: true, accountId: true, opportunityId: true } }),
-    tx.transcript.findMany({ where: { tenantId: ctx.tenantId, personId: source.id }, select: { id: true, accountId: true, opportunityId: true } }),
+    tx.transcript.findMany({ where: { tenantId: ctx.tenantId, personId: source.id }, select: {
+      id: true, tenantId: true, accountId: true, opportunityId: true, personId: true,
+      createdByUserId: true, visibility: true, aclVersion: true,
+    } }),
+    tx.sourceArtifact.findMany({
+      where: {
+        tenantId: ctx.tenantId,
+        personId: source.id,
+        OR: [{ backingKind: 'external_reference' }, { retentionState: 'deleted' }],
+      },
+      select: SOURCE_ARTIFACT_METADATA_SELECT,
+    }),
     tx.advisorMsg.findMany({ where: { tenantId: ctx.tenantId, personId: source.id }, select: { id: true, accountId: true, opportunityId: true } }),
     tx.relSuggestion.findMany({ where: { tenantId: ctx.tenantId, OR: [
       { sourceKind: 'person', sourcePersonId: source.id }, { targetKind: 'person', targetPersonId: source.id },
-    ] } }),
+    ] }, select: { id: true } }),
     tx.personSuggestion.findMany({ where: { tenantId: ctx.tenantId, resolvedPersonId: source.id }, select: { id: true, accountId: true, opportunityId: true } }),
     tx.changeProposal.findMany({ where: {
       tenantId: ctx.tenantId, entityKind: { in: ['person', 'personLog', 'oppRole'] }, entityId: { in: [target.id, source.id] },
-    }, select: {
-      id: true, accountId: true, opportunityId: true, entityKind: true, entityId: true, field: true, status: true, dedupeKey: true,
-    }, orderBy: { id: 'asc' } }),
+    }, select: { id: true }, orderBy: { id: 'asc' } }),
     tx.reminder.findMany({ where: {
       tenantId: ctx.tenantId, kind: { in: ['sentiment_recheck', 'form_empty'] }, entityId: { in: [target.id, source.id] },
-    }, select: { id: true, accountId: true, opportunityId: true, entityId: true, kind: true } }),
+    }, select: { id: true } }),
   ]);
 
   for (const member of members) requireAccountOpportunity(account.id, member.opportunityId, opportunityAccounts);
@@ -293,15 +338,131 @@ export async function executePersonMerge(
     if (row.accountId !== account.id) throw new MergeNotFoundError('引用客户异常');
     requireAccountOpportunity(account.id, row.opportunityId, opportunityAccounts);
   }
-  for (const row of relSuggestions) requireAccountOpportunity(account.id, row.opportunityId, opportunityAccounts);
-  const scopedRelSuggestions = await resolveScopedRelSuggestions(tx, ctx.tenantId, relSuggestions);
-  if (scopedRelSuggestions.length !== relSuggestions.length) throw new MergeNotFoundError('关系候选端点父树异常');
-  for (const row of changeProposals) {
+  for (const row of detachedSourceArtifacts) {
+    if (!sourceArtifactMetadataIsValid(row) || row.accountId !== account.id) {
+      throw new MergeNotFoundError('来源资料引用异常');
+    }
+    requireAccountOpportunity(account.id, row.matterId, opportunityAccounts);
+  }
+  const sensitiveEvaluator = await createSensitiveAccessEvaluator(tx, {
+    tenantId: ctx.tenantId, userId: ctx.actorId, role: ctx.actorRole,
+  }, capabilityPolicy);
+  const sensitiveDecisions = await sensitiveEvaluator.authorizeMany([
+    ...notes.map(noteDescriptor),
+    ...transcripts.map(transcriptDescriptor),
+    ...detachedSourceArtifacts.map(sourceArtifactDescriptor),
+  ], 'manage');
+  if (sensitiveDecisions.some((access) => !access.allowed)) {
+    throw new MergeNotFoundError('敏感引用不存在或无权限');
+  }
+  const relSuggestions = [] as Array<{
+    id: string;
+    opportunityId: string;
+    sourceKind: string;
+    sourcePersonId: string;
+    targetKind: string;
+    targetPersonId: string;
+  }>;
+  for (const ref of relSuggestionRefs) {
+    await requireCandidateReviewAccess(
+      tx, ctx.tenantId, 'RelSuggestion', ref.id, candidateReview,
+    );
+    const row = await tx.relSuggestion.findFirst({
+      where: { id: ref.id, tenantId: ctx.tenantId },
+      select: {
+        id: true, opportunityId: true,
+        sourceKind: true, sourcePersonId: true,
+        targetKind: true, targetPersonId: true,
+      },
+    });
+    if (!row) throw new MergeNotFoundError('关系候选不存在或无权限');
+    relSuggestions.push(row);
+    requireAccountOpportunity(account.id, row.opportunityId, opportunityAccounts);
+  }
+  const candidateEndpointIds = new Set<string>();
+  const formalRelationEndpointIds = new Set<string>();
+  for (const row of relSuggestions) {
+    if (row.sourceKind === 'suggestion') candidateEndpointIds.add(row.sourcePersonId);
+    else if (row.sourceKind === 'person') formalRelationEndpointIds.add(row.sourcePersonId);
+    else throw new MergeNotFoundError('关系候选端点父树异常');
+    if (row.targetKind === 'suggestion') candidateEndpointIds.add(row.targetPersonId);
+    else if (row.targetKind === 'person') formalRelationEndpointIds.add(row.targetPersonId);
+    else throw new MergeNotFoundError('关系候选端点父树异常');
+  }
+  const [formalRelationEndpoints, candidateRelationEndpoints] = await Promise.all([
+    formalRelationEndpointIds.size === 0 ? [] : tx.person.findMany({
+      where: { tenantId: ctx.tenantId, id: { in: [...formalRelationEndpointIds] }, ...activePersonWhere },
+      select: { id: true, accountId: true },
+    }),
+    candidateEndpointIds.size === 0 ? [] : tx.candidate.findMany({
+      where: {
+        tenantId: ctx.tenantId,
+        legacySourceKind: 'PersonSuggestion',
+        legacySourceId: { in: [...candidateEndpointIds] },
+      },
+      select: { kind: true, accountId: true, matterId: true, legacySourceId: true },
+    }),
+  ]);
+  const formalRelationById = new Map(formalRelationEndpoints.map((row) => [row.id, row]));
+  const candidateRelationById = new Map(candidateRelationEndpoints.map((row) => [row.legacySourceId, row]));
+  const relationEndpointValid = (
+    kind: string, id: string, expectedMatterId: string,
+  ): boolean => {
+    if (kind === 'person') return formalRelationById.get(id)?.accountId === account.id;
+    if (kind !== 'suggestion') return false;
+    const endpoint = candidateRelationById.get(id);
+    return endpoint?.kind === 'person_create'
+      && endpoint.accountId === account.id
+      && (!endpoint.matterId || endpoint.matterId === expectedMatterId);
+  };
+  if (relSuggestions.some((row) => (
+    !relationEndpointValid(row.sourceKind, row.sourcePersonId, row.opportunityId)
+    || !relationEndpointValid(row.targetKind, row.targetPersonId, row.opportunityId)
+  ))) throw new MergeNotFoundError('关系候选端点父树异常');
+  const changeProposals = [] as Array<{
+    id: string;
+    accountId: string;
+    opportunityId: string | null;
+    entityKind: string;
+    entityId: string;
+    field: string;
+    status: string;
+    dedupeKey: string | null;
+  }>;
+  for (const ref of changeProposalRefs) {
+    await requireCandidateReviewAccess(
+      tx, ctx.tenantId, 'ChangeProposal', ref.id, candidateReview,
+    );
+    const row = await tx.changeProposal.findFirst({
+      where: { id: ref.id, tenantId: ctx.tenantId },
+      select: {
+        id: true, accountId: true, opportunityId: true,
+        entityKind: true, entityId: true, field: true, status: true, dedupeKey: true,
+      },
+    });
+    if (!row) throw new MergeNotFoundError('字段候选不存在或无权限');
+    changeProposals.push(row);
     if (row.accountId !== account.id) throw new MergeNotFoundError('引用客户异常');
     if (row.entityKind === 'oppRole' && !row.opportunityId) throw new MergeNotFoundError('引用父树异常');
     requireAccountOpportunity(account.id, row.opportunityId, opportunityAccounts);
   }
-  for (const row of reminders) {
+  const reminders = [] as Array<{
+    id: string;
+    accountId: string;
+    opportunityId: string | null;
+    entityId: string | null;
+    kind: string;
+  }>;
+  for (const ref of reminderRefs) {
+    await requireCandidateReviewAccess(
+      tx, ctx.tenantId, 'Reminder', ref.id, candidateReview,
+    );
+    const row = await tx.reminder.findFirst({
+      where: { id: ref.id, tenantId: ctx.tenantId },
+      select: { id: true, accountId: true, opportunityId: true, entityId: true, kind: true },
+    });
+    if (!row) throw new MergeNotFoundError('提醒候选不存在或无权限');
+    reminders.push(row);
     if (row.accountId !== account.id || !row.opportunityId) throw new MergeNotFoundError('引用父树异常');
     requireAccountOpportunity(account.id, row.opportunityId, opportunityAccounts);
   }
@@ -416,21 +577,66 @@ export async function executePersonMerge(
 
   const updateMany = async (model: { updateMany: (args: any) => Promise<{ count: number }> }, where: object, data: object) =>
     (await model.updateMany({ where, data })).count;
+  const redirectSensitiveRows = async (
+    kind: 'note' | 'transcript',
+    model: { updateMany: (args: any) => Promise<{ count: number }> },
+    rows: ReadonlyArray<{ id: string; aclVersion: number }>,
+  ): Promise<number> => {
+    let redirected = 0;
+    for (const row of rows) {
+      const changed = await model.updateMany({
+        where: {
+          id: row.id,
+          tenantId: ctx.tenantId,
+          personId: source.id,
+          aclVersion: row.aclVersion,
+        },
+        data: { personId: target.id, aclVersion: { increment: 1 } },
+      });
+      if (changed.count !== 1) throw new MergeNotFoundError('敏感引用已变化或无权限');
+      if (kind === 'note') await ensureSourceArtifactForNote(tx, ctx.tenantId, row.id);
+      else await ensureSourceArtifactForTranscript(tx, ctx.tenantId, row.id);
+      redirected += 1;
+    }
+    return redirected;
+  };
+  const redirectDetachedSourceArtifacts = async (): Promise<number> => {
+    let redirected = 0;
+    for (const row of detachedSourceArtifacts) {
+      const changed = await tx.sourceArtifact.updateMany({
+        where: {
+          id: row.id,
+          tenantId: ctx.tenantId,
+          personId: source.id,
+          aclVersion: row.aclVersion,
+        },
+        data: { personId: target.id, aclVersion: { increment: 1 } },
+      });
+      if (changed.count !== 1) throw new MergeNotFoundError('来源资料已变化或无权限');
+      redirected += 1;
+    }
+    return redirected;
+  };
   let deletedReminders = 0;
   let redirectedReminders = 0;
   const targetReminderKeys = new Set(reminders.filter((row) => row.entityId === target.id)
     .map((row) => `${row.opportunityId ?? ''}\u0000${row.kind}`));
   for (const reminder of reminders.filter((row) => row.entityId === source.id)) {
     const key = `${reminder.opportunityId ?? ''}\u0000${reminder.kind}`;
-    if (targetReminderKeys.has(key)) {
-      await tx.reminder.delete({ where: { id: reminder.id } });
+    const duplicate = targetReminderKeys.has(key);
+    await redirectReminderCandidateForPersonMerge(tx, {
+      tenantId: ctx.tenantId,
+      id: reminder.id,
+      targetId: target.id,
+      dedupeKey: `${reminder.opportunityId ?? ''}:${reminder.kind}:${target.id}`,
+      duplicate,
+      review: candidateReview,
+    });
+    if (duplicate) {
       deletedReminders += 1;
       continue;
     }
-    await tx.reminder.update({ where: { id: reminder.id }, data: {
-      entityId: target.id,
-      dedupeKey: `${reminder.opportunityId ?? ''}:${reminder.kind}:${target.id}`,
-    } });
+    targetReminderKeys.add(key);
     redirectedReminders += 1;
   }
   let redirectedChangeProposals = 0;
@@ -459,43 +665,67 @@ export async function executePersonMerge(
     return left.id.localeCompare(right.id);
   });
   if (orderedProposals.length) {
-    await tx.changeProposal.updateMany({ where: { id: { in: orderedProposals.map((proposal) => proposal.id) } }, data: { dedupeKey: null } });
+    await prepareFieldCandidatesForPersonMerge(tx, {
+      tenantId: ctx.tenantId,
+      ids: orderedProposals.map((proposal) => proposal.id),
+      review: candidateReview,
+    });
   }
   for (const proposal of orderedProposals) {
     const sourceBacked = proposal.entityId === source.id;
     if (sourceBacked) redirectedChangeProposals += 1;
-    if (proposal.status !== 'pending') {
-      await tx.changeProposal.update({ where: { id: proposal.id }, data: { entityId: target.id, dedupeKey: null } });
-      continue;
-    }
-    if (!proposalWins(proposal)) {
-      await tx.changeProposal.update({ where: { id: proposal.id }, data: { entityId: target.id, status: 'rejected', dedupeKey: null } });
+    const reject = proposal.status === 'pending' && !proposalWins(proposal);
+    if (reject) {
       rejectedStaleRoleProposals += 1;
-      continue;
     }
-    const key = proposalKey(proposal);
-    const dedupeKey = claimedProposalKeys.has(key) ? null : key;
-    claimedProposalKeys.add(key);
-    await tx.changeProposal.update({ where: { id: proposal.id }, data: { entityId: target.id, dedupeKey } });
+    let dedupeKey: string | null = null;
+    if (proposal.status === 'pending' && !reject) {
+      const key = proposalKey(proposal);
+      dedupeKey = claimedProposalKeys.has(key) ? null : key;
+      claimedProposalKeys.add(key);
+    }
+    await redirectFieldCandidateForPersonMerge(tx, {
+      tenantId: ctx.tenantId,
+      id: proposal.id,
+      targetId: target.id,
+      reject,
+      dedupeKey,
+      review: candidateReview,
+    });
   }
+  const candidateRedirects = await redirectCandidatePersonReferences(tx, {
+    tenantId: ctx.tenantId,
+    accountId: account.id,
+    from: { kind: 'person', id: source.id },
+    toPersonId: target.id,
+    review: candidateReview,
+  });
+  const redirectedEvidenceEvents = await redirectEvidenceCandidatesForPersonMerge(tx, {
+    tenantId: ctx.tenantId,
+    accountId: account.id,
+    fromPersonId: source.id,
+    toPersonId: target.id,
+    review: candidateReview,
+  });
   const redirected: RedirectCounts = {
     oppRoles: redirectedOppRoles,
     opportunityMembers: redirectedMembers,
     matterParticipants: redirectedParticipants,
     edges: edgeRedirect.count + edgeTargetRedirect.count,
     burningIssues: await updateMany(tx.burningIssue, { tenantId: ctx.tenantId, personId: source.id }, { personId: target.id }),
-    evidenceEvents: await updateMany(tx.evidenceEvent, { tenantId: ctx.tenantId, personId: source.id }, { personId: target.id }),
-    notes: await updateMany(tx.note, { tenantId: ctx.tenantId, personId: source.id }, { personId: target.id }),
+    evidenceEvents: redirectedEvidenceEvents,
+    notes: await redirectSensitiveRows('note', tx.note, notes),
     planActions: await updateMany(tx.planAction, { tenantId: ctx.tenantId, personId: source.id }, {
       personId: target.id,
       version: { increment: 1 },
     }),
     strategyCards: await updateMany(tx.strategyCard, { tenantId: ctx.tenantId, personId: source.id }, { personId: target.id }),
-    transcripts: await updateMany(tx.transcript, { tenantId: ctx.tenantId, personId: source.id }, { personId: target.id }),
+    transcripts: await redirectSensitiveRows('transcript', tx.transcript, transcripts),
+    sourceArtifacts: await redirectDetachedSourceArtifacts(),
     advisorMsgs: await updateMany(tx.advisorMsg, { tenantId: ctx.tenantId, personId: source.id }, { personId: target.id }),
-    relSuggestionSources: await updateMany(tx.relSuggestion, { tenantId: ctx.tenantId, sourceKind: 'person', sourcePersonId: source.id }, { sourcePersonId: target.id }),
-    relSuggestionTargets: await updateMany(tx.relSuggestion, { tenantId: ctx.tenantId, targetKind: 'person', targetPersonId: source.id }, { targetPersonId: target.id }),
-    personSuggestions: await updateMany(tx.personSuggestion, { tenantId: ctx.tenantId, resolvedPersonId: source.id }, { resolvedPersonId: target.id }),
+    relSuggestionSources: candidateRedirects.relationSources,
+    relSuggestionTargets: candidateRedirects.relationTargets,
+    personSuggestions: candidateRedirects.resolvedPersons,
     changeProposals: redirectedChangeProposals,
     staleRoleProposalsRejected: rejectedStaleRoleProposals,
     reminders: redirectedReminders,
@@ -546,7 +776,12 @@ export function personMergeHttpError(error: unknown, fallback: string): {
   body: { error: string; code?: string };
   unexpected: boolean;
 } {
-  const value = error && typeof error === 'object' ? error as { statusCode?: unknown; code?: unknown; message?: unknown } : {};
+  const value = error && typeof error === 'object'
+    ? error as { statusCode?: unknown; code?: unknown; message?: unknown; scopedNotFound?: unknown }
+    : {};
+  if (value.scopedNotFound === true) {
+    return { statusCode: 404, body: { error: '资源不存在或无权限' }, unexpected: false };
+  }
   if (typeof value.statusCode !== 'number') return { statusCode: 500, body: { error: fallback }, unexpected: true };
   return {
     statusCode: value.statusCode,
@@ -558,7 +793,7 @@ export function personMergeHttpError(error: unknown, fallback: string): {
   };
 }
 
-export function personMergeRoutes(app: FastifyInstance): void {
+export function personMergeRoutes(app: FastifyInstance, capabilityPolicy: CapabilityPolicy): void {
   app.get('/api/repair/person-merge/preview', { preHandler: [app.authenticate] }, async (req: any, reply) => {
     if (!['owner', 'admin', 'member'].includes(req.user.role)) return reply.code(403).send({ error: '权限不足' });
     const query = z.object({ targetPersonId: z.string().min(1), sourcePersonId: z.string().min(1) }).strict().safeParse(req.query);
@@ -581,7 +816,9 @@ export function personMergeRoutes(app: FastifyInstance): void {
       const command = await runCommand<PersonMergeReceipt>(
         commandContext(req),
         { kind: 'person-merge', idempotencyKey: key, payload: parsed.data },
-        (tx) => executePersonMerge(commandContext(req), parsed.data, tx),
+        (tx) => executePersonMerge(
+          commandContext(req), parsed.data, tx, {}, capabilityPolicy,
+        ),
         prisma,
       );
       return command.result;

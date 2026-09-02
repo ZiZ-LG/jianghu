@@ -531,4 +531,899 @@ describe('PostgreSQL schema delivery', () => {
     expect(integrationDrill).toContain('[ -d "$path" ] || continue');
     expect(integrationDrill).not.toContain('for path in prisma/postgres/migrations/*; do');
   });
+
+  it('keeps the CORE-201 schema expansion portable and adds the CORE-203 versioned data cutover', async () => {
+    const sqliteSchema = await read('prisma/schema.prisma');
+    const postgresSchema = await read('prisma/postgres/schema.prisma');
+    const preCandidateSchema = await read('prisma/postgres/legacy/20260824_pre_core201.prisma').catch(() => '');
+    const migration = await read(
+      'prisma/postgres/migrations/20260824000000_expand_candidate_foundation/migration.sql',
+    ).catch(() => '');
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const sqliteUpgrade = await read('scripts/upgrade-sqlite-schema.ts');
+    const schemaState = await read('scripts/postgres-candidate-schema-state.ts').catch(() => '');
+    const packageJson = JSON.parse(await read('package.json')) as {
+      scripts?: Record<string, string>;
+    };
+
+    for (const schema of [sqliteSchema, postgresSchema]) {
+      expect(schema).toMatch(/model Tenant \{[\s\S]*?candidates\s+Candidate\[\]/);
+      expect(schema).toMatch(/model Candidate \{[\s\S]*?tenant\s+Tenant\s+@relation\(fields: \[tenantId\], references: \[id\], onDelete: Cascade\)/);
+      for (const field of [
+        'kind', 'status', 'accountId', 'matterId', 'targetKind', 'targetId', 'fieldKey',
+        'oldValue', 'newValue', 'payload', 'source', 'sourceRef', 'evidence', 'confidence',
+        'sourceArtifactId', 'reviewBatchId', 'createdByUserId', 'visibility', 'dedupeKey',
+        'legacySourceKind', 'legacySourceId', 'version', 'createdAt', 'updatedAt',
+      ]) expect(schema).toMatch(new RegExp(`model Candidate \\{[\\s\\S]*?\\b${field}\\s+`));
+      expect(schema).toMatch(/model Candidate \{[\s\S]*?@@unique\(\[tenantId, dedupeKey\]\)/);
+      expect(schema).toMatch(/model Candidate \{[\s\S]*?@@unique\(\[tenantId, legacySourceKind, legacySourceId\]\)/);
+      for (const index of [
+        '@@index([tenantId, status, createdAt])',
+        '@@index([tenantId, accountId, status, createdAt])',
+        '@@index([tenantId, matterId, status, createdAt])',
+        '@@index([tenantId, sourceArtifactId])',
+        '@@index([tenantId, reviewBatchId])',
+        '@@index([tenantId, createdByUserId, visibility])',
+      ]) expect(schema).toContain(index);
+      expect(schema).not.toMatch(/^\s*\w+\s+Json[?\[\]]*/m);
+      expect(schema).not.toMatch(/^enum\s+/m);
+    }
+
+    expect(preCandidateSchema).not.toContain('model Candidate');
+    expect(migration.trimStart().startsWith('BEGIN;')).toBe(true);
+    expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(migration).toContain("SET LOCAL lock_timeout = '30s'");
+    expect(migration).toContain("SET LOCAL statement_timeout = '15min'");
+    expect(migration).toContain('CREATE TABLE "Candidate"');
+    expect(migration).toContain('FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id")');
+    for (const identity of [
+      'Candidate_tenantId_dedupeKey_key',
+      'Candidate_tenantId_legacySourceKind_legacySourceId_key',
+      'Candidate_tenantId_status_createdAt_idx',
+      'Candidate_tenantId_accountId_status_createdAt_idx',
+      'Candidate_tenantId_matterId_status_createdAt_idx',
+      'Candidate_tenantId_sourceArtifactId_idx',
+      'Candidate_tenantId_reviewBatchId_idx',
+      'Candidate_tenantId_createdByUserId_visibility_idx',
+    ]) expect(migration).toContain(`"${identity}"`);
+    expect(migration).not.toMatch(
+      /(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+"(?:PersonSuggestion|RelSuggestion|ChangeProposal|Reminder|EvidenceEvent|Candidate)"/i,
+    );
+
+    expect(packageJson.scripts?.['migrate:candidate-report']).toBe(
+      'tsx scripts/migrate-candidates.ts --dry-run',
+    );
+    expect(packageJson.scripts?.['migrate:candidate-verify']).toBe(
+      'tsx scripts/migrate-candidates.ts --verify',
+    );
+    expect(packageJson.scripts?.['migrate:candidate-apply']).toBe(
+      'tsx scripts/migrate-candidates.ts --apply',
+    );
+    expect(deployScript).toContain('CANDIDATE_MIGRATION=20260824000000_expand_candidate_foundation');
+    expect(deployScript).toContain('PRE_CANDIDATE_SCHEMA=prisma/postgres/legacy/20260824_pre_core201.prisma');
+    expect(deployScript).toContain('recover_incomplete_candidate_migration');
+    expect(deployScript).toContain('adopt_existing_candidate_schema_if_safe');
+    expect(deployScript).toContain('postgres-candidate-schema-state.ts');
+    expect(deployScript).toContain('npm run migrate:candidate-report');
+    expect(deployScript).toContain('npm run migrate:candidate-apply');
+    expect(deployScript).toContain('npm run migrate:candidate-verify');
+    expect(deployScript).toContain('uninitialized|legacy) return 0 ;;');
+    expect(schemaState).toContain("process.stdout.write('uninitialized')");
+    expect(schemaState).toContain("process.stdout.write('legacy')");
+    expect(schemaState).toContain("process.stdout.write('expanded')");
+    expect(schemaState).toContain("process.stdout.write('partial')");
+    expect(schemaState).not.toMatch(/\bAS\s+constraint\b/i);
+    expect(schemaState).toContain('FROM pg_constraint AS candidate_constraint');
+    expect(sqliteUpgrade).toContain('inspectCandidateSchemaState');
+    expect(sqliteUpgrade).toContain('partial Candidate foundation detected');
+    expect(sqliteUpgrade).toContain('candidateBackfillRequired');
+    expect(sqliteUpgrade).toContain("['run', 'migrate:candidate-apply']");
+  });
+
+  it('delivers CORE-204 sensitive creator/share ACL as an expand-only dual-database cutover', async () => {
+    const sqliteSchema = await read('prisma/schema.prisma');
+    const postgresSchema = await read('prisma/postgres/schema.prisma');
+    const preAclSchema = await read('prisma/postgres/legacy/20260825_pre_core204.prisma');
+    const migration = await read(
+      'prisma/postgres/migrations/20260825000000_expand_sensitive_resource_acl/migration.sql',
+    );
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const sqliteUpgrade = await read('scripts/upgrade-sqlite-schema.ts');
+    const aclState = await read('scripts/postgres-sensitive-acl-schema-state.ts');
+    const candidateState = await read('scripts/postgres-candidate-schema-state.ts');
+    const migrationCli = await read('scripts/migrate-sensitive-acl.ts');
+    const packageJson = JSON.parse(await read('package.json')) as { scripts?: Record<string, string> };
+
+    for (const schema of [sqliteSchema, postgresSchema]) {
+      expect(schema).toMatch(/model SourceArtifact \{[\s\S]*?createdByUserId\s+String\?/);
+      expect(schema).toMatch(/model SourceArtifact \{[\s\S]*?visibility\s+String\s+@default\("owner_admin_only"\)/);
+      expect(schema).toMatch(/model SourceArtifact \{[\s\S]*?aclVersion\s+Int\s+@default\(1\)/);
+      expect(schema).toMatch(/model SensitiveResourceGrant \{[\s\S]*?resourceAclVersion\s+Int/);
+      expect(schema).toMatch(/model Note \{[\s\S]*?createdByUserId\s+String\?[\s\S]*?visibility\s+String[\s\S]*?aclVersion\s+Int/);
+      expect(schema).toMatch(/model Transcript \{[\s\S]*?createdByUserId\s+String\?[\s\S]*?visibility\s+String[\s\S]*?aclVersion\s+Int/);
+      expect(schema).toMatch(/model Transcript \{[\s\S]*?idempotencyDomain\s+String\s+@default\("system-quarantine-v1"\)/);
+      expect(schema).toContain('@@unique([tenantId, idempotencyDomain, source, externalRef])');
+      expect(schema).toMatch(/model Candidate \{[\s\S]*?aclVersion\s+Int\s+@default\(1\)/);
+      expect(schema).not.toMatch(/^enum\s+/m);
+      expect(schema).not.toMatch(/^\s*\w+\s+Json[?\[\]]*/m);
+    }
+    expect(preAclSchema).toContain('model Candidate');
+    expect(preAclSchema).not.toContain('model SourceArtifact');
+    expect(preAclSchema).not.toContain('model SensitiveResourceGrant');
+    expect(preAclSchema).not.toMatch(/model Candidate \{[^}]*aclVersion/);
+    expect(preAclSchema).not.toContain('idempotencyDomain');
+    expect(preAclSchema).toContain('@@unique([tenantId, source, externalRef])');
+
+    expect(migration.trimStart().startsWith('BEGIN;')).toBe(true);
+    expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(migration).toContain("SET LOCAL lock_timeout = '30s'");
+    expect(migration).toContain("SET LOCAL statement_timeout = '15min'");
+    expect(migration).toContain('LOCK TABLE "Candidate", "Note", "Transcript"');
+    expect(migration.indexOf('sensitive ACL columns partially exist'))
+      .toBeLessThan(migration.indexOf('ALTER TABLE "Candidate"'));
+    expect(migration).toContain('CREATE TABLE "SourceArtifact"');
+    expect(migration).toContain('CREATE TABLE "SensitiveResourceGrant"');
+    expect(migration).toContain('ADD COLUMN "idempotencyDomain" TEXT NOT NULL DEFAULT \'system-quarantine-v1\'');
+    expect(migration).toContain('DROP INDEX "Transcript_tenantId_source_externalRef_key"');
+    expect(migration).toContain('CREATE UNIQUE INDEX "Transcript_tenantId_idempotencyDomain_source_externalRef_key"');
+    expect(migration).toContain('FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id")');
+    expect(migration).toContain('sensitive ACL expansion parity failed');
+    expect(migration).not.toMatch(/(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+"(?:Note|Transcript|Candidate)"/i);
+
+    expect(packageJson.scripts?.['migrate:sensitive-acl-report'])
+      .toBe('tsx scripts/migrate-sensitive-acl.ts --dry-run');
+    expect(packageJson.scripts?.['migrate:sensitive-acl-apply'])
+      .toBe('tsx scripts/migrate-sensitive-acl.ts --apply');
+    expect(packageJson.scripts?.['migrate:sensitive-acl-verify'])
+      .toBe('tsx scripts/migrate-sensitive-acl.ts --verify');
+    expect(migrationCli).toContain('reportSensitiveAclMigration');
+    expect(migrationCli).toContain('applySensitiveAclMigration');
+    expect(migrationCli).toContain('verifySensitiveAclMigration');
+    expect(migrationCli).not.toContain('contentEnc');
+    expect(migrationCli).not.toContain('payload');
+
+    expect(deployScript).toContain('PRE_SENSITIVE_SCHEMA=prisma/postgres/legacy/20260825_pre_core204.prisma');
+    expect(deployScript).toContain('SENSITIVE_ACL_MIGRATION=20260825000000_expand_sensitive_resource_acl');
+    expect(deployScript).toContain('recover_incomplete_sensitive_acl_migration');
+    expect(deployScript).toContain('adopt_existing_sensitive_acl_schema_if_safe');
+    expect(deployScript).toContain('postgres-sensitive-acl-schema-state.ts');
+    expect(deployScript.lastIndexOf('npm run migrate:sensitive-acl-report'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:sensitive-acl-apply'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:sensitive-acl-verify'))
+      .toBeGreaterThan(deployScript.lastIndexOf('npm run migrate:sensitive-acl-apply'));
+    for (const state of ['uninitialized', 'legacy', 'partial']) {
+      expect(aclState).toContain(`process.stdout.write('${state}')`);
+    }
+    expect(aclState).toContain("'expanded'");
+    expect(aclState).toContain('Transcript.idempotencyDomain');
+    expect(aclState).toContain('Transcript_tenantId_idempotencyDomain_source_externalRef_key');
+    expect(candidateState).toContain('expectedBaseColumns');
+    expect(candidateState).toContain('expectedAclColumns');
+    expect(sqliteUpgrade).toContain('inspectSensitiveAclSchemaState');
+    expect(sqliteUpgrade).toContain('partial sensitive resource ACL expansion detected');
+    expect(sqliteUpgrade).toContain("['run', 'migrate:sensitive-acl-apply']");
+    expect(sqliteUpgrade).toContain("['run', 'migrate:sensitive-acl-verify']");
+  });
+
+  it('delivers SAAS-201 as a body-free SourceArtifact projection with guarded dual-database cutover', async () => {
+    const sqliteSchema = await read('prisma/schema.prisma');
+    const postgresSchema = await read('prisma/postgres/schema.prisma');
+    const preSourceSchema = await read('prisma/postgres/legacy/20260825_pre_saas201.prisma');
+    const migration = await read(
+      'prisma/postgres/migrations/20260825010000_expand_source_artifact_projection/migration.sql',
+    );
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const sqliteUpgrade = await read('scripts/upgrade-sqlite-schema.ts');
+    const schemaState = await read('scripts/postgres-source-artifact-schema-state.ts');
+    const sensitiveState = await read('scripts/postgres-sensitive-acl-schema-state.ts');
+    const migrationCli = await read('scripts/migrate-source-artifacts.ts');
+    const packageJson = JSON.parse(await read('package.json')) as { scripts?: Record<string, string> };
+
+    for (const schema of [sqliteSchema, postgresSchema]) {
+      for (const field of [
+        'artifactKind', 'source', 'externalRef', 'idempotencyDomain', 'title', 'occurredAt',
+        'fingerprintKind', 'sourceFingerprint', 'retentionState', 'retentionUpdatedAt',
+      ]) expect(schema).toMatch(new RegExp(`model SourceArtifact \\{[\\s\\S]*?${field}\\s+`));
+      expect(schema).toContain(
+        '@@unique([tenantId, idempotencyDomain, source, externalRef], map: "SourceArtifact_tenantId_domain_source_externalRef_key")',
+      );
+      expect(schema).toContain('@@index([tenantId, artifactKind, createdAt])');
+      expect(schema).toContain('@@index([tenantId, retentionState, updatedAt])');
+      expect(schema).not.toMatch(/model SourceArtifact \{[^}]*\b(?:content|contentEnc|body|payload)\b/);
+      expect(schema).not.toMatch(/^enum\s+/m);
+      expect(schema).not.toMatch(/^\s*\w+\s+Json[?\[\]]*/m);
+    }
+    expect(preSourceSchema).toContain('model SourceArtifact');
+    expect(preSourceSchema).not.toMatch(/model SourceArtifact \{[^}]*artifactKind/);
+    expect(preSourceSchema).not.toContain('SourceArtifact_tenantId_domain_source_externalRef_key');
+
+    expect(migration.trimStart().startsWith('BEGIN;')).toBe(true);
+    expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(migration).toContain("SET LOCAL lock_timeout = '30s'");
+    expect(migration).toContain("SET LOCAL statement_timeout = '15min'");
+    expect(migration).toContain('LOCK TABLE "SourceArtifact" IN SHARE ROW EXCLUSIVE MODE');
+    expect(migration.indexOf('projection columns partially exist'))
+      .toBeLessThan(migration.indexOf('ADD COLUMN "artifactKind"'));
+    expect(migration.match(/ADD COLUMN/g)).toHaveLength(10);
+    expect(migration).toContain('SourceArtifact_tenantId_domain_source_externalRef_key');
+    expect(migration).toContain('SourceArtifact_tenantId_artifactKind_createdAt_idx');
+    expect(migration).toContain('SourceArtifact_tenantId_retentionState_updatedAt_idx');
+    expect(migration).toContain('projection expansion parity failed');
+    expect(migration).not.toMatch(/(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+"(?:Note|Transcript|SourceArtifact)"/i);
+
+    expect(packageJson.scripts?.['migrate:source-artifact-report'])
+      .toBe('tsx scripts/migrate-source-artifacts.ts --dry-run');
+    expect(packageJson.scripts?.['migrate:source-artifact-apply'])
+      .toBe('tsx scripts/migrate-source-artifacts.ts --apply');
+    expect(packageJson.scripts?.['migrate:source-artifact-verify'])
+      .toBe('tsx scripts/migrate-source-artifacts.ts --verify');
+    expect(migrationCli).toContain('reportSourceArtifactMigration');
+    expect(migrationCli).toContain('applySourceArtifactMigration');
+    expect(migrationCli).toContain('verifySourceArtifactMigration');
+    expect(migrationCli).not.toContain('contentEnc');
+    expect(migrationCli).not.toContain('Note.content');
+
+    expect(deployScript).toContain('PRE_SOURCE_ARTIFACT_SCHEMA=prisma/postgres/legacy/20260825_pre_saas201.prisma');
+    expect(deployScript).toContain('SOURCE_ARTIFACT_MIGRATION=20260825010000_expand_source_artifact_projection');
+    expect(deployScript).toContain('recover_incomplete_source_artifact_migration');
+    expect(deployScript).toContain('adopt_existing_source_artifact_schema_if_safe');
+    expect(deployScript).toContain('postgres-source-artifact-schema-state.ts');
+    expect(deployScript.lastIndexOf('npm run migrate:source-artifact-report'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:source-artifact-apply'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:source-artifact-verify'))
+      .toBeGreaterThan(deployScript.lastIndexOf('npm run migrate:source-artifact-apply'));
+    expect(schemaState).toContain("process.stdout.write('uninitialized')");
+    expect(schemaState).toContain("process.stdout.write('legacy')");
+    expect(schemaState).toContain("'expanded'");
+    expect(schemaState).toContain("'partial'");
+    expect(schemaState).toContain('expectedColumns');
+    expect(schemaState).toContain('expectedIndexes');
+    expect(sensitiveState).toContain('sourceArtifactBaseColumns');
+    expect(sensitiveState).toContain('sourceArtifactSuccessorColumns');
+    expect(sqliteUpgrade).toContain('inspectSourceArtifactSchemaState');
+    expect(sqliteUpgrade).toContain('partial SourceArtifact projection expansion detected');
+    expect(sqliteUpgrade).toContain("['run', 'migrate:source-artifact-apply']");
+    expect(sqliteUpgrade).toContain("['run', 'migrate:source-artifact-verify']");
+  });
+});
+
+describe('CORE-205 ReviewBatch and Interaction expansion', () => {
+  it('keeps Candidate single-authority and wires guarded SQLite/PostgreSQL migration gates', async () => {
+    const sqliteSchema = await read('prisma/schema.prisma');
+    const postgresSchema = await read('prisma/postgres/schema.prisma');
+    const preReviewSchema = await read('prisma/postgres/legacy/20260825_pre_core205.prisma');
+    const migration = await read(
+      'prisma/postgres/migrations/20260825020000_expand_review_batch_interaction/migration.sql',
+    );
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const sqliteUpgrade = await read('scripts/upgrade-sqlite-schema.ts');
+    const schemaState = await read('scripts/postgres-review-batch-schema-state.ts');
+    const migrationCli = await read('scripts/migrate-review-batches.ts');
+    const packageJson = JSON.parse(await read('package.json')) as { scripts?: Record<string, string> };
+
+    for (const schema of [sqliteSchema, postgresSchema]) {
+      expect(schema.match(/^model Candidate \{/gm)).toHaveLength(1);
+      expect(schema).not.toContain('model ReviewCandidate {');
+      expect(schema).toContain('model ReviewBatch {');
+      expect(schema).toContain('model Interaction {');
+      expect(schema).toContain('@@index([tenantId, sourceArtifactId, status])');
+      expect(schema).toContain('@@index([tenantId, interactionId])');
+      expect(schema).toContain('@@index([tenantId, sourceArtifactId])');
+      expect(schema).not.toMatch(/model (?:ReviewBatch|Interaction) \{[^}]*(?:contentEnc|body|evidence|payload)/);
+      expect(schema).not.toMatch(/^enum\s+/m);
+      expect(schema).not.toMatch(/^\s*\w+\s+Json[?\[\]]*/m);
+    }
+    expect(preReviewSchema).toContain('model SourceArtifact {');
+    expect(preReviewSchema).not.toContain('model ReviewBatch {');
+    expect(preReviewSchema).not.toContain('model Interaction {');
+
+    expect(migration.trimStart().startsWith('BEGIN;')).toBe(true);
+    expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(migration).toContain("SET LOCAL lock_timeout = '30s'");
+    expect(migration).toContain("SET LOCAL statement_timeout = '15min'");
+    expect(migration).toContain('LOCK TABLE "Candidate", "SourceArtifact" IN SHARE ROW EXCLUSIVE MODE');
+    expect(migration.indexOf('LOCK TABLE "Candidate", "SourceArtifact" IN SHARE ROW EXCLUSIVE MODE'))
+      .toBeLessThan(migration.indexOf('pre-expansion Candidate attachment drift detected'));
+    expect(migration.indexOf('pre-expansion Candidate attachment drift detected'))
+      .toBeLessThan(migration.indexOf('CREATE TABLE "ReviewBatch"'));
+    expect(migration).toContain('CREATE TABLE "Interaction"');
+    expect(migration).toContain('ReviewBatch table expansion parity failed');
+    expect(migration).not.toMatch(/(?:UPDATE|DELETE\s+FROM)\s+"(?:Candidate|SourceArtifact|Person|Edge|PlanAction)"/i);
+
+    expect(packageJson.scripts?.['migrate:review-batch-report'])
+      .toBe('tsx scripts/migrate-review-batches.ts --dry-run');
+    expect(packageJson.scripts?.['migrate:review-batch-apply'])
+      .toBe('tsx scripts/migrate-review-batches.ts --apply');
+    expect(packageJson.scripts?.['migrate:review-batch-verify'])
+      .toBe('tsx scripts/migrate-review-batches.ts --verify');
+    expect(migrationCli).toContain('reportReviewBatchMigration');
+    expect(migrationCli).toContain('applyReviewBatchMigration');
+    expect(migrationCli).toContain('verifyReviewBatchMigration');
+
+    expect(deployScript).toContain('PRE_REVIEW_BATCH_SCHEMA=prisma/postgres/legacy/20260825_pre_core205.prisma');
+    expect(deployScript).toContain('REVIEW_BATCH_MIGRATION=20260825020000_expand_review_batch_interaction');
+    expect(deployScript).toContain('recover_incomplete_review_batch_migration');
+    expect(deployScript).toContain('adopt_existing_review_batch_schema_if_safe');
+    expect(deployScript).toContain('review_batch_schema_matches_known_state');
+    expect(deployScript).toMatch(
+      /source_artifact_schema_matches_known_state\(\) \{[\s\S]*schema_matches "\$PRE_REVIEW_BATCH_SCHEMA"[\s\S]*schema_matches "\$SCHEMA"/,
+    );
+    expect(deployScript.lastIndexOf('npm run migrate:review-batch-report'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:review-batch-apply'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:review-batch-verify'))
+      .toBeGreaterThan(deployScript.lastIndexOf('npm run migrate:review-batch-apply'));
+    expect(schemaState).toContain("process.stdout.write('uninitialized')");
+    expect(schemaState).toContain("process.stdout.write('legacy')");
+    expect(schemaState).toContain("'expanded'");
+    expect(schemaState).toContain("'partial'");
+    expect(schemaState).toContain('expectedColumns');
+    expect(schemaState).toContain('expectedIndexes');
+    expect(sqliteUpgrade).toContain('inspectReviewBatchSchemaState');
+    expect(sqliteUpgrade).toContain('partial ReviewBatch/Interaction expansion detected');
+    expect(sqliteUpgrade).toContain("['run', 'migrate:review-batch-apply']");
+    expect(sqliteUpgrade).toContain("['run', 'migrate:review-batch-verify']");
+    expect(sqliteUpgrade.indexOf("['run', 'migrate:review-batch-report']"))
+      .toBeLessThan(sqliteUpgrade.indexOf("const dbPushArgs = ['prisma', 'db', 'push'"));
+  });
+});
+
+describe('CORE-206 Agent Job control and run audit expansion', () => {
+  it('wires exact body-free models into guarded SQLite and PostgreSQL migration gates', async () => {
+    const sqliteSchema = await read('prisma/schema.prisma');
+    const postgresSchema = await read('prisma/postgres/schema.prisma');
+    const preAgentSchema = await read('prisma/postgres/legacy/20260825_pre_core206.prisma');
+    const migration = await read(
+      'prisma/postgres/migrations/20260825030000_expand_agent_job_run/migration.sql',
+    );
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const sqliteUpgrade = await read('scripts/upgrade-sqlite-schema.ts');
+    const schemaState = await read('scripts/postgres-agent-job-schema-state.ts');
+    const migrationCli = await read('scripts/migrate-agent-jobs.ts');
+    const packageJson = JSON.parse(await read('package.json')) as { scripts?: Record<string, string> };
+
+    for (const schema of [sqliteSchema, postgresSchema]) {
+      expect(schema).toContain('model AgentJobDefinition {');
+      expect(schema).toContain('model AgentRun {');
+      expect(schema).toContain('@@unique([tenantId, jobKey, jobVersion])');
+      expect(schema).toContain('@@unique([tenantId, actorId, jobKey, jobVersion, idempotencyKey])');
+      expect(schema).toContain('@@index([tenantId, status, createdAt])');
+      expect(schema).not.toMatch(/model Agent(?:JobDefinition|Run) \{[^}]*(?:contentEnc|body|prompt|response|rawResponse|token|secret)/);
+      expect(schema).not.toMatch(/^enum\s+/m);
+      expect(schema).not.toMatch(/^\s*\w+\s+Json[?\[\]]*/m);
+    }
+    expect(preAgentSchema).toContain('model ReviewBatch {');
+    expect(preAgentSchema).not.toContain('model AgentJobDefinition {');
+    expect(preAgentSchema).not.toContain('model AgentRun {');
+
+    expect(migration.trimStart().startsWith('BEGIN;')).toBe(true);
+    expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(migration).toContain("SET LOCAL lock_timeout = '30s'");
+    expect(migration).toContain("SET LOCAL statement_timeout = '15min'");
+    expect(migration).toContain('LOCK TABLE "Tenant", "User", "Account", "Opportunity", "SourceArtifact", "ReviewBatch"');
+    expect(migration).toContain('CREATE TABLE "AgentJobDefinition"');
+    expect(migration).toContain('CREATE TABLE "AgentRun"');
+    expect(migration).toContain('Agent Job table expansion parity failed');
+    expect(migration).not.toMatch(/(?:UPDATE|DELETE\s+FROM)\s+"(?:Account|Opportunity|SourceArtifact|ReviewBatch|Candidate|Person|Edge|PlanAction)"/i);
+
+    expect(packageJson.scripts?.['migrate:agent-job-report'])
+      .toBe('tsx scripts/migrate-agent-jobs.ts --dry-run');
+    expect(packageJson.scripts?.['migrate:agent-job-apply'])
+      .toBe('tsx scripts/migrate-agent-jobs.ts --apply');
+    expect(packageJson.scripts?.['migrate:agent-job-verify'])
+      .toBe('tsx scripts/migrate-agent-jobs.ts --verify');
+    expect(migrationCli).toContain('reportAgentJobMigration');
+    expect(migrationCli).toContain('applyAgentJobMigration');
+    expect(migrationCli).toContain('verifyAgentJobMigration');
+
+    expect(deployScript).toContain('PRE_AGENT_JOB_SCHEMA=prisma/postgres/legacy/20260825_pre_core206.prisma');
+    expect(deployScript).toContain('AGENT_JOB_MIGRATION=20260825030000_expand_agent_job_run');
+    expect(deployScript).toContain('recover_incomplete_agent_job_migration');
+    expect(deployScript).toContain('adopt_existing_agent_job_schema_if_safe');
+    expect(deployScript).toContain('agent_job_schema_matches_known_state');
+    expect(deployScript.lastIndexOf('npm run migrate:agent-job-report'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:agent-job-apply'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:agent-job-verify'))
+      .toBeGreaterThan(deployScript.lastIndexOf('npm run migrate:agent-job-apply'));
+    expect(schemaState).toContain("? 'legacy' : 'uninitialized'");
+    expect(schemaState).toContain("'expanded'");
+    expect(schemaState).toContain("'partial'");
+    expect(schemaState.indexOf('!state?.agent_definition && !state?.agent_run'))
+      .toBeLessThan(schemaState.indexOf('!state?.tenant || !state.review_batch'));
+    expect(schemaState).toContain('expectedColumns');
+    expect(schemaState).toContain('expectedIndexes');
+    expect(sqliteUpgrade).toContain('inspectAgentJobSchemaState');
+    expect(sqliteUpgrade).toContain('partial AgentJobDefinition/AgentRun expansion detected');
+    expect(sqliteUpgrade).toContain("['run', 'migrate:agent-job-apply']");
+    expect(sqliteUpgrade).toContain("['run', 'migrate:agent-job-verify']");
+    expect(sqliteUpgrade.indexOf("['run', 'migrate:agent-job-report']"))
+      .toBeLessThan(sqliteUpgrade.indexOf("const dbPushArgs = ['prisma', 'db', 'push'"));
+  });
+
+  it('registers only approved meeting handlers while keeping narrow ports outside formal CRM writers', async () => {
+    const app = await read('src/app.ts');
+    const routes = await read('src/agents/routes.ts');
+    const model = await read('src/agents/model.ts');
+    const runner = await read('src/agents/runner.ts');
+    const registry = await read('src/agents/registry.ts');
+    const handler = await read('src/postMeeting/handler.ts');
+    const candidateCommit = await read('src/postMeeting/commit.ts');
+    const preMeetingHandler = await read('src/preMeeting/handler.ts');
+    const briefCommit = await read('src/preMeeting/commit.ts');
+
+    expect(app).toContain('productionPostMeetingHandlers(prisma, product.policy)');
+    expect(app).toContain('createPostMeetingCandidateCommitAdapter({ policy: product.policy })');
+    expect(app).toContain('productionPreMeetingHandlers(prisma, product.policy)');
+    expect(app).toContain('createPreMeetingResearchBriefCommitAdapter({ policy: product.policy })');
+    expect(app).toContain('agentResearchBriefCommitAdapter');
+    expect(app).toContain('...(options.agentHandlers ?? {})');
+    expect(routes).toContain("app.get('/api/agent-jobs'");
+    expect(routes).toContain("app.put('/api/agent-jobs/:jobKey/control'");
+    expect(routes).toContain("app.post('/api/agent-jobs/:jobKey/runs'");
+    expect(routes).toContain("app.get('/api/agent-runs'");
+    expect(routes).toContain("app.get('/api/agent-runs/:id'");
+    expect(registry).toContain("jobKey: 'pre_meeting_brief'");
+    expect(registry).toContain("jobKey: 'post_meeting_extract'");
+    expect(registry).toContain("jobKey: 'relationship_radar'");
+    const handlerCommitContext = model.slice(
+      model.indexOf('export interface AgentCommitContext'),
+      model.indexOf('export interface AgentCandidateCommitAdapterContext'),
+    );
+    expect(handlerCommitContext).not.toContain('tx:');
+    expect(handler).toContain("'post_meeting_extract@core-206.v1'");
+    expect(preMeetingHandler).toContain("'pre_meeting_brief@core-206.v1'");
+    expect(handler).not.toMatch(/\.(?:account|opportunity|person|edge|planAction|interaction)\.(?:create|update|upsert|delete)/);
+    expect(preMeetingHandler).not.toMatch(/\.(?:account|opportunity|person|edge|planAction|interaction|candidate|curatedSummary)\.(?:create|update|upsert|delete)/);
+    expect(candidateCommit).not.toMatch(/\.(?:account|opportunity|person|edge|planAction|interaction)\.(?:create|update|upsert|delete)/);
+    expect(briefCommit).not.toMatch(/\.(?:account|opportunity|person|edge|planAction|interaction|candidate|curatedSummary)\.(?:create|update|upsert|delete)/);
+    expect(runner).not.toMatch(/\.(?:account|opportunity|person|edge|planAction|interaction|candidate)\.(?:create|update|upsert|delete)/);
+    expect(runner).not.toContain('../jobs.js');
+    expect(runner).not.toContain('../enrich.js');
+  });
+});
+
+describe('SAAS-204 ResearchBriefSnapshot expansion', () => {
+  it('creates one encrypted portable authority through guarded SQLite and PostgreSQL gates', async () => {
+    const sqliteSchema = await read('prisma/schema.prisma');
+    const postgresSchema = await read('prisma/postgres/schema.prisma');
+    const predecessor = await read('prisma/postgres/legacy/20260826_pre_saas204.prisma');
+    const migration = await read(
+      'prisma/postgres/migrations/20260826000000_expand_research_brief_snapshot/migration.sql',
+    );
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const sqliteUpgrade = await read('scripts/upgrade-sqlite-schema.ts');
+    const schemaState = await read('scripts/postgres-research-brief-schema-state.ts');
+    const migrationCli = await read('scripts/migrate-research-briefs.ts');
+    const packageJson = JSON.parse(await read('package.json')) as { scripts?: Record<string, string> };
+
+    for (const schema of [sqliteSchema, postgresSchema]) {
+      expect(schema).toContain('model ResearchBriefSnapshot {');
+      for (const field of [
+        'tenantId', 'customerId', 'matterId', 'createdByUserId', 'generationKey', 'status',
+        'subjectStatus', 'payloadEnc', 'payloadFingerprint', 'sourceSetHash', 'sourceCount',
+        'sectionCount', 'unknownCount', 'failureCount', 'version', 'basedOnAt', 'freshUntil',
+        'generatedAt', 'createdAt',
+      ]) expect(schema).toMatch(new RegExp(`model ResearchBriefSnapshot \\{[\\s\\S]*?${field}\\s+`));
+      expect(schema).toContain('@@unique([tenantId, createdByUserId, generationKey])');
+      expect(schema).toContain('@@index([tenantId, createdByUserId, customerId, generatedAt])');
+      expect(schema).toContain('@@index([tenantId, createdByUserId, matterId, generatedAt])');
+      expect(schema).not.toMatch(/model ResearchBriefSnapshot \{[^}]*(?:rawResponse|prompt|secret|token)/);
+      expect(schema).not.toMatch(/^enum\s+/m);
+      expect(schema).not.toMatch(/^\s*\w+\s+Json[?\[\]]*/m);
+    }
+    expect(predecessor).toContain('model AgentRun {');
+    expect(predecessor).not.toContain('model ResearchBriefSnapshot {');
+
+    expect(migration.trimStart().startsWith('BEGIN;')).toBe(true);
+    expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(migration).toContain("SET LOCAL lock_timeout = '30s'");
+    expect(migration).toContain("SET LOCAL statement_timeout = '15min'");
+    expect(migration).toContain('LOCK TABLE "Tenant" IN SHARE ROW EXCLUSIVE MODE');
+    expect(migration).toContain('CREATE TABLE "ResearchBriefSnapshot"');
+    expect(migration).toContain('ResearchBriefSnapshot table expansion parity failed');
+    expect(migration).not.toMatch(/(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+"(?:Account|Opportunity|CuratedSummary|SourceArtifact|Candidate|ReviewBatch|AgentRun|Person|Edge|PlanAction)"/i);
+
+    expect(packageJson.scripts?.['migrate:research-brief-report'])
+      .toBe('tsx scripts/migrate-research-briefs.ts --dry-run');
+    expect(packageJson.scripts?.['migrate:research-brief-apply'])
+      .toBe('tsx scripts/migrate-research-briefs.ts --apply');
+    expect(packageJson.scripts?.['migrate:research-brief-verify'])
+      .toBe('tsx scripts/migrate-research-briefs.ts --verify');
+    expect(migrationCli).toContain('reportResearchBriefMigration');
+    expect(migrationCli).toContain('applyResearchBriefMigration');
+    expect(migrationCli).toContain('verifyResearchBriefMigration');
+
+    expect(deployScript).toContain('PRE_RESEARCH_BRIEF_SCHEMA=prisma/postgres/legacy/20260826_pre_saas204.prisma');
+    expect(deployScript).toContain('RESEARCH_BRIEF_MIGRATION=20260826000000_expand_research_brief_snapshot');
+    expect(deployScript).toContain('recover_incomplete_research_brief_migration');
+    expect(deployScript).toContain('adopt_existing_research_brief_schema_if_safe');
+    expect(deployScript).toContain('research_brief_schema_matches_known_state');
+    expect(deployScript).toContain('agent_job_schema_matches_known_state');
+    expect(deployScript.lastIndexOf('npm run migrate:research-brief-report'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:research-brief-apply'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:research-brief-verify'))
+      .toBeGreaterThan(deployScript.lastIndexOf('npm run migrate:research-brief-apply'));
+    expect(schemaState).toContain("? 'legacy' : 'uninitialized'");
+    expect(schemaState).toContain("'expanded'");
+    expect(schemaState).toContain("'partial'");
+    expect(schemaState).toContain('expectedColumns');
+    expect(schemaState).toContain('expectedIndexes');
+    expect(sqliteUpgrade).toContain('inspectResearchBriefSchemaState');
+    expect(sqliteUpgrade).toContain('partial ResearchBriefSnapshot expansion detected');
+    expect(sqliteUpgrade).toContain("['run', 'migrate:research-brief-apply']");
+    expect(sqliteUpgrade).toContain("['run', 'migrate:research-brief-verify']");
+    expect(sqliteUpgrade.indexOf("['run', 'migrate:research-brief-report']"))
+      .toBeLessThan(sqliteUpgrade.indexOf("const dbPushArgs = ['prisma', 'db', 'push'"));
+  });
+});
+
+describe('SAAS-206 IntelligenceItem and StakeholderFocus expansion', () => {
+  it('creates two portable method-neutral authorities through guarded SQLite and PostgreSQL gates', async () => {
+    const sqliteSchema = await read('prisma/schema.prisma');
+    const postgresSchema = await read('prisma/postgres/schema.prisma');
+    const predecessor = await read('prisma/postgres/legacy/20260827_pre_saas206.prisma');
+    const migration = await read(
+      'prisma/postgres/migrations/20260827000000_expand_intelligence_focus/migration.sql',
+    );
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const sqliteUpgrade = await read('scripts/upgrade-sqlite-schema.ts');
+    const schemaState = await read('scripts/postgres-intelligence-focus-schema-state.ts');
+    const migrationCli = await read('scripts/migrate-intelligence-focus.ts');
+    const packageJson = JSON.parse(await read('package.json')) as { scripts?: Record<string, string> };
+
+    for (const schemaText of [sqliteSchema, postgresSchema]) {
+      expect(schemaText).toContain('model IntelligenceItem {');
+      expect(schemaText).toContain('model StakeholderFocus {');
+      for (const field of [
+        'tenantId', 'customerId', 'matterId', 'assertionType', 'statement', 'sourceKind',
+        'sourceDescription', 'sourceRefId', 'sourceRefVersion', 'occurredAt', 'learnedAt',
+        'confidence', 'targetRefs', 'createdByUserId', 'version', 'archivedAt',
+        'archivedByUserId', 'archiveReason', 'createdAt', 'updatedAt',
+      ]) expect(schemaText).toMatch(new RegExp(`model IntelligenceItem \\{[\\s\\S]*?${field}\\s+`));
+      for (const field of [
+        'tenantId', 'customerId', 'matterId', 'personId', 'desiredChange', 'rationale',
+        'evidenceGap', 'basisRefs', 'validUntil', 'activeMatterKey', 'confirmedByUserId',
+        'confirmedAt', 'retiredByUserId', 'retiredAt', 'retireReason', 'version',
+        'createdAt', 'updatedAt',
+      ]) expect(schemaText).toMatch(new RegExp(`model StakeholderFocus \\{[\\s\\S]*?${field}\\s+`));
+      expect(schemaText).toContain('@@unique([tenantId, activeMatterKey])');
+      expect(schemaText).not.toMatch(/model (?:IntelligenceItem|StakeholderFocus) \{[^}]*(?:primaryDPersonId|g64111|adurc|methodology)/i);
+      expect(schemaText).not.toMatch(/^enum\s+/m);
+      expect(schemaText).not.toMatch(/^\s*\w+\s+Json[?\[\]]*/m);
+    }
+    expect(predecessor).toContain('model ResearchBriefSnapshot {');
+    expect(predecessor).not.toContain('model IntelligenceItem {');
+    expect(predecessor).not.toContain('model StakeholderFocus {');
+
+    expect(migration.trimStart().startsWith('BEGIN;')).toBe(true);
+    expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(migration).toContain("SET LOCAL lock_timeout = '30s'");
+    expect(migration).toContain("SET LOCAL statement_timeout = '15min'");
+    expect(migration).toContain('LOCK TABLE "Tenant" IN SHARE ROW EXCLUSIVE MODE');
+    expect(migration).toContain('CREATE TABLE "IntelligenceItem"');
+    expect(migration).toContain('CREATE TABLE "StakeholderFocus"');
+    expect(migration).toContain('IntelligenceItem table expansion parity failed');
+    expect(migration).toContain('StakeholderFocus table expansion parity failed');
+    expect(migration).not.toMatch(/(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+"(?:EvidenceEvent|Account|Opportunity|Person|Edge|PlanAction|Candidate|ResearchBriefSnapshot)"/i);
+
+    expect(packageJson.scripts?.['migrate:intelligence-focus-report'])
+      .toBe('tsx scripts/migrate-intelligence-focus.ts --dry-run');
+    expect(packageJson.scripts?.['migrate:intelligence-focus-apply'])
+      .toBe('tsx scripts/migrate-intelligence-focus.ts --apply');
+    expect(packageJson.scripts?.['migrate:intelligence-focus-verify'])
+      .toBe('tsx scripts/migrate-intelligence-focus.ts --verify');
+    expect(migrationCli).toContain('reportIntelligenceFocusMigration');
+    expect(migrationCli).toContain('applyIntelligenceFocusMigration');
+    expect(migrationCli).toContain('verifyIntelligenceFocusMigration');
+
+    expect(deployScript).toContain('PRE_INTELLIGENCE_FOCUS_SCHEMA=prisma/postgres/legacy/20260827_pre_saas206.prisma');
+    expect(deployScript).toContain('INTELLIGENCE_FOCUS_MIGRATION=20260827000000_expand_intelligence_focus');
+    expect(deployScript).toContain('recover_incomplete_intelligence_focus_migration');
+    expect(deployScript).toContain('adopt_existing_intelligence_focus_schema_if_safe');
+    expect(deployScript).toContain('intelligence_focus_schema_matches_known_state');
+    expect(deployScript.lastIndexOf('npm run migrate:intelligence-focus-report'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:intelligence-focus-apply'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:intelligence-focus-verify'))
+      .toBeGreaterThan(deployScript.lastIndexOf('npm run migrate:intelligence-focus-apply'));
+    expect(schemaState).toContain("? 'legacy' : 'uninitialized'");
+    expect(schemaState).toContain("'expanded'");
+    expect(schemaState).toContain("'partial'");
+    expect(schemaState).toContain('expectedIntelligenceColumns');
+    expect(schemaState).toContain('expectedFocusColumns');
+    expect(sqliteUpgrade).toContain('inspectIntelligenceFocusSchemaState');
+    expect(sqliteUpgrade).toContain('partial IntelligenceItem/StakeholderFocus expansion detected');
+    expect(sqliteUpgrade).toContain("['run', 'migrate:intelligence-focus-apply']");
+    expect(sqliteUpgrade).toContain("['run', 'migrate:intelligence-focus-verify']");
+    expect(sqliteUpgrade.indexOf("['run', 'migrate:intelligence-focus-report']"))
+      .toBeLessThan(sqliteUpgrade.indexOf("const dbPushArgs = ['prisma', 'db', 'push'"));
+  });
+});
+
+describe('SAAS-207 SalesHypothesis expansion', () => {
+  it('creates portable immutable authorities through guarded SQLite and PostgreSQL gates', async () => {
+    const sqliteSchema = await read('prisma/schema.prisma');
+    const postgresSchema = await read('prisma/postgres/schema.prisma');
+    const predecessor = await read('prisma/postgres/legacy/20260830_pre_saas207.prisma');
+    const migration = await read(
+      'prisma/postgres/migrations/20260830000000_expand_sales_hypothesis/migration.sql',
+    );
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const sqliteUpgrade = await read('scripts/upgrade-sqlite-schema.ts');
+    const schemaState = await read('scripts/postgres-sales-hypothesis-schema-state.ts');
+    const migrationCli = await read('scripts/migrate-sales-hypotheses.ts');
+    const postgresOps = await read('../scripts/test-postgres-ops-integration.sh');
+    const packageJson = JSON.parse(await read('package.json')) as { scripts?: Record<string, string> };
+
+    for (const schemaText of [sqliteSchema, postgresSchema]) {
+      expect(schemaText).toContain('model SalesHypothesis {');
+      expect(schemaText).toContain('model SalesHypothesisRevision {');
+      expect(schemaText).toContain('model HypothesisEvidenceLink {');
+      expect(schemaText).toContain('@@unique([tenantId, legacyStrategyRiskId])');
+      expect(schemaText).toContain('@@unique([tenantId, hypothesisId, revisionNumber])');
+      expect(schemaText).toContain('@@unique([tenantId, hypothesisRevisionId, evidenceId])');
+      expect(schemaText).not.toMatch(/^enum\s+/m);
+      expect(schemaText).not.toMatch(/^\s*\w+\s+Json[?\[\]]*/m);
+    }
+    expect(predecessor).toContain('model StakeholderFocus {');
+    expect(predecessor).not.toContain('model SalesHypothesis {');
+
+    expect(migration.trimStart().startsWith('BEGIN;')).toBe(true);
+    expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(migration).toContain("SET LOCAL lock_timeout = '30s'");
+    expect(migration).toContain("SET LOCAL statement_timeout = '15min'");
+    expect(migration).toContain('LOCK TABLE "Tenant", "StrategyRisk" IN SHARE ROW EXCLUSIVE MODE');
+    expect(migration).toContain('CREATE TABLE "SalesHypothesis"');
+    expect(migration).toContain('CREATE TABLE "SalesHypothesisRevision"');
+    expect(migration).toContain('CREATE TABLE "HypothesisEvidenceLink"');
+    expect([...migration.matchAll(/"([^"]+)"/g)]
+      .map((match) => match[1])
+      .filter((identifier) => Buffer.byteLength(identifier, 'utf8') > 63)).toEqual([]);
+    for (const indexName of [
+      'SalesHypothesisRevision_tenantId_hypothesisId_revisionNumbe_key',
+      'HypothesisEvidenceLink_tenantId_hypothesisRevisionId_eviden_key',
+    ]) {
+      expect(migration).toContain(`CREATE UNIQUE INDEX "${indexName}"`);
+      expect(schemaState).toContain(`'${indexName}'`);
+    }
+    expect(migration).toContain('SalesHypothesis table expansion parity failed');
+    expect(migration).not.toMatch(/(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+"(?:StrategyRisk|EvidenceEvent|Account|Opportunity|Person|Edge|PlanAction|Candidate|StakeholderFocus)"/i);
+
+    expect(packageJson.scripts?.['migrate:sales-hypothesis-report'])
+      .toBe('tsx scripts/migrate-sales-hypotheses.ts --dry-run');
+    expect(packageJson.scripts?.['migrate:sales-hypothesis-apply'])
+      .toBe('tsx scripts/migrate-sales-hypotheses.ts --apply');
+    expect(packageJson.scripts?.['migrate:sales-hypothesis-verify'])
+      .toBe('tsx scripts/migrate-sales-hypotheses.ts --verify');
+    expect(migrationCli).toContain('reportSalesHypothesisMigration');
+    expect(migrationCli).toContain('applySalesHypothesisMigration');
+    expect(migrationCli).toContain('verifySalesHypothesisMigration');
+
+    expect(deployScript).toContain('PRE_SALES_HYPOTHESIS_SCHEMA=prisma/postgres/legacy/20260830_pre_saas207.prisma');
+    expect(deployScript).toContain('SALES_HYPOTHESIS_MIGRATION=20260830000000_expand_sales_hypothesis');
+    expect(deployScript).toContain('recover_incomplete_sales_hypothesis_migration');
+    expect(deployScript).toContain('adopt_existing_sales_hypothesis_schema_if_safe');
+    expect(deployScript).toContain('sales_hypothesis_schema_matches_known_state');
+    expect(deployScript.lastIndexOf('npm run migrate:sales-hypothesis-report'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:sales-hypothesis-apply'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:sales-hypothesis-verify'))
+      .toBeGreaterThan(deployScript.lastIndexOf('npm run migrate:sales-hypothesis-apply'));
+    expect(schemaState).toContain("? 'legacy' : 'uninitialized'");
+    expect(schemaState).toContain("'expanded'");
+    expect(schemaState).toContain("'partial'");
+    expect(schemaState).toContain('expectedHypothesisColumns');
+    expect(schemaState).toContain('expectedRevisionColumns');
+    expect(schemaState).toContain('expectedLinkColumns');
+    expect(sqliteUpgrade).toContain('inspectSalesHypothesisSchemaState');
+    expect(sqliteUpgrade).toContain('partial SalesHypothesis expansion detected');
+    expect(sqliteUpgrade).toContain("['run', 'migrate:sales-hypothesis-apply']");
+    expect(sqliteUpgrade).toContain("['run', 'migrate:sales-hypothesis-verify']");
+    expect(sqliteUpgrade.indexOf("['run', 'migrate:sales-hypothesis-report']"))
+      .toBeLessThan(sqliteUpgrade.indexOf("const dbPushArgs = ['prisma', 'db', 'push'"));
+    expect(postgresOps).toContain('INTERRUPTED_SALES_HYPOTHESIS_AFTER_COMMIT_ADOPTION_OK=1');
+    expect(postgresOps).toContain('SALES_HYPOTHESIS_SEMANTIC_CONFLICT_FAIL_CLOSED_OK=1');
+    expect(postgresOps).toContain('SALES_HYPOTHESIS_MARKER_CHECKSUM_FAIL_CLOSED_OK=1');
+    expect(postgresOps).toContain('PARTIAL_SALES_HYPOTHESIS_SCHEMA_FAIL_CLOSED_OK=1');
+    expect(postgresOps).toContain('SALES_HYPOTHESIS_RESTORE_ROLLBACK_OK=1');
+    expect(postgresOps).toContain('SAAS_207_SALES_HYPOTHESIS_MIGRATION_OK=1');
+  });
+});
+
+describe('SAAS-208 hypothesis Commitment review expansion', () => {
+  it('adds only portable same-row links through guarded SQLite and PostgreSQL gates', async () => {
+    const sqliteSchema = await read('prisma/schema.prisma');
+    const postgresSchema = await read('prisma/postgres/schema.prisma');
+    const predecessor = await read('prisma/postgres/legacy/20260831_pre_saas208.prisma');
+    const migration = await read(
+      'prisma/postgres/migrations/20260831000000_expand_hypothesis_commitment_review/migration.sql',
+    );
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const sqliteUpgrade = await read('scripts/upgrade-sqlite-schema.ts');
+    const schemaState = await read('scripts/postgres-hypothesis-commitment-review-schema-state.ts');
+    const predecessorSchemaState = await read('scripts/postgres-sales-hypothesis-schema-state.ts');
+    const migrationCli = await read('scripts/migrate-hypothesis-commitment-review.ts');
+    const postgresOps = await read('../scripts/test-postgres-ops-integration.sh');
+    const packageJson = JSON.parse(await read('package.json')) as { scripts?: Record<string, string> };
+
+    for (const schemaText of [sqliteSchema, postgresSchema]) {
+      expect(schemaText).toContain('hypothesisId                       String?');
+      expect(schemaText).toContain('hypothesisRevisionId               String?');
+      expect(schemaText).toContain('completionResult                   String    @default("")');
+      expect(schemaText).toContain('verificationReviewDisposition      String    @default("")');
+      expect(schemaText).toContain('verificationCommitmentId String?');
+      expect(schemaText).toContain('@@index([tenantId, hypothesisId, hypothesisRevisionId])');
+      expect(schemaText).toContain('@@index([tenantId, verificationCommitmentId])');
+      expect(schemaText).not.toMatch(/^enum\s+/m);
+      expect(schemaText).not.toMatch(/^\s*\w+\s+Json[?\[\]]*/m);
+    }
+    expect(predecessor).toContain('model SalesHypothesis {');
+    expect(predecessor).not.toContain('verificationCommitmentId String?');
+    expect(predecessor).not.toContain('completionResultRecordedAtUtc');
+
+    expect(migration.trimStart().startsWith('BEGIN;')).toBe(true);
+    expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(migration).toContain("SET LOCAL lock_timeout = '30s'");
+    expect(migration).toContain("SET LOCAL statement_timeout = '15min'");
+    expect(migration).toContain('LOCK TABLE "PlanAction", "SalesHypothesis", "SalesHypothesisRevision", "HypothesisEvidenceLink"');
+    expect(migration).toContain('ADD COLUMN "hypothesisId" TEXT');
+    expect(migration).toContain('ADD COLUMN "verificationCommitmentId" TEXT');
+    expect(migration).toContain("column_default = (quote_literal('') || '::text')");
+    expect(migration).not.toContain("column_default = ''''::text");
+    expect(migration).toContain('must not infer or backfill Commitment verification data');
+    expect(migration).not.toMatch(/(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+"(?:Account|Opportunity|Person|Edge|PlanAction|EvidenceEvent|SalesHypothesis|SalesHypothesisRevision|HypothesisEvidenceLink)"/i);
+    expect([...migration.matchAll(/"([^"]+)"/g)]
+      .map((match) => match[1])
+      .filter((identifier) => Buffer.byteLength(identifier, 'utf8') > 63)).toEqual([]);
+
+    expect(packageJson.scripts?.['migrate:hypothesis-commitment-review-report'])
+      .toBe('tsx scripts/migrate-hypothesis-commitment-review.ts --dry-run');
+    expect(packageJson.scripts?.['migrate:hypothesis-commitment-review-apply'])
+      .toBe('tsx scripts/migrate-hypothesis-commitment-review.ts --apply');
+    expect(packageJson.scripts?.['migrate:hypothesis-commitment-review-verify'])
+      .toBe('tsx scripts/migrate-hypothesis-commitment-review.ts --verify');
+    expect(migrationCli).toContain('reportHypothesisCommitmentReviewMigration');
+    expect(migrationCli).toContain('applyHypothesisCommitmentReviewMigration');
+    expect(migrationCli).toContain('verifyHypothesisCommitmentReviewMigration');
+
+    expect(deployScript).toContain('PRE_HYPOTHESIS_COMMITMENT_REVIEW_SCHEMA=prisma/postgres/legacy/20260831_pre_saas208.prisma');
+    expect(deployScript).toContain('HYPOTHESIS_COMMITMENT_REVIEW_MIGRATION=20260831000000_expand_hypothesis_commitment_review');
+    expect(deployScript).toContain('recover_incomplete_hypothesis_commitment_review_migration');
+    expect(deployScript).toContain('adopt_existing_hypothesis_commitment_review_schema_if_safe');
+    expect(deployScript).toContain('hypothesis_commitment_review_schema_matches_known_state');
+    expect(deployScript.lastIndexOf('npm run migrate:hypothesis-commitment-review-report'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:hypothesis-commitment-review-apply'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:hypothesis-commitment-review-verify'))
+      .toBeGreaterThan(deployScript.lastIndexOf('npm run migrate:hypothesis-commitment-review-apply'));
+    expect(schemaState).toContain("? 'legacy' : 'uninitialized'");
+    expect(schemaState).toContain("'expanded'");
+    expect(schemaState).toContain("'partial'");
+    expect(schemaState).toContain('expectedPlanActionColumns');
+    expect(schemaState).toContain('expectedLinkColumns');
+    expect(schemaState).toContain("table_name = 'PlanAction' AND column_name IN (${quotedPlanActionNames})");
+    expect(schemaState).toContain("table_name = 'HypothesisEvidenceLink' AND column_name IN (${quotedLinkNames})");
+    expect(schemaState).not.toContain("table_name IN ('PlanAction', 'HypothesisEvidenceLink')");
+    expect(predecessorSchemaState).toContain('expectedLinkSaas208Columns');
+    expect(predecessorSchemaState).toContain('HypothesisEvidenceLink_tenantId_verificationCommitmentId_idx');
+    expect(sqliteUpgrade).toContain('inspectHypothesisCommitmentReviewSchemaState');
+    expect(sqliteUpgrade).toContain('partial hypothesis Commitment review expansion detected');
+    expect(sqliteUpgrade).toContain("['run', 'migrate:hypothesis-commitment-review-apply']");
+    expect(sqliteUpgrade).toContain("['run', 'migrate:hypothesis-commitment-review-verify']");
+    expect(sqliteUpgrade.indexOf("['run', 'migrate:hypothesis-commitment-review-report']"))
+      .toBeLessThan(sqliteUpgrade.indexOf("const dbPushArgs = ['prisma', 'db', 'push'"));
+    expect(postgresOps).toContain('INTERRUPTED_HYPOTHESIS_COMMITMENT_REVIEW_AFTER_COMMIT_ADOPTION_OK=1');
+    expect(postgresOps).toContain('HYPOTHESIS_COMMITMENT_REVIEW_SEMANTIC_CONFLICT_FAIL_CLOSED_OK=1');
+    expect(postgresOps).toContain('HYPOTHESIS_COMMITMENT_REVIEW_MARKER_CHECKSUM_FAIL_CLOSED_OK=1');
+    expect(postgresOps).toContain('PARTIAL_HYPOTHESIS_COMMITMENT_REVIEW_SCHEMA_FAIL_CLOSED_OK=1');
+    expect(postgresOps).toContain('HYPOTHESIS_COMMITMENT_REVIEW_RESTORE_ROLLBACK_OK=1');
+    expect(postgresOps).toContain('SAAS_208_HYPOTHESIS_COMMITMENT_REVIEW_MIGRATION_OK=1');
+    const saas208StageOffset = postgresOps.indexOf("POSTGRES_OPS_STAGE='saas208-hypothesis-commitment-review'");
+    const saas208SeedEnd = postgresOps.indexOf('hypothesis_commitment_review_backup_root=', saas208StageOffset);
+    expect(saas208StageOffset).toBeGreaterThan(0);
+    expect(saas208SeedEnd).toBeGreaterThan(saas208StageOffset);
+    const saas208Seed = postgresOps.slice(saas208StageOffset, saas208SeedEnd);
+    expect(saas208Seed).toContain('MatterParticipant');
+    expect(saas208Seed).toContain('verification-participant');
+    expect(saas208Seed).toContain('createdAt');
+    expect(saas208Seed).toContain('updatedAt');
+    const saas208MigrationIds = [...postgresOps.matchAll(/VALUES \('(int-saas208-[^']+)'/g)]
+      .map((match) => match[1]);
+    expect(saas208MigrationIds).toEqual(['int-saas208-after-commit', 'int-saas208-partial']);
+    expect(saas208MigrationIds.every((id) => id.length <= 36)).toBe(true);
+  });
+});
+
+describe('SAAS-212 relationship radar snapshot expansion', () => {
+  it('ships one portable immutable table through guarded SQLite and PostgreSQL gates', async () => {
+    const sqliteSchema = await read('prisma/schema.prisma');
+    const postgresSchema = await read('prisma/postgres/schema.prisma');
+    const predecessor = await read('prisma/postgres/legacy/20260831_pre_saas212.prisma');
+    const migration = await read(
+      'prisma/postgres/migrations/20260831235900_expand_relationship_radar/migration.sql',
+    );
+    const deployScript = await read('scripts/deploy-postgres-migrations.sh');
+    const sqliteUpgrade = await read('scripts/upgrade-sqlite-schema.ts');
+    const schemaState = await read('scripts/postgres-relationship-radar-schema-state.ts');
+    const migrationCli = await read('scripts/migrate-relationship-radar.ts');
+    const postgresOps = await read('../scripts/test-postgres-ops-integration.sh');
+    const packageJson = JSON.parse(await read('package.json')) as { scripts?: Record<string, string> };
+
+    for (const schemaText of [sqliteSchema, postgresSchema]) {
+      expect(schemaText).toContain('model RelationshipRadarSnapshot {');
+      expect(schemaText).toContain('payloadJson        String');
+      expect(schemaText).toContain('agentRunId         String');
+      expect(schemaText).toContain('@@unique([tenantId, agentRunId], map: "rrs_tenant_run_key")');
+      expect(schemaText).toContain('@@unique([tenantId, createdByUserId, generationKey], map: "rrs_tenant_creator_generation_key")');
+      expect(schemaText).toContain('@@index([tenantId, customerId, matterId, generatedAt], map: "rrs_tenant_customer_matter_generated_idx")');
+      expect(schemaText).toContain('@@index([tenantId, matterId, expiresAt], map: "rrs_tenant_matter_expires_idx")');
+      expect(schemaText).not.toMatch(/^enum\s+/m);
+      expect(schemaText).not.toMatch(/^\s*\w+\s+Json[?\[\]]*/m);
+    }
+    expect(predecessor).toContain('model AgentRun {');
+    expect(predecessor).toContain('completionResultRecordedAtUtc');
+    expect(predecessor).not.toContain('model RelationshipRadarSnapshot {');
+
+    expect(migration.trimStart().startsWith('BEGIN;')).toBe(true);
+    expect(migration.trimEnd().endsWith('COMMIT;')).toBe(true);
+    expect(migration).toContain("SET LOCAL lock_timeout = '30s'");
+    expect(migration).toContain("SET LOCAL statement_timeout = '15min'");
+    expect(migration).toContain('LOCK TABLE "Tenant" IN SHARE ROW EXCLUSIVE MODE');
+    expect(migration).toContain('CREATE TABLE "RelationshipRadarSnapshot"');
+    expect(migration).toContain('SAAS-212 expansion must not infer or backfill radar snapshots');
+    expect(migration).not.toMatch(/(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+"(?:Account|Opportunity|Person|Edge|PlanAction|EvidenceEvent|AgentRun)"/i);
+    expect([...migration.matchAll(/"([^"]+)"/g)]
+      .map((match) => match[1])
+      .filter((identifier) => Buffer.byteLength(identifier, 'utf8') > 63)).toEqual([]);
+
+    expect(packageJson.scripts?.['migrate:relationship-radar-report'])
+      .toBe('tsx scripts/migrate-relationship-radar.ts --dry-run');
+    expect(packageJson.scripts?.['migrate:relationship-radar-apply'])
+      .toBe('tsx scripts/migrate-relationship-radar.ts --apply');
+    expect(packageJson.scripts?.['migrate:relationship-radar-verify'])
+      .toBe('tsx scripts/migrate-relationship-radar.ts --verify');
+    expect(migrationCli).toContain('reportRelationshipRadarMigration');
+    expect(migrationCli).toContain('applyRelationshipRadarMigration');
+    expect(migrationCli).toContain('verifyRelationshipRadarMigration');
+
+    expect(deployScript).toContain('PRE_RELATIONSHIP_RADAR_SCHEMA=prisma/postgres/legacy/20260831_pre_saas212.prisma');
+    expect(deployScript).toContain('RELATIONSHIP_RADAR_MIGRATION=20260831235900_expand_relationship_radar');
+    expect(deployScript).toContain('recover_incomplete_relationship_radar_migration');
+    expect(deployScript).toContain('adopt_existing_relationship_radar_schema_if_safe');
+    expect(deployScript).toContain('relationship_radar_schema_matches_known_state');
+    expect(deployScript.lastIndexOf('npm run migrate:relationship-radar-report'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:relationship-radar-apply'))
+      .toBeGreaterThan(deployScript.indexOf('prisma migrate deploy --schema "$SCHEMA"'));
+    expect(deployScript.lastIndexOf('npm run migrate:relationship-radar-verify'))
+      .toBeGreaterThan(deployScript.lastIndexOf('npm run migrate:relationship-radar-apply'));
+    expect(schemaState).toContain("dependencies ? 'legacy' : 'uninitialized'");
+    expect(schemaState).toContain("'expanded'");
+    expect(schemaState).toContain("'partial'");
+    expect(schemaState).toContain('expectedColumns');
+    expect(schemaState).toContain('expectedIndexes');
+    expect(sqliteUpgrade).toContain('inspectRelationshipRadarSchemaState');
+    expect(sqliteUpgrade).toContain('partial RelationshipRadarSnapshot expansion detected');
+    expect(sqliteUpgrade).toContain("['run', 'migrate:relationship-radar-apply']");
+    expect(sqliteUpgrade).toContain("['run', 'migrate:relationship-radar-verify']");
+
+    expect(postgresOps).toContain('INTERRUPTED_RELATIONSHIP_RADAR_AFTER_COMMIT_ADOPTION_OK=1');
+    expect(postgresOps).toContain('RELATIONSHIP_RADAR_SEMANTIC_CONFLICT_FAIL_CLOSED_OK=1');
+    expect(postgresOps).toContain('RELATIONSHIP_RADAR_MARKER_CHECKSUM_FAIL_CLOSED_OK=1');
+    expect(postgresOps).toContain('PARTIAL_RELATIONSHIP_RADAR_SCHEMA_FAIL_CLOSED_OK=1');
+    expect(postgresOps).toContain('RELATIONSHIP_RADAR_RESTORE_ROLLBACK_OK=1');
+    expect(postgresOps).toContain('SAAS_212_RELATIONSHIP_RADAR_MIGRATION_OK=1');
+  });
 });

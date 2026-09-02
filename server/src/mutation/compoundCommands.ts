@@ -1,9 +1,10 @@
 import type { FastifyInstance } from 'fastify';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import {
   ActorRoleSchema,
+  assembleProductAccess,
   QuickCaptureCommandReceiptSchema,
   QuickCaptureCommandSchema,
   commitmentReceiptMatchesCommand,
@@ -16,6 +17,7 @@ import {
   type QuickCaptureCommandReceipt,
 } from '@jianghu/domain-contracts';
 import { denyViewer } from '../scope.js';
+import { prisma } from '../prisma.js';
 import { applyAction, type DbClient } from '../mutate.js';
 import { CloneOpportunitySchema, cloneOpportunityInTransaction } from '../opp.js';
 import { acceptProposalInTransaction, rejectProposalInTransaction } from '../proposals.js';
@@ -28,6 +30,18 @@ import { syncCommitmentToWeCom } from '../wecom.js';
 import { resolveEffectiveResourceScope } from '../resourceScope.js';
 import { executeCustomerCommand, parseCustomerCommandReceiptForCommand } from './customers.js';
 import { executeCommitmentCommand } from './commitments.js';
+import { rejectPersonCandidate, rejectRelationCandidate } from '../candidates/personRelation.js';
+import {
+  dismissReminderCandidate,
+  reviewEvidenceCandidate,
+} from '../candidates/reviewItems.js';
+import {
+  requireCandidateReviewAccessMany,
+  type LegacyCandidateReviewRef,
+} from '../sensitiveAccess.js';
+import { CapabilityDeniedError } from '../capabilityError.js';
+
+const INTERNAL_CAPABILITY_POLICY = assembleProductAccess({ edition: 'internal' }).policy;
 
 class ActionAlreadyCompletedError extends Error {
   readonly statusCode = 409;
@@ -45,12 +59,6 @@ class ActionFeedbackPermissionError extends Error {
   readonly statusCode = 403;
   readonly code = 'commitment_write_forbidden';
   constructor() { super('无权回填跟进承诺'); }
-}
-
-class CapabilityDeniedError extends Error {
-  readonly statusCode = 403;
-  readonly code = 'capability_denied';
-  constructor() { super('能力未启用'); }
 }
 
 class QuickCapturePermissionError extends Error {
@@ -268,44 +276,77 @@ export async function executeInboxBatch(
   input: z.infer<typeof InboxBatchCommandSchema>,
   db: DbClient,
   options?: FaultOptions,
+  policy: CapabilityPolicy = INTERNAL_CAPABILITY_POLICY,
 ): Promise<{ items: Array<{ kind: string; id: string; status: string }> }> {
   const items: Array<{ kind: string; id: string; status: string }> = [];
+  const review = { actorId: ctx.actorId, actorRole: ctx.actorRole, capabilityPolicy: policy };
+  const reviewRefs: LegacyCandidateReviewRef[] = input.items.map((item) => ({
+    sourceKind: item.kind === 'proposal'
+      ? 'ChangeProposal'
+      : item.kind === 'person'
+        ? 'PersonSuggestion'
+        : item.kind === 'rel'
+          ? 'RelSuggestion'
+          : item.kind === 'evidence'
+            ? 'EvidenceEvent'
+            : 'Reminder',
+    sourceId: item.id,
+  }));
+  await requireCandidateReviewAccessMany(db, ctx.tenantId, reviewRefs, review);
   let step = 0;
   for (const item of input.items) {
     let status = 'ok';
     if (item.kind === 'proposal') {
       if (item.decision === 'accept') {
-        const outcome = await acceptProposalInTransaction(ctx, item.id, item.overrideValue, db as any);
+        const outcome = await acceptProposalInTransaction(
+          ctx, item.id, item.overrideValue, db as any, policy,
+        );
+        if (outcome.result === 'missing') throw new ScopedNotFoundError();
         status = outcome.result;
-      } else status = await rejectProposalInTransaction(ctx.tenantId, item.id, db as any);
+      } else status = await rejectProposalInTransaction(ctx, item.id, db as any, policy);
     } else if (item.kind === 'person') {
       if (item.decision === 'accept') {
-        await materializePerson(db, ctx.tenantId, item.id, { override: item.personOverride, allowAcceptedReuse: false });
+        await materializePerson(
+          db, ctx.tenantId, item.id, review,
+          { override: item.personOverride, allowAcceptedReuse: false },
+        );
       } else {
-        const changed = await db.personSuggestion.updateMany({ where: { id: item.id, tenantId: ctx.tenantId, status: 'pending' }, data: { status: 'rejected' } });
-        if (!changed.count) throw new Error('候选干系人不存在或已处理');
+        const rejected = await rejectPersonCandidate(db, {
+          id: item.id, tenantId: ctx.tenantId, review,
+        });
+        if (!rejected) throw new ScopedNotFoundError();
       }
     } else if (item.kind === 'rel') {
       if (item.decision === 'reject') {
-        const changed = await db.relSuggestion.updateMany({ where: { id: item.id, tenantId: ctx.tenantId, status: 'pending' }, data: { status: 'rejected' } });
-        if (!changed.count) throw new Error('候选关系不存在或已处理');
+        const rejected = await rejectRelationCandidate(db, {
+          id: item.id, tenantId: ctx.tenantId, review,
+        });
+        if (!rejected) throw new ScopedNotFoundError();
       } else {
-        await acceptRelationSuggestionInTransaction(db as any, ctx.tenantId, item.id, item.relOverride);
+        await acceptRelationSuggestionInTransaction(
+          db as any, ctx.tenantId, item.id, review, item.relOverride,
+        );
       }
     } else if (item.kind === 'evidence') {
       const today = businessYmd();
-      const evidence = await db.evidenceEvent.findFirst({ where: { id: item.id, tenantId: ctx.tenantId, status: 'pending_review' } });
-      if (!evidence) throw new Error('证据不存在或已处理');
-      const changed = await db.evidenceEvent.updateMany({ where: { id: item.id, tenantId: ctx.tenantId, status: 'pending_review' }, data: {
-        status: item.decision === 'accept' ? 'approved' : 'rejected', reviewedBy: ctx.actorId, reviewedAt: today,
-        ...(item.decision === 'accept' && item.direction !== undefined ? { direction: item.direction } : {}),
-      } });
-      if (!changed.count) throw new Error('证据不存在或已处理');
-      if (item.decision === 'accept') await createPdeSnapshot(db, ctx.tenantId, evidence.opportunityId, 'evidence_review', ctx.actorId);
+      const reviewed = await reviewEvidenceCandidate(db, {
+        tenantId: ctx.tenantId,
+        id: item.id,
+        decision: item.decision === 'accept' ? 'accept' : 'reject',
+        reviewedBy: ctx.actorId,
+        reviewedAt: today,
+        direction: item.decision === 'accept' ? item.direction : undefined,
+        review,
+      }, async (tx, evidence) => {
+        await createPdeSnapshot(tx, ctx.tenantId, evidence.opportunityId, 'evidence_review', ctx.actorId);
+      });
+      if (!reviewed) throw new ScopedNotFoundError();
     } else {
       if (item.decision !== 'reject') throw new Error('提醒只能忽略');
-      const changed = await db.reminder.updateMany({ where: { id: item.id, tenantId: ctx.tenantId, status: 'pending' }, data: { status: 'dismissed' } });
-      if (!changed.count) throw new Error('提醒不存在或已处理');
+      const dismissed = await dismissReminderCandidate(db, {
+        id: item.id, tenantId: ctx.tenantId, review,
+      });
+      if (!dismissed) throw new ScopedNotFoundError();
       status = 'dismissed';
     }
     items.push({ kind: item.kind, id: item.id, status });
@@ -459,9 +500,30 @@ export function compoundCommandRoutes(app: FastifyInstance, product: ProductAcce
     const key = idempotencyKey(req, reply); if (!key) return;
     const body = InboxBatchCommandSchema.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: '批量审核参数无效' });
+    const ctx = commandContext(req);
+    const reviewRefs: LegacyCandidateReviewRef[] = body.data.items.map((item) => ({
+      sourceKind: item.kind === 'proposal'
+        ? 'ChangeProposal'
+        : item.kind === 'person'
+          ? 'PersonSuggestion'
+          : item.kind === 'rel'
+            ? 'RelSuggestion'
+            : item.kind === 'evidence'
+              ? 'EvidenceEvent'
+              : 'Reminder',
+      sourceId: item.id,
+    }));
+    const authorizeReplay = () => prisma.$transaction((tx) => requireCandidateReviewAccessMany(
+      tx,
+      ctx.tenantId,
+      reviewRefs,
+      { actorId: ctx.actorId, actorRole: ctx.actorRole, capabilityPolicy: product.policy },
+    ), { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     try {
-      const result = await runCommand(commandContext(req), { kind: 'inbox-batch', idempotencyKey: key, payload: body.data },
-        (tx) => executeInboxBatch(commandContext(req), body.data, tx));
+      await authorizeReplay();
+      const result = await runCommand(ctx, { kind: 'inbox-batch', idempotencyKey: key, payload: body.data },
+        (tx) => executeInboxBatch(ctx, body.data, tx, undefined, product.policy));
+      if (result.replayed) await authorizeReplay();
       return { items: result.result.items, replayed: result.replayed };
     } catch (error) { return commandFailure(req, reply, error, '批量审核失败'); }
   });
