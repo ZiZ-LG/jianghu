@@ -11,7 +11,7 @@
 ## Global constraints
 
 - **Task:** `SAAS-209`; **branch:** `codex/saas-209-matter-portfolio`; **worktree:** `/Volumes/PowerData/江湖APP/.worktrees/saas-209-matter-portfolio`; **base:** `origin/main@802018eb06e6398975745d18d754121d36269cbc`.
-- `SAAS-209` is the only CRM `IN_PROGRESS` task. Do not start `SAAS-210` or `SAAS-211` until the independent business commit and governance-close commit have each been pushed and passed exact-SHA CI.
+- `SAAS-209` is complete after independent business and governance-close commits pass their exact-SHA CI gates. `SAAS-210` is the next `READY` task and must not start from an unmerged dependency branch; use the separately approved main-integration gate first.
 - Do not modify `app/src/App.tsx`, App package/lock/Vite/dist, Docker Compose, root deployment/test scripts, navigation/cross-site entry, common Nginx/CI, any self-cultivation path, production, Aliyun, Mac mini or `main`. If investigation proves one of those files unavoidable, stop and request the file-specific approval.
 - The portfolio is a derived read consumer. It creates no table, migration, snapshot, score, second task model or writer and cannot change Relation, Evidence, Intelligence, Focus, Hypothesis, Commitment, stage, forecast or key-person authority.
 - Every read and source drill reloads the current database role, requires `sales.workspace`, resolves EffectiveResourceScope and validates exact tenant/Customer/Matter/source closure. Viewer reads retain Customer ownership isolation; viewer gets no action-draft control.
@@ -53,10 +53,10 @@ An action draft has `state: uncommitted`, the exact top `InterventionItem` ident
 - Create: `packages/domain-contracts/tests/matterPortfolio.test.ts`
 - Modify: `packages/domain-contracts/src/index.ts`
 
-- [ ] Write failing contract tests for the response anchors, categorical attention bucket, ordered strict InterventionItems, active-stage/null semantics, sales-only estimate union, uncommitted draft/source closure, no aggregate score and no 4–5 cap.
-- [ ] Confirm RED is caused by missing exports/contracts, then add minimal strict Zod schemas and inferred types.
-- [ ] Reject duplicate Matter/item identities, parent mismatches, item/source/target drift, generic-Matter estimate fields, committed-action claims, unknown keys and impossible bucket/item combinations.
-- [ ] Run focused and full Domain type/test gates.
+- [x] Write failing contract tests for the response anchors, categorical attention bucket, ordered strict InterventionItems, active-stage/null semantics, sales-only estimate union, uncommitted draft/source closure, no aggregate score and no 4–5 cap.
+- [x] Confirm RED is caused by missing exports/contracts, then add minimal strict Zod schemas and inferred types.
+- [x] Reject duplicate Matter/item identities, parent mismatches, item/source/target drift, generic-Matter estimate fields, committed-action claims, unknown keys and impossible bucket/item combinations.
+- [x] Run focused and full Domain type/test gates.
 
 ## Task 2: Build deterministic attention composition with RED tests
 
@@ -65,9 +65,9 @@ An action draft has `state: uncommitted`, the exact top `InterventionItem` ident
 - Create: `server/tests/matter-portfolio-model.test.ts`
 - Modify only if reuse requires a narrow exported helper: `server/src/today.ts`, `server/src/relationshipRadar/service.ts`
 
-- [ ] Write failing pure-model tests for all seven ordering buckets, overdue/pending precedence, no-next dedupe, radar relationship ordering, stale-intelligence threshold boundaries, Focus-related/Matter-level due hypotheses, manual-priority ties, six visible Matters and stable ordering.
-- [ ] Implement pure builders that accept only already-authorized structured facts and emit server-owned body-free InterventionItems and one uncommitted top-action draft.
-- [ ] Prove missing Intelligence is unknown rather than stale; non-Focus person hypotheses are not promoted as high-impact; retired/supported/contradicted hypotheses do not enter; no score or legacy stage/key-person field is accepted.
+- [x] Write failing pure-model tests for all seven ordering buckets, overdue/pending precedence, no-next dedupe, radar relationship ordering, stale-intelligence threshold boundaries, Focus-related/Matter-level due hypotheses, manual-priority ties, six visible Matters and stable ordering.
+- [x] Implement pure builders that accept only already-authorized structured facts and emit server-owned body-free InterventionItems and one uncommitted top-action draft.
+- [x] Prove missing Intelligence is unknown rather than stale; non-Focus person hypotheses are not promoted as high-impact; retired/supported/contradicted hypotheses do not enter; no score or legacy stage/key-person field is accepted.
 
 ## Task 3: Assemble the current-scope portfolio and source drill
 
@@ -79,11 +79,11 @@ An action draft has `state: uncommitted`, the exact top `InterventionItem` ident
 - Create: `server/tests/matter-portfolio.test.ts`
 - Modify: `server/tests/product-capabilities.test.ts`
 
-- [ ] Write failing integration tests for authentication, `sales.workspace`, tenant isolation, scoped member/viewer ownership, archived/revoked Matter omission, current-role downgrade, exact parent closure and `private, no-store` headers.
-- [ ] In one serializable transaction, resolve current visible active Matters; compose core Today and current Radar interventions; validate Intelligence/Hypothesis/Focus through their existing authorities; load only exact active methodology-stage state; emit no hard 4–5 cap.
-- [ ] Implement provider-aware source drill: delegate core Today/Radar sources and revalidate portfolio Intelligence/Hypothesis/Focus exact revisions through current scope and sensitive ACL. Stale/revoked sources return scoped 404/409 without body leakage.
-- [ ] Snapshot every formal table/write-side count before and after reads and prove zero AgentRun, CommandRun, AuditEvent or formal CRM mutation.
-- [ ] Update the authority inventory so portfolio is a read consumer only and remove completed `SAAS-209 portfolio` planned placeholders.
+- [x] Write failing integration tests for authentication, `sales.workspace`, tenant isolation, scoped member/viewer ownership, archived/revoked Matter omission, current-role downgrade, exact parent closure and `private, no-store` headers.
+- [x] In one serializable transaction, resolve current visible active Matters; compose core Today and current Radar interventions; validate Intelligence/Hypothesis/Focus through their existing authorities; load only exact active methodology-stage state; emit no hard 4–5 cap.
+- [x] Implement provider-aware source drill: delegate core Today/Radar sources and revalidate portfolio Intelligence/Hypothesis/Focus exact revisions through current scope and sensitive ACL. Stale/revoked sources return scoped 404/409 without body leakage.
+- [x] Snapshot every formal table/write-side count before and after reads and prove zero AgentRun, CommandRun, AuditEvent or formal CRM mutation.
+- [x] Update the authority inventory so portfolio is a read consumer only and remove completed `SAAS-209 portfolio` planned placeholders.
 
 ## Task 4: Add strict App transport/parser boundaries
 
@@ -93,9 +93,9 @@ An action draft has `state: uncommitted`, the exact top `InterventionItem` ident
 - Modify: `app/src/api.ts`
 - Modify focused API tests if needed
 
-- [ ] Write failing tests for strict response/source parsing, parent identity preservation, stale source error mapping and no acceptance of aggregate score or provider-authored extra fields.
-- [ ] Add `api.matterPortfolio()` and `api.matterPortfolioSource(...)` using the shared schemas and provider/customer/matter/source anchors.
-- [ ] Keep error bodies bounded and ensure no response parser falls back to legacy `Account`/Opportunity state.
+- [x] Write failing tests for strict response/source parsing, parent identity preservation, stale source error mapping and no acceptance of aggregate score or provider-authored extra fields.
+- [x] Add `api.matterPortfolio()` and `api.matterPortfolioSource(...)` using the shared schemas and provider/customer/matter/source anchors.
+- [x] Keep error bodies bounded and ensure no response parser falls back to legacy `Account`/Opportunity state.
 
 ## Task 5: Add the `/matters` list/portfolio toggle and read-only UX
 
@@ -108,26 +108,26 @@ An action draft has `state: uncommitted`, the exact top `InterventionItem` ident
 - Modify: `app/src/components/CommercialShell.test.ts`
 - Modify: `app/src/styles.css`
 
-- [ ] Write failing render tests for the list/portfolio toggle, 4–5 fixture, visible categorical ordering, why-now copy, exact source/rule/time details, methodology `未配置`, sales-only estimate columns and generic-Matter omission.
-- [ ] Render loading/error/empty/refresh states and preserve the existing Matter detail/list behavior. Do not add navigation or modify `App.tsx`.
-- [ ] Open source drill only after an explicit click. Render the uncommitted draft clearly; non-viewers may explicitly open existing Quick Capture/relationship workspace, while viewer sees no draft action control.
-- [ ] Use semantic CSS variables and responsive controls; never auto-submit, mutate formal state, show a total score or present missing/stale sources as fact.
+- [x] Write failing render tests for the list/portfolio toggle, 4–5 fixture, visible categorical ordering, why-now copy, exact source/rule/time details, methodology `未配置`, sales-only estimate columns and generic-Matter omission.
+- [x] Render loading/error/empty/refresh states and preserve the existing Matter detail/list behavior. Do not add navigation or modify `App.tsx`.
+- [x] Open source drill only after an explicit click. Render the uncommitted draft clearly; non-viewers may explicitly open existing Quick Capture/relationship workspace, while viewer sees no draft action control.
+- [x] Use semantic CSS variables and responsive controls; never auto-submit, mutate formal state, show a total score or present missing/stale sources as fact.
 
 ## Task 6: Lock no-methodology and authority boundaries
 
 **Files:**
 - Create/modify focused Domain, Server and App fixtures only
 
-- [ ] Run a G64111-disabled fixture with poisoned `primaryDPersonId`, `pipelineStage`, `engageStage`, ADURC-like metadata and legacy status values; assert the portfolio remains functional and displays `未配置` without exposing poisoned values.
-- [ ] Add a bound-methodology fixture proving only the exact active binding's current StageState/StageDefinition is read; stale/inactive binding state cannot appear.
-- [ ] Prove Candidate/AI/Radar drafts never change formal Relation, Focus, Hypothesis, Commitment, stage, forecast or key-person state, and that inaccessible source loss only removes/downgrades attention.
+- [x] Run a G64111-disabled fixture with poisoned `primaryDPersonId`, `pipelineStage`, `engageStage`, ADURC-like metadata and legacy status values; assert the portfolio remains functional and displays `未配置` without exposing poisoned values.
+- [x] Add a bound-methodology fixture proving only the exact active binding's current StageState/StageDefinition is read; stale/inactive binding state cannot appear.
+- [x] Prove Candidate/AI/Radar drafts never change formal Relation, Focus, Hypothesis, Commitment, stage, forecast or key-person state, and that inaccessible source loss only removes/downgrades attention.
 
 ## Task 7: Verify and create one independent business commit
 
-- [ ] After Domain package changes, rerun `npm ci --install-links` in `app/` and `server/`.
-- [ ] Run focused RED→GREEN suites, then Domain typecheck/tests, Server generate/typecheck/full tests/PostgreSQL schema render check, App typecheck/tests and a production build to a temporary directory outside `app/dist`, G64111 typecheck/tests and PDE typecheck/tests.
-- [ ] Inspect `git diff --check`, exact changed-file inventory, forbidden self-cultivation paths, shared/high-conflict denylist, generated/local artifacts and source text for legacy-field fallback.
-- [ ] Commit the business implementation independently with `SAAS-209` in the message, push only `codex/saas-209-matter-portfolio`, and wait for all required jobs on that exact SHA. Do not create/merge a PR or deploy unless separately requested.
+- [x] After Domain package changes, rerun `npm ci --install-links` in `app/` and `server/`.
+- [x] Run focused RED→GREEN suites, then Domain typecheck/tests, Server generate/typecheck/full tests/PostgreSQL schema render check, App typecheck/tests and a production build to a temporary directory outside `app/dist`, G64111 typecheck/tests and PDE typecheck/tests.
+- [x] Inspect `git diff --check`, exact changed-file inventory, forbidden self-cultivation paths, shared/high-conflict denylist, generated/local artifacts and source text for legacy-field fallback.
+- [x] Commit the business implementation independently with `SAAS-209` in the message, push only `codex/saas-209-matter-portfolio`, and wait for all required jobs on that exact SHA. Do not create/merge a PR or deploy unless separately requested.
 
 ## Task 8: Close governance only after the business exact-SHA gate
 
@@ -135,19 +135,26 @@ An action draft has `state: uncommitted`, the exact top `InterventionItem` ident
 - Modify: `docs/商业版开发待办清单v1.md`
 - Modify: this plan's checkboxes/evidence only
 
-- [ ] Record exact business SHA, test counts, CI run, no-schema/no-migration decision and rollback boundary; mark `SAAS-209` `DONE` and only then move `SAAS-210` to `READY`.
-- [ ] Commit/push governance separately and wait for its exact SHA CI before reporting completion or starting `SAAS-210`.
+- [x] Record exact business SHA, test counts, CI run, no-schema/no-migration decision and rollback boundary; mark `SAAS-209` `DONE` and only then move `SAAS-210` to `READY`.
+- [x] Commit/push governance separately and wait for its exact SHA CI before reporting completion or starting `SAAS-210`; the exact governance SHA/run is reported outside this self-referential commit.
 
 ## Acceptance gate
 
-- [ ] One authorized portfolio shows at least a 4–5 Matter fixture but does not truncate a sixth visible active Matter.
-- [ ] Ordering reliably surfaces overdue/pending confirmation, no next step, relationship/Focus gaps, stale readable intelligence and due high-impact unverified hypotheses before manual priority, with no hidden total score.
-- [ ] Every attention item explains why now and exposes observation time, rule version, suggested action and exact currently authorized source drill; stale/revoked sources fail closed.
-- [ ] Action drafts are visibly uncommitted and require an explicit user action; reads/drafts cause zero formal CRM, AgentRun, CommandRun or AuditEvent changes.
-- [ ] Stage reads only the active MethodologyStageState or displays `未配置`; no `pipelineStage`, OppStage, `primaryDPersonId`, ADURC, G64111 score or fixed-stage fallback exists.
-- [ ] Sales estimates appear only for `sales_opportunity` and are labeled explicit sales inputs; generic Matters expose no sales estimate fields.
-- [ ] Tenant/current-role/EffectiveResourceScope/sensitive ACL and viewer Customer ownership isolation pass across list and source drill.
-- [ ] Domain, Server, App, G64111 and PDE gates pass locally and exact-SHA CI is green; self-cultivation/shared/deployment/production files remain untouched.
+- [x] One authorized portfolio shows at least a 4–5 Matter fixture but does not truncate a sixth visible active Matter.
+- [x] Ordering reliably surfaces overdue/pending confirmation, no next step, relationship/Focus gaps, stale readable intelligence and due high-impact unverified hypotheses before manual priority, with no hidden total score.
+- [x] Every attention item explains why now and exposes observation time, rule version, suggested action and exact currently authorized source drill; stale/revoked sources fail closed.
+- [x] Action drafts are visibly uncommitted and require an explicit user action; reads/drafts cause zero formal CRM, AgentRun, CommandRun or AuditEvent changes.
+- [x] Stage reads only the active MethodologyStageState or displays `未配置`; no `pipelineStage`, OppStage, `primaryDPersonId`, ADURC, G64111 score or fixed-stage fallback exists.
+- [x] Sales estimates appear only for `sales_opportunity` and are labeled explicit sales inputs; generic Matters expose no sales estimate fields.
+- [x] Tenant/current-role/EffectiveResourceScope/sensitive ACL and viewer Customer ownership isolation pass across list and source drill.
+- [x] Domain, Server, App, G64111 and PDE gates pass locally and exact-SHA CI is green; self-cultivation/shared/deployment/production files remain untouched.
+
+## Completion evidence
+
+- Business commit: `7073f416a8e89fc9a747669b556fc7633b2fc61e`; [GitHub Actions run 33605977787](https://github.com/ZiZ-LG/jianghu/actions/runs/33605977787) completed with 12/12 jobs successful for that exact SHA.
+- Local gates: Domain Contracts 17 files / 156 tests; Server 121 files / 957 tests plus Prisma generate, typecheck and PostgreSQL schema render check; App 57 files / 390 tests plus typecheck and production build outside `app/dist`; G64111 2 files / 32 tests; PDE 3 files / 25 tests.
+- Scope: 24 business files in App, Server and Domain Contracts; no schema, migration, package/lock/Vite, `App.tsx`, Docker Compose, root script, workflow, deployment, shared high-conflict or self-cultivation change. Production, Aliyun, Mac mini and `main` were not touched.
+- Rollback: hide the `/matters` portfolio toggle and revert the business commit. Preserve all pre-existing radar, intelligence, focus, hypothesis, commitment, agent/audit and migration history; never restore legacy stage/key-person fallbacks or delete data.
 
 ## Rollback
 
