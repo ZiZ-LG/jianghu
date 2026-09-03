@@ -40,6 +40,9 @@ import {
   CommitmentCommandReceiptSchema,
   commitmentReceiptMatchesCommand,
   CrmContextSnapshotSchema,
+  G64111MethodologyReadModelSchema,
+  MethodologyCommandReceiptSchema,
+  MethodologyCommandSchema,
   PostMeetingReviewRequestSchema,
   PostMeetingFeishuImportRequestSchema,
   PostMeetingFeishuOAuthStartResponseSchema,
@@ -63,6 +66,9 @@ import {
   type MatterPortfolioSourceRequest,
   type CrmContextSnapshot,
   type CommandContext,
+  type G64111MethodologyReadModel,
+  type MethodologyCommand,
+  type MethodologyCommandReceipt,
   type ProductAccess,
   type PostMeetingReviewBatchDetail,
   type PostMeetingReviewReceipt,
@@ -276,6 +282,13 @@ const invalidMatterPortfolioResponse = (cause?: unknown): ApiError => new ApiErr
   cause,
 });
 
+const invalidMethodologyResponse = (cause?: unknown): ApiError => new ApiError({
+  code: 'invalid_response',
+  message: '服务返回的方法论状态无效，请刷新后重试。',
+  retryable: false,
+  cause,
+});
+
 function postMeetingParse<T>(parse: () => T): T {
   try { return parse(); } catch (cause) { throw invalidPostMeetingResponse(cause); }
 }
@@ -300,6 +313,42 @@ function parseCrmContextResponse(raw: unknown): CrmContextSnapshot {
   const parsed = CrmContextSnapshotSchema.safeParse(raw);
   if (!parsed.success) throw invalidCrmContextResponse(parsed.error);
   return parsed.data;
+}
+
+function parseG64111MethodologyResponse(raw: unknown): G64111MethodologyReadModel {
+  const parsed = G64111MethodologyReadModelSchema.safeParse(raw);
+  if (!parsed.success) throw invalidMethodologyResponse(parsed.error);
+  return parsed.data;
+}
+
+type MethodologySetupCommand = Exclude<MethodologyCommand, { type: 'ASSIGN_METHODOLOGY_PILOT' }>;
+
+function parseMethodologyCommandResponse(
+  raw: unknown,
+  command: MethodologySetupCommand,
+): MethodologyCommandReceipt & { replayed: boolean } {
+  if (!isRecord(raw) || typeof raw.replayed !== 'boolean') throw invalidMethodologyResponse();
+  const { replayed, ...receiptValue } = raw;
+  const receipt = MethodologyCommandReceiptSchema.safeParse(receiptValue);
+  if (!receipt.success) throw invalidMethodologyResponse(receipt.error);
+
+  const matches = command.type === 'MATERIALIZE_BUILTIN_METHODOLOGY'
+    ? receipt.data.action === 'template_materialized'
+      && receipt.data.packId === command.packId
+      && receipt.data.versionId === command.versionId
+    : command.type === 'ACTIVATE_METHODOLOGY_BINDING'
+      ? receipt.data.action === 'binding_activated'
+        && receipt.data.matterId === command.matterId
+        && receipt.data.bindingId === command.bindingId
+        && receipt.data.activeMethodologyBindingId === command.bindingId
+        && receipt.data.matterVersion === command.baseMatterVersion + 1
+      : receipt.data.action === 'methodology_unbound'
+        && receipt.data.matterId === command.matterId
+        && receipt.data.previousBindingId === command.expectedActiveBindingId
+        && receipt.data.activeMethodologyBindingId === null
+        && receipt.data.matterVersion === command.baseMatterVersion + 1;
+  if (!matches) throw invalidMethodologyResponse(new Error('methodology command receipt mismatch'));
+  return { ...receipt.data, replayed };
 }
 
 function parseTodayResponse(raw: unknown): TodayReadModel {
@@ -548,6 +597,21 @@ export const api = {
   crmContext: async (): Promise<CrmContextSnapshot> => parseCrmContextResponse(
     await req<unknown>('/api/crm/context'),
   ),
+  g64111Methodology: async (): Promise<G64111MethodologyReadModel> => parseG64111MethodologyResponse(
+    await req<unknown>('/api/methodology/g64111'),
+  ),
+  methodologyCommand: async (
+    input: MethodologySetupCommand,
+    idempotencyKey: string,
+  ): Promise<MethodologyCommandReceipt & { replayed: boolean }> => {
+    const command = MethodologyCommandSchema.parse(input) as MethodologySetupCommand;
+    const raw = await commandReq<unknown>('/api/commands/methodology', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(command),
+    });
+    return parseMethodologyCommandResponse(raw, command);
+  },
   matterPortfolio: async (): Promise<MatterPortfolioReadModel> => {
     const raw = await req<unknown>('/api/matter-portfolio');
     return matterPortfolioParse(() => parseMatterPortfolio(raw));

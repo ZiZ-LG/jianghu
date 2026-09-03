@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  G64111_BUILTIN_PACK_KEY,
+  G64111_BUILTIN_SOURCE_TEMPLATE_REF,
   assembleProductAccess,
   type AgentManualRunRequest,
   type PostMeetingReviewRequest,
@@ -9,6 +11,22 @@ import {
   MATTER_PORTFOLIO_FIXTURE,
   MATTER_PORTFOLIO_SOURCE_REF,
 } from './testFixtures/matterPortfolio';
+
+const G64111_READ_FIXTURE = {
+  generatedAtUtc: '2026-09-03T12:00:00.000Z',
+  commandsEnabled: true,
+  canManage: true,
+  installation: {
+    packId: 'methodologypack_11111111111111111111111111111111',
+    versionId: 'methodologyversion_22222222222222222222222222222222',
+    packKey: G64111_BUILTIN_PACK_KEY,
+    packName: 'G64111 趋赢力',
+    sourceTemplateRef: G64111_BUILTIN_SOURCE_TEMPLATE_REF,
+    versionKey: '1.0.0',
+    engineRef: 'g64111:0.1.0',
+  },
+  matters: [],
+};
 
 const response = (status: number, body: unknown) => ({
   ok: status >= 200 && status < 300,
@@ -851,6 +869,68 @@ describe('typed API failures', () => {
       code: 'review_batch_conflict',
       cause: conflict,
     });
+  });
+});
+
+describe('SAAS-210 methodology API', () => {
+  it('strictly parses the neutral G64111 setup projection', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(200, G64111_READ_FIXTURE))
+      .mockResolvedValueOnce(response(200, { ...G64111_READ_FIXTURE, pipelineStage: 'poison' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.g64111Methodology()).resolves.toEqual(G64111_READ_FIXTURE);
+    await expect(api.g64111Methodology()).rejects.toMatchObject({ code: 'invalid_response', retryable: false });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('http://localhost:3001/api/methodology/g64111');
+  });
+
+  it('sends a setup command with a stable idempotency key and accepts only an exact receipt', async () => {
+    const command = {
+      type: 'ACTIVATE_METHODOLOGY_BINDING' as const,
+      bindingId: 'methodologybinding_33333333333333333333333333333333',
+      customerId: 'customer-1',
+      matterId: 'matter-1',
+      versionId: 'methodologyversion_22222222222222222222222222222222',
+      baseMatterVersion: 4,
+      expectedActiveBindingId: null,
+      decisionProfileRef: null,
+    };
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => response(200, {
+      action: 'binding_activated', matterId: command.matterId,
+      bindingId: command.bindingId, activeMethodologyBindingId: command.bindingId,
+      matterVersion: 5, replayed: false,
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.methodologyCommand(command, 'methodology-stable-key')).resolves.toMatchObject({
+      action: 'binding_activated', bindingId: command.bindingId, matterVersion: 5, replayed: false,
+    });
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe('http://localhost:3001/api/commands/methodology');
+    expect(((init as RequestInit).headers as Headers).get('Idempotency-Key')).toBe('methodology-stable-key');
+    expect(JSON.parse(String((init as RequestInit).body))).toEqual(command);
+  });
+
+  it('rejects malformed, mismatched, or non-boolean methodology command receipts', async () => {
+    const command = {
+      type: 'UNBIND_METHODOLOGY' as const,
+      customerId: 'customer-1', matterId: 'matter-1', baseMatterVersion: 5,
+      expectedActiveBindingId: 'methodologybinding_33333333333333333333333333333333',
+    };
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(response(200, {
+        action: 'methodology_unbound', matterId: 'matter-other',
+        previousBindingId: command.expectedActiveBindingId,
+        activeMethodologyBindingId: null, matterVersion: 6, replayed: false,
+      }))
+      .mockResolvedValueOnce(response(200, {
+        action: 'methodology_unbound', matterId: command.matterId,
+        previousBindingId: command.expectedActiveBindingId,
+        activeMethodologyBindingId: null, matterVersion: 6, replayed: 'false',
+      })));
+
+    await expect(api.methodologyCommand(command, 'methodology-mismatch-key')).rejects.toMatchObject({ code: 'invalid_response' });
+    await expect(api.methodologyCommand(command, 'methodology-malformed-key')).rejects.toMatchObject({ code: 'invalid_response' });
   });
 });
 

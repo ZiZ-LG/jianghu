@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
 import { assembleProductAccess } from '@jianghu/domain-contracts';
+import {
+  G64111_BUILTIN_PACK_KEY,
+  G64111_BUILTIN_SOURCE_TEMPLATE_REF,
+  type G64111MethodologyReadModel,
+} from '@jianghu/domain-contracts';
 import { CommercialShell } from './CommercialShell';
 
 const EMPTY_CRM_CONTEXT = {
@@ -21,8 +26,11 @@ const renderShell = (pathname: string, enabledEntitlements?: string[], readonly 
   actorUserId: 'user-cao',
   actorRole: readonly ? 'viewer' : 'owner',
   readonly,
+  methodologyState: { status: 'loading' },
   onNavigate: () => undefined,
   onOpenLegacy: () => undefined,
+  onMethodologyAction: async () => undefined,
+  onRetryMethodology: () => undefined,
   onOpenTeam: () => undefined,
   onQuickCaptureSaved: async () => undefined,
   onLogout: () => undefined,
@@ -105,8 +113,11 @@ describe('CommercialShell', () => {
       actorUserId: 'user-cao',
       actorRole: 'owner',
       readonly: false,
+      methodologyState: { status: 'loading' },
       onNavigate: () => undefined,
       onOpenLegacy: () => undefined,
+      onMethodologyAction: async () => undefined,
+      onRetryMethodology: () => undefined,
       onOpenTeam: () => undefined,
       onQuickCaptureSaved: async () => undefined,
       onLogout: () => undefined,
@@ -132,8 +143,11 @@ describe('CommercialShell', () => {
       actorUserId: 'user-cao',
       actorRole: 'owner',
       readonly: false,
+      methodologyState: { status: 'loading' },
       onNavigate: () => undefined,
       onOpenLegacy: () => undefined,
+      onMethodologyAction: async () => undefined,
+      onRetryMethodology: () => undefined,
       onOpenTeam: () => undefined,
       onQuickCaptureSaved: async () => undefined,
       onLogout: () => undefined,
@@ -157,8 +171,14 @@ describe('CommercialShell', () => {
       actorUserId: 'user-cao',
       actorRole: 'owner',
       readonly: false,
+      methodologyState: { status: 'ready', snapshot: {
+        generatedAtUtc: '2026-09-03T12:00:00.000Z', commandsEnabled: true, canManage: true,
+        installation: null, matters: [],
+      } },
       onNavigate: () => undefined,
       onOpenLegacy: () => undefined,
+      onMethodologyAction: async () => undefined,
+      onRetryMethodology: () => undefined,
       onOpenTeam: () => undefined,
       onQuickCaptureSaved: async () => undefined,
       onLogout: () => undefined,
@@ -174,8 +194,14 @@ describe('CommercialShell', () => {
       actorUserId: 'viewer-cao',
       actorRole: 'viewer',
       readonly: true,
+      methodologyState: { status: 'ready', snapshot: {
+        generatedAtUtc: '2026-09-03T12:00:00.000Z', commandsEnabled: true, canManage: false,
+        installation: null, matters: [],
+      } },
       onNavigate: () => undefined,
       onOpenLegacy: () => undefined,
+      onMethodologyAction: async () => undefined,
+      onRetryMethodology: () => undefined,
       onOpenTeam: () => undefined,
       onQuickCaptureSaved: async () => undefined,
       onLogout: () => undefined,
@@ -186,10 +212,84 @@ describe('CommercialShell', () => {
     expect(owner).toContain('data-relationship-workspace="idle"');
     expect(owner.indexOf('data-pre-meeting-brief')).toBeLessThan(owner.indexOf('data-post-meeting-review'));
     expect(owner.indexOf('data-post-meeting-review')).toBeLessThan(owner.indexOf('data-relationship-workspace'));
-    expect(owner.indexOf('data-relationship-workspace')).toBeLessThan(owner.indexOf('还没有可打开的客户'));
+    expect(owner.indexOf('data-relationship-workspace')).toBeLessThan(owner.indexOf('尚无已启用 G64111 的事项'));
     expect(viewer).toContain('data-pre-meeting-brief="loading"');
     expect(viewer).not.toContain('data-post-meeting-review');
     expect(viewer).toContain('data-relationship-workspace="idle"');
-    expect(viewer).toContain('还没有可打开的客户');
+    expect(viewer).toContain('尚无已启用 G64111 的事项');
+  });
+
+  it('keeps the complex-sales loop usable with no methodology and exposes no proprietary legacy consumer', () => {
+    const noMethodology: G64111MethodologyReadModel = {
+      generatedAtUtc: '2026-09-03T12:00:00.000Z', commandsEnabled: true, canManage: true,
+      installation: null,
+      matters: [{
+        customerId: 'neutral-customer', customerName: '中性客户', matterId: 'neutral-matter',
+        matterTitle: '中性事项', matterKind: 'general', matterVersion: 0, activeBinding: null,
+      }],
+    };
+    const html = renderToStaticMarkup(createElement(CommercialShell, {
+      access: assembleProductAccess({ edition: 'commercial', enabledEntitlements: ['sales.workspace', 'methodology.g64111'] }),
+      pathname: '/sales',
+      accounts: [{
+        id: 'neutral-customer', name: '中性客户', customerType: 1, persons: [], edges: [],
+        opportunities: [{
+          id: 'neutral-matter', name: '中性事项', customerType: 1,
+          pipelineStage: 'POISON_PIPELINE', engageStage: 'POISON_ENGAGE', roles: [], bis: [], ucvs: [],
+          plan: [], milestones: [], visits: [], strategy: { cards: [], risks: [], resources: [] },
+        }], visitNotes: [], notes: [],
+      }] as any,
+      crmContextState: { status: 'ready', snapshot: EMPTY_CRM_CONTEXT, refreshing: false, refreshError: null },
+      actorUserId: 'user-cao', actorRole: 'owner', readonly: false,
+      methodologyState: { status: 'ready', snapshot: noMethodology },
+      onNavigate: () => undefined, onOpenLegacy: () => undefined, onOpenTeam: () => undefined,
+      onMethodologyAction: async () => undefined, onRetryMethodology: () => undefined,
+      onQuickCaptureSaved: async () => undefined, onLogout: () => undefined,
+    }));
+
+    expect(html).toContain('data-pre-meeting-brief="loading"');
+    expect(html).toContain('data-post-meeting-review="loading"');
+    expect(html).toContain('data-relationship-workspace="idle"');
+    expect(html).toContain('尚无已启用 G64111 的事项');
+    expect(html).not.toContain('data-legacy-g64111-matter');
+    expect(html).not.toContain('POISON_PIPELINE');
+    expect(html).not.toContain('POISON_ENGAGE');
+    expect(html).not.toContain('趋赢力方法论已就绪');
+  });
+
+  it('lists only exact-bound Matters in the frozen legacy entry', () => {
+    const bound: G64111MethodologyReadModel = {
+      generatedAtUtc: '2026-09-03T12:00:00.000Z', commandsEnabled: true, canManage: true,
+      installation: {
+        packId: 'pack-g', versionId: 'version-g', packKey: G64111_BUILTIN_PACK_KEY,
+        packName: 'G64111 趋赢力', sourceTemplateRef: G64111_BUILTIN_SOURCE_TEMPLATE_REF,
+        versionKey: '1.0.0', engineRef: 'g64111:0.1.0',
+      },
+      matters: [{
+        customerId: 'customer-1', customerName: '客户一', matterId: 'matter-bound', matterTitle: '精确绑定事项',
+        matterKind: 'general', matterVersion: 2,
+        activeBinding: {
+          bindingId: 'binding-g', customerId: 'customer-1', matterId: 'matter-bound',
+          packId: 'pack-g', versionId: 'version-g', packKey: G64111_BUILTIN_PACK_KEY,
+          packName: 'G64111 趋赢力', sourceTemplateRef: G64111_BUILTIN_SOURCE_TEMPLATE_REF,
+          versionKey: '1.0.0', engineRef: 'g64111:0.1.0',
+        },
+      }, {
+        customerId: 'customer-1', customerName: '客户一', matterId: 'matter-unbound', matterTitle: '未绑定事项',
+        matterKind: 'general', matterVersion: 0, activeBinding: null,
+      }],
+    };
+    const html = renderToStaticMarkup(createElement(CommercialShell, {
+      access: assembleProductAccess({ edition: 'commercial', enabledEntitlements: ['sales.workspace', 'methodology.g64111'] }),
+      pathname: '/sales', accounts: [], crmContextState: { status: 'loading' },
+      actorUserId: 'user-cao', actorRole: 'owner', readonly: false,
+      methodologyState: { status: 'ready', snapshot: bound },
+      onNavigate: () => undefined, onOpenLegacy: () => undefined, onOpenTeam: () => undefined,
+      onMethodologyAction: async () => undefined, onRetryMethodology: () => undefined,
+      onQuickCaptureSaved: async () => undefined, onLogout: () => undefined,
+    }));
+    expect(html).toContain('data-legacy-g64111-matter="matter-bound"');
+    expect(html).toContain('精确绑定事项');
+    expect(html).not.toContain('未绑定事项');
   });
 });
