@@ -27,6 +27,9 @@ type CrmContextPanelComponent = (props: {
   state: Parameters<CrmContextPanelStateViewComponent>[0]['state'];
   onRetry: () => void;
   onQuickCapture: () => void;
+  readonly?: boolean;
+  onNavigate?: (path: string) => void;
+  portfolioEnabled?: boolean;
 }) => ReturnType<typeof createElement>;
 
 const SNAPSHOT = CrmContextSnapshotSchema.parse({
@@ -198,5 +201,31 @@ describe('SAAS-105 generic CRM context pages', () => {
     expect(html).toContain('共享刷新失败');
     expect(html).toContain('再次刷新');
     expect(html).toContain('远山制造');
+  });
+
+  it('adds a list/portfolio toggle only to the Matter surface and preserves the list as default', () => {
+    const Panel = Reflect.get(CrmContextComponents, 'CrmContextPanel') as CrmContextPanelComponent | undefined;
+    expect(Panel, 'CrmContextPanel must be exported').toBeDefined();
+    const matters = renderToStaticMarkup(createElement(Panel!, {
+      mode: 'matters',
+      state: { status: 'ready', snapshot: SNAPSHOT, refreshing: false, refreshError: null },
+      onRetry: () => undefined,
+      onQuickCapture: () => undefined,
+      readonly: false,
+      onNavigate: () => undefined,
+      portfolioEnabled: true,
+    }));
+    const customers = renderToStaticMarkup(createElement(Panel!, {
+      mode: 'customers',
+      state: { status: 'ready', snapshot: SNAPSHOT, refreshing: false, refreshError: null },
+      onRetry: () => undefined,
+      onQuickCapture: () => undefined,
+    }));
+
+    expect(matters).toContain('data-matter-surface-toggle="true"');
+    expect(matters).toContain('aria-pressed="true">事项列表');
+    expect(matters).toContain('aria-pressed="false">注意组合');
+    expect(matters).toContain('data-crm-context-page="matters"');
+    expect(customers).not.toContain('data-matter-surface-toggle="true"');
   });
 });

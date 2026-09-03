@@ -28,6 +28,10 @@ import {
   parseRelationshipRadarRuns,
 } from './lib/relationshipRadar';
 import {
+  parseMatterPortfolio,
+  parseMatterPortfolioSource,
+} from './lib/matterPortfolio';
+import {
   ActorRoleSchema,
   AgentJobCardSchema,
   AgentJobControlRequestSchema,
@@ -55,6 +59,8 @@ import {
   type AgentManualRunRequest,
   type AgentRunReceipt,
   type InterventionSourceRef,
+  type MatterPortfolioReadModel,
+  type MatterPortfolioSourceRequest,
   type CrmContextSnapshot,
   type CommandContext,
   type ProductAccess,
@@ -263,6 +269,13 @@ const invalidRelationshipRadarResponse = (cause?: unknown): ApiError => new ApiE
   cause,
 });
 
+const invalidMatterPortfolioResponse = (cause?: unknown): ApiError => new ApiError({
+  code: 'invalid_response',
+  message: '服务返回的事项组合数据无效，请刷新后重试。',
+  retryable: false,
+  cause,
+});
+
 function postMeetingParse<T>(parse: () => T): T {
   try { return parse(); } catch (cause) { throw invalidPostMeetingResponse(cause); }
 }
@@ -277,6 +290,10 @@ function relationshipWorkspaceParse<T>(parse: () => T): T {
 
 function relationshipRadarParse<T>(parse: () => T): T {
   try { return parse(); } catch (cause) { throw invalidRelationshipRadarResponse(cause); }
+}
+
+function matterPortfolioParse<T>(parse: () => T): T {
+  try { return parse(); } catch (cause) { throw invalidMatterPortfolioResponse(cause); }
 }
 
 function parseCrmContextResponse(raw: unknown): CrmContextSnapshot {
@@ -531,6 +548,19 @@ export const api = {
   crmContext: async (): Promise<CrmContextSnapshot> => parseCrmContextResponse(
     await req<unknown>('/api/crm/context'),
   ),
+  matterPortfolio: async (): Promise<MatterPortfolioReadModel> => {
+    const raw = await req<unknown>('/api/matter-portfolio');
+    return matterPortfolioParse(() => parseMatterPortfolio(raw));
+  },
+  matterPortfolioSource: async (
+    requestValue: MatterPortfolioSourceRequest,
+  ): Promise<TodaySourceView> => {
+    const raw = await req<unknown>('/api/matter-portfolio/source', {
+      method: 'POST',
+      body: JSON.stringify(requestValue),
+    });
+    return matterPortfolioParse(() => parseMatterPortfolioSource(raw, requestValue));
+  },
   relationshipWorkspace: async (
     customerId: string,
     matterId: string,

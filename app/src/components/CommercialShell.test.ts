@@ -57,6 +57,16 @@ describe('CommercialShell', () => {
     expect(quickCaptureHtml).not.toContain('前往客户');
   });
 
+  it('wires the Matter list/portfolio selector without adding a navigation entry', () => {
+    const freeHtml = renderShell('/matters');
+    const html = renderShell('/matters', ['sales.workspace']);
+    expect(freeHtml).not.toContain('data-matter-surface-toggle="true"');
+    expect(html).toContain('data-matter-surface-toggle="true"');
+    expect(html).toContain('>事项列表</button>');
+    expect(html).toContain('>注意组合</button>');
+    expect(html.match(/data-product-entry=/g)).toHaveLength(5);
+  });
+
   it('renders every gated entry and its non-empty surface only when enabled', () => {
     const enabled = ['sales.workspace', 'team.operations', 'methodology.g64111', 'decision.pde'];
     const html = renderShell('/pde', enabled);

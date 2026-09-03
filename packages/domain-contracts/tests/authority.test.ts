@@ -25,8 +25,8 @@ const VALID_ENTRY = {
 } as const;
 
 describe('CRM field authority map', () => {
-  it('contains the sixteen approved logical fields with classified consumers', () => {
-    expect(CRM_FIELD_AUTHORITY).toHaveLength(16);
+  it('contains the seventeen approved logical fields with classified consumers', () => {
+    expect(CRM_FIELD_AUTHORITY).toHaveLength(17);
     for (const entry of CRM_FIELD_AUTHORITY) expect(listCrmFieldConsumers(entry).length).toBeGreaterThan(0);
   });
 
@@ -105,6 +105,7 @@ describe('CRM field authority map', () => {
         reads: [
           'app/src/components/RelationshipWorkspacePanel.tsx',
           'server/src/intelligenceFocus/routes.ts',
+          'server/src/matterPortfolio/service.ts',
           'server/src/relationshipWorkspace/model.ts',
         ],
         writes: ['server/src/intelligenceFocus/service.ts'],
@@ -142,12 +143,12 @@ describe('CRM field authority map', () => {
         reads: [
           'app/src/components/RelationshipWorkspacePanel.tsx',
           'server/src/hypotheses/routes.ts',
+          'server/src/matterPortfolio/service.ts',
           'server/src/relationshipWorkspace/model.ts',
           'server/src/relationshipWorkspace/routes.ts',
         ],
         writes: ['server/src/hypotheses/service.ts', 'server/src/relationshipWorkspace/service.ts'],
         planned: [
-          'SAAS-209 portfolio',
           'SAAS-212 relationship radar',
         ],
       },
@@ -176,6 +177,32 @@ describe('CRM field authority map', () => {
     expect(hypothesis?.forbidden.join('\n')).toMatch(/automatic|auto|自动/i);
     expect(hypothesis?.forbidden.join('\n')).toMatch(/fallback|dual/i);
     expect(hypothesis?.forbidden.join('\n')).toMatch(/revision|link/i);
+  });
+
+  it('records the Matter portfolio as a read-only composition with no authority or pending cutover', () => {
+    const projection = getCrmFieldAuthority('matter.portfolio_projection');
+    expect(projection).toMatchObject({
+      currentAuthority: { kind: 'none', path: null },
+      targetAuthority: { kind: 'none', path: null },
+      consumers: {
+        reads: [
+          'app/src/components/MatterPortfolioPanel.tsx',
+          'server/src/matterPortfolio/routes.ts',
+        ],
+        writes: [],
+        migrations: [],
+        planned: [],
+      },
+    });
+    expect(projection?.consumers.adapters).toEqual(expect.arrayContaining([
+      'packages/domain-contracts/src/matterPortfolio.ts',
+      'server/src/matterPortfolio/model.ts',
+      'server/src/matterPortfolio/service.ts',
+      'app/src/lib/matterPortfolio.ts',
+    ]));
+    expect(projection?.forbidden.join('\n')).toMatch(/score|snapshot/i);
+    expect(projection?.forbidden.join('\n')).toMatch(/draft|AI/i);
+    expect(projection?.forbidden.join('\n')).toMatch(/pipelineStage|primaryDPersonId/);
   });
 
   it('records the relationship workspace as a read-only composition without a new field authority', () => {
@@ -234,6 +261,7 @@ describe('CRM field authority map', () => {
       'app/src/components/CrmContextPages.tsx',
       'app/src/lib/crmContext.ts',
       'server/src/crmContext.ts',
+      'server/src/matterPortfolio/service.ts',
     ]);
     expect(category?.consumers.writes).toEqual([
       'app/src/lib/quickCapture.ts',
@@ -268,6 +296,7 @@ describe('CRM field authority map', () => {
       'server/scripts/render-pre-customer-schema.ts',
       'server/src/ai.ts',
       'server/src/crmContext.ts',
+      'server/src/matterPortfolio/service.ts',
       'server/src/mcp/syncBundle.ts',
       'server/src/mcpServer.ts',
       'server/src/mutate.ts',

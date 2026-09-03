@@ -13,6 +13,7 @@ import {
   selectMatterContext,
 } from '../lib/crmContext';
 import { CrmRelationshipGraph } from './CrmRelationshipGraph';
+import { MatterPortfolioPanel } from './MatterPortfolioPanel';
 
 export const CRM_CONTEXT_REFRESH_INTERVAL_MS = 60_000;
 
@@ -344,12 +345,50 @@ export function CrmContextPanelStateView({
   );
 }
 
-export function CrmContextPanel({ mode, state, onRetry, onQuickCapture }: {
+export function CrmContextPanel({
+  mode,
+  state,
+  onRetry,
+  onQuickCapture,
+  readonly = false,
+  onNavigate = onQuickCapture,
+  portfolioEnabled = false,
+}: {
   mode: ContextMode;
   state: CrmContextPanelState;
   onRetry: () => void;
   onQuickCapture: () => void;
+  readonly?: boolean;
+  onNavigate?: (path: string) => void;
+  portfolioEnabled?: boolean;
 }) {
+  const [matterSurface, setMatterSurface] = useState<'list' | 'portfolio'>('list');
+  if (mode === 'matters' && portfolioEnabled) {
+    return (
+      <div className="matter-surface-shell">
+        <div className="matter-surface-toggle" data-matter-surface-toggle="true" role="group" aria-label="事项视图">
+          <button
+            type="button"
+            aria-pressed={matterSurface === 'list'}
+            onClick={() => setMatterSurface('list')}
+          >事项列表</button>
+          <button
+            type="button"
+            aria-pressed={matterSurface === 'portfolio'}
+            onClick={() => setMatterSurface('portfolio')}
+          >注意组合</button>
+        </div>
+        {matterSurface === 'list' ? (
+          <CrmContextPanelStateView
+            mode={mode}
+            state={state}
+            onRetry={onRetry}
+            onQuickCapture={onQuickCapture}
+          />
+        ) : <MatterPortfolioPanel readonly={readonly} onNavigate={onNavigate} />}
+      </div>
+    );
+  }
   return (
     <CrmContextPanelStateView
       mode={mode}

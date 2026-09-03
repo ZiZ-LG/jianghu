@@ -8,6 +8,7 @@ export * from './ids.js';
 export * from './hypotheses.js';
 export * from './intelligence.js';
 export * from './interventions.js';
+export * from './matterPortfolio.js';
 export * from './methodology.js';
 export * from './postMeeting.js';
 export * from './postMeetingImport.js';

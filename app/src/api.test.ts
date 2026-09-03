@@ -5,6 +5,10 @@ import {
   type PostMeetingReviewRequest,
 } from '@jianghu/domain-contracts';
 import { ApiError, api, isConfirmedAuthFailure, request } from './api';
+import {
+  MATTER_PORTFOLIO_FIXTURE,
+  MATTER_PORTFOLIO_SOURCE_REF,
+} from './testFixtures/matterPortfolio';
 
 const response = (status: number, body: unknown) => ({
   ok: status >= 200 && status < 300,
@@ -534,6 +538,51 @@ describe('typed API failures', () => {
       'http://localhost:3001/api/crm/context',
       'http://localhost:3001/api/crm/context',
     ]);
+  });
+
+  it('uses strict Matter portfolio list and exact provider-scoped source transports', async () => {
+    const sourceRequest = {
+      providerKey: 'core.today' as const,
+      customerId: 'customer-209',
+      matterId: 'matter-209',
+      sourceRef: MATTER_PORTFOLIO_SOURCE_REF,
+    };
+    const source = {
+      sourceRef: MATTER_PORTFOLIO_SOURCE_REF,
+      customerId: sourceRequest.customerId,
+      matterId: sourceRequest.matterId,
+      label: '当前事项',
+      detail: '正式事项版本 5',
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(200, MATTER_PORTFOLIO_FIXTURE))
+      .mockResolvedValueOnce(response(200, { ...MATTER_PORTFOLIO_FIXTURE, aggregateScore: 88 }))
+      .mockResolvedValueOnce(response(200, source))
+      .mockResolvedValueOnce(response(200, { ...source, customerId: 'other-customer' }))
+      .mockResolvedValueOnce(response(409, {
+        error: '事项组合已变化', code: 'matter_portfolio_source_changed',
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.matterPortfolio()).resolves.toEqual(MATTER_PORTFOLIO_FIXTURE);
+    await expect(api.matterPortfolio()).rejects.toMatchObject({
+      code: 'invalid_response', retryable: false,
+    });
+    await expect(api.matterPortfolioSource(sourceRequest)).resolves.toEqual(source);
+    await expect(api.matterPortfolioSource(sourceRequest)).rejects.toMatchObject({
+      code: 'invalid_response', retryable: false,
+    });
+    await expect(api.matterPortfolioSource(sourceRequest)).rejects.toMatchObject({
+      status: 409, code: 'matter_portfolio_source_changed', retryable: false,
+    });
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'http://localhost:3001/api/matter-portfolio',
+      'http://localhost:3001/api/matter-portfolio',
+      'http://localhost:3001/api/matter-portfolio/source',
+      'http://localhost:3001/api/matter-portfolio/source',
+      'http://localhost:3001/api/matter-portfolio/source',
+    ]);
+    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual(sourceRequest);
   });
 
   it('revalidates an exact Today source revision before drill-down', async () => {
