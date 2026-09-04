@@ -529,7 +529,12 @@ export function methodologyCommandRoutes(app: FastifyInstance): void {
     try {
       const command = await runCommand<MethodologyCommandReceipt>(
         ctx,
-        { kind: 'methodology', idempotencyKey: key, payload: input },
+        {
+          kind: 'methodology',
+          idempotencyKey: key,
+          payload: input,
+          authorizeReplay: (tx) => assertMethodologyManager(ctx, tx),
+        },
         (tx) => executeMethodologyCommand(ctx, input, tx),
         prisma,
       );

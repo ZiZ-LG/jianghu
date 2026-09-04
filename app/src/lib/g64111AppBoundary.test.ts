@@ -88,21 +88,42 @@ describe('SAAS-210 App G64111 boundary', () => {
     expect(compute).toHaveBeenCalledTimes(2);
   });
 
-  it('refreshes the methodology projection with every commercial Matter mutation', async () => {
-    const refreshMatterState = vi.fn(async () => 'fresh-state');
-    const refreshMethodologyState = vi.fn(async () => undefined);
+  it('invalidates the commercial methodology snapshot before refreshing a mutated Matter', async () => {
+    const calls: string[] = [];
+    const invalidateMethodologyState = vi.fn(() => { calls.push('invalidate'); });
+    const refreshMatterState = vi.fn(async () => {
+      calls.push('matter');
+      return 'fresh-state';
+    });
+    let releaseMethodology!: () => void;
+    const refreshMethodologyState = vi.fn(() => new Promise<void>((resolve) => {
+      calls.push('methodology');
+      releaseMethodology = resolve;
+    }));
 
-    await expect(refreshG64111AfterMatterMutation(
+    const pending = refreshG64111AfterMatterMutation(
       commercial,
+      invalidateMethodologyState,
       refreshMatterState,
       refreshMethodologyState,
-    )).resolves.toBe('fresh-state');
+    );
+    expect(calls).toEqual(['invalidate', 'matter', 'methodology']);
+    expect(invalidateMethodologyState).toHaveBeenCalledTimes(1);
     expect(refreshMatterState).toHaveBeenCalledTimes(1);
     expect(refreshMethodologyState).toHaveBeenCalledTimes(1);
+    releaseMethodology();
+    await expect(pending).resolves.toBe('fresh-state');
 
+    invalidateMethodologyState.mockClear();
     refreshMatterState.mockClear();
     refreshMethodologyState.mockClear();
-    await refreshG64111AfterMatterMutation(internal, refreshMatterState, refreshMethodologyState);
+    await refreshG64111AfterMatterMutation(
+      internal,
+      invalidateMethodologyState,
+      refreshMatterState,
+      refreshMethodologyState,
+    );
+    expect(invalidateMethodologyState).not.toHaveBeenCalled();
     expect(refreshMatterState).toHaveBeenCalledTimes(1);
     expect(refreshMethodologyState).not.toHaveBeenCalled();
   });

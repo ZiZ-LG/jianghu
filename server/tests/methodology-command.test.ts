@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createG64111Adapter } from '../src/g64111.js';
 import { createTestContext, type TestContext } from './helpers/testApp.js';
 
@@ -189,6 +189,42 @@ describe('CORE-110 methodology command path', () => {
         where: { tenantId: context.tenant.id, action: 'methodology_template_materialized' },
       })).toBe(1);
     } finally {
+      await context.cleanup();
+    }
+  });
+
+  it('reauthorizes a completed replay when the database role changes after request authentication', async () => {
+    const context = await createTestContext();
+    let transactionSpy: ReturnType<typeof vi.spyOn> | null = null;
+    try {
+      const key = 'methodology-replay-current-role';
+      const first = await command(context, key, materializePayload());
+      expect(first.statusCode, first.body).toBe(200);
+      expect(first.json()).toMatchObject({ action: 'template_materialized', replayed: false });
+
+      const originalTransaction = context.prisma.$transaction.bind(context.prisma);
+      transactionSpy = vi.spyOn(context.prisma, '$transaction');
+      transactionSpy.mockImplementationOnce((async (...args: unknown[]) => {
+        await context.prisma.user.update({
+          where: { id: context.owner.id },
+          data: { role: 'member' },
+        });
+        return (originalTransaction as (...input: unknown[]) => Promise<unknown>)(...args);
+      }) as typeof context.prisma.$transaction);
+      const replay = await command(context, key, materializePayload());
+
+      expect(replay.statusCode, replay.body).toBe(403);
+      expect(replay.json()).toMatchObject({ code: 'methodology_manage_forbidden' });
+      expect(await context.prisma.methodologyPack.count({ where: { tenantId: context.tenant.id } })).toBe(1);
+      expect(await context.prisma.methodologyPackVersion.count({ where: { tenantId: context.tenant.id } })).toBe(1);
+      expect(await context.prisma.commandRun.count({
+        where: { tenantId: context.tenant.id, actorId: context.owner.id, kind: 'methodology' },
+      })).toBe(1);
+      expect(await context.prisma.auditEvent.count({
+        where: { tenantId: context.tenant.id, action: 'methodology_template_materialized' },
+      })).toBe(1);
+    } finally {
+      transactionSpy?.mockRestore();
       await context.cleanup();
     }
   });

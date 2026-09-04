@@ -1416,6 +1416,9 @@ export default function App() {
             setOppFormOpen(false);
             void refreshG64111AfterMatterMutation(
               auth.product,
+              () => {
+                if (sessionGuard.current.isCurrent(ticket, api.getToken())) resetMethodologyContext();
+              },
               () => refreshState(ticket),
               () => refreshMethodology(auth.product, ticket),
             ).catch(() => {

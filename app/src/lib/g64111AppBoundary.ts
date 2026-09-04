@@ -32,14 +32,17 @@ export function invokeG64111ForMatter<T>(
 
 export async function refreshG64111AfterMatterMutation<T>(
   access: ProductAccess,
+  invalidateMethodologyState: () => void,
   refreshMatterState: () => Promise<T>,
   refreshMethodologyState: () => Promise<unknown>,
 ): Promise<T> {
+  const refreshesMethodology = access.valid
+    && access.shell === 'commercial'
+    && capabilityPolicyAllows(access.policy, { entitlement: 'methodology.g64111' });
+  if (refreshesMethodology) invalidateMethodologyState();
   const [matterState] = await Promise.all([
     refreshMatterState(),
-    access.valid
-      && access.shell === 'commercial'
-      && capabilityPolicyAllows(access.policy, { entitlement: 'methodology.g64111' })
+    refreshesMethodology
       ? refreshMethodologyState()
       : Promise.resolve(null),
   ]);
