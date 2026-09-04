@@ -7,6 +7,7 @@ import {
 } from '@jianghu/domain-contracts';
 import {
   invokeG64111ForMatter,
+  refreshG64111AfterMatterMutation,
   resolveG64111LegacyRoute,
   selectG64111Accounts,
 } from './g64111AppBoundary';
@@ -85,6 +86,25 @@ describe('SAAS-210 App G64111 boundary', () => {
     expect(invokeG64111ForMatter(commercial, withLifecycle('canceled'), 'customer-1', 'matter-bound', compute)).toBeNull();
     expect(selectG64111Accounts(commercial, withLifecycle('completed'), accounts)).toEqual([]);
     expect(compute).toHaveBeenCalledTimes(2);
+  });
+
+  it('refreshes the methodology projection with every commercial Matter mutation', async () => {
+    const refreshMatterState = vi.fn(async () => 'fresh-state');
+    const refreshMethodologyState = vi.fn(async () => undefined);
+
+    await expect(refreshG64111AfterMatterMutation(
+      commercial,
+      refreshMatterState,
+      refreshMethodologyState,
+    )).resolves.toBe('fresh-state');
+    expect(refreshMatterState).toHaveBeenCalledTimes(1);
+    expect(refreshMethodologyState).toHaveBeenCalledTimes(1);
+
+    refreshMatterState.mockClear();
+    refreshMethodologyState.mockClear();
+    await refreshG64111AfterMatterMutation(internal, refreshMatterState, refreshMethodologyState);
+    expect(refreshMatterState).toHaveBeenCalledTimes(1);
+    expect(refreshMethodologyState).not.toHaveBeenCalled();
   });
 
   it('filters commercial legacy state to exact-bound Matters without changing internal state', () => {

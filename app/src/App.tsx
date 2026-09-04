@@ -70,6 +70,7 @@ import {
 import {
   canUseG64111Matter,
   invokeG64111ForMatter,
+  refreshG64111AfterMatterMutation,
   resolveG64111LegacyRoute,
   selectG64111Accounts,
 } from './lib/g64111AppBoundary';
@@ -1410,9 +1411,14 @@ export default function App() {
         <OpportunityForm key={`opportunity:${opp.id}:${cloudDiscardRevisions[`opportunity:${opp.id}`] ?? 0}`} opp={opp} onClose={() => setOppFormOpen(false)}
           coordinator={coordinator} onViewCloud={discardToCloudState}
           onSave={async (patch) => {
+            const ticket = sessionGuard.current.capture();
             await api.repairOpportunity(opp.id, patch);
             setOppFormOpen(false);
-            void refreshRenderedState().catch(() => {
+            void refreshG64111AfterMatterMutation(
+              auth.product,
+              () => refreshState(ticket),
+              () => refreshMethodology(auth.product, ticket),
+            ).catch(() => {
               if (sessionLease.isCurrent()) setSyncErr('商机纠错已保存，但刷新失败；请稍后重新进入客户。');
             });
           }} />

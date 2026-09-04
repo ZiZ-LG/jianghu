@@ -43,7 +43,11 @@ const materializeG64111Payload = () => ({
   versionId: G64111_VERSION_ID,
 });
 
-async function seedMatter(context: TestContext, suffix: string) {
+async function seedMatter(
+  context: TestContext,
+  suffix: string,
+  lifecycleStatus: 'active' | 'paused' | 'completed' | 'canceled' = 'active',
+) {
   const customerId = `methodology-customer-${suffix}`;
   const matterId = `methodology-matter-${suffix}`;
   const personAId = `methodology-person-a-${suffix}`;
@@ -60,6 +64,7 @@ async function seedMatter(context: TestContext, suffix: string) {
     accountId: customerId,
     name: 'Methodology matter',
     customerType: 1,
+    lifecycleStatus,
     pipelineStage: '线索',
     engageStage: '需求调研立项',
     memberScoped: true,
@@ -382,6 +387,151 @@ describe('CORE-110 methodology command path', () => {
       await context.cleanup();
     }
   });
+
+  it.each(['completed', 'canceled'] as const)(
+    'rejects direct G64111 activation for a %s Matter without tightening other methodology commands',
+    async (lifecycleStatus) => {
+      const context = await createTestContext();
+      try {
+        const tree = await seedMatter(context, `g64111-${lifecycleStatus}`, lifecycleStatus);
+        const materialized = await command(
+          context,
+          `methodology-g64111-${lifecycleStatus}-materialize`,
+          materializeG64111Payload(),
+        );
+        expect(materialized.statusCode, materialized.body).toBe(200);
+
+        const rejected = await command(context, `methodology-g64111-${lifecycleStatus}-activate`, {
+          type: 'ACTIVATE_METHODOLOGY_BINDING',
+          bindingId: BINDING_ID,
+          customerId: tree.customerId,
+          matterId: tree.matterId,
+          versionId: G64111_VERSION_ID,
+          baseMatterVersion: 0,
+          expectedActiveBindingId: null,
+          decisionProfileRef: null,
+        });
+        expect(rejected.statusCode, rejected.body).toBe(409);
+        expect(rejected.json()).toMatchObject({ code: 'g64111_matter_lifecycle_not_bindable' });
+        expect(await context.prisma.methodologyBinding.count({ where: { tenantId: context.tenant.id } })).toBe(0);
+        expect(await context.prisma.opportunity.findUniqueOrThrow({ where: { id: tree.matterId } })).toMatchObject({
+          activeMethodologyBindingId: null,
+          version: 0,
+        });
+        expect(await context.prisma.auditEvent.count({
+          where: { tenantId: context.tenant.id, action: 'methodology_binding_activated' },
+        })).toBe(0);
+
+        await materialize(context, `methodology-general-${lifecycleStatus}-materialize`);
+        const generic = await command(context, `methodology-general-${lifecycleStatus}-activate`, {
+          type: 'ACTIVATE_METHODOLOGY_BINDING',
+          bindingId: `methodologybinding_${(lifecycleStatus === 'completed' ? '5' : '6').repeat(32)}`,
+          customerId: tree.customerId,
+          matterId: tree.matterId,
+          versionId: VERSION_ID,
+          baseMatterVersion: 0,
+          expectedActiveBindingId: null,
+          decisionProfileRef: null,
+        });
+        expect(generic.statusCode, generic.body).toBe(200);
+      } finally {
+        await context.cleanup();
+      }
+    },
+  );
+
+  it.each(['active', 'paused'] as const)(
+    'allows exact G64111 activation for a %s Matter',
+    async (lifecycleStatus) => {
+      const context = await createTestContext();
+      try {
+        const tree = await seedMatter(context, `g64111-${lifecycleStatus}`, lifecycleStatus);
+        const materialized = await command(
+          context,
+          `methodology-g64111-${lifecycleStatus}-materialize`,
+          materializeG64111Payload(),
+        );
+        expect(materialized.statusCode, materialized.body).toBe(200);
+
+        const bindingId = `methodologybinding_${(lifecycleStatus === 'active' ? '7' : '8').repeat(32)}`;
+        const activated = await command(context, `methodology-g64111-${lifecycleStatus}-activate`, {
+          type: 'ACTIVATE_METHODOLOGY_BINDING',
+          bindingId,
+          customerId: tree.customerId,
+          matterId: tree.matterId,
+          versionId: G64111_VERSION_ID,
+          baseMatterVersion: 0,
+          expectedActiveBindingId: null,
+          decisionProfileRef: null,
+        });
+        expect(activated.statusCode, activated.body).toBe(200);
+        expect(activated.json()).toMatchObject({
+          action: 'binding_activated',
+          matterId: tree.matterId,
+          bindingId,
+          matterVersion: 1,
+        });
+      } finally {
+        await context.cleanup();
+      }
+    },
+  );
+
+  it.each(['completed', 'canceled'] as const)(
+    'keeps an existing exact G64111 binding recoverable after the Matter becomes %s',
+    async (lifecycleStatus) => {
+      const context = await createTestContext();
+      try {
+        const tree = await seedMatter(context, `g64111-unbind-${lifecycleStatus}`);
+        const materialized = await command(
+          context,
+          `methodology-g64111-unbind-${lifecycleStatus}-materialize`,
+          materializeG64111Payload(),
+        );
+        expect(materialized.statusCode, materialized.body).toBe(200);
+
+        const bindingId = `methodologybinding_${(lifecycleStatus === 'completed' ? '9' : 'a').repeat(32)}`;
+        const activated = await command(context, `methodology-g64111-unbind-${lifecycleStatus}-activate`, {
+          type: 'ACTIVATE_METHODOLOGY_BINDING',
+          bindingId,
+          customerId: tree.customerId,
+          matterId: tree.matterId,
+          versionId: G64111_VERSION_ID,
+          baseMatterVersion: 0,
+          expectedActiveBindingId: null,
+          decisionProfileRef: null,
+        });
+        expect(activated.statusCode, activated.body).toBe(200);
+
+        await context.prisma.opportunity.update({
+          where: { id: tree.matterId },
+          data: { lifecycleStatus, version: { increment: 1 } },
+        });
+        const unbound = await command(context, `methodology-g64111-unbind-${lifecycleStatus}-command`, {
+          type: 'UNBIND_METHODOLOGY',
+          customerId: tree.customerId,
+          matterId: tree.matterId,
+          baseMatterVersion: 2,
+          expectedActiveBindingId: bindingId,
+        });
+        expect(unbound.statusCode, unbound.body).toBe(200);
+        expect(unbound.json()).toMatchObject({
+          action: 'methodology_unbound',
+          matterId: tree.matterId,
+          previousBindingId: bindingId,
+          activeMethodologyBindingId: null,
+          matterVersion: 3,
+        });
+        expect(await context.prisma.methodologyBinding.findUniqueOrThrow({ where: { id: bindingId } })).toMatchObject({
+          tenantId: context.tenant.id,
+          opportunityId: tree.matterId,
+          versionId: G64111_VERSION_ID,
+        });
+      } finally {
+        await context.cleanup();
+      }
+    },
+  );
 
   it('keeps pilots beside the primary binding and rejects every cross-tenant reference', async () => {
     const context = await createTestContext();

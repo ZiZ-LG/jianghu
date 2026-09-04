@@ -30,6 +30,22 @@ export function invokeG64111ForMatter<T>(
   return canUseG64111Matter(access, model, customerId, matterId) ? compute() : null;
 }
 
+export async function refreshG64111AfterMatterMutation<T>(
+  access: ProductAccess,
+  refreshMatterState: () => Promise<T>,
+  refreshMethodologyState: () => Promise<unknown>,
+): Promise<T> {
+  const [matterState] = await Promise.all([
+    refreshMatterState(),
+    access.valid
+      && access.shell === 'commercial'
+      && capabilityPolicyAllows(access.policy, { entitlement: 'methodology.g64111' })
+      ? refreshMethodologyState()
+      : Promise.resolve(null),
+  ]);
+  return matterState;
+}
+
 export function selectG64111Accounts<
   TAccount extends { id: string; opportunities: TMatter[] },
   TMatter extends { id: string },

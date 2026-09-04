@@ -4,8 +4,14 @@ import type { Prisma } from '@prisma/client';
 import {
   ActorRoleSchema,
   CommandContextSchema,
+  G64111_BUILTIN_ENGINE_REF,
+  G64111_BUILTIN_PACK_KEY,
+  G64111_BUILTIN_SOURCE_TEMPLATE_REF,
+  G64111_BUILTIN_VERSION_KEY,
+  MatterLifecycleStatusSchema,
   MethodologyCommandReceiptSchema,
   MethodologyCommandSchema,
+  isG64111LifecycleEligible,
   type CommandContext,
   type MethodologyCommand,
   type MethodologyCommandReceipt,
@@ -44,6 +50,12 @@ class MethodologyVersionNotBindableError extends Error {
   readonly statusCode = 409;
   readonly code = 'methodology_version_not_bindable';
   constructor() { super('只有当前租户已发布的方法论版本可以绑定'); }
+}
+
+class G64111MatterLifecycleNotBindableError extends Error {
+  readonly statusCode = 409;
+  readonly code = 'g64111_matter_lifecycle_not_bindable';
+  constructor() { super('只有进行中或已暂停的事项可以启用 G64111'); }
 }
 
 class MethodologyVersionNotPilotableError extends Error {
@@ -99,7 +111,12 @@ async function loadMatter(
       archivedAt: null,
       account: { tenantId: ctx.tenantId, archivedAt: null },
     },
-    select: { id: true, version: true, activeMethodologyBindingId: true },
+    select: {
+      id: true,
+      version: true,
+      lifecycleStatus: true,
+      activeMethodologyBindingId: true,
+    },
   });
   if (!matter) throw new ScopedNotFoundError();
   return matter;
@@ -231,10 +248,26 @@ async function activateBinding(
       tenantId: ctx.tenantId,
       pack: { tenantId: ctx.tenantId, archivedAt: null },
     },
-    select: { packId: true, status: true },
+    select: {
+      packId: true,
+      status: true,
+      versionKey: true,
+      engineRef: true,
+      sourceTemplateRef: true,
+      pack: { select: { key: true, sourceTemplateRef: true } },
+    },
   });
   if (!version) throw new ScopedNotFoundError();
   if (version.status !== 'published') throw new MethodologyVersionNotBindableError();
+  const exactG64111 = version.pack.key === G64111_BUILTIN_PACK_KEY
+    && version.pack.sourceTemplateRef === G64111_BUILTIN_SOURCE_TEMPLATE_REF
+    && version.sourceTemplateRef === G64111_BUILTIN_SOURCE_TEMPLATE_REF
+    && version.versionKey === G64111_BUILTIN_VERSION_KEY
+    && version.engineRef === G64111_BUILTIN_ENGINE_REF;
+  const lifecycle = MatterLifecycleStatusSchema.safeParse(matter.lifecycleStatus);
+  if (exactG64111 && (!lifecycle.success || !isG64111LifecycleEligible(lifecycle.data))) {
+    throw new G64111MatterLifecycleNotBindableError();
+  }
 
   if (input.decisionProfileRef) {
     const decisionProfile = await db.industryPack.findFirst({
