@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import fixtures from '@jianghu/g64111/fixtures/compatibility.json';
 import type { ScoreBreakdown, ScoringProfile } from '@jianghu/g64111';
+import { G64111_BUILTIN_ENGINE_REF } from '@jianghu/domain-contracts';
 import {
   G64111AdapterConfigurationError,
+  G64111_ENGINE_REF,
   G64111_RUNTIME_CONFIG,
   createG64111Adapter,
   projectG64111LegacyState,
@@ -15,6 +17,8 @@ function assertExact(expected: ScoreBreakdown, actual: ScoreBreakdown): void {
 
 describe('G64111 app adapter fixture contract', () => {
   it('fails closed when engineRef or registered legacy bindings drift', () => {
+    expect(G64111_ENGINE_REF).toBe(G64111_BUILTIN_ENGINE_REF);
+    expect(G64111_RUNTIME_CONFIG.engineRef).toBe(G64111_BUILTIN_ENGINE_REF);
     expect(() => createG64111Adapter({
       ...G64111_RUNTIME_CONFIG,
       engineRef: 'g64111:9.9.9',

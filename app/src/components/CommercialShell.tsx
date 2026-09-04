@@ -1,4 +1,10 @@
-import type { CommandContext, CrmContextSnapshot, ProductAccess, ProductEntryId } from '@jianghu/domain-contracts';
+import {
+  isG64111RunnableMatter,
+  type CommandContext,
+  type CrmContextSnapshot,
+  type ProductAccess,
+  type ProductEntryId,
+} from '@jianghu/domain-contracts';
 import type { Account } from '../types';
 import { resolveProductRoute } from '../lib/productRoutes';
 import { QuickCapture } from './QuickCapture';
@@ -8,18 +14,34 @@ import { toQuickCaptureAccounts, type QuickCaptureAccountOption } from '../lib/c
 import { PostMeetingReviewPanel } from './PostMeetingReviewPanel';
 import { PreMeetingBriefPanel } from './PreMeetingBriefPanel';
 import { RelationshipWorkspacePanel } from './RelationshipWorkspacePanel';
+import {
+  G64111SetupPanel,
+  type G64111SetupAction,
+  type G64111SetupPanelState,
+} from './G64111SetupPanel';
 
 function EmptyState({ children }: { children: string }) {
   return <div className="commercial-shell-empty">{children}</div>;
 }
 
-function LegacyAccountList({ accounts, onOpenLegacy }: { accounts: Account[]; onOpenLegacy: (accountId: string) => void }) {
-  if (accounts.length === 0) return <EmptyState>还没有可打开的客户，先在“客户”中建立档案。</EmptyState>;
+function LegacyG64111MatterList({ state, onOpenLegacy }: {
+  state: G64111SetupPanelState;
+  onOpenLegacy: (customerId: string, matterId: string) => void;
+}) {
+  if (state.status === 'loading') return <EmptyState>正在确认 G64111 事项绑定…</EmptyState>;
+  if (state.status === 'error') return <EmptyState>方法论状态暂不可用，原工作台已安全关闭。</EmptyState>;
+  const matters = state.snapshot.matters.filter(isG64111RunnableMatter);
+  if (matters.length === 0) return <EmptyState>尚无已启用 G64111 的事项；通用复杂销售工作流仍可使用。</EmptyState>;
   return (
     <div className="commercial-shell-list">
-      {accounts.map((account) => (
-        <button key={account.id} className="commercial-shell-row" onClick={() => onOpenLegacy(account.id)}>
-          <span>{account.name}</span><span>{account.opportunities.length} 个事项 ›</span>
+      {matters.map((matter) => (
+        <button
+          key={matter.matterId}
+          className="commercial-shell-row"
+          data-legacy-g64111-matter={matter.matterId}
+          onClick={() => onOpenLegacy(matter.customerId, matter.matterId)}
+        >
+          <span>{matter.matterTitle}</span><span>{matter.customerName} ›</span>
         </button>
       ))}
     </div>
@@ -27,7 +49,8 @@ function LegacyAccountList({ accounts, onOpenLegacy }: { accounts: Account[]; on
 }
 
 function ProductPanel({
-  id, accounts, crmContextState, quickCaptureAccounts, actorUserId, actorRole, readonly, portfolioEnabled, onNavigate, onOpenLegacy, onOpenTeam, onQuickCaptureSaved,
+  id, accounts, crmContextState, quickCaptureAccounts, actorUserId, actorRole, readonly, portfolioEnabled,
+  methodologyState, onNavigate, onOpenLegacy, onOpenTeam, onMethodologyAction, onRetryMethodology, onQuickCaptureSaved,
 }: {
   id: ProductEntryId;
   accounts: Account[];
@@ -37,9 +60,12 @@ function ProductPanel({
   actorRole: CommandContext['actorRole'];
   readonly: boolean;
   portfolioEnabled: boolean;
+  methodologyState: G64111SetupPanelState;
   onNavigate: (path: string) => void;
-  onOpenLegacy: (accountId: string) => void;
+  onOpenLegacy: (customerId: string, matterId: string) => void;
   onOpenTeam: () => void;
+  onMethodologyAction: (action: G64111SetupAction) => Promise<void>;
+  onRetryMethodology: () => void;
   onQuickCaptureSaved: () => Promise<unknown>;
 }) {
   if (id === 'today') {
@@ -101,20 +127,12 @@ function ProductPanel({
       />
       <section className="commercial-legacy-entry" data-legacy-sales-entry="frozen">
         <div className="commercial-legacy-heading"><h2>原复杂销售工作台</h2><span>遗留入口 · 冻结新功能</span></div>
-        <LegacyAccountList accounts={accounts} onOpenLegacy={onOpenLegacy} />
+        <LegacyG64111MatterList state={methodologyState} onOpenLegacy={onOpenLegacy} />
       </section>
     </div>;
   }
   if (id === 'g64111') {
-    return (
-      <div className="commercial-shell-empty" data-capability-surface="g64111">
-        <p>G64111 趋赢力方法论已就绪，可从现有事项开始检查关键角色与信息缺口。</p>
-        <strong>{matters.length} 个事项可纳入方法论分析</strong>
-        <div className="commercial-shell-actions">
-          <button className="btn primary" onClick={() => onNavigate('/matters')}>查看事项</button>
-        </div>
-      </div>
-    );
+    return <G64111SetupPanel state={methodologyState} onRetry={onRetryMethodology} onAction={onMethodologyAction} />;
   }
   return (
     <div className="commercial-shell-empty" data-capability-surface="pde">
@@ -128,7 +146,8 @@ function ProductPanel({
 }
 
 export function CommercialShell({
-  access, pathname, accounts, crmContextState, actorUserId, actorRole, readonly, onNavigate, onOpenLegacy, onOpenTeam, onQuickCaptureSaved, onLogout,
+  access, pathname, accounts, crmContextState, actorUserId, actorRole, readonly, methodologyState,
+  onNavigate, onOpenLegacy, onOpenTeam, onMethodologyAction, onRetryMethodology, onQuickCaptureSaved, onLogout,
 }: {
   access: ProductAccess;
   pathname: string;
@@ -137,9 +156,12 @@ export function CommercialShell({
   actorUserId: string;
   actorRole: CommandContext['actorRole'];
   readonly: boolean;
+  methodologyState: G64111SetupPanelState;
   onNavigate: (path: string) => void;
-  onOpenLegacy: (accountId: string) => void;
+  onOpenLegacy: (customerId: string, matterId: string) => void;
   onOpenTeam: () => void;
+  onMethodologyAction: (action: G64111SetupAction) => Promise<void>;
+  onRetryMethodology: () => void;
   onQuickCaptureSaved: () => Promise<unknown>;
   onLogout: () => void;
 }) {
@@ -178,9 +200,12 @@ export function CommercialShell({
           actorRole={actorRole}
           readonly={readonly}
           portfolioEnabled={access.policy.entitlements.includes('sales.workspace')}
+          methodologyState={methodologyState}
           onNavigate={onNavigate}
           onOpenLegacy={onOpenLegacy}
           onOpenTeam={onOpenTeam}
+          onMethodologyAction={onMethodologyAction}
+          onRetryMethodology={onRetryMethodology}
           onQuickCaptureSaved={onQuickCaptureSaved}
         />
       </main>

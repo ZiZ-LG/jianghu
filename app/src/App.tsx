@@ -36,9 +36,10 @@ import { createCommitScheduler } from './lib/sync/commitScheduler';
 import { createMutationCoordinator, createMutationExecutionGate, entityKeyForAction } from './lib/sync/mutationCoordinator';
 import { localYmd } from './lib/dateYmd';
 import { clearStableBatchItemKey, runBatchWithProgress, stableBatchItemKey, type StableBatchKeyCache } from './lib/reviewBatch';
-import { capabilityPolicyAllows, type ProductAccess } from '@jianghu/domain-contracts';
+import { capabilityPolicyAllows, type G64111MethodologyReadModel, type ProductAccess } from '@jianghu/domain-contracts';
 import { GlobalDialogs, type GlobalInboxProps } from './components/GlobalDialogs';
 import { CommercialShell } from './components/CommercialShell';
+import type { G64111SetupAction, G64111SetupPanelState } from './components/G64111SetupPanel';
 import { CRM_CONTEXT_REFRESH_INTERVAL_MS, type CrmContextPanelState } from './components/CrmContextPages';
 import { InternalRootAdapter } from './components/InternalRootAdapter';
 import { resolveProductRoute } from './lib/productRoutes';
@@ -61,13 +62,36 @@ import {
   type SessionInbox,
   type SessionTicket,
 } from './lib/sessionLifecycle';
+import {
+  buildG64111BindCommand,
+  buildG64111InstallCommand,
+  buildG64111UnbindCommand,
+} from './lib/g64111Setup';
+import {
+  canUseG64111Matter,
+  invokeG64111ForMatter,
+  refreshG64111AfterMatterMutation,
+  resolveG64111LegacyRoute,
+  selectG64111Accounts,
+} from './lib/g64111AppBoundary';
 
 const INVALID_PRODUCT_CONFIGURATION_MESSAGE = '产品能力配置无效，请联系部署管理员。';
+
+function disabledG64111Snapshot(): G64111MethodologyReadModel {
+  return {
+    generatedAtUtc: new Date().toISOString(),
+    commandsEnabled: false,
+    canManage: false,
+    installation: null,
+    matters: [],
+  };
+}
 
 export default function App() {
   const [state, dispatch] = useReducer(reducer, { accounts: [] });
   const [auth, setAuth] = useState<AuthResult | null>(null);
   const [commercialContextState, setCommercialContextState] = useState<CrmContextPanelState>({ status: 'loading' });
+  const [methodologyState, setMethodologyState] = useState<G64111SetupPanelState>({ status: 'loading' });
   const [commercialPath, setCommercialPath] = useState(window.location.pathname);
   const [booting, setBooting] = useState(true);
   const [syncErr, setSyncErr] = useState('');
@@ -86,10 +110,15 @@ export default function App() {
   const inboxBatchKeys = useRef<StableBatchKeyCache>(new Map());
   const sessionGuard = useRef(createSessionGuard());
   const crmContextRequestGuard = useRef(createLatestRequestGuard());
+  const methodologyRequestGuard = useRef(createLatestRequestGuard());
   const [appShellUi, appShellUiDispatch] = useReducer(appShellUiReducer, undefined, createInitialAppShellUiState);
   const resetCommercialContext = useCallback(() => {
     crmContextRequestGuard.current.invalidate();
     setCommercialContextState({ status: 'loading' });
+  }, []);
+  const resetMethodologyContext = useCallback(() => {
+    methodologyRequestGuard.current.invalidate();
+    setMethodologyState({ status: 'loading' });
   }, []);
   const setGlobalDialogOpen = useCallback((dialog: SettableGlobalDialog, open: boolean) => {
     appShellUiDispatch({ type: 'SET_DIALOG', dialog, open });
@@ -103,6 +132,11 @@ export default function App() {
   const salesWorkspaceEnabled = capabilityPolicyAllows(auth?.product.policy, { entitlement: 'sales.workspace' });
   const g64111Enabled = capabilityPolicyAllows(auth?.product.policy, { entitlement: 'methodology.g64111' });
   const pdeEnabled = capabilityPolicyAllows(auth?.product.policy, { entitlement: 'decision.pde' });
+  const g64111Snapshot = methodologyState.status === 'ready' ? methodologyState.snapshot : null;
+  const g64111Accounts = useMemo(
+    () => auth?.product ? selectG64111Accounts(auth.product, g64111Snapshot, state.accounts) : [],
+    [auth?.product, g64111Snapshot, state.accounts],
+  );
 
   const [accId, setAccId] = useState<string | null>(null);
   const [oppId, setOppId] = useState<string | null>(null);
@@ -124,8 +158,10 @@ export default function App() {
   // P5 Hub 今日一屏：三源聚合「今日三件事」+ 客户卡「需要你」角标（纯前端零 schema）
   const hubTodayYmd = localYmd(new Date());
   const hubToday = useMemo(
-    () => g64111Enabled ? computeG64111Today(state.accounts, inbox.reminders, hubTodayYmd) : [],
-    [g64111Enabled, state.accounts, inbox.reminders, hubTodayYmd],
+    () => g64111Enabled && g64111Accounts.length > 0
+      ? computeG64111Today(g64111Accounts, inbox.reminders, hubTodayYmd)
+      : [],
+    [g64111Accounts, g64111Enabled, inbox.reminders, hubTodayYmd],
   );
   const hubNeedsYou = useMemo(() => needsYouByAccount(state.accounts, inbox, hubTodayYmd), [state.accounts, inbox, hubTodayYmd]);
   const [selfComputeBusy, setSelfComputeBusy] = useState(false); // 江湖自算·补全干系人 进行中
@@ -179,7 +215,11 @@ export default function App() {
     }
   }, []);
 
-  const applyAuthenticatedRoute = useCallback((product: ProductAccess, accounts: { id: string; externalRef?: string; opportunities: { id: string; externalRef?: string }[] }[]) => {
+  const applyAuthenticatedRoute = useCallback((
+    product: ProductAccess,
+    accounts: { id: string; externalRef?: string; opportunities: { id: string; externalRef?: string }[] }[],
+    methodologySnapshot: G64111MethodologyReadModel | null,
+  ) => {
     if (!product.valid) {
       pendingRoute.current = null;
       setCommercialPath('/today');
@@ -193,12 +233,26 @@ export default function App() {
     }
 
     if (pendingRoute.current) {
-      if (capabilityPolicyAllows(product.policy, { entitlement: 'sales.workspace' })) {
-        applyRoute(accounts);
+      const target = pendingRoute.current;
+      const resolved = resolveG64111LegacyRoute(product, methodologySnapshot, accounts, target);
+      pendingRoute.current = null;
+      if (capabilityPolicyAllows(product.policy, { entitlement: 'sales.workspace' }) && resolved) {
+        setCommercialPath(resolveProductRoute('/sales', product).canonicalPath);
+        window.history.replaceState(null, '', buildPath(resolved.accId, resolved.oppId));
+        setAccId(resolved.accId); setOppId(resolved.oppId); setSelectedId(null); setVisibleLayers(new Set(['L1']));
         return;
       }
-      pendingRoute.current = null;
-      setSyncErr('当前版本未启用复杂销售工作台');
+      const fallback = resolveProductRoute(
+        capabilityPolicyAllows(product.policy, { entitlement: 'sales.workspace' }) ? '/sales' : '/today',
+        product,
+      ).canonicalPath;
+      setCommercialPath(fallback);
+      setAccId(null); setOppId(null); setSelectedId(null);
+      setSyncErr(capabilityPolicyAllows(product.policy, { entitlement: 'sales.workspace' })
+        ? '该事项未启用 G64111，原复杂销售工作台已安全关闭'
+        : '当前版本未启用复杂销售工作台');
+      window.history.replaceState(null, '', fallback);
+      return;
     }
 
     const route = resolveProductRoute(window.location.pathname, product);
@@ -241,18 +295,55 @@ export default function App() {
       throw cause;
     }
   }, []);
+  const refreshMethodology = useCallback(async (
+    product: ProductAccess,
+    ticket: SessionTicket = sessionGuard.current.capture(),
+  ) => {
+    const enabled = product.valid
+      && product.shell === 'commercial'
+      && capabilityPolicyAllows(product.policy, { entitlement: 'methodology.g64111' });
+    if (!enabled) {
+      if (!sessionGuard.current.isCurrent(ticket, api.getToken())) return null;
+      methodologyRequestGuard.current.invalidate();
+      setMethodologyState({ status: 'ready', snapshot: disabledG64111Snapshot() });
+      return null;
+    }
+    const request = beginLatestSessionRequest(
+      sessionGuard.current,
+      ticket,
+      api.getToken,
+      methodologyRequestGuard.current,
+    );
+    if (request === null) return null;
+    setMethodologyState((current) => current.status === 'ready'
+      ? { ...current, refreshing: true, refreshError: null }
+      : { status: 'loading' });
+    try {
+      const result = await runSessionRequest(sessionGuard.current, ticket, api.g64111Methodology, api.getToken);
+      if (!result.current || !methodologyRequestGuard.current.isCurrent(request)) return null;
+      setMethodologyState({ status: 'ready', snapshot: result.value, refreshing: false, refreshError: null });
+      return result.value;
+    } catch (cause) {
+      if (!sessionGuard.current.isCurrent(ticket, api.getToken())
+        || !methodologyRequestGuard.current.isCurrent(request)) return null;
+      setMethodologyState({ status: 'error', message: toApiError(cause).message });
+      throw cause;
+    }
+  }, []);
   const loadProductData = useCallback(async (product: ProductAccess, ticket: SessionTicket) => {
     if (!product.valid) {
       if (!sessionGuard.current.isCurrent(ticket, api.getToken())) return null;
       stateRef.current = { accounts: [] };
       dispatch({ type: 'HYDRATE', accounts: [] });
       resetCommercialContext();
-      return { accounts: [] };
+      resetMethodologyContext();
+      return { accounts: [], methodologySnapshot: null };
     }
     const needsLegacyState = shouldLoadLegacyState(product);
-    const [legacyState] = await Promise.all([
+    const [legacyState, , methodologySnapshot] = await Promise.all([
       needsLegacyState ? refreshState(ticket) : Promise.resolve({ accounts: [] }),
       product.shell === 'commercial' ? refreshCrmContext(ticket) : Promise.resolve(null),
+      refreshMethodology(product, ticket).catch(() => null),
     ]);
     if (!sessionGuard.current.isCurrent(ticket, api.getToken())) return null;
     if (needsLegacyState && !legacyState) return null;
@@ -261,8 +352,8 @@ export default function App() {
       dispatch({ type: 'HYDRATE', accounts: [] });
     }
     if (product.shell !== 'commercial') resetCommercialContext();
-    return legacyState;
-  }, [refreshCrmContext, refreshState, resetCommercialContext]);
+    return { accounts: legacyState?.accounts ?? [], methodologySnapshot };
+  }, [refreshCrmContext, refreshMethodology, refreshState, resetCommercialContext, resetMethodologyContext]);
   const renderedSessionTicket = sessionGuard.current.capture();
   const sessionLease = useMemo(
     () => createSessionLease(sessionGuard.current, renderedSessionTicket, api.getToken),
@@ -279,6 +370,7 @@ export default function App() {
       sessionGuard.current.begin(null);
       setInbox(emptyInbox);
       resetCommercialContext();
+      resetMethodologyContext();
       setBooting(false);
       return;
     }
@@ -293,7 +385,7 @@ export default function App() {
       if (!st) return;
       const me = meResult.value;
       setAuth({ token, user: me.user, tenant: me.tenant, product: me.product });
-      applyAuthenticatedRoute(me.product, st.accounts);
+      applyAuthenticatedRoute(me.product, st.accounts, st.methodologySnapshot);
       if (me.user.role !== 'viewer' && capabilityPolicyAllows(me.product.policy, { entitlement: 'sales.workspace' })) void loadInbox(sessionTicket);
     } catch (error) {
       if (!sessionGuard.current.isCurrent(sessionTicket, api.getToken())) return;
@@ -303,6 +395,7 @@ export default function App() {
         setInbox(emptyInbox);
         setAuth(null);
         resetCommercialContext();
+        resetMethodologyContext();
         stateRef.current = { accounts: [] };
         dispatch({ type: 'HYDRATE', accounts: [] });
         setBooting(false);
@@ -312,7 +405,7 @@ export default function App() {
     } finally {
       if (sessionGuard.current.isCurrent(sessionTicket, api.getToken())) setBooting(false);
     }
-  }, [applyAuthenticatedRoute, loadInbox, loadProductData, resetCommercialContext]);
+  }, [applyAuthenticatedRoute, loadInbox, loadProductData, resetCommercialContext, resetMethodologyContext]);
   // 启动：有 token 则恢复会话 + 拉取云端数据
   useEffect(() => { void restoreSession(); }, [restoreSession]);
 
@@ -343,13 +436,42 @@ export default function App() {
     };
   }, [auth?.product.shell, auth?.product.valid, auth?.token, refreshCrmContext]);
 
+  useEffect(() => {
+    if (!auth?.product.valid
+      || auth.product.shell !== 'commercial'
+      || !capabilityPolicyAllows(auth.product.policy, { entitlement: 'methodology.g64111' })) return;
+    const refresh = () => {
+      const ticket = sessionGuard.current.capture();
+      void refreshMethodology(auth.product, ticket).then((snapshot) => {
+        if (snapshot && sessionGuard.current.isCurrent(ticket, api.getToken())) {
+          setSyncErr((current) => current.startsWith('方法论状态刷新失败：') ? '' : current);
+        }
+      }).catch((cause) => {
+        if (sessionGuard.current.isCurrent(ticket, api.getToken())) {
+          setSyncErr(`方法论状态刷新失败：${toApiError(cause).message}`);
+        }
+      });
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    const interval = window.setInterval(refreshWhenVisible, CRM_CONTEXT_REFRESH_INTERVAL_MS);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+      window.clearInterval(interval);
+    };
+  }, [auth?.product, auth?.token, refreshMethodology]);
+
   const onAuthed = async (res: AuthResult) => {
     const sessionTicket = sessionGuard.current.begin(res.token);
     setInbox(emptyInbox);
     const st = await loadProductData(res.product, sessionTicket);
     if (!st) return;
     setAuth(res);
-    applyAuthenticatedRoute(res.product, st.accounts);
+    applyAuthenticatedRoute(res.product, st.accounts, st.methodologySnapshot);
     if (res.user.role !== 'viewer' && capabilityPolicyAllows(res.product.policy, { entitlement: 'sales.workspace' })) void loadInbox(sessionTicket);
   };
   const logout = useCallback(() => {
@@ -363,7 +485,7 @@ export default function App() {
     sessionGuard.current.begin(null);
     appShellUiDispatch({ type: 'RESET_SESSION_TRANSIENT' });
     setInbox(clearedUi.inbox);
-    api.setToken(null); setAuth(null); resetCommercialContext(); setAccId(null); setOppId(null); setSelectedId(null);
+    api.setToken(null); setAuth(null); resetCommercialContext(); resetMethodologyContext(); setAccId(null); setOppId(null); setSelectedId(null);
     stateRef.current = { accounts: [] };
     dispatch({ type: 'HYDRATE', accounts: [] });
     setSyncErr(clearedUi.syncErr);
@@ -377,16 +499,24 @@ export default function App() {
     pendingRoute.current = null;
     setCommercialPath('/today');
     window.history.replaceState(null, '', '/'); // 登出清 URL，避免登录页残留目标路径造成误解（重新登录会重新解析）
-  }, [resetCommercialContext]);
+  }, [resetCommercialContext, resetMethodologyContext]);
   useEffect(() => api.onUnauthorized(() => logout()), [logout]);
 
   // 选中客户/商机 ↔ URL 双向同步：导航 pushState 入历史；popstate（前进/后退）解析回状态并规范化 URL
   useEffect(() => {
     if (!auth?.product.valid || pendingRoute.current) return; // 未登录/配置无效不动 URL；待解析目标不被覆盖
-    if (auth.product.shell === 'commercial' && !accId) return;
+    if (auth.product.shell === 'commercial') {
+      if (!accId || !oppId || !canUseG64111Matter(auth.product, g64111Snapshot, accId, oppId)) return;
+    }
     const path = buildPath(accId, oppId);
     if (window.location.pathname !== path) window.history.pushState(null, '', path);
-  }, [accId, oppId, auth]);
+  }, [accId, oppId, auth, g64111Snapshot]);
+  useEffect(() => {
+    if (!auth?.product.valid || auth.product.shell !== 'commercial' || !accId) return;
+    if (oppId && canUseG64111Matter(auth.product, g64111Snapshot, accId, oppId)) return;
+    setAccId(null); setOppId(null); setSelectedId(null);
+    if (window.location.pathname !== commercialPath) window.history.replaceState(null, '', commercialPath);
+  }, [accId, auth, commercialPath, g64111Snapshot, oppId]);
   useEffect(() => {
     const onPop = () => {
       const t = parsePath(window.location.pathname);
@@ -399,11 +529,22 @@ export default function App() {
         return;
       }
       if (!t) { setAccId(null); setOppId(null); setSelectedId(null); return; }
-      if (auth?.product.valid && auth.product.shell === 'commercial' && !capabilityPolicyAllows(auth.product.policy, { entitlement: 'sales.workspace' })) {
-        const route = resolveProductRoute('/today', auth.product);
+      if (auth?.product.valid && auth.product.shell === 'commercial') {
+        const resolved = resolveG64111LegacyRoute(auth.product, g64111Snapshot, stateRef.current.accounts, t);
+        if (capabilityPolicyAllows(auth.product.policy, { entitlement: 'sales.workspace' }) && resolved) {
+          window.history.replaceState(null, '', buildPath(resolved.accId, resolved.oppId));
+          setAccId(resolved.accId); setOppId(resolved.oppId); setSelectedId(null);
+          return;
+        }
+        const route = resolveProductRoute(
+          capabilityPolicyAllows(auth.product.policy, { entitlement: 'sales.workspace' }) ? '/sales' : '/today',
+          auth.product,
+        );
         window.history.replaceState(null, '', route.canonicalPath);
         setCommercialPath(route.canonicalPath);
-        setSyncErr('当前版本未启用复杂销售工作台');
+        setSyncErr(capabilityPolicyAllows(auth.product.policy, { entitlement: 'sales.workspace' })
+          ? '该事项未启用 G64111，原复杂销售工作台已安全关闭'
+          : '当前版本未启用复杂销售工作台');
         setAccId(null); setOppId(null); setSelectedId(null);
         return;
       }
@@ -418,7 +559,7 @@ export default function App() {
     };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
-  }, [auth]);
+  }, [auth, g64111Snapshot]);
   const discardToCloudState = useCallback(async (entityKey?: string) => {
     if (!sessionLease.isCurrent()) return;
     const refreshed = await refreshState(renderedSessionTicket);
@@ -572,7 +713,11 @@ export default function App() {
 
   const account = state.accounts.find((a) => a.id === accId) ?? null;
   const opp = account?.opportunities.find((o) => o.id === oppId) ?? null;
-  const breakdown = useMemo(() => (g64111Enabled && account && opp ? scoreFromDomain(account, opp) : null), [account, g64111Enabled, opp]);
+  const breakdown = useMemo(() => (
+    auth?.product && account && opp
+      ? invokeG64111ForMatter(auth.product, g64111Snapshot, account.id, opp.id, () => scoreFromDomain(account, opp))
+      : null
+  ), [account, auth?.product, g64111Snapshot, opp]);
 
   // PDE 完整评估（App 层一次 fetch 喂两处：左栏加权分小字+徽章 + 坞引擎详解抽屉）。引擎不可用静默 null 不阻塞。
   const [pdeFull, setPdeFull] = useState<any>(null);
@@ -588,7 +733,11 @@ export default function App() {
       });
     return () => { alive = false; };
   }, [pdeEnabled, opp?.id, breakdown]);
-  const gaps = useMemo(() => (g64111Enabled && account && opp ? computeGaps(account, opp) : []), [account, g64111Enabled, opp]);
+  const gaps = useMemo(() => (
+    auth?.product && account && opp
+      ? invokeG64111ForMatter(auth.product, g64111Snapshot, account.id, opp.id, () => computeGaps(account, opp)) ?? []
+      : []
+  ), [account, auth?.product, g64111Snapshot, opp]);
   const roleByPerson = useMemo(() => {
     const m = new Map<string, Role>();
     if (opp) for (const r of opp.roles) m.set(r.personId, r.role);
@@ -612,6 +761,22 @@ export default function App() {
     const a = state.accounts.find((x) => x.id === id);
     setAccId(id); setOppId(a?.opportunities[0]?.id ?? null); setSelectedId(null); setVisibleLayers(new Set(['L1']));
   };
+  const openCommercialLegacyMatter = (customerId: string, matterId: string) => {
+    if (!auth?.product.valid
+      || auth.product.shell !== 'commercial'
+      || !salesWorkspaceEnabled
+      || !canUseG64111Matter(auth.product, g64111Snapshot, customerId, matterId)) {
+      setSyncErr('该事项未启用 G64111，原复杂销售工作台已安全关闭');
+      return;
+    }
+    const selectedAccount = state.accounts.find((candidate) => candidate.id === customerId);
+    if (!selectedAccount?.opportunities.some((candidate) => candidate.id === matterId)) {
+      setSyncErr('该事项不存在或已超出当前权限范围');
+      return;
+    }
+    setSyncErr('');
+    setAccId(customerId); setOppId(matterId); setSelectedId(null); setVisibleLayers(new Set(['L1']));
+  };
   const navigateCommercial = (path: string) => {
     if (!auth?.product.valid || auth.product.shell !== 'commercial') return;
     const route = resolveProductRoute(path, auth.product);
@@ -629,6 +794,39 @@ export default function App() {
     if (auth?.product.shell === 'commercial') {
       if (window.location.pathname !== commercialPath) window.history.pushState(null, '', commercialPath);
     }
+  };
+  const runMethodologyAction = async (action: G64111SetupAction) => {
+    if (!auth?.product.valid
+      || auth.product.shell !== 'commercial'
+      || methodologyState.status !== 'ready'
+      || !methodologyState.snapshot.commandsEnabled
+      || !methodologyState.snapshot.canManage) {
+      throw new Error('当前会话不可执行方法论操作');
+    }
+    const snapshot = methodologyState.snapshot;
+    const command = action.type === 'install'
+      ? buildG64111InstallCommand()
+      : action.type === 'bind'
+        ? buildG64111BindCommand(snapshot, action.customerId, action.matterId)
+        : buildG64111UnbindCommand(snapshot, action.customerId, action.matterId);
+    const ticket = sessionGuard.current.capture();
+    const result = await runSessionRequest(
+      sessionGuard.current,
+      ticket,
+      () => api.methodologyCommand(command, newIdempotencyKey()),
+      api.getToken,
+    );
+    if (!result.current) throw new ApiError({
+      code: 'session_reset', message: '会话已切换，已忽略旧会话方法论操作', retryable: false,
+    });
+    await Promise.all([
+      shouldLoadLegacyState(auth.product) ? refreshState(ticket) : Promise.resolve(null),
+      refreshMethodology(auth.product, ticket),
+    ]);
+    if (!sessionGuard.current.isCurrent(ticket, api.getToken())) throw new ApiError({
+      code: 'session_reset', message: '会话已切换，方法论状态不会写入当前界面', retryable: false,
+    });
+    setSyncErr('');
   };
   const createAccount = (name: string, ctype: CustomerType) => {
     const a = newAccount(name, ctype);
@@ -925,8 +1123,11 @@ export default function App() {
     );
   }
 
-  const rootSurface = selectAppRootSurface(auth.product, Boolean(account));
-  if (!account && rootSurface === 'commercial_shell') {
+  const hasAuthorizedLegacySurface = auth.product.shell === 'internal_legacy'
+    ? Boolean(account)
+    : Boolean(account && opp && canUseG64111Matter(auth.product, g64111Snapshot, account.id, opp.id));
+  const rootSurface = selectAppRootSurface(auth.product, hasAuthorizedLegacySurface);
+  if (rootSurface === 'commercial_shell') {
     return (
       <>
         <CommercialShell
@@ -937,9 +1138,19 @@ export default function App() {
           actorUserId={auth.user.id}
           actorRole={auth.user.role}
           readonly={readonly}
+          methodologyState={methodologyState}
           onNavigate={navigateCommercial}
-          onOpenLegacy={salesWorkspaceEnabled ? openAccount : () => setSyncErr('当前版本未启用复杂销售工作台')}
+          onOpenLegacy={openCommercialLegacyMatter}
           onOpenTeam={() => setGlobalDialogOpen('team', true)}
+          onMethodologyAction={runMethodologyAction}
+          onRetryMethodology={() => {
+            const ticket = sessionGuard.current.capture();
+            void refreshMethodology(auth.product, ticket).catch((cause) => {
+              if (sessionGuard.current.isCurrent(ticket, api.getToken())) {
+                setSyncErr(`方法论状态刷新失败：${toApiError(cause).message}`);
+              }
+            });
+          }}
           onQuickCaptureSaved={async () => {
             try {
               await refreshCrmContext(renderedSessionTicket);
@@ -1200,9 +1411,17 @@ export default function App() {
         <OpportunityForm key={`opportunity:${opp.id}:${cloudDiscardRevisions[`opportunity:${opp.id}`] ?? 0}`} opp={opp} onClose={() => setOppFormOpen(false)}
           coordinator={coordinator} onViewCloud={discardToCloudState}
           onSave={async (patch) => {
+            const ticket = sessionGuard.current.capture();
             await api.repairOpportunity(opp.id, patch);
             setOppFormOpen(false);
-            void refreshRenderedState().catch(() => {
+            void refreshG64111AfterMatterMutation(
+              auth.product,
+              () => {
+                if (sessionGuard.current.isCurrent(ticket, api.getToken())) resetMethodologyContext();
+              },
+              () => refreshState(ticket),
+              () => refreshMethodology(auth.product, ticket),
+            ).catch(() => {
               if (sessionLease.isCurrent()) setSyncErr('商机纠错已保存，但刷新失败；请稍后重新进入客户。');
             });
           }} />

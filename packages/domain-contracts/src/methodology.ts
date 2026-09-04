@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MatterLifecycleStatusSchema } from './crm.js';
 import { OpaqueEntityIdSchema } from './ids.js';
 
 const id = z.string().min(1);
@@ -101,6 +102,143 @@ export const MethodologyBindingSchema = z.object({
 }).strict();
 
 export type MethodologyBinding = z.infer<typeof MethodologyBindingSchema>;
+
+export const G64111_BUILTIN_TEMPLATE_KEY = 'g64111' as const;
+export const G64111_BUILTIN_PACK_KEY = 'platform.g64111' as const;
+export const G64111_BUILTIN_SOURCE_TEMPLATE_REF = 'builtin:g64111:1' as const;
+export const G64111_BUILTIN_VERSION_KEY = '1.0.0' as const;
+export const G64111_BUILTIN_ENGINE_REF = 'g64111:0.1.0' as const;
+
+interface G64111Identity {
+  packKey: string;
+  sourceTemplateRef: string | null;
+  versionKey: string;
+  engineRef: string;
+}
+
+function hasExactG64111Identity(identity: G64111Identity): boolean {
+  return identity.packKey === G64111_BUILTIN_PACK_KEY
+    && identity.sourceTemplateRef === G64111_BUILTIN_SOURCE_TEMPLATE_REF
+    && identity.versionKey === G64111_BUILTIN_VERSION_KEY
+    && identity.engineRef === G64111_BUILTIN_ENGINE_REF;
+}
+
+export const MethodologyActiveBindingSummarySchema = z.object({
+  bindingId: id,
+  customerId: id,
+  matterId: id,
+  packId: id,
+  versionId: id,
+  packKey: openKey,
+  packName: z.string().trim().min(1).max(200),
+  sourceTemplateRef: openKey.nullable(),
+  versionKey: openKey,
+  engineRef: openKey,
+}).strict().superRefine((value, ctx) => {
+  const resemblesG64111 = value.packKey === G64111_BUILTIN_PACK_KEY
+    || value.sourceTemplateRef === G64111_BUILTIN_SOURCE_TEMPLATE_REF;
+  if (resemblesG64111 && !hasExactG64111Identity(value)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['versionKey'],
+      message: 'G64111 binding identity must match the built-in version and engine',
+    });
+  }
+});
+
+export type MethodologyActiveBindingSummary = z.infer<typeof MethodologyActiveBindingSummarySchema>;
+
+export function isG64111Active(binding: MethodologyActiveBindingSummary | null): boolean {
+  return Boolean(binding && hasExactG64111Identity(binding));
+}
+
+export const G64111MethodologyInstallationSchema = z.object({
+  packId: id,
+  versionId: id,
+  packKey: z.literal(G64111_BUILTIN_PACK_KEY),
+  packName: z.string().trim().min(1).max(200),
+  sourceTemplateRef: z.literal(G64111_BUILTIN_SOURCE_TEMPLATE_REF),
+  versionKey: z.literal(G64111_BUILTIN_VERSION_KEY),
+  engineRef: z.literal(G64111_BUILTIN_ENGINE_REF),
+}).strict();
+
+export type G64111MethodologyInstallation = z.infer<typeof G64111MethodologyInstallationSchema>;
+
+export const G64111MethodologyMatterSchema = z.object({
+  customerId: id,
+  customerName: z.string().trim().min(1).max(500),
+  matterId: id,
+  matterTitle: z.string().trim().min(1).max(500),
+  matterKind: openKey,
+  lifecycleStatus: MatterLifecycleStatusSchema,
+  matterVersion: version,
+  activeBinding: MethodologyActiveBindingSummarySchema.nullable(),
+}).strict().superRefine((value, ctx) => {
+  if (value.activeBinding?.customerId !== undefined
+    && value.activeBinding.customerId !== value.customerId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['activeBinding', 'customerId'],
+      message: 'active binding customer must match its projected parent',
+    });
+  }
+  if (value.activeBinding?.matterId !== undefined
+    && value.activeBinding.matterId !== value.matterId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['activeBinding', 'matterId'],
+      message: 'active binding Matter must match its projected parent',
+    });
+  }
+});
+
+export type G64111MethodologyMatter = z.infer<typeof G64111MethodologyMatterSchema>;
+
+export function isG64111LifecycleEligible(
+  lifecycleStatus: z.infer<typeof MatterLifecycleStatusSchema>,
+): boolean {
+  return lifecycleStatus === 'active' || lifecycleStatus === 'paused';
+}
+
+export function isG64111RunnableMatter(matter: G64111MethodologyMatter): boolean {
+  return isG64111LifecycleEligible(matter.lifecycleStatus)
+    && isG64111Active(matter.activeBinding);
+}
+
+export const G64111MethodologyReadModelSchema = z.object({
+  generatedAtUtc: instant,
+  commandsEnabled: z.boolean(),
+  canManage: z.boolean(),
+  installation: G64111MethodologyInstallationSchema.nullable(),
+  matters: z.array(G64111MethodologyMatterSchema),
+}).strict().superRefine((value, ctx) => {
+  const matterIds = new Set<string>();
+  for (const [index, matter] of value.matters.entries()) {
+    if (matterIds.has(matter.matterId)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['matters', index, 'matterId'],
+        message: 'duplicate Matter projection',
+      });
+    }
+    matterIds.add(matter.matterId);
+    const binding = matter.activeBinding;
+    if (!binding || !isG64111Active(binding)) continue;
+    if (!value.installation
+      || binding.packId !== value.installation.packId
+      || binding.versionId !== value.installation.versionId
+      || binding.versionKey !== value.installation.versionKey
+      || binding.engineRef !== value.installation.engineRef) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['matters', index, 'activeBinding', 'versionId'],
+        message: 'active G64111 binding requires the exact current tenant installation',
+      });
+    }
+  }
+});
+
+export type G64111MethodologyReadModel = z.infer<typeof G64111MethodologyReadModelSchema>;
 
 export const MethodologyPilotAssignmentSchema = z.object({
   id,

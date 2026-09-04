@@ -44,6 +44,7 @@ import { matterParticipantRoutes } from './mutation/matterParticipants.js';
 import { commitmentRoutes } from './mutation/commitments.js';
 import { customerRoutes } from './mutation/customers.js';
 import { methodologyCommandRoutes } from './methodology/commands.js';
+import { methodologyReadRoutes } from './methodology/routes.js';
 import { repairRoutes } from './repair.js';
 import { personMergeRoutes } from './personMerge.js';
 import { todayRoutes } from './today.js';
@@ -153,7 +154,8 @@ const serviceCapabilityRules: ReadonlyArray<{
   },
   {
     requirement: { entitlement: 'methodology.g64111' },
-    matches: (pathname) => pathname === '/api/commands/methodology',
+    matches: (pathname) => pathname === '/api/commands/methodology'
+      || pathname === '/api/methodology/g64111',
   },
   {
     requirement: { entitlement: 'decision.pde' },
@@ -229,6 +231,7 @@ function registerRoutes(
   customerRoutes(app, product.policy);
   commitmentRoutes(app);
   methodologyCommandRoutes(app);
+  methodologyReadRoutes(app);
   repairRoutes(app, product.policy);
   personMergeRoutes(app, product.policy);
   todayRoutes(app, product.policy);

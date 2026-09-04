@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  G64111_BUILTIN_PACK_KEY,
+  G64111_BUILTIN_SOURCE_TEMPLATE_REF,
+  G64111_BUILTIN_TEMPLATE_KEY,
+  G64111MethodologyReadModelSchema,
   METHODOLOGY_COMMAND_TYPES,
   MethodologyActionTemplateSchema,
   MethodologyBindingSchema,
@@ -19,6 +23,7 @@ import {
   MethodologyStorageBindingKindSchema,
   MethodologyValueSchema,
   MethodologyVersionStatusSchema,
+  isG64111Active,
 } from '../src/index.js';
 
 const PACK_ID = 'methodologypack_00000000000000000000000000000001';
@@ -343,6 +348,134 @@ describe('CORE-111 methodology data contracts', () => {
     }).success).toBe(false);
     expect(MethodologyMigrationRunSchema.safeParse({
       ...planned, dryRunJson: { affected: 1 },
+    }).success).toBe(false);
+  });
+});
+
+describe('SAAS-210 optional G64111 read contract', () => {
+  const installation = {
+    packId: PACK_ID,
+    versionId: VERSION_ID,
+    packKey: G64111_BUILTIN_PACK_KEY,
+    packName: 'G64111 趋赢力',
+    sourceTemplateRef: G64111_BUILTIN_SOURCE_TEMPLATE_REF,
+    versionKey: '1.0.0',
+    engineRef: 'g64111:0.1.0',
+  };
+  const activeBinding = {
+    bindingId: BINDING_ID,
+    customerId: 'customer-1',
+    matterId: 'matter-1',
+    packId: PACK_ID,
+    versionId: VERSION_ID,
+    packKey: G64111_BUILTIN_PACK_KEY,
+    packName: 'G64111 趋赢力',
+    sourceTemplateRef: G64111_BUILTIN_SOURCE_TEMPLATE_REF,
+    versionKey: '1.0.0',
+    engineRef: 'g64111:0.1.0',
+  };
+  const readModel = {
+    generatedAtUtc: '2026-09-03T12:00:00.000Z',
+    commandsEnabled: true,
+    canManage: true,
+    installation,
+    matters: [{
+      customerId: 'customer-1',
+      customerName: '中性客户',
+      matterId: 'matter-1',
+      matterTitle: '中性事项',
+      matterKind: 'sales_opportunity',
+      lifecycleStatus: 'active',
+      matterVersion: 3,
+      activeBinding,
+    }],
+  };
+
+  it('publishes stable built-in identity constants and recognizes only the exact binding identity', () => {
+    expect(G64111_BUILTIN_TEMPLATE_KEY).toBe('g64111');
+    expect(G64111_BUILTIN_PACK_KEY).toBe('platform.g64111');
+    expect(G64111_BUILTIN_SOURCE_TEMPLATE_REF).toBe('builtin:g64111:1');
+    expect(isG64111Active(activeBinding)).toBe(true);
+    expect(isG64111Active({ ...activeBinding, packKey: 'tenant.lookalike' })).toBe(false);
+    expect(isG64111Active({ ...activeBinding, sourceTemplateRef: 'tenant:copy:1' })).toBe(false);
+    expect(isG64111Active({ ...activeBinding, versionKey: '1.0.1' })).toBe(false);
+    expect(isG64111Active({ ...activeBinding, engineRef: 'g64111:9.9.9' })).toBe(false);
+    expect(isG64111Active(null)).toBe(false);
+  });
+
+  it('accepts a strict neutral projection and rejects proprietary or forecast fields', () => {
+    expect(G64111MethodologyReadModelSchema.parse(readModel)).toEqual(readModel);
+    for (const forbidden of [
+      'primaryDPersonId', 'roles', 'c3Items', 'c5Items', 'pipelineStage', 'engageStage', 'score', 'winProbability',
+    ]) {
+      expect(G64111MethodologyReadModelSchema.safeParse({
+        ...readModel,
+        matters: [{ ...readModel.matters[0], [forbidden]: 'poison' }],
+      }).success).toBe(false);
+    }
+  });
+
+  it('rejects duplicate Matters and inconsistent binding parents', () => {
+    expect(G64111MethodologyReadModelSchema.safeParse({
+      ...readModel,
+      matters: [...readModel.matters, { ...readModel.matters[0] }],
+    }).success).toBe(false);
+    expect(G64111MethodologyReadModelSchema.safeParse({
+      ...readModel,
+      matters: [{
+        ...readModel.matters[0],
+        activeBinding: { ...activeBinding, matterId: 'matter-other' },
+      }],
+    }).success).toBe(false);
+    expect(G64111MethodologyReadModelSchema.safeParse({
+      ...readModel,
+      matters: [{
+        ...readModel.matters[0],
+        activeBinding: { ...activeBinding, customerId: 'customer-other' },
+      }],
+    }).success).toBe(false);
+  });
+
+  it('rejects an installation whose pack/version identity is inconsistent with G64111', () => {
+    expect(G64111MethodologyReadModelSchema.safeParse({
+      ...readModel,
+      installation: { ...installation, packKey: 'platform.copy' },
+    }).success).toBe(false);
+    expect(G64111MethodologyReadModelSchema.safeParse({
+      ...readModel,
+      installation: { ...installation, sourceTemplateRef: 'builtin:copy:1' },
+    }).success).toBe(false);
+    expect(G64111MethodologyReadModelSchema.safeParse({
+      ...readModel,
+      installation: { ...installation, versionKey: '1.0.1' },
+    }).success).toBe(false);
+    expect(G64111MethodologyReadModelSchema.safeParse({
+      ...readModel,
+      installation: { ...installation, engineRef: 'g64111:9.9.9' },
+    }).success).toBe(false);
+    expect(G64111MethodologyReadModelSchema.safeParse({
+      ...readModel,
+      matters: [{
+        ...readModel.matters[0],
+        activeBinding: { ...activeBinding, versionId: 'version-stale' },
+      }],
+    }).success).toBe(false);
+    expect(G64111MethodologyReadModelSchema.safeParse({
+      ...readModel,
+      installation: null,
+    }).success).toBe(false);
+  });
+
+  it('requires a valid lifecycle status on every manageable Matter projection', () => {
+    for (const lifecycleStatus of ['active', 'paused', 'completed', 'canceled']) {
+      expect(G64111MethodologyReadModelSchema.safeParse({
+        ...readModel,
+        matters: [{ ...readModel.matters[0], lifecycleStatus }],
+      }).success).toBe(true);
+    }
+    expect(G64111MethodologyReadModelSchema.safeParse({
+      ...readModel,
+      matters: [{ ...readModel.matters[0], lifecycleStatus: 'won' }],
     }).success).toBe(false);
   });
 });

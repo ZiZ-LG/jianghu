@@ -1,10 +1,14 @@
 import { createHash } from 'node:crypto';
-import type {
-  MethodologyActionTemplate,
-  MethodologyFieldDefinition,
-  MethodologyRoleDefinition,
-  MethodologyRuleDefinition,
-  MethodologyStageDefinition,
+import {
+  G64111_BUILTIN_PACK_KEY,
+  G64111_BUILTIN_SOURCE_TEMPLATE_REF,
+  G64111_BUILTIN_TEMPLATE_KEY,
+  G64111_BUILTIN_VERSION_KEY,
+  type MethodologyActionTemplate,
+  type MethodologyFieldDefinition,
+  type MethodologyRoleDefinition,
+  type MethodologyRuleDefinition,
+  type MethodologyStageDefinition,
 } from '@jianghu/domain-contracts';
 import type { MethodologyDefinitionSetInput } from './repository.js';
 import { G64111_DEFINITION_MANIFEST, G64111_ENGINE_REF } from './g64111Manifest.js';
@@ -61,11 +65,11 @@ const generalFollowup: BuiltinMethodologyTemplate = Object.freeze({
 });
 
 const g64111Content = Object.freeze({
-  templateKey: 'g64111',
-  sourceTemplateRef: 'builtin:g64111:1',
-  packKey: 'platform.g64111',
+  templateKey: G64111_BUILTIN_TEMPLATE_KEY,
+  sourceTemplateRef: G64111_BUILTIN_SOURCE_TEMPLATE_REF,
+  packKey: G64111_BUILTIN_PACK_KEY,
   name: 'G64111 趋赢力',
-  versionKey: '1.0.0',
+  versionKey: G64111_BUILTIN_VERSION_KEY,
   engineRef: G64111_ENGINE_REF,
   learningContentRef: 'docs:G64111-评分规格.md',
   definitions: G64111_DEFINITION_MANIFEST,
