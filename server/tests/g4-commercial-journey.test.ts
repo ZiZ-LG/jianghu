@@ -19,7 +19,11 @@ import {
 } from '../src/sensitiveAcl/service.js';
 import { createTestContext, type TestContext } from './helpers/testApp.js';
 
-const policy = assembleProductAccess({ edition: 'internal' }).policy;
+const productAccess = {
+  edition: 'commercial' as const,
+  enabledEntitlements: ['sales.workspace'],
+};
+const policy = assembleProductAccess(productAccess).policy;
 const customerId = 'g4-cao-customer';
 const matterId = 'g4-cao-matter-main';
 const matterIds = [
@@ -30,7 +34,8 @@ const matterIds = [
   'g4-cao-matter-five',
 ] as const;
 const occurredAt = '2026-09-01T01:00:00.000Z';
-const radarAt = new Date(Date.now() - 60_000).toISOString();
+const journeyNow = new Date('2026-09-04T09:00:00.000Z');
+const radarAt = '2026-09-04T08:59:00.000Z';
 const fixtureApiKey = ['TEST', 'KEY', 'NOT', 'PERSISTED'].join('_');
 const uploadBoundary = '----jianghu-saas-211-g4-upload';
 const meetingBody = [
@@ -277,9 +282,15 @@ async function externalExecutionCounts(test: TestContext) {
 
 describe('SAAS-211 Cao manager G4 commercial journey stage gate', () => {
   let test: TestContext | null = null;
-  afterEach(async () => test?.cleanup());
+  afterEach(async () => {
+    vi.useRealTimers();
+    await test?.cleanup();
+    test = null;
+  });
 
   it('runs one synthetic file through three controlled jobs, human review, explainable radar and five Matters', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(journeyNow);
     const preMeetingCall = vi.fn(async () => preMeetingModelResponse);
     const postMeetingCall = vi.fn(async () => postMeetingModelResponse);
     const fixtureAiConfig = async () => ({
@@ -289,6 +300,7 @@ describe('SAAS-211 Cao manager G4 commercial journey stage gate', () => {
       apiKey: fixtureApiKey,
     });
     test = await createTestContext({
+      productAccess,
       agentHandlers: {
         'pre_meeting_brief@core-206.v1': createPreMeetingHandler({
           db: prisma, policy, loadAiConfig: fixtureAiConfig, callLLM: preMeetingCall,
@@ -303,6 +315,19 @@ describe('SAAS-211 Cao manager G4 commercial journey stage gate', () => {
     });
     await test.prisma.user.update({
       where: { id: test.owner.id }, data: { name: '曹经理' },
+    });
+    const me = await test.app.inject({
+      method: 'GET', url: '/api/me', headers: auth(test.token),
+    });
+    expect(me.statusCode, me.body).toBe(200);
+    expect(me.json().product).toMatchObject({
+      valid: true,
+      edition: 'commercial',
+      shell: 'commercial',
+      policy: {
+        entitlements: ['crm.core', 'sales.workspace'],
+        permissions: [],
+      },
     });
     await test.prisma.account.create({ data: {
       id: customerId,
@@ -374,6 +399,24 @@ describe('SAAS-211 Cao manager G4 commercial journey stage gate', () => {
     });
     expect(transcript.contentEnc).not.toContain(meetingBody);
     expect(dec(transcript.contentEnc)).toBe(meetingBody);
+    const uploadReplay = await test.app.inject({
+      method: 'POST',
+      url: `/api/post-meeting/import/upload?customerId=${customerId}&matterId=${matterId}&occurredAt=${encodeURIComponent(occurredAt)}`,
+      headers: {
+        ...auth(test.token, 'saas-211-upload-file'),
+        'content-type': `multipart/form-data; boundary=${uploadBoundary}`,
+      },
+      payload: multipartFile(meetingBody),
+    });
+    expect(uploadReplay.statusCode, uploadReplay.body).toBe(200);
+    expect(uploadReplay.json()).toMatchObject({
+      source: { id: uploaded.source.id, fingerprint: uploaded.source.fingerprint },
+      replayed: true,
+    });
+    await expect(Promise.all([
+      test.prisma.sourceArtifact.count({ where: { tenantId: test.tenant.id } }),
+      test.prisma.transcript.count({ where: { tenantId: test.tenant.id } }),
+    ])).resolves.toEqual([1, 1]);
 
     const creatorRead = await test.app.inject({
       method: 'GET', url: `/api/source-artifacts/${uploaded.source.id}`, headers: auth(test.token),
@@ -401,12 +444,13 @@ describe('SAAS-211 Cao manager G4 commercial journey stage gate', () => {
     expect(shared.statusCode, shared.body).toBe(200);
     expect(shared.json()).toMatchObject({ visibility: 'matter_shared', aclVersion: 2 });
     for (const token of [manager.token, sharedReader.token, nonCreatorAdmin.token]) {
-      const visible = await test.app.inject({
+      const stillHidden = await test.app.inject({
         method: 'GET', url: `/api/source-artifacts/${uploaded.source.id}`, headers: auth(token),
       });
-      expect(visible.statusCode, visible.body).toBe(200);
-      expect(visible.body).not.toContain(meetingBody);
-      expect(visible.body).not.toContain('contentEnc');
+      expect(stillHidden.statusCode, stillHidden.body).toBe(404);
+      expect(stillHidden.json()).toEqual(missingForManager.json());
+      expect(stillHidden.body).not.toContain(meetingBody);
+      expect(stillHidden.body).not.toContain('contentEnc');
     }
 
     const privateAgain = await test.app.inject({
@@ -451,7 +495,8 @@ describe('SAAS-211 Cao manager G4 commercial journey stage gate', () => {
     const viewerSource = await test.app.inject({
       method: 'GET', url: `/api/source-artifacts/${uploaded.source.id}`, headers: auth(viewer.token),
     });
-    expect(viewerSource.statusCode, viewerSource.body).toBe(200);
+    expect(viewerSource.statusCode, viewerSource.body).toBe(404);
+    expect(viewerSource.json()).toEqual(missingForManager.json());
     const beforeViewerWrites = await readSideCounts(test);
     const viewerDenied = await Promise.all([
       test.app.inject({
@@ -607,6 +652,19 @@ describe('SAAS-211 Cao manager G4 commercial journey stage gate', () => {
     await expect(test.prisma.candidate.count({
       where: { tenantId: test.tenant.id, reviewBatchId: extractReceipt.run.outputRefs[0]!.id },
     })).resolves.toBe(5);
+    const currentExtractRun = await test.app.inject({
+      method: 'GET',
+      url: `/api/agent-runs/${extractReceipt.run.id}`,
+      headers: auth(test.token),
+    });
+    expect(currentExtractRun.statusCode, currentExtractRun.body).toBe(200);
+    expect(currentExtractRun.json()).toMatchObject({
+      id: extractReceipt.run.id,
+      jobKey: 'post_meeting_extract',
+      jobVersion: 'core-206.v1',
+      actionMode: 'candidate',
+      status: 'succeeded',
+    });
 
     const batchId = extractReceipt.run.outputRefs[0]!.id;
     const ownerBatch = await test.app.inject({
@@ -628,7 +686,7 @@ describe('SAAS-211 Cao manager G4 commercial journey stage gate', () => {
       method: 'GET', url: '/api/review-batches', headers: auth(manager.token),
     });
     expect(managerList.statusCode, managerList.body).toBe(200);
-    expect(managerList.body).toContain(batchId);
+    expect(managerList.body).not.toContain(batchId);
     expect(managerList.body).not.toContain('预算审批暂未通过');
     const managerBeforeGrant = await test.app.inject({
       method: 'GET', url: `/api/review-batches/${batchId}`, headers: auth(manager.token),
@@ -678,59 +736,19 @@ describe('SAAS-211 Cao manager G4 commercial journey stage gate', () => {
       }, policy);
       expect(granted.aclVersion).toBe(item.expectedAclVersion + 1);
     }
-    const managerBatch = await test.app.inject({
+    // G4 commercial access has no team permission allocation yet: an explicit
+    // resource grant cannot by itself widen the current product policy.
+    const managerAfterGrant = await test.app.inject({
       method: 'GET', url: `/api/review-batches/${batchId}`, headers: auth(manager.token),
     });
-    expect(managerBatch.statusCode, managerBatch.body).toBe(200);
-    const reviewDetail = PostMeetingReviewBatchDetailSchema.parse(managerBatch.json());
-    const delegatedPerson = reviewDetail.items.find(
-      (item) => item.kind === 'person' && item.after.name === '李经理',
-    );
-    if (!delegatedPerson) throw new Error('missing delegated reviewer Person candidate');
-    const reviewerPayload = {
-      expectedVersion: reviewDetail.version,
-      expectedAcceptanceVersion: reviewDetail.acceptanceVersion,
-      customerId,
-      matterId,
-      activityKind: 'meeting',
-      occurredAt,
-      decisions: [{
-        kind: delegatedPerson.kind,
-        candidateId: delegatedPerson.candidateId,
-        expectedVersion: delegatedPerson.expectedVersion,
-        expectedAclVersion: delegatedPerson.expectedAclVersion,
-        decision: 'accept' as const,
-      }],
-    };
-    const reviewerAccepted = await test.app.inject({
-      method: 'POST',
-      url: `/api/review-batches/${batchId}/accept`,
-      headers: auth(manager.token, 'saas-211-reviewer-accept'),
-      payload: reviewerPayload,
-    });
-    expect(reviewerAccepted.statusCode, reviewerAccepted.body).toBe(200);
-    const reviewerAcceptedBody = reviewerAccepted.json<{
-      status: string;
-      interactionId: string;
-      version: number;
-      acceptanceVersion: number;
-      businessReplayed: boolean;
-      replayed: boolean;
-      items: Array<{
-        candidateId: string; formalKind: string; formalId: string;
-      }>;
-    }>();
-    expect(reviewerAcceptedBody).toMatchObject({
-      status: 'pending', businessReplayed: false, replayed: false,
-      interactionId: expect.any(String), version: 1, acceptanceVersion: 1,
-      items: [{ candidateId: delegatedPerson.candidateId, formalKind: 'person' }],
-    });
+    expect(managerAfterGrant.statusCode, managerAfterGrant.body).toBe(404);
+    expect(managerAfterGrant.json()).toEqual(missingBatch.json());
 
-    const ownerBatchAfterReviewer = await test.app.inject({
+    const ownerBatchAfterGrants = await test.app.inject({
       method: 'GET', url: `/api/review-batches/${batchId}`, headers: auth(test.token),
     });
-    expect(ownerBatchAfterReviewer.statusCode, ownerBatchAfterReviewer.body).toBe(200);
-    const ownerReviewDetail = PostMeetingReviewBatchDetailSchema.parse(ownerBatchAfterReviewer.json());
+    expect(ownerBatchAfterGrants.statusCode, ownerBatchAfterGrants.body).toBe(200);
+    const ownerReviewDetail = PostMeetingReviewBatchDetailSchema.parse(ownerBatchAfterGrants.json());
     const reviewPayload = {
       expectedVersion: ownerReviewDetail.version,
       expectedAcceptanceVersion: ownerReviewDetail.acceptanceVersion,
@@ -766,9 +784,9 @@ describe('SAAS-211 Cao manager G4 commercial journey stage gate', () => {
     }>();
     expect(acceptedBody).toMatchObject({
       status: 'accepted', businessReplayed: false, replayed: false,
-      interactionId: reviewerAcceptedBody.interactionId, version: 2, acceptanceVersion: 2,
+      interactionId: expect.any(String), version: 1, acceptanceVersion: 1,
     });
-    const acceptedItems = [...reviewerAcceptedBody.items, ...acceptedBody.items];
+    const acceptedItems = acceptedBody.items;
     expect(acceptedItems.map((item) => item.formalKind).sort()).toEqual([
       'commitment', 'evidence', 'person', 'person', 'relation',
     ]);
@@ -778,7 +796,7 @@ describe('SAAS-211 Cao manager G4 commercial journey stage gate', () => {
       return value;
     };
     const personReceipts = acceptedItems.filter((item) => item.formalKind === 'person');
-    const wangCandidate = reviewDetail.items.find(
+    const wangCandidate = ownerReviewDetail.items.find(
       (item) => item.kind === 'person' && item.after.name === '王总',
     );
     const wangId = acceptedItems.find(
@@ -831,22 +849,43 @@ describe('SAAS-211 Cao manager G4 commercial journey stage gate', () => {
       test.prisma.person.count(), test.prisma.interaction.count(),
       test.prisma.commandRun.count(), test.prisma.auditEvent.count(),
     ]);
+    const managerDeniedReview = await test.app.inject({
+      method: 'POST',
+      url: `/api/review-batches/${batchId}/accept`,
+      headers: auth(manager.token, 'saas-211-reviewer-denied'),
+      payload: reviewPayload,
+    });
+    expect(managerDeniedReview.statusCode, managerDeniedReview.body).toBe(404);
+    const afterManagerDenied = await Promise.all([
+      test.prisma.person.count(), test.prisma.interaction.count(),
+      test.prisma.commandRun.count(), test.prisma.auditEvent.count(),
+    ]);
+    expect(afterManagerDenied).toEqual([
+      replayGuardBefore[0], replayGuardBefore[1], replayGuardBefore[2] + 1, replayGuardBefore[3],
+    ]);
+    await expect(test.prisma.commandRun.findFirstOrThrow({ where: {
+      tenantId: test.tenant.id,
+      actorId: manager.user.id,
+      kind: { startsWith: `review-batch-accept:${batchId}:` },
+    } })).resolves.toMatchObject({
+      status: 'failed', errorCode: 'review_batch_not_found', resultSummary: '{}',
+    });
     await test.prisma.user.update({ where: { id: manager.user.id }, data: { role: 'viewer' } });
     const demotedReplay = await test.app.inject({
       method: 'POST',
       url: `/api/review-batches/${batchId}/accept`,
-      headers: auth(manager.token, 'saas-211-reviewer-accept'),
-      payload: reviewerPayload,
+      headers: auth(manager.token, 'saas-211-reviewer-denied'),
+      payload: reviewPayload,
     });
     expect(demotedReplay.statusCode, demotedReplay.body).toBe(403);
     expect(demotedReplay.json()).toMatchObject({ code: 'viewer_write_denied' });
     await expect(Promise.all([
       test.prisma.person.count(), test.prisma.interaction.count(),
       test.prisma.commandRun.count(), test.prisma.auditEvent.count(),
-    ])).resolves.toEqual(replayGuardBefore);
+    ])).resolves.toEqual(afterManagerDenied);
 
     await test.prisma.user.update({ where: { id: manager.user.id }, data: { role: 'member' } });
-    const revokedCandidate = reviewDetail.items[0]!;
+    const revokedCandidate = ownerReviewDetail.items[0]!;
     await revokeCandidateReviewer(test.prisma, {
       tenantId: test.tenant.id,
       actorId: test.owner.id,
@@ -862,8 +901,8 @@ describe('SAAS-211 Cao manager G4 commercial journey stage gate', () => {
     const revokedReplay = await test.app.inject({
       method: 'POST',
       url: `/api/review-batches/${batchId}/accept`,
-      headers: auth(manager.token, 'saas-211-reviewer-accept'),
-      payload: reviewerPayload,
+      headers: auth(manager.token, 'saas-211-reviewer-denied'),
+      payload: reviewPayload,
     });
     expect(revokedReplay.statusCode, revokedReplay.body).toBe(404);
     await expect(Promise.all([
@@ -1123,6 +1162,8 @@ describe('SAAS-211 Cao manager G4 commercial journey stage gate', () => {
     const historyItems = runHistory.json<{ items: Array<{
       jobKey: string; jobVersion: string; actionMode: string; status: string;
     }> }>().items;
+    // The candidate run is still immutable audit data, but its public view is
+    // hidden after human review advances the exact ReviewBatch output version.
     expect(historyItems).toHaveLength(2);
     expect(historyItems.map((run) => [run.jobKey, run.jobVersion, run.actionMode, run.status]).sort())
       .toEqual([
@@ -1140,6 +1181,18 @@ describe('SAAS-211 Cao manager G4 commercial journey stage gate', () => {
         ['pre_meeting_brief', 'core-206.v1', 'read_only', 'succeeded'],
         ['relationship_radar', 'saas-212.v1', 'draft', 'succeeded'],
       ]);
+    const staleExtractRun = await test.app.inject({
+      method: 'GET',
+      url: `/api/agent-runs/${extractReceipt.run.id}`,
+      headers: auth(test.token),
+    });
+    const missingRun = await test.app.inject({
+      method: 'GET',
+      url: '/api/agent-runs/missing-g4-run',
+      headers: auth(test.token),
+    });
+    expect(staleExtractRun.statusCode, staleExtractRun.body).toBe(404);
+    expect(staleExtractRun.json()).toEqual(missingRun.json());
 
     const stopped = await test.app.inject({
       method: 'PUT',
@@ -1172,9 +1225,9 @@ describe('SAAS-211 Cao manager G4 commercial journey stage gate', () => {
       audits: await test.prisma.auditEvent.findMany({ where: { tenantId: test.tenant.id } }),
     });
     for (const forbidden of [
-      meetingBody,
-      '客户明确表示预算审批暂未通过。',
-      '曹经理将在下周二确认评审安排。',
+      ...meetingBody.split('\n'),
+      '客户正在推进储能联合开发事项。',
+      '确认预算审批人与技术评审安排。',
       fixtureApiKey,
     ]) expect(bodyFreeAudit).not.toContain(forbidden);
     await expect(externalExecutionCounts(test)).resolves.toEqual(externalBefore);
