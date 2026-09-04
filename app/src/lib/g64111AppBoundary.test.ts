@@ -20,7 +20,7 @@ const exactReadModel: G64111MethodologyReadModel = {
   },
   matters: [{
     customerId: 'customer-1', customerName: '客户一', matterId: 'matter-bound', matterTitle: '已绑定',
-    matterKind: 'general', matterVersion: 1,
+    matterKind: 'general', lifecycleStatus: 'active', matterVersion: 1,
     activeBinding: {
       bindingId: 'binding-g', customerId: 'customer-1', matterId: 'matter-bound',
       packId: 'pack-g', versionId: 'version-g', packKey: G64111_BUILTIN_PACK_KEY,
@@ -29,7 +29,7 @@ const exactReadModel: G64111MethodologyReadModel = {
     },
   }, {
     customerId: 'customer-1', customerName: '客户一', matterId: 'matter-unbound', matterTitle: '未绑定',
-    matterKind: 'general', matterVersion: 0, activeBinding: null,
+    matterKind: 'general', lifecycleStatus: 'active', matterVersion: 0, activeBinding: null,
   }],
 };
 
@@ -55,6 +55,35 @@ describe('SAAS-210 App G64111 boundary', () => {
     const compute = vi.fn(() => 'computed');
     expect(invokeG64111ForMatter(commercial, exactReadModel, 'customer-1', 'matter-bound', compute)).toBe('computed');
     expect(invokeG64111ForMatter(internal, null, 'any-customer', 'any-matter', compute)).toBe('computed');
+    expect(compute).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails closed before invoking the adapter when version or engine identity drifts', () => {
+    for (const activeBinding of [
+      { ...exactReadModel.matters[0]!.activeBinding!, versionKey: '1.0.1' },
+      { ...exactReadModel.matters[0]!.activeBinding!, engineRef: 'g64111:9.9.9' },
+    ]) {
+      const compute = vi.fn(() => 'must-not-run');
+      const drifted = {
+        ...exactReadModel,
+        matters: [{ ...exactReadModel.matters[0]!, activeBinding }],
+      } as unknown as G64111MethodologyReadModel;
+      expect(invokeG64111ForMatter(commercial, drifted, 'customer-1', 'matter-bound', compute)).toBeNull();
+      expect(compute).not.toHaveBeenCalled();
+    }
+  });
+
+  it('runs active and paused Matters but excludes closed Matters from every commercial runtime path', () => {
+    const withLifecycle = (lifecycleStatus: 'active' | 'paused' | 'completed' | 'canceled') => ({
+      ...exactReadModel,
+      matters: [{ ...exactReadModel.matters[0]!, lifecycleStatus }],
+    }) as G64111MethodologyReadModel;
+    const compute = vi.fn(() => 'computed');
+    expect(invokeG64111ForMatter(commercial, withLifecycle('active'), 'customer-1', 'matter-bound', compute)).toBe('computed');
+    expect(invokeG64111ForMatter(commercial, withLifecycle('paused'), 'customer-1', 'matter-bound', compute)).toBe('computed');
+    expect(invokeG64111ForMatter(commercial, withLifecycle('completed'), 'customer-1', 'matter-bound', compute)).toBeNull();
+    expect(invokeG64111ForMatter(commercial, withLifecycle('canceled'), 'customer-1', 'matter-bound', compute)).toBeNull();
+    expect(selectG64111Accounts(commercial, withLifecycle('completed'), accounts)).toEqual([]);
     expect(compute).toHaveBeenCalledTimes(2);
   });
 

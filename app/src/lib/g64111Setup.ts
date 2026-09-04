@@ -2,6 +2,7 @@ import {
   G64111_BUILTIN_TEMPLATE_KEY,
   MethodologyCommandSchema,
   isG64111Active,
+  isG64111LifecycleEligible,
   type G64111MethodologyMatter,
   type G64111MethodologyReadModel,
   type MethodologyCommand,
@@ -53,6 +54,9 @@ export function buildG64111BindCommand(
   assertCommandsAllowed(model);
   if (!model.installation) throw new Error('G64111 is not installed');
   const matter = exactMatter(model, customerId, matterId);
+  if (!isG64111LifecycleEligible(matter.lifecycleStatus)) {
+    throw new Error('Matter lifecycle does not allow G64111 activation');
+  }
   if (isG64111Active(matter.activeBinding)) throw new Error('G64111 is already active');
   return MethodologyCommandSchema.parse({
     type: 'ACTIVATE_METHODOLOGY_BINDING',

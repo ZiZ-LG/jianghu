@@ -1,7 +1,9 @@
 import {
   CommandContextSchema,
+  G64111_BUILTIN_ENGINE_REF,
   G64111_BUILTIN_PACK_KEY,
   G64111_BUILTIN_SOURCE_TEMPLATE_REF,
+  G64111_BUILTIN_VERSION_KEY,
   G64111MethodologyReadModelSchema,
   type CommandContext,
   type G64111MethodologyReadModel,
@@ -90,15 +92,17 @@ export async function buildG64111MethodologyReadModel(
     if (!currentVersion
       || currentVersion.packId !== installedPack.id
       || currentVersion.status !== 'published'
-      || currentVersion.sourceTemplateRef !== G64111_BUILTIN_SOURCE_TEMPLATE_REF) conflict();
+      || currentVersion.sourceTemplateRef !== G64111_BUILTIN_SOURCE_TEMPLATE_REF
+      || currentVersion.versionKey !== G64111_BUILTIN_VERSION_KEY
+      || currentVersion.engineRef !== G64111_BUILTIN_ENGINE_REF) conflict();
     installation = {
       packId: installedPack.id,
       versionId: currentVersion.id,
       packKey: G64111_BUILTIN_PACK_KEY,
       packName: installedPack.name,
       sourceTemplateRef: G64111_BUILTIN_SOURCE_TEMPLATE_REF,
-      versionKey: currentVersion.versionKey,
-      engineRef: currentVersion.engineRef,
+      versionKey: G64111_BUILTIN_VERSION_KEY,
+      engineRef: G64111_BUILTIN_ENGINE_REF,
     };
   }
 
@@ -107,7 +111,6 @@ export async function buildG64111MethodologyReadModel(
     where: {
       tenantId: ctx.tenantId,
       id: { in: visibleMatterIds },
-      lifecycleStatus: 'active',
       archivedAt: null,
       account: { tenantId: ctx.tenantId, archivedAt: null },
     },
@@ -117,6 +120,7 @@ export async function buildG64111MethodologyReadModel(
       accountId: true,
       name: true,
       kind: true,
+      lifecycleStatus: true,
       version: true,
       activeMethodologyBindingId: true,
       account: { select: { id: true, name: true } },
@@ -181,7 +185,10 @@ export async function buildG64111MethodologyReadModel(
         pack.key !== G64111_BUILTIN_PACK_KEY
         || pack.sourceTemplateRef !== G64111_BUILTIN_SOURCE_TEMPLATE_REF
         || version.sourceTemplateRef !== G64111_BUILTIN_SOURCE_TEMPLATE_REF
+        || version.versionKey !== G64111_BUILTIN_VERSION_KEY
+        || version.engineRef !== G64111_BUILTIN_ENGINE_REF
         || installation?.packId !== pack.id
+        || installation?.versionId !== version.id
       )) conflict();
 
       activeBinding = {
@@ -203,6 +210,7 @@ export async function buildG64111MethodologyReadModel(
       matterId: matter.id,
       matterTitle: matter.name,
       matterKind: matter.kind,
+      lifecycleStatus: matter.lifecycleStatus,
       matterVersion: matter.version,
       activeBinding,
     };

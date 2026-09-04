@@ -1,5 +1,5 @@
 import {
-  isG64111Active,
+  isG64111RunnableMatter,
   type CommandContext,
   type CrmContextSnapshot,
   type ProductAccess,
@@ -30,7 +30,7 @@ function LegacyG64111MatterList({ state, onOpenLegacy }: {
 }) {
   if (state.status === 'loading') return <EmptyState>正在确认 G64111 事项绑定…</EmptyState>;
   if (state.status === 'error') return <EmptyState>方法论状态暂不可用，原工作台已安全关闭。</EmptyState>;
-  const matters = state.snapshot.matters.filter((matter) => isG64111Active(matter.activeBinding));
+  const matters = state.snapshot.matters.filter(isG64111RunnableMatter);
   if (matters.length === 0) return <EmptyState>尚无已启用 G64111 的事项；通用复杂销售工作流仍可使用。</EmptyState>;
   return (
     <div className="commercial-shell-list">

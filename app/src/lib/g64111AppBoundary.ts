@@ -1,6 +1,6 @@
 import {
   capabilityPolicyAllows,
-  isG64111Active,
+  isG64111RunnableMatter,
   type G64111MethodologyReadModel,
   type ProductAccess,
 } from '@jianghu/domain-contracts';
@@ -17,7 +17,7 @@ export function canUseG64111Matter(
   const matter = model.matters.find((candidate) => (
     candidate.customerId === customerId && candidate.matterId === matterId
   ));
-  return Boolean(matter && isG64111Active(matter.activeBinding));
+  return Boolean(matter && isG64111RunnableMatter(matter));
 }
 
 export function invokeG64111ForMatter<T>(

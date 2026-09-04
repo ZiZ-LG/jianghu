@@ -1,5 +1,17 @@
 import { useState } from 'react';
-import { isG64111Active, type G64111MethodologyReadModel } from '@jianghu/domain-contracts';
+import {
+  isG64111Active,
+  isG64111LifecycleEligible,
+  type G64111MethodologyMatter,
+  type G64111MethodologyReadModel,
+} from '@jianghu/domain-contracts';
+
+const lifecycleLabel: Record<G64111MethodologyMatter['lifecycleStatus'], string> = {
+  active: '进行中',
+  paused: '已暂停',
+  completed: '已完成',
+  canceled: '已取消',
+};
 
 export type G64111SetupAction =
   | { type: 'install' }
@@ -87,16 +99,19 @@ export function G64111SetupPanel({
             <div className="commercial-shell-list">
               {snapshot.matters.map((matter) => {
                 const exact = isG64111Active(matter.activeBinding);
+                const lifecycleEligible = isG64111LifecycleEligible(matter.lifecycleStatus);
                 const key = `${matter.customerId}:${matter.matterId}`;
                 return (
                   <div key={key} className="commercial-shell-row" data-g64111-matter={matter.matterId}>
                     <span>
                       <strong>{matter.matterTitle}</strong>
-                      <small>{matter.customerName} · {exact ? 'G64111 已启用' : matter.activeBinding ? `当前为 ${matter.activeBinding.packName}` : '未绑定方法论'}</small>
+                      <small>{matter.customerName} · {lifecycleLabel[matter.lifecycleStatus]} · {exact ? 'G64111 已启用' : matter.activeBinding ? `当前为 ${matter.activeBinding.packName}` : '未绑定方法论'}</small>
                     </span>
                     {actionsAvailable && (exact
                       ? <button className="btn ghost sm" disabled={Boolean(busy)} onClick={() => void run(key, { type: 'unbind', customerId: matter.customerId, matterId: matter.matterId })}>解绑 G64111</button>
-                      : <button className="btn sm" disabled={Boolean(busy)} onClick={() => void run(key, { type: 'bind', customerId: matter.customerId, matterId: matter.matterId })}>{matter.activeBinding ? '切换到 G64111' : '为此事项启用'}</button>)}
+                      : lifecycleEligible
+                        ? <button className="btn sm" disabled={Boolean(busy)} onClick={() => void run(key, { type: 'bind', customerId: matter.customerId, matterId: matter.matterId })}>{matter.activeBinding ? '切换到 G64111' : '为此事项启用'}</button>
+                        : null)}
                   </div>
                 );
               })}

@@ -41,6 +41,7 @@ async function seedMatter(
   context: TestContext,
   suffix: string,
   ownerUserId = context.owner.id,
+  lifecycleStatus: 'active' | 'paused' | 'completed' | 'canceled' = 'active',
 ) {
   const customerId = `methodology-read-customer-${suffix}`;
   const matterId = `methodology-read-matter-${suffix}`;
@@ -57,6 +58,7 @@ async function seedMatter(
     name: `Matter ${suffix}`,
     kind: 'general',
     customerType: 1,
+    lifecycleStatus,
     pipelineStage: `POISON_PIPELINE_${suffix}`,
     engageStage: `POISON_ENGAGE_${suffix}`,
     c3Items: JSON.stringify({ poison: suffix }),
@@ -76,6 +78,7 @@ async function installPack(
     name: string;
     sourceTemplateRef: string;
     engineRef: string;
+    versionKey?: string;
   },
 ) {
   await context.prisma.methodologyPack.create({ data: {
@@ -91,7 +94,7 @@ async function installPack(
     id: input.versionId,
     tenantId: context.tenant.id,
     packId: input.packId,
-    versionKey: '1.0.0',
+    versionKey: input.versionKey ?? '1.0.0',
     status: 'published',
     engineRef: input.engineRef,
     contentHash: 'a'.repeat(64),
@@ -177,6 +180,7 @@ describe('SAAS-210 G64111 methodology read boundary', () => {
         matterId: matter.matterId,
         matterTitle: 'Matter neutral',
         matterKind: 'general',
+        lifecycleStatus: 'active',
         matterVersion: 0,
         activeBinding: null,
       }]);
@@ -189,11 +193,51 @@ describe('SAAS-210 G64111 methodology read boundary', () => {
         where: { tenantId: context.tenant.id },
         select: {
           id: true, accountId: true, name: true, kind: true, version: true,
+          lifecycleStatus: true,
           activeMethodologyBindingId: true,
         },
       });
       expect((projectionRead?.[0] as any).select).not.toHaveProperty('pipelineStage');
       opportunityReads.mockRestore();
+    } finally {
+      await context.cleanup();
+    }
+  });
+
+  it('keeps every visible non-archived lifecycle in the management projection', async () => {
+    const context = await createTestContext({
+      productAccess: { edition: 'commercial', enabledEntitlements: ['methodology.g64111'] },
+    });
+    try {
+      const active = await seedMatter(context, 'lifecycle-active');
+      const paused = await seedMatter(context, 'lifecycle-paused', context.owner.id, 'paused');
+      const completed = await seedMatter(context, 'lifecycle-completed', context.owner.id, 'completed');
+      const canceled = await seedMatter(context, 'lifecycle-canceled', context.owner.id, 'canceled');
+      await installPack(context, {
+        packId: 'pack-lifecycle', versionId: 'version-lifecycle',
+        key: G64111_BUILTIN_PACK_KEY, name: 'G64111 趋赢力',
+        sourceTemplateRef: G64111_BUILTIN_SOURCE_TEMPLATE_REF, engineRef: 'g64111:0.1.0',
+      });
+      await bind(context, completed, {
+        bindingId: 'binding-lifecycle-completed',
+        packId: 'pack-lifecycle',
+        versionId: 'version-lifecycle',
+      });
+
+      const response = await context.app.inject({
+        method: 'GET', url: '/api/methodology/g64111', headers: auth(context.token),
+      });
+      expect(response.statusCode, response.body).toBe(200);
+      const model = G64111MethodologyReadModelSchema.parse(response.json());
+      const byId = new Map(model.matters.map((matter) => [matter.matterId, matter]));
+      expect([...byId.keys()].sort()).toEqual([
+        active.matterId, paused.matterId, completed.matterId, canceled.matterId,
+      ].sort());
+      expect(byId.get(active.matterId)?.lifecycleStatus).toBe('active');
+      expect(byId.get(paused.matterId)?.lifecycleStatus).toBe('paused');
+      expect(byId.get(completed.matterId)?.lifecycleStatus).toBe('completed');
+      expect(byId.get(canceled.matterId)?.lifecycleStatus).toBe('canceled');
+      expect(isG64111Active(byId.get(completed.matterId)?.activeBinding ?? null)).toBe(true);
     } finally {
       await context.cleanup();
     }
@@ -249,6 +293,65 @@ describe('SAAS-210 G64111 methodology read boundary', () => {
       expect(isG64111Active(byId.get(otherMatter.matterId)!.activeBinding)).toBe(false);
       expect(byId.get(otherMatter.matterId)!.activeBinding).toMatchObject({ packKey: 'tenant.other' });
       expect(response.body).not.toContain('FOREIGN_CUSTOMER_MUST_NOT_LEAK');
+    } finally {
+      await context.cleanup();
+    }
+  });
+
+  it.each([
+    { label: 'versionKey', versionKey: '1.0.1', engineRef: 'g64111:0.1.0' },
+    { label: 'engineRef', versionKey: '1.0.0', engineRef: 'g64111:9.9.9' },
+  ])('fails closed when the installed G64111 $label drifts from the built-in runtime', async ({ versionKey, engineRef }) => {
+    const context = await createTestContext({
+      productAccess: { edition: 'commercial', enabledEntitlements: ['methodology.g64111'] },
+    });
+    try {
+      await installPack(context, {
+        packId: `pack-drift-${versionKey}-${engineRef}`,
+        versionId: `version-drift-${versionKey}-${engineRef}`,
+        key: G64111_BUILTIN_PACK_KEY,
+        name: 'Drifted G64111',
+        sourceTemplateRef: G64111_BUILTIN_SOURCE_TEMPLATE_REF,
+        versionKey,
+        engineRef,
+      });
+      const response = await context.app.inject({
+        method: 'GET', url: '/api/methodology/g64111', headers: auth(context.token),
+      });
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toMatchObject({ code: 'methodology_read_conflict' });
+    } finally {
+      await context.cleanup();
+    }
+  });
+
+  it('fails closed when a G64111 binding targets a non-current drifted version snapshot', async () => {
+    const context = await createTestContext({
+      productAccess: { edition: 'commercial', enabledEntitlements: ['methodology.g64111'] },
+    });
+    try {
+      const matter = await seedMatter(context, 'stale-version');
+      await installPack(context, {
+        packId: 'pack-current', versionId: 'version-current',
+        key: G64111_BUILTIN_PACK_KEY, name: 'G64111 趋赢力',
+        sourceTemplateRef: G64111_BUILTIN_SOURCE_TEMPLATE_REF, engineRef: 'g64111:0.1.0',
+      });
+      await context.prisma.methodologyPackVersion.create({ data: {
+        id: 'version-stale', tenantId: context.tenant.id, packId: 'pack-current',
+        versionKey: '0.9.0', status: 'deprecated', engineRef: 'g64111:0.1.0',
+        contentHash: 'b'.repeat(64), sourceTemplateRef: G64111_BUILTIN_SOURCE_TEMPLATE_REF,
+        createdByUserId: context.owner.id, publishedByUserId: context.owner.id,
+        publishedAt: new Date('2026-09-03T11:00:00.000Z'),
+      } });
+      await bind(context, matter, {
+        bindingId: 'binding-stale', packId: 'pack-current', versionId: 'version-stale',
+      });
+
+      const response = await context.app.inject({
+        method: 'GET', url: '/api/methodology/g64111', headers: auth(context.token),
+      });
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toMatchObject({ code: 'methodology_read_conflict' });
     } finally {
       await context.cleanup();
     }

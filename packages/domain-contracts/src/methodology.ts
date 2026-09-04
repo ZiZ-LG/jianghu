@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MatterLifecycleStatusSchema } from './crm.js';
 import { OpaqueEntityIdSchema } from './ids.js';
 
 const id = z.string().min(1);
@@ -105,6 +106,22 @@ export type MethodologyBinding = z.infer<typeof MethodologyBindingSchema>;
 export const G64111_BUILTIN_TEMPLATE_KEY = 'g64111' as const;
 export const G64111_BUILTIN_PACK_KEY = 'platform.g64111' as const;
 export const G64111_BUILTIN_SOURCE_TEMPLATE_REF = 'builtin:g64111:1' as const;
+export const G64111_BUILTIN_VERSION_KEY = '1.0.0' as const;
+export const G64111_BUILTIN_ENGINE_REF = 'g64111:0.1.0' as const;
+
+interface G64111Identity {
+  packKey: string;
+  sourceTemplateRef: string | null;
+  versionKey: string;
+  engineRef: string;
+}
+
+function hasExactG64111Identity(identity: G64111Identity): boolean {
+  return identity.packKey === G64111_BUILTIN_PACK_KEY
+    && identity.sourceTemplateRef === G64111_BUILTIN_SOURCE_TEMPLATE_REF
+    && identity.versionKey === G64111_BUILTIN_VERSION_KEY
+    && identity.engineRef === G64111_BUILTIN_ENGINE_REF;
+}
 
 export const MethodologyActiveBindingSummarySchema = z.object({
   bindingId: id,
@@ -117,13 +134,22 @@ export const MethodologyActiveBindingSummarySchema = z.object({
   sourceTemplateRef: openKey.nullable(),
   versionKey: openKey,
   engineRef: openKey,
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  const resemblesG64111 = value.packKey === G64111_BUILTIN_PACK_KEY
+    || value.sourceTemplateRef === G64111_BUILTIN_SOURCE_TEMPLATE_REF;
+  if (resemblesG64111 && !hasExactG64111Identity(value)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['versionKey'],
+      message: 'G64111 binding identity must match the built-in version and engine',
+    });
+  }
+});
 
 export type MethodologyActiveBindingSummary = z.infer<typeof MethodologyActiveBindingSummarySchema>;
 
 export function isG64111Active(binding: MethodologyActiveBindingSummary | null): boolean {
-  return binding?.packKey === G64111_BUILTIN_PACK_KEY
-    && binding.sourceTemplateRef === G64111_BUILTIN_SOURCE_TEMPLATE_REF;
+  return Boolean(binding && hasExactG64111Identity(binding));
 }
 
 export const G64111MethodologyInstallationSchema = z.object({
@@ -132,8 +158,8 @@ export const G64111MethodologyInstallationSchema = z.object({
   packKey: z.literal(G64111_BUILTIN_PACK_KEY),
   packName: z.string().trim().min(1).max(200),
   sourceTemplateRef: z.literal(G64111_BUILTIN_SOURCE_TEMPLATE_REF),
-  versionKey: openKey,
-  engineRef: openKey,
+  versionKey: z.literal(G64111_BUILTIN_VERSION_KEY),
+  engineRef: z.literal(G64111_BUILTIN_ENGINE_REF),
 }).strict();
 
 export type G64111MethodologyInstallation = z.infer<typeof G64111MethodologyInstallationSchema>;
@@ -144,6 +170,7 @@ export const G64111MethodologyMatterSchema = z.object({
   matterId: id,
   matterTitle: z.string().trim().min(1).max(500),
   matterKind: openKey,
+  lifecycleStatus: MatterLifecycleStatusSchema,
   matterVersion: version,
   activeBinding: MethodologyActiveBindingSummarySchema.nullable(),
 }).strict().superRefine((value, ctx) => {
@@ -167,6 +194,17 @@ export const G64111MethodologyMatterSchema = z.object({
 
 export type G64111MethodologyMatter = z.infer<typeof G64111MethodologyMatterSchema>;
 
+export function isG64111LifecycleEligible(
+  lifecycleStatus: z.infer<typeof MatterLifecycleStatusSchema>,
+): boolean {
+  return lifecycleStatus === 'active' || lifecycleStatus === 'paused';
+}
+
+export function isG64111RunnableMatter(matter: G64111MethodologyMatter): boolean {
+  return isG64111LifecycleEligible(matter.lifecycleStatus)
+    && isG64111Active(matter.activeBinding);
+}
+
 export const G64111MethodologyReadModelSchema = z.object({
   generatedAtUtc: instant,
   commandsEnabled: z.boolean(),
@@ -184,12 +222,17 @@ export const G64111MethodologyReadModelSchema = z.object({
       });
     }
     matterIds.add(matter.matterId);
-    if (!isG64111Active(matter.activeBinding)) continue;
-    if (!value.installation || matter.activeBinding?.packId !== value.installation.packId) {
+    const binding = matter.activeBinding;
+    if (!binding || !isG64111Active(binding)) continue;
+    if (!value.installation
+      || binding.packId !== value.installation.packId
+      || binding.versionId !== value.installation.versionId
+      || binding.versionKey !== value.installation.versionKey
+      || binding.engineRef !== value.installation.engineRef) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ['matters', index, 'activeBinding', 'packId'],
-        message: 'active G64111 binding requires the matching tenant installation',
+        path: ['matters', index, 'activeBinding', 'versionId'],
+        message: 'active G64111 binding requires the exact current tenant installation',
       });
     }
   }

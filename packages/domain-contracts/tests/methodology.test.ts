@@ -385,6 +385,7 @@ describe('SAAS-210 optional G64111 read contract', () => {
       matterId: 'matter-1',
       matterTitle: '中性事项',
       matterKind: 'sales_opportunity',
+      lifecycleStatus: 'active',
       matterVersion: 3,
       activeBinding,
     }],
@@ -397,6 +398,8 @@ describe('SAAS-210 optional G64111 read contract', () => {
     expect(isG64111Active(activeBinding)).toBe(true);
     expect(isG64111Active({ ...activeBinding, packKey: 'tenant.lookalike' })).toBe(false);
     expect(isG64111Active({ ...activeBinding, sourceTemplateRef: 'tenant:copy:1' })).toBe(false);
+    expect(isG64111Active({ ...activeBinding, versionKey: '1.0.1' })).toBe(false);
+    expect(isG64111Active({ ...activeBinding, engineRef: 'g64111:9.9.9' })).toBe(false);
     expect(isG64111Active(null)).toBe(false);
   });
 
@@ -444,7 +447,35 @@ describe('SAAS-210 optional G64111 read contract', () => {
     }).success).toBe(false);
     expect(G64111MethodologyReadModelSchema.safeParse({
       ...readModel,
+      installation: { ...installation, versionKey: '1.0.1' },
+    }).success).toBe(false);
+    expect(G64111MethodologyReadModelSchema.safeParse({
+      ...readModel,
+      installation: { ...installation, engineRef: 'g64111:9.9.9' },
+    }).success).toBe(false);
+    expect(G64111MethodologyReadModelSchema.safeParse({
+      ...readModel,
+      matters: [{
+        ...readModel.matters[0],
+        activeBinding: { ...activeBinding, versionId: 'version-stale' },
+      }],
+    }).success).toBe(false);
+    expect(G64111MethodologyReadModelSchema.safeParse({
+      ...readModel,
       installation: null,
+    }).success).toBe(false);
+  });
+
+  it('requires a valid lifecycle status on every manageable Matter projection', () => {
+    for (const lifecycleStatus of ['active', 'paused', 'completed', 'canceled']) {
+      expect(G64111MethodologyReadModelSchema.safeParse({
+        ...readModel,
+        matters: [{ ...readModel.matters[0], lifecycleStatus }],
+      }).success).toBe(true);
+    }
+    expect(G64111MethodologyReadModelSchema.safeParse({
+      ...readModel,
+      matters: [{ ...readModel.matters[0], lifecycleStatus: 'won' }],
     }).success).toBe(false);
   });
 });

@@ -14,11 +14,12 @@ import {
   type ScoringRole,
   type ScoringUcv,
 } from '@jianghu/g64111';
+import { G64111_BUILTIN_ENGINE_REF } from '@jianghu/domain-contracts';
 import type { Account, Opportunity } from '../types';
 
 export * from '@jianghu/g64111';
 
-export const G64111_ENGINE_REF = 'g64111:0.1.0';
+export const G64111_ENGINE_REF = G64111_BUILTIN_ENGINE_REF;
 
 export interface G64111LegacyStorageBinding {
   key: string;

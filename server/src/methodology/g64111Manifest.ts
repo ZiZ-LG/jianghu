@@ -1,3 +1,5 @@
+import { G64111_BUILTIN_ENGINE_REF } from '@jianghu/domain-contracts';
+
 const APP_ENGINE = 'app:g64111-adapter';
 const SERVER_ENGINE = 'server:g64111-adapter';
 const APP_LEGACY_SALES = 'app:legacy-sales-shell';
@@ -5,7 +7,7 @@ const SERVER_LEGACY_SALES = 'server:legacy-sales-api';
 const APP_PDE_CORE113 = 'app:pde-adapter:CORE-113';
 const SERVER_PDE_CORE113 = 'server:pde-assembler:CORE-113';
 
-export const G64111_ENGINE_REF = 'g64111:0.1.0';
+export const G64111_ENGINE_REF = G64111_BUILTIN_ENGINE_REF;
 export const G64111_LEGACY_STOP_DATE = '2026-12-31';
 
 const consumers = (...values: string[]) => JSON.stringify([...new Set(values)]);

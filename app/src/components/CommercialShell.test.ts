@@ -225,7 +225,7 @@ describe('CommercialShell', () => {
       installation: null,
       matters: [{
         customerId: 'neutral-customer', customerName: '中性客户', matterId: 'neutral-matter',
-        matterTitle: '中性事项', matterKind: 'general', matterVersion: 0, activeBinding: null,
+        matterTitle: '中性事项', matterKind: 'general', lifecycleStatus: 'active', matterVersion: 0, activeBinding: null,
       }],
     };
     const html = renderToStaticMarkup(createElement(CommercialShell, {
@@ -267,7 +267,7 @@ describe('CommercialShell', () => {
       },
       matters: [{
         customerId: 'customer-1', customerName: '客户一', matterId: 'matter-bound', matterTitle: '精确绑定事项',
-        matterKind: 'general', matterVersion: 2,
+        matterKind: 'general', lifecycleStatus: 'active', matterVersion: 2,
         activeBinding: {
           bindingId: 'binding-g', customerId: 'customer-1', matterId: 'matter-bound',
           packId: 'pack-g', versionId: 'version-g', packKey: G64111_BUILTIN_PACK_KEY,
@@ -275,8 +275,26 @@ describe('CommercialShell', () => {
           versionKey: '1.0.0', engineRef: 'g64111:0.1.0',
         },
       }, {
+        customerId: 'customer-1', customerName: '客户一', matterId: 'matter-paused', matterTitle: '暂停绑定事项',
+        matterKind: 'general', lifecycleStatus: 'paused', matterVersion: 4,
+        activeBinding: {
+          bindingId: 'binding-paused', customerId: 'customer-1', matterId: 'matter-paused',
+          packId: 'pack-g', versionId: 'version-g', packKey: G64111_BUILTIN_PACK_KEY,
+          packName: 'G64111 趋赢力', sourceTemplateRef: G64111_BUILTIN_SOURCE_TEMPLATE_REF,
+          versionKey: '1.0.0', engineRef: 'g64111:0.1.0',
+        },
+      }, {
+        customerId: 'customer-1', customerName: '客户一', matterId: 'matter-completed', matterTitle: '关闭绑定事项',
+        matterKind: 'general', lifecycleStatus: 'completed', matterVersion: 3,
+        activeBinding: {
+          bindingId: 'binding-completed', customerId: 'customer-1', matterId: 'matter-completed',
+          packId: 'pack-g', versionId: 'version-g', packKey: G64111_BUILTIN_PACK_KEY,
+          packName: 'G64111 趋赢力', sourceTemplateRef: G64111_BUILTIN_SOURCE_TEMPLATE_REF,
+          versionKey: '1.0.0', engineRef: 'g64111:0.1.0',
+        },
+      }, {
         customerId: 'customer-1', customerName: '客户一', matterId: 'matter-unbound', matterTitle: '未绑定事项',
-        matterKind: 'general', matterVersion: 0, activeBinding: null,
+        matterKind: 'general', lifecycleStatus: 'active', matterVersion: 0, activeBinding: null,
       }],
     };
     const html = renderToStaticMarkup(createElement(CommercialShell, {
@@ -290,6 +308,10 @@ describe('CommercialShell', () => {
     }));
     expect(html).toContain('data-legacy-g64111-matter="matter-bound"');
     expect(html).toContain('精确绑定事项');
+    expect(html).toContain('data-legacy-g64111-matter="matter-paused"');
+    expect(html).toContain('暂停绑定事项');
+    expect(html).not.toContain('data-legacy-g64111-matter="matter-completed"');
+    expect(html).not.toContain('关闭绑定事项');
     expect(html).not.toContain('未绑定事项');
   });
 });

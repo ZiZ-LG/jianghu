@@ -14,10 +14,14 @@ import {
 const binding = (packKey: string = G64111_BUILTIN_PACK_KEY, sourceTemplateRef: string | null = G64111_BUILTIN_SOURCE_TEMPLATE_REF) => ({
   bindingId: 'binding-1', customerId: 'customer-1', matterId: 'matter-1',
   packId: 'pack-1', versionId: 'version-1', packKey, packName: 'Pack',
-  sourceTemplateRef, versionKey: '1.0.0', engineRef: 'g64111:0.1.0',
+  sourceTemplateRef, versionKey: '1.0.0' as const, engineRef: 'g64111:0.1.0' as const,
 });
 
-const model = (activeBinding: ReturnType<typeof binding> | null, installed = true): G64111MethodologyReadModel => ({
+const model = (
+  activeBinding: ReturnType<typeof binding> | null,
+  installed = true,
+  lifecycleStatus: 'active' | 'paused' | 'completed' | 'canceled' = 'active',
+): G64111MethodologyReadModel => ({
   generatedAtUtc: '2026-09-03T12:00:00.000Z', commandsEnabled: true, canManage: true,
   installation: installed ? {
     packId: 'pack-1', versionId: 'version-1', packKey: G64111_BUILTIN_PACK_KEY,
@@ -26,7 +30,7 @@ const model = (activeBinding: ReturnType<typeof binding> | null, installed = tru
   } : null,
   matters: [{
     customerId: 'customer-1', customerName: '客户', matterId: 'matter-1', matterTitle: '事项',
-    matterKind: 'general', matterVersion: 4, activeBinding,
+    matterKind: 'general', lifecycleStatus, matterVersion: 4, activeBinding,
   }],
 });
 
@@ -72,5 +76,16 @@ describe('SAAS-210 G64111 setup helpers', () => {
     expect(() => buildG64111BindCommand(model(null, false), 'customer-1', 'matter-1', () => 'unused')).toThrow();
     expect(() => buildG64111BindCommand(model(null), 'customer-other', 'matter-1', () => 'unused')).toThrow();
     expect(() => buildG64111UnbindCommand(model(binding('tenant.other', 'tenant:other:1')), 'customer-1', 'matter-1')).toThrow();
+  });
+
+  it('does not offer a new G64111 binding for a closed Matter but preserves exact unbind recovery', () => {
+    expect(() => buildG64111BindCommand(
+      model(null, true, 'completed'), 'customer-1', 'matter-1',
+      () => 'methodologybinding_44444444444444444444444444444444',
+    )).toThrow('Matter lifecycle does not allow G64111 activation');
+    expect(buildG64111UnbindCommand(model(binding(), true, 'canceled'), 'customer-1', 'matter-1')).toMatchObject({
+      type: 'UNBIND_METHODOLOGY',
+      expectedActiveBindingId: 'binding-1',
+    });
   });
 });

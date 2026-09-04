@@ -17,10 +17,10 @@ const snapshot: G64111MethodologyReadModel = {
   },
   matters: [{
     customerId: 'customer-1', customerName: '客户一', matterId: 'matter-unbound', matterTitle: '未绑定事项',
-    matterKind: 'general', matterVersion: 0, activeBinding: null,
+    matterKind: 'general', lifecycleStatus: 'active', matterVersion: 0, activeBinding: null,
   }, {
     customerId: 'customer-1', customerName: '客户一', matterId: 'matter-bound', matterTitle: '已绑定事项',
-    matterKind: 'general', matterVersion: 2,
+    matterKind: 'general', lifecycleStatus: 'active', matterVersion: 2,
     activeBinding: {
       bindingId: 'binding-g', customerId: 'customer-1', matterId: 'matter-bound',
       packId: 'pack-g', versionId: 'version-g', packKey: G64111_BUILTIN_PACK_KEY,
@@ -29,7 +29,7 @@ const snapshot: G64111MethodologyReadModel = {
     },
   }, {
     customerId: 'customer-2', customerName: '客户二', matterId: 'matter-other', matterTitle: '其他方法事项',
-    matterKind: 'general', matterVersion: 5,
+    matterKind: 'general', lifecycleStatus: 'active', matterVersion: 5,
     activeBinding: {
       bindingId: 'binding-other', customerId: 'customer-2', matterId: 'matter-other',
       packId: 'pack-other', versionId: 'version-other', packKey: 'tenant.other',
@@ -78,5 +78,22 @@ describe('G64111SetupPanel', () => {
     expect(html).not.toContain('解绑 G64111');
     expect(html).not.toContain('切换到 G64111');
     expect(html).not.toContain('为此事项启用');
+  });
+
+  it('keeps closed exact bindings visible for unbind but hides activation on closed Matters', () => {
+    const completed = render({
+      status: 'ready',
+      snapshot: { ...snapshot, matters: [{ ...snapshot.matters[1]!, lifecycleStatus: 'completed' }] },
+    });
+    expect(completed).toContain('已完成');
+    expect(completed).toContain('解绑 G64111');
+
+    const canceled = render({
+      status: 'ready',
+      snapshot: { ...snapshot, matters: [{ ...snapshot.matters[0]!, lifecycleStatus: 'canceled' }] },
+    });
+    expect(canceled).toContain('已取消');
+    expect(canceled).not.toContain('为此事项启用');
+    expect(canceled).not.toContain('切换到 G64111');
   });
 });
