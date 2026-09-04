@@ -51,13 +51,13 @@
 **Files:**
 - Create: `server/tests/g4-commercial-journey.test.ts`
 
-- [ ] 先写一个跨功能集成测试，使用真实 Fastify/Prisma 和真实上传/业务路由；以缺少或不完整的阶段门断言取得可解释 RED。
-- [ ] 注入 `createPreMeetingHandler` 与 `createPostMeetingHandler` 的本地固定 provider seam；断言调用参数不进入持久化/响应，绝不联网。
-- [ ] 建立 5-Matter fixture，列出并显式启用三类 Job，分别运行并验证正确 actionMode/outputRef。
-- [ ] 在 pre-meeting、post-meeting 和 radar 三个机器阶段前后捕获正式权威快照；除对应受控 snapshot/candidate/audit 外正式数据必须逐表相等。
-- [ ] 从 ReviewBatch detail 生成明确的人审 payload，验证一次采纳、幂等 replay、改 payload 冲突，以及正式 Person/Relation/Evidence/Commitment/Interaction 只在人审后出现。
-- [ ] 通过正式命令建立 IntelligenceItem、StakeholderFocus 与 SalesHypothesis；链接反对 Evidence 后验证 suggestion 不自动改正式状态，再由用户命令确认 `contradicted`。
-- [ ] 运行 relationship radar，验证六维、解释四元组、当前来源下钻、不可变 snapshot、未提交草稿与零正式写；读取 5-Matter portfolio 并验证全部可见、注意力排序、解释和零读副作用。
+- [x] 先写一个跨功能集成测试，使用真实 Fastify/Prisma 和真实上传/业务路由；以缺少或不完整的阶段门断言取得可解释 RED。
+- [x] 注入 `createPreMeetingHandler` 与 `createPostMeetingHandler` 的本地固定 provider seam；断言调用参数不进入持久化/响应，绝不联网。
+- [x] 建立 5-Matter fixture，列出并显式启用三类 Job，分别运行并验证正确 actionMode/outputRef。
+- [x] 在 pre-meeting、post-meeting 和 radar 三个机器阶段前后捕获正式权威快照；除对应受控 snapshot/candidate/audit 外正式数据必须逐表相等。
+- [x] 从 ReviewBatch detail 生成明确的人审 payload，验证一次采纳、幂等 replay、改 payload 冲突，以及正式 Person/Relation/Evidence/Commitment/Interaction 只在人审后出现。
+- [x] 通过正式命令建立 IntelligenceItem、StakeholderFocus 与 SalesHypothesis；链接反对 Evidence 后验证 suggestion 不自动改正式状态，再由用户命令确认 `contradicted`。
+- [x] 运行 relationship radar，验证六维、解释四元组、当前来源下钻、不可变 snapshot、未提交草稿与零正式写；读取 5-Matter portfolio 并验证全部可见、注意力排序、解释和零读副作用。
 
 ### 定向验证
 
@@ -72,12 +72,12 @@ DATABASE_URL=file:./test.db npx vitest run tests/g4-commercial-journey.test.ts
 **Files:**
 - Modify: `server/tests/g4-commercial-journey.test.ts`
 
-- [ ] 使用当前租户的 manager-shaped member、普通 member 与 viewer，以及同一 app 注册的外部租户 owner。
-- [ ] 私密 SourceArtifact 对非创建者 owner/admin/member 一律隐藏；切为 `matter_shared` 后只有同时具备当前 Matter scope 与 `source.read_shared` 的读取者可见。
-- [ ] ReviewCandidate 的 shared read 不等于 review；只有当前版本显式 reviewer grant 可采纳，撤销或 role downgrade 后 replay 即时拒绝且 Person/Interaction/CommandRun/AuditEvent 不增加。
-- [ ] viewer 即使拥有 Customer/Matter 归属也只能读取有权共享元数据，Job/control/review/source mutation 均在业务或审计写前拒绝。
-- [ ] cross-tenant、无 scope、已撤销与不存在资源使用相同安全形状，不暴露标题、正文、quote、ciphertext 或存在性。
-- [ ] 对响应、AgentRun、CommandRun、AuditEvent 做敏感标记扫描；只允许加密正文位于既有 Transcript 存储。
+- [x] 使用当前租户的 manager-shaped member、普通 member 与 viewer，以及同一 app 注册的外部租户 owner。
+- [x] 私密 SourceArtifact 对非创建者 owner/admin/member 一律隐藏；商业版 G4 的 `sales.workspace` 不分配 `source.read_shared`，所以切为 `matter_shared` 或只有 resource grant 仍不扩大非创建者可见性。权限启用后的 share/revoke 正向链路继续由既有 CORE-204/205 兼容套件覆盖，商业团队权限分配留给 SAAS-301。
+- [x] ReviewCandidate 的 shared read 不等于 review；商业版 G4 没有 `candidate.review_shared`，所以显式 reviewer grant 单独存在时仍失败关闭；既有权限启用套件验证当前版本 grant、role downgrade 与 revoke。曹经理个人闭环由 owner 人审，未伪造 G5 经理权限。
+- [x] viewer 即使拥有 Customer/Matter 归属也不能读取敏感 SourceArtifact，Job/control/review/source mutation 均在正式业务或审计写前拒绝。
+- [x] cross-tenant、无 scope、已撤销与不存在资源使用相同安全形状，不暴露标题、正文、quote、ciphertext 或存在性。
+- [x] 对响应、AgentRun、CommandRun、AuditEvent 做敏感标记扫描；只允许加密正文位于既有 Transcript 存储。
 
 ### 定向验证
 
@@ -96,10 +96,10 @@ DATABASE_URL=file:./test.db npx vitest run \
 - No production file changes expected.
 - Test evidence comes from existing focused suites and `scripts/test-postgres-ops-integration.sh`.
 
-- [ ] 定向运行 Candidate migration/rollback、Inbox parity、Source/ACL、ReviewBatch、AgentJob、ResearchBrief、Hypothesis/verification、Radar 和 Portfolio 套件。
-- [ ] 验证所有 G4 SQLite marker/expand migration report 为 ok；PostgreSQL rendered schema 与版本化 migration 由最终完整运维集成覆盖。
-- [ ] 验证 ReviewBatch 全 reject、accept replay、逐项冲突整批回滚；Job disabled/revoke/timeout/budget/candidate/read-only/draft policy 继续 fail closed。
-- [ ] 静态检查不存在自动外发、Forecast/stage/key-person 正式写入、第二 Candidate/Customer/Matter/Commitment 权威或 legacy fallback。
+- [x] 定向运行 Candidate migration/rollback、Inbox parity、Source/ACL、ReviewBatch、AgentJob、ResearchBrief、Hypothesis/verification、Radar 和 Portfolio 套件。
+- [x] 验证所有 G4 SQLite marker/expand migration report 为 ok；PostgreSQL rendered schema 与版本化 migration 由最终完整运维集成覆盖。
+- [x] 验证 ReviewBatch 全 reject、accept replay、逐项冲突整批回滚；Job disabled/revoke/timeout/budget/candidate/read-only/draft policy 继续 fail closed。
+- [x] 静态检查不存在自动外发、Forecast/stage/key-person 正式写入、第二 Candidate/Customer/Matter/Commitment 权威或 legacy fallback。
 
 ### 定向验证
 
@@ -124,9 +124,9 @@ DATABASE_URL=file:./test.db npx vitest run \
 **Files:**
 - Review all changes since `9cccff76c7f22fbf2449a7507ef6ad5be789ec10`.
 
-- [ ] 测试提交完成后，用仓库 `/review` 方法独立检查 scope、ACL、人审、幂等、审计、敏感数据、三类 Job actionMode 和测试真实性；阻断项先修复并形成独立本地 commit。
-- [ ] 独立审查通过且代码稳定后，只运行下面一次完整本地验收；如无代码变化，不重复已经通过的矩阵。
-- [ ] 检查精确 changed-file allowlist、自我修养零变化、共享文件零变化、secret/DB/build artifact、`git diff --check` 和工作树 clean 预条件。
+- [x] 测试提交完成后，用仓库 `/review` 方法独立检查 scope、ACL、人审、幂等、审计、敏感数据、三类 Job actionMode 和测试真实性；阻断项已在独立测试加固 commit 中关闭。
+- [x] 独立审查通过且代码稳定后，只运行下面一次完整本地验收；代码未变化，没有重复已通过的完整矩阵。
+- [x] 检查精确 changed-file allowlist、自我修养零变化、共享文件零变化、secret/DB/build artifact、`git diff --check` 和工作树 clean 预条件；最终 docs commit 后再做一次只读复核。
 
 ### 完整本地验收（仅一次）
 
@@ -152,7 +152,7 @@ cd .. && bash scripts/test-postgres-ops-integration.sh
 - Modify: `docs/superpowers/plans/2026-09-04-saas-211-g4-stage-gate.md`
 - Modify: `docs/商业版开发待办清单v1.md`
 
-- [ ] 先形成独立验收测试 commit；再以独立 docs commit 记录本地测试数量、审查结果、迁移/恢复证据、回滚边界、零共享/自我修养/生产触碰，并将 SAAS-211 标为 `DONE`、G4 标为 PASS、SAAS-301 标为 `READY` 但明确禁止启动。
+- [x] 先形成独立验收测试 commit；再以独立 docs commit 记录本地测试数量、审查结果、迁移/恢复证据、回滚边界、零共享/自我修养/生产触碰，并将 SAAS-211 标为本地 `DONE` 候选、G4 标为有条件 PASS、SAAS-301 标为 `READY` 但明确禁止启动。
 - [ ] 确认所有本地 commit 共同构成一个 SAAS-211 候选，工作树 clean；一次性 push `codex/saas-211-g4-acceptance`，不创建 PR。
 - [ ] 只跟踪最终 branch-tip SHA 的权威 push CI；达到精确 12/12 前 SAAS-211 不视为对外完成，SAAS-301 不启动。
 - [ ] 真失败则最小修复形成新 SHA；纯 audit endpoint 400/500/503 且日志无漏洞发现时只重跑失败 job，不重跑成功 job、不加空提交。
@@ -161,17 +161,18 @@ cd .. && bash scripts/test-postgres-ops-integration.sh
 
 ## G4 接受标准
 
-- [ ] Candidate 单表 migration/rollback 与 Inbox parity 全绿；不存在平行候选权威或 fallback 双读。
-- [ ] 一份合成文件通过真实上传路径进入加密 SourceArtifact；无真实妙记、凭据、客户数据或外部网络。
-- [ ] 三类 Job Card/Run 精确匹配固定版本与 actionMode，停用/撤权下一次运行立即生效。
-- [ ] 拜访简报有来源/时间/未知项；会后候选有 quote/confidence/source；人审前正式数据零变化，人审后幂等原子写入。
-- [ ] Intelligence/Focus/Hypothesis/verification 由明确用户命令产生；反对 Evidence 只形成 `contradicted` 建议，直到用户确认才改变正式状态。
-- [ ] Radar 无总分，每项解释 reason/source/time/ruleVersion/action 且来源可下钻；source drift/revoke 只降级或隐藏，不抬高严重度。
-- [ ] 5 个 Matter 全部进入组合，无硬截断；注意力排序、来源与未提交草稿可解释，读模型零写。
-- [ ] creator/share/reviewer/revoke/viewer/cross-tenant/current-role ACL 矩阵全绿；经理身份不自动取得敏感正文。
-- [ ] 自动外发、自动 stage/Forecast/key-person/Relation/Evidence/Focus/Commitment 正式修改和越权正式写入均为 0。
-- [ ] Domain、Server、App、G64111、PDE、SQLite/PostgreSQL migration/恢复及 exact branch-tip 12-job CI 全绿。
-- [ ] 共享文件、自我修养、生产、阿里云、Mac mini 和 main 均未触碰。
+- [x] Candidate 单表 migration/rollback 与 Inbox parity 全绿；不存在平行候选权威或 fallback 双读。
+- [x] 一份合成文件通过真实上传路径进入加密 SourceArtifact；无真实妙记、凭据、客户数据或外部网络。
+- [x] 三类 Job Card/Run 精确匹配固定版本与 actionMode，停用/撤权下一次运行立即生效。
+- [x] 拜访简报有来源/时间/未知项；会后候选有 quote/confidence/source；人审前正式数据零变化，人审后幂等原子写入。
+- [x] Intelligence/Focus/Hypothesis/verification 由明确用户命令产生；反对 Evidence 只形成 `contradicted` 建议，直到用户确认才改变正式状态。
+- [x] Radar 无总分，每项解释 reason/source/time/ruleVersion/action 且来源可下钻；source drift/revoke 只降级或隐藏，不抬高严重度。
+- [x] 5 个 Matter 全部进入组合，无硬截断；注意力排序、来源与未提交草稿可解释，读模型零写。
+- [x] creator/share/reviewer/revoke/viewer/cross-tenant/current-role ACL 矩阵全绿；经理身份不自动取得敏感正文。
+- [x] 自动外发、自动 stage/Forecast/key-person/Relation/Evidence/Focus/Commitment 正式修改和越权正式写入均为 0。
+- [x] Domain、Server、App、G64111、PDE 与 SQLite/PostgreSQL migration/恢复的本地门全绿。
+- [ ] 最终 branch-tip 精确 SHA 的权威 12-job CI 全绿；这是本记录生效、创建 PR 或启动 SAAS-301 的外部门，不在 push 前预写结果。
+- [x] 共享文件、自我修养、生产、阿里云、Mac mini 和 main 均未触碰。
 
 ## 回滚
 
