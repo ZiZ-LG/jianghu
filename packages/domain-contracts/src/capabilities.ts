@@ -93,16 +93,16 @@ export const ProductEntryDefinitionSchema: z.ZodType<ProductEntryDefinition> = z
 
 export const PRODUCT_ENTRY_REGISTRY: readonly ProductEntryDefinition[] = Object.freeze([
   {
+    id: 'matters', label: '商机', path: '/matters', title: '商机',
+    description: '看清客户为什么买、谁能推动，以及下一步该做什么。', requirement: { entitlement: 'crm.core' },
+  },
+  {
     id: 'today', label: '今日', path: '/today', title: '今日',
     description: '集中查看今天需要关注的客户与事项。', requirement: { entitlement: 'crm.core' },
   },
   {
     id: 'customers', label: '客户', path: '/customers', title: '客户',
     description: '统一查看和管理客户档案。', requirement: { entitlement: 'crm.core' },
-  },
-  {
-    id: 'matters', label: '事项', path: '/matters', title: '事项',
-    description: '按客户查看正在推进的事项。', requirement: { entitlement: 'crm.core' },
   },
   {
     id: 'quick-capture', label: '快速记录', path: '/quick-capture', title: '快速记录',

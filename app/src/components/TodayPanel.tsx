@@ -70,11 +70,13 @@ function InterventionCard({
   readonly,
   onAction,
   onOpenSource,
+  onOpenMatter,
 }: {
   item: InterventionItem;
   readonly: boolean;
   onAction?: (item: InterventionItem, action: TodayCommitmentAction, origin: HTMLButtonElement) => void;
   onOpenSource: (item: InterventionItem, source: InterventionSourceRef) => void;
+  onOpenMatter?: (matterId: string) => void;
 }) {
   const headingId = useId();
   const itemTimeZone = 'timeZone' in item.time ? item.time.timeZone : undefined;
@@ -93,6 +95,7 @@ function InterventionCard({
         </div>
         <span className={`today-time ${item.time.relation}`}>{item.time.label}</span>
       </header>
+      {item.target.matterId && onOpenMatter ? <button className="btn ghost sm" onClick={() => onOpenMatter(item.target.matterId!)}>查看商机 ↗</button> : null}
       <details className="today-explanation">
         <summary>为什么现在</summary>
         <p>{item.explanation}</p>
@@ -162,11 +165,13 @@ export function TodayView({
   readonly = false,
   onAction,
   onOpenSource,
+  onOpenMatter,
 }: {
   model: TodayReadModel;
   readonly?: boolean;
   onAction?: (item: InterventionItem, action: TodayCommitmentAction, origin: HTMLButtonElement) => void;
   onOpenSource: (item: InterventionItem, source: InterventionSourceRef) => void;
+  onOpenMatter?: (matterId: string) => void;
 }) {
   return (
     <div className="today-read-model" data-today-state="ready">
@@ -197,7 +202,7 @@ export function TodayView({
                       item={item}
                       readonly={readonly}
                       onAction={onAction}
-                      onOpenSource={onOpenSource}
+                      onOpenSource={onOpenSource} onOpenMatter={onOpenMatter}
                     />
                   ))}
                 </div>
@@ -216,12 +221,14 @@ export function TodayPanelStateView({
   onAction,
   onRetry,
   onOpenSource,
+  onOpenMatter,
 }: {
   state: TodayPanelState;
   readonly?: boolean;
   onAction?: (item: InterventionItem, action: TodayCommitmentAction, origin: HTMLButtonElement) => void;
   onRetry: () => void;
   onOpenSource: (item: InterventionItem, source: InterventionSourceRef) => void;
+  onOpenMatter?: (matterId: string) => void;
 }) {
   if (state.status === 'loading') {
     return (
@@ -243,7 +250,7 @@ export function TodayPanelStateView({
       model={state.model}
       readonly={readonly}
       onAction={onAction}
-      onOpenSource={onOpenSource}
+      onOpenSource={onOpenSource} onOpenMatter={onOpenMatter}
     />
   );
 }
@@ -322,10 +329,12 @@ export function TodayPanel({
   actorUserId,
   readonly,
   onDataChanged,
+  onOpenMatter,
 }: {
   actorUserId: string;
   readonly: boolean;
   onDataChanged: () => Promise<unknown>;
+  onOpenMatter?: (matterId: string) => void;
 }) {
   const [state, setState] = useState<TodayPanelState>({ status: 'loading' });
   const [sourceState, setSourceState] = useState<TodaySourceState>({ status: 'idle' });
@@ -530,6 +539,7 @@ export function TodayPanel({
           void loadToday({ showLoading: true }).catch(() => undefined);
         }}
         onOpenSource={openSource}
+        onOpenMatter={onOpenMatter}
       />
       {activeAction ? (
         <CommitmentActionEditor

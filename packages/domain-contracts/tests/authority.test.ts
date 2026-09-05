@@ -280,6 +280,7 @@ describe('CRM field authority map', () => {
       'app/src/components/MdDocPanel.tsx',
       'app/src/components/MdDocView.tsx',
       'app/src/components/NewOpportunityDialog.tsx',
+      'app/src/components/PersonalWorkbench.tsx',
       'app/src/components/RepairPanel.tsx',
       'app/src/data/seed.ts',
       'app/src/lib/mdProfile.ts',

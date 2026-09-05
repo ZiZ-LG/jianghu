@@ -173,7 +173,7 @@ CORE-208 文件：`server/src/auth.ts`、`server/tests/personal-auth.test.ts`、
 - [x] CORE-208：完成个人注册与鉴权回归，独立本地 commit。
 - [x] CORE-209：形成 C1–C7 唯一权威、最小补齐与历史映射，独立文档核验和 commit。
 - [x] CORE-210：补齐必要命令/投影/结构，本地安全与 SQLite 验证通过；PostgreSQL 实测保留为批次远程 Gate，独立 commit。
-- [ ] SAAS-213：收敛入口与商机接续，类型/消费者及浏览器验证，独立 commit。
+- [x] SAAS-213：收敛入口与商机接续，类型/消费者及浏览器验证，独立 commit。
 - [ ] SAAS-216：图内证据、关注与行动衔接，真实交互及批次回归，独立 commit。
 - [ ] 批末：集中候选 PR、精确 SHA CI、预览与工程验收记录；用户验收、main 与发布分别记录。
 
@@ -218,6 +218,10 @@ CORE-208 文件：`server/src/auth.ts`、`server/tests/personal-auth.test.ts`、
 **结果：** 三个默认入口、一处全局快速记录；待判断线索在商机视图内。总览显示阶段、用户选定的关键缺口、下一步与时间；进入商机后提供主要地图入口和列表回退，保持同一上下文。允许搜索、筛选和手动重点标记，不强制先画完整关系图或安装方法论。本项收敛入口，图内衔接由 SAAS-216 验收。
 
 **验收：** 无包/无 Key/无 WorkBuddy 场景可以手动工作；多个客户、多条商机的上下文不串写；刷新、空态、权限变化后不显示过期他人数据；旧高级能力与历史记录有受控入口。App 主站导航、Vite、锁文件和自我修养路径不在本项默认修改范围。
+
+**SAAS-213 本地验收（2026-09-05）：** 三主入口、全局记录和上下文深链完成。真实浏览器在仅 crm.core 的隔离库创建空阶段线索，更新目标/阶段、暂停后筛选找回，ID 不变；从商机进入快速记录及整页刷新保留客户与商机关联；390×844 无横向溢出、无控制台错误。App 61/416、Domain 18/169、G64111 2/32、Server 相关 3/13、各类型及临时目录 build 通过；新增 Customer 分类消费者进入 authority inventory，消费者复制已刷新。无 App.tsx、锁文件、自我修养或生产变更；远程证据仍待批末。
+
+**SAAS-216 接续范围：** 在个人商机详情中复用 `CrmRelationshipGraph.tsx`，新增独立的个人地图操作面板与 action draft adapter；按共享契约接通既有 intelligence/focus/hypothesis/commitment API。新增人物、关系与角色来源使用 CORE-210 正式命令。原 `RelationshipWorkspacePanel.tsx` 保留历史受控入口；新默认体验不使用其直接确认建行动的流程。按发现的边界缺陷补充现有服务与测试，不扩展高级能力或 Agent 写权限。
 
 ### SAAS-216：商机地图、证据与行动衔接（3d）
 

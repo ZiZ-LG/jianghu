@@ -1160,3 +1160,20 @@ describe('post-meeting import API', () => {
       .rejects.toMatchObject({ code: 'invalid_response' });
   });
 });
+
+describe('personal workbench command receipts', () => {
+  it('rejects a different entity receipt and retries the same command with its original key', async () => {
+    const command = { type: 'SET_PERSON_DECISION_ROLE' as const, customerId: 'c1', matterId: 'm1', personId: 'p1', baseVersion: 0, decisionRole: '业务需求推动', basis: null };
+    const receipt = { type: command.type, customerId: 'c1', matterId: 'm1', entityId: 'p2', version: 1, replayed: false };
+    const fetchMock = vi.fn().mockResolvedValueOnce(response(200, receipt));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(api.personalCommand(command, 'same-command-1')).rejects.toThrow('保存回执不一致');
+    fetchMock.mockRejectedValueOnce(new TypeError('connection lost')).mockResolvedValueOnce(response(200, { ...receipt, entityId: 'p1', replayed: true }));
+    await expect(api.personalCommand(command, 'same-command-1')).resolves.toMatchObject({ entityId: 'p1', replayed: true });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    for (const [, init] of fetchMock.mock.calls) {
+      expect((init.headers as Headers).get('Idempotency-Key')).toBe('same-command-1');
+      expect(JSON.parse(init.body as string)).toEqual(command);
+    }
+  });
+});

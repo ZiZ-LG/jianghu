@@ -84,7 +84,7 @@ export const CRM_FIELD_AUTHORITY: CrmAuthorityEntry[] = CrmAuthorityMapSchema.pa
       adapters: [
         'app/src/aiContext.ts', 'app/src/api.ts', 'app/src/components/CustomerHub.tsx',
         'app/src/components/MdDocPanel.tsx', 'app/src/components/MdDocView.tsx',
-        'app/src/components/NewOpportunityDialog.tsx', 'app/src/components/RepairPanel.tsx',
+        'app/src/components/NewOpportunityDialog.tsx', 'app/src/components/PersonalWorkbench.tsx', 'app/src/components/RepairPanel.tsx',
         'app/src/lib/mdProfile.ts', 'app/src/store.ts',
         'server/src/ai.ts', 'server/src/mcp/syncBundle.ts', 'server/src/mcpServer.ts',
         'server/src/mutation/reviewedFields.ts', 'server/src/opp.ts',

@@ -33,6 +33,14 @@ import {
 } from './lib/matterPortfolio';
 import {
   ActorRoleSchema,
+  CustomerCreateCommandSchema,
+  CustomerCommandReceiptSchema,
+  PersonalWorkbenchCommandSchema,
+  PersonalWorkbenchDetailSchema,
+  PersonalWorkbenchListSchema,
+  PersonalWorkbenchReceiptSchema,
+  type CustomerCreateCommand,
+  type PersonalWorkbenchCommand,
   AgentJobCardSchema,
   AgentJobControlRequestSchema,
   AgentManualRunRequestSchema,
@@ -597,6 +605,29 @@ export const api = {
   crmContext: async (): Promise<CrmContextSnapshot> => parseCrmContextResponse(
     await req<unknown>('/api/crm/context'),
   ),
+  personalWorkbench: async (signal?: AbortSignal) => PersonalWorkbenchListSchema.parse(await req<unknown>('/api/personal-workbench', { signal })),
+  personalMatter: async (matterId: string, signal?: AbortSignal) => {
+    const result = PersonalWorkbenchDetailSchema.parse(await req<unknown>(`/api/personal-workbench/${encodeURIComponent(matterId)}`, { signal }));
+    if (result.opportunity.matter.id !== matterId) throw new Error('商机上下文不一致，请刷新');
+    return result;
+  },
+  personalCommand: async (input: PersonalWorkbenchCommand, idempotencyKey: string) => {
+    const command = PersonalWorkbenchCommandSchema.parse(input);
+    const result = PersonalWorkbenchReceiptSchema.parse(await commandReq<unknown>('/api/commands/personal-workbench', {
+      method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(command),
+    }));
+    const entityId = 'personId' in command ? command.personId : 'relationId' in command ? command.relationId : command.matterId;
+    if (result.entityId !== entityId || result.type !== command.type || result.customerId !== command.customerId || result.matterId !== command.matterId) throw new Error('保存回执不一致，请刷新确认');
+    return result;
+  },
+  createCustomer: async (input: CustomerCreateCommand, idempotencyKey: string) => {
+    const command = CustomerCreateCommandSchema.parse(input);
+    const result = CustomerCommandReceiptSchema.parse(await commandReq<unknown>('/api/commands/customer', {
+      method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(command),
+    }));
+    if (result.customerId !== command.customer.id) throw new Error('客户回执不一致，请刷新确认');
+    return result;
+  },
   g64111Methodology: async (): Promise<G64111MethodologyReadModel> => parseG64111MethodologyResponse(
     await req<unknown>('/api/methodology/g64111'),
   ),

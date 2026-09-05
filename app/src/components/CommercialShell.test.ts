@@ -37,10 +37,12 @@ const renderShell = (pathname: string, enabledEntitlements?: string[], readonly 
 }));
 
 describe('CommercialShell', () => {
-  it('renders exactly the four Free navigation entries and a real panel for each route', () => {
+  it('renders three primary entries and global capture without advanced defaults', () => {
     const html = renderShell('/today');
     const navLabels = [...html.matchAll(/data-product-entry="[^"]+"[^>]*>([^<]+)<\/button>/g)].map((match) => match[1]);
-    expect(navLabels).toEqual(['今日', '客户', '事项', '快速记录']);
+    expect(navLabels).toEqual(['商机', '今日', '客户']);
+    expect(html).toContain('data-global-quick-capture="true"');
+    expect(renderShell('/matters', undefined, true)).not.toContain('data-global-quick-capture');
     expect(html).not.toContain('复杂销售');
     expect(html).not.toContain('G64111');
     expect(html).not.toContain('PDE');
@@ -55,7 +57,7 @@ describe('CommercialShell', () => {
       const routeHtml = renderShell(path);
       expect(routeHtml).toContain('data-product-panel');
       expect(routeHtml).toMatch(/<h1>[^<]+<\/h1>/);
-      expect(routeHtml).toContain('data-crm-context-state="loading"');
+      expect(routeHtml).toContain(path === '/matters' ? 'data-personal-workbench="loading"' : 'data-crm-context-state="loading"');
       expect(routeHtml).not.toContain('还没有客户档案');
       expect(routeHtml).not.toContain('还没有进行中的事项');
     }
@@ -65,14 +67,12 @@ describe('CommercialShell', () => {
     expect(quickCaptureHtml).not.toContain('前往客户');
   });
 
-  it('wires the Matter list/portfolio selector without adding a navigation entry', () => {
-    const freeHtml = renderShell('/matters');
+  it('keeps the personal workbench primary when legacy capabilities are enabled', () => {
     const html = renderShell('/matters', ['sales.workspace']);
-    expect(freeHtml).not.toContain('data-matter-surface-toggle="true"');
-    expect(html).toContain('data-matter-surface-toggle="true"');
-    expect(html).toContain('>事项列表</button>');
-    expect(html).toContain('>注意组合</button>');
-    expect(html.match(/data-product-entry=/g)).toHaveLength(5);
+    expect(html).toContain('data-personal-workbench="loading"');
+    expect(html).not.toContain('data-matter-surface-toggle');
+    expect(html).toContain('<summary>历史工具</summary>');
+    expect(html.match(/data-product-entry=/g)).toHaveLength(4);
   });
 
   it('renders every gated entry and its non-empty surface only when enabled', () => {
