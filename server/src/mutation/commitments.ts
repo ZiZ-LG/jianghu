@@ -110,7 +110,7 @@ function createData(input: AnyCreateInput, tenantId: string, actorId: string): P
     gapItem: '',
     personId: input.personId,
     title: input.title,
-    scene: '', scripts: '', target: '',
+    scene: '', scripts: '', target: input.expectedSignal ?? '',
     ownerId: input.ownerUserId,
     startDate: legacy.startDate,
     endDate: legacy.endDate,

@@ -71,6 +71,7 @@ async function authorizeReplayInNewSnapshot(
 const REDACTED_KEYS = new Set([
   'text', 'content', 'summary', 'raw', 'rawNote', 'rawContent', 'evidence', 'note', 'form', 'logs', 'priorText', 'oldValue', 'newValue',
   'name', 'title', 'label', 'person', 'source', 'target', 'similarTo', 'accountName',
+  'customerBusinessGoal', 'salesProgress', 'decisionRole', 'statement', 'sourceDescription', 'expectedSignal',
 ]);
 
 function redact(value: unknown): unknown {

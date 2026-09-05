@@ -49,6 +49,7 @@ import { repairRoutes } from './repair.js';
 import { personMergeRoutes } from './personMerge.js';
 import { todayRoutes } from './today.js';
 import { crmContextRoutes } from './crmContext.js';
+import { personalWorkbenchRoutes } from './personalWorkbench/routes.js';
 import { deploymentProductAccess } from './productPolicy.js';
 import { sourceArtifactRoutes } from './sourceArtifacts/routes.js';
 import { reviewBatchRoutes } from './reviewBatches/routes.js';
@@ -133,6 +134,16 @@ const serviceCapabilityRules: ReadonlyArray<{
       || pathname === '/api/commands/customer'
       || pathname === '/api/commands/commitment'
       || pathname === '/api/commands/quick-capture'
+      || pathname === '/api/personal-workbench' || pathname.startsWith('/api/personal-workbench/')
+      || pathname === '/api/commands/personal-workbench'
+      || pathname === '/api/relationship-workspace'
+      || pathname === '/api/intelligence-items' || pathname.startsWith('/api/intelligence-items/')
+      || pathname === '/api/stakeholder-focuses' || pathname.startsWith('/api/stakeholder-focuses/')
+      || pathname === '/api/sales-hypotheses' || pathname.startsWith('/api/sales-hypotheses/')
+      || pathname === '/api/commands/intelligence-item'
+      || pathname === '/api/commands/stakeholder-focus'
+      || pathname === '/api/commands/sales-hypothesis'
+      || pathname === '/api/commands/hypothesis-verification-review'
       || pathname === '/api/commands/matter-participant',
   },
   {
@@ -236,6 +247,7 @@ function registerRoutes(
   personMergeRoutes(app, product.policy);
   todayRoutes(app, product.policy);
   crmContextRoutes(app);
+  personalWorkbenchRoutes(app, product.policy);
   sourceArtifactRoutes(app, product.policy);
   reviewBatchRoutes(app, product.policy);
   agentJobRoutes(

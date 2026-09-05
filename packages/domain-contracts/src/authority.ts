@@ -55,6 +55,23 @@ export type CrmAuthorityEntry = z.infer<typeof CrmAuthorityEntrySchema>;
 
 export const CRM_FIELD_AUTHORITY: CrmAuthorityEntry[] = CrmAuthorityMapSchema.parse([
   {
+    logicalField: 'personal_matter.sales_progress',
+    currentAuthority: { kind: 'core_path', path: 'Opportunity.salesProgress' },
+    targetAuthority: { kind: 'core_path', path: 'Opportunity.salesProgress' },
+    consumers: {
+      reads: ['server/src/personalWorkbench/service.ts'],
+      writes: ['server/src/personalWorkbench/routes.ts'],
+      adapters: ['packages/domain-contracts/src/personalWorkbench.ts'],
+      migrations: ['server/prisma/postgres/migrations/20260905000000_personal_workbench/migration.sql'],
+      planned: ['SAAS-213 personal opportunity navigation'],
+    },
+    shadowComparison: 'No shadow or fallback: an empty manual stage stays unassessed.',
+    cutoverCondition: 'CORE-210 personal commands use tenant scope, current roles, version CAS and audit.',
+    stopCondition: 'Personal consumers never read pipelineStage, OppStage or MethodologyStageState as the manual stage.',
+    removalPhase: 'Permanent personal authority under ADR-004; legacy stage inventory remains frozen separately.',
+    forbidden: ['Automatic stage advancement from AI, scoring or questionnaire completeness', 'Fallback or dual writes with legacy or methodology stages'],
+  },
+  {
     logicalField: 'customer.category',
     currentAuthority: { kind: 'core_path', path: 'Customer.categoryKey' },
     targetAuthority: { kind: 'core_path', path: 'Customer.categoryKey' },
@@ -71,6 +88,7 @@ export const CRM_FIELD_AUTHORITY: CrmAuthorityEntry[] = CrmAuthorityMapSchema.pa
         'app/src/lib/mdProfile.ts', 'app/src/store.ts',
         'server/src/ai.ts', 'server/src/mcp/syncBundle.ts', 'server/src/mcpServer.ts',
         'server/src/mutation/reviewedFields.ts', 'server/src/opp.ts',
+        'server/src/personalWorkbench/service.ts',
         'server/src/postMeeting/commit.ts', 'server/src/postMeeting/extractor.ts',
         'server/src/postMeeting/handler.ts', 'server/src/postMeeting/review.ts',
         'server/src/postMeeting/source.ts', 'server/src/repair.ts',

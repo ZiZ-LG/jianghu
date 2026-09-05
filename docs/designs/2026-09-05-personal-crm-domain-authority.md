@@ -35,7 +35,7 @@
 
 ## 兼容与回滚
 
-新建商机为无包的 `sales_opportunity`，旧必填 pipelineStage/engageStage 只给现有合法初始值“线索 / 需求调研立项”，不把其值投射为个人阶段，不自动安装 G64111/PDE。旧绑定与历史字段原样保留；旧高级入口受现有 capability 控制。既有 stage authority registry 说明仅约束冻结的旧消费者，新增个人阶段以独立逻辑键登记，禁止空值回退或双主写入。
+新建商机为无包的 `sales_opportunity`，旧必填 pipelineStage/engageStage 只给现有合法初始值“线索 / 需求调研立项”，不把其值投射为个人阶段，不自动安装方法论或运行评分。当前初始化要求每个 Opportunity 有 PDE context，因此沿用既有 helper 创建 `system_default` 兼容行；它不拥有个人销售阶段，避免再次初始化时补行改变新记录摘要。旧绑定与历史字段原样保留；旧高级入口受现有 capability 控制。既有 stage authority registry 说明仅约束冻结的旧消费者，新增个人阶段以独立逻辑键登记，禁止空值回退或双主写入。
 
 新增可空列允许回退至第一批基线镜像，回退后个人新功能不可用但原行不丢失；恢复候选前不得运行会清空/回填个人字段的旧迁移。后续版本仍从新库和合成场景验证结构、重复初始化、持久化、认证恢复及镜像回退。当前本地 Docker 不可用，PostgreSQL 在批次 CI 的隔离 runner 验证；不把 SQLite 测试称作双库通过。
 

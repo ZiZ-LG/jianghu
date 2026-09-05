@@ -172,7 +172,7 @@ CORE-208 文件：`server/src/auth.ts`、`server/tests/personal-auth.test.ts`、
 
 - [x] CORE-208：完成个人注册与鉴权回归，独立本地 commit。
 - [x] CORE-209：形成 C1–C7 唯一权威、最小补齐与历史映射，独立文档核验和 commit。
-- [ ] CORE-210：补齐盘点证明必要的命令/投影/结构，运行适用安全与双库验证，独立 commit。
+- [x] CORE-210：补齐必要命令/投影/结构，本地安全与 SQLite 验证通过；PostgreSQL 实测保留为批次远程 Gate，独立 commit。
 - [ ] SAAS-213：收敛入口与商机接续，类型/消费者及浏览器验证，独立 commit。
 - [ ] SAAS-216：图内证据、关注与行动衔接，真实交互及批次回归，独立 commit。
 - [ ] 批末：集中候选 PR、精确 SHA CI、预览与工程验收记录；用户验收、main 与发布分别记录。
@@ -206,6 +206,10 @@ CORE-208 文件：`server/src/auth.ts`、`server/tests/personal-auth.test.ts`、
 **结果：** 只补核心盘点证明缺少的正式命令与投影，保持线索到商机的记录/证据连续、阶段可手动更新、人物/关系/缺口与行动结果可关联。复用现有版本、幂等、审计和候选人审基础，不为地图或个人复盘创建另一套事实库。
 
 **验收：** 跨租户、viewer 写入、版本冲突、重复采纳失败/回放路径均符合既有约束；AI 候选在确认前零正式变化；适用引擎的空库初始化、合成数据持久化和相关 schema 变更通过，新基线恢复/回滚按影响检查。无 schema 差异时明确记录，不制造空 migration；不搬运或逐历史版本升级旧假数据。
+
+**CORE-210 本地验收（2026-09-05）：** 新个人 API 在仅 crm.core 的隔离预览保存客户、无包商机、人物、角色、来源和 Commitment 预期；阶段前进/退回待判断、暂停/恢复、赢单/重新开始保留 ID。新增 6 个 API 集成用例与 8 个共享契约用例，包含事务失败回滚、CAS、重复请求、同人跨商机角色独立、来源版本/归档隐藏、跨租户/当前角色/Agent 伪造拒绝。Domain 18/169、App 60/412、G64111 2/32、各类型、41 个 CI 脚本用例通过。完整 Server 125 文件/988 项中 986 通过，两项旧 capability 预期按批准的个人范围更新后，相关 3 文件/15 项复验通过。SQLite 受控升级和重复初始化后 Account/Opportunity/PDE context/Person/Participant/PlanAction/Audit/CommandRun 摘要相同（224ab4a873cca7af9f35bbed2a1b8b7418e0336d32713d1043bcf518db17a9be）。新增 PostgreSQL migration 与生成 schema 一致，隔离 fixture 已扩展；真实 PostgreSQL 运行和当前新 SHA 远程 CI 仍待本批末。技术自查保持历史长文本可读、旧 scope 不扩权、日志脱敏和 source 精确引用。
+
+**SAAS-213 页面实施范围：** `app/src/components/CommercialShell.tsx`、新增个人商机列表/详情与表单组件、`CrmContextPages.tsx`、`TodayPanel.tsx`、`QuickCapture.tsx`、`app/src/lib/productRoutes.ts` 及必要的小型个人工作台 adapter / `app/src/api.ts` / `styles.css` 与测试；共享 capability registry 只调整默认入口顺序、名称和说明。使用 `/matters/:id` 保留商机深链，以 `/quick-capture/:customerId/:matterId` 保留记录上下文；不修改 App 主站导航或 Vite/锁文件。SAAS-216 再为复用地图补选择、证据与行动；不改旧 Canvas。
 
 ### SAAS-213：商机、今日、客户与地图入口（3d）
 

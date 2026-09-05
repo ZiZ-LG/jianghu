@@ -103,7 +103,8 @@ function storageInvalid(): never {
 }
 
 function requireSalesCapability(policy: CapabilityPolicy): void {
-  if (!capabilityPolicyAllows(policy, { entitlement: 'sales.workspace' })) {
+  if (!capabilityPolicyAllows(policy, { entitlement: 'crm.core' })
+    && !capabilityPolicyAllows(policy, { entitlement: 'sales.workspace' })) {
     throw new SalesHypothesisError('capability_denied', 403);
   }
 }

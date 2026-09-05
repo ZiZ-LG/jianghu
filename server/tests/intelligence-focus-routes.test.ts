@@ -197,9 +197,9 @@ describe('SAAS-206 dedicated IntelligenceItem/StakeholderFocus routes', () => {
     expect(list.json()).toMatchObject({ items: [{ id: 'focus-route-a', status: 'retired', version: 1 }] });
   });
 
-  it('fails closed when commercial Free lacks sales.workspace', async () => {
+  it('fails closed when product capability configuration is invalid', async () => {
     await test.cleanup();
-    test = await createTestContext({ productAccess: { edition: 'commercial' } });
+    test = await createTestContext({ productAccess: { edition: 'commercial', enabledEntitlements: ['invalid'] } });
     const response = await test.app.inject({
       method: 'GET', url: '/api/intelligence-items?customerId=x&matterId=y', headers: headers(),
     });

@@ -199,6 +199,13 @@ describe('SAAS-207 dedicated SalesHypothesis routes', () => {
 
     await test.cleanup();
     test = await createTestContext({ productAccess: { edition: 'commercial' } });
+    const personalMissing = await test.app.inject({
+      method: 'GET', url: '/api/sales-hypotheses?customerId=x&matterId=y', headers: headers(),
+    });
+    // CORE-210 grants the personal route, while its parent scope remains enforced.
+    expect(personalMissing.statusCode, personalMissing.body).toBe(404);
+    await test.cleanup();
+    test = await createTestContext({ productAccess: { edition: 'commercial', enabledEntitlements: ['invalid'] } });
     const denied = await test.app.inject({
       method: 'GET', url: '/api/sales-hypotheses?customerId=x&matterId=y', headers: headers(),
     });
