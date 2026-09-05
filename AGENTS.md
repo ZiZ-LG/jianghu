@@ -4,13 +4,13 @@
 
 ## 这是什么
 
-面向复杂大客户/大项目销售的「干系人作战地图」SaaS：可视化客户内部权力关系网（关系地图 L1–L4），用 **G64111 趋赢力** 方法论打分，多人云端协作。
+面向个人大客户销售经理的「商机推进工作台」：管理多个客户、线索和商机，看清**阶段、关键缺口、下一步行动**。默认导航为商机、今日、客户；可选六问不默认评分、不强制填完。关系图按需使用，G64111/PDE 与既有协作模型冻结新增并保留历史；不开发团队管理。
 
 ## 技术栈
 
 - **前端 `app/`**：Vite + React + **TypeScript**（`.tsx` 组件 / `.ts` 逻辑）。乐观本地更新 + 云端同步。
-- **后端 `server/`**：Fastify + Prisma + JWT。多租户 SaaS，RBAC，免费多人协作（50 席）+ 自愿捐赠。
-- **数据库**：dev = SQLite（`server/prisma/dev.db`，零配置）；prod = Postgres（由 `schema:postgres:render` 确定性生成专用 schema，版本化 migration 经 `migrate deploy` 执行）。
+- **后端 `server/`**：Fastify + Prisma + JWT。一个注册账户原则上对应一个私有租户；tenant scope、RBAC 与存量协作权限继续保留，自愿捐赠配置不因本次定位调整而改变。
+- **数据库（当前）**：dev = SQLite（`server/prisma/dev.db`）；prod = Postgres（由 `schema:postgres:render` 确定性生成专用 schema，版本化 migration 经 `migrate deploy` 执行）。ADR-004 已批准 PostgreSQL 单一引擎目标，**CORE-214 退出 Gate 通过前仍按双库验证**。
 - 源码全是 TypeScript（仓库统计里的 `.js/.map` 来自 `node_modules`）。
 
 ## 仓库结构（monorepo）
@@ -71,7 +71,7 @@ cd packages/pde-kernel && npx tsc --noEmit && npm run test   # 内核类型 + go
 
 1. **多租户隔离**：所有数据读写**必须按 `tenantId` 作用域**过滤；新增任何查询/接口都要带租户隔离。数据安全红线，**绝不跨租户**。viewer 角色（销售包只读投影）再加一层行级隔离：只见 `Account.primaryOwner === User.name` 的客户——新增「按 id 直查」的读接口须带 viewer 归属校验，写接口须挡 viewer（helper 在 `server/src/scope.ts`）。
 2. **AI 结果绝不自动写库**：AI 推断的关系/节点一律先作为候选（带置信度/证据/来源、画布灰虚线 ❓），**人审采纳后才建边**；导入的企查查/AI 节点要带「待验证」溯源日志。企查查多候选时同理——**展示候选让用户点选，不自动锁定主体**。
-3. **跨库可移植**：Prisma schema **不用原生 enum/json**，保证 SQLite ↔ Postgres 一致。
+3. **数据库过渡纪律**：CORE-214 退出 Gate 通过前，Prisma schema **不用原生 enum/json**，保证 SQLite ↔ Postgres 一致；不得提前删除 SQLite 支持、历史 migration 或存量文件。PostgreSQL 单一引擎目标不取消版本化 migration、备份恢复与回滚。
 4. **用户自配模型/数据 Key（BYO）**：Key（AI 模型、企查查 MCP token）经 **AES-256-GCM 加密存服务端**、用用户自己额度调用，平台零成本；无 Key 走演示/回退模式。**绝不明文落库、绝不外发、绝不写进提交。**
 5. **数据契约 = `app/src/store.ts` 的 Action**：改契约要前端 store、后端 `mutate.ts` / `types.ts` 同步。
 6. **G64111 引擎对齐规格**：改 `packages/g64111/src/score.ts` 前先读 `docs/G64111-评分规格.md`；App/Server 只做 adapter，禁止复制公式。改完跑通共享包和 server parity 单测。
@@ -99,11 +99,15 @@ cd packages/pde-kernel && npx tsc --noEmit && npm run test   # 内核类型 + go
 - 优先**复用现有模式与组件**，而不是另起一套。
 - 端口被占：`lsof -ti:3001 | xargs kill -9`（前端 5173 同理）。
 
-## 当前执行基线（2026-08-19）
+## 当前执行基线（2026-09-04）
 
-- 产品路线与能力分层：`docs/ADR-002-商业版单一演进与通用CRM能力分层.md`；`docs/架构-双版本关系与变更治理v1.md` 继续约束共享核心、安全边界、物理隔离和重大偏差治理。
-- 商业持续演进详细计划：`docs/superpowers/plans/2026-08-19-lightweight-personal-crm-commercialization.md`。
+- 产品路线：`docs/ADR-004-个人商机推进工作台与研发范围收敛.md` 已批准，部分替代 ADR-002 的团队/企业/G5–G7 路线；ADR-001/002 的共享核心、数据单一权威、安全、算法、物理隔离与重大偏差治理继续有效。
+- 当前计划：`docs/superpowers/plans/2026-09-04-personal-opportunity-workbench.md`；2026-08-19 计划保留为历史，不从旧 G5–G7 自动启动任务。
 - 唯一日常状态清单：`docs/商业版开发待办清单v1.md`；持续建设代码任务必须引用 `CORE-*` 或 `SAAS-*` ID，同一时间最多一项 `IN_PROGRESS`。
+- CORE-207 仅治理落盘；后续从清单的当前无依赖任务启动。PR #46 / SAAS-211 保持暂停，不合并、不关闭、不自动解除。
+- 个人方法论上传后置；六问可跳过，AI 只产出带来源、证据与置信度的候选。正式状态、关系和方法论结论经用户确认后才写入。
+- 不因个人化削弱 tenant scope，不直接增加全局手机号/邮箱唯一约束；不触碰自我修养开发线，不部署 lake2ocean.top、阿里云或 Mac mini，不破坏性删除 G64111/PDE/协作模型与历史数据。
+- 原 CORE-301 权限矩阵及 CORE-503 备份恢复/安全职责由新计划承接；精确 SHA CI、审计、版本化 migration、备份恢复与回滚门持续生效。新产品/数据库目标不代表运行时已实现。
 - `docs/内部版开发待办清单v1.md` 已转维护冻结；只有安全、兼容、恢复或经批准的显式迁移维护，才可另行授权 `INT-*` 任务。`INT-502` 及其发布验收资料仅作 `NO-GO / STOPPED` 历史证据，不再阻塞商业主线。
 - 除重大偏差外严格按商业清单阶段门执行；重大偏差先暂停、写 ADR、由项目所有者批准，再更新计划和清单。
 
