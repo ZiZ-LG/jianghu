@@ -42,6 +42,7 @@ const TODAY_PLAN_ACTION_SELECT = {
   opportunityId: true,
   personId: true,
   title: true,
+  target: true,
   kind: true,
   ownerUserId: true,
   executionStatus: true,

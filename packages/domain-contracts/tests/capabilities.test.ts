@@ -103,9 +103,9 @@ describe('central capability policy', () => {
       policy: { entitlements: ['crm.core'], permissions: [] },
     });
     expect(access.navigation.map(({ id, label, path }) => ({ id, label, path }))).toEqual([
+      { id: 'matters', label: '商机', path: '/matters' },
       { id: 'today', label: '今日', path: '/today' },
       { id: 'customers', label: '客户', path: '/customers' },
-      { id: 'matters', label: '事项', path: '/matters' },
       { id: 'quick-capture', label: '快速记录', path: '/quick-capture' },
     ]);
     expect(access.navigation.map((entry) => entry.id)).not.toEqual(
@@ -120,7 +120,7 @@ describe('central capability policy', () => {
     });
 
     expect(access.navigation.map((entry) => entry.id)).toEqual([
-      'today', 'customers', 'matters', 'quick-capture',
+      'matters', 'today', 'customers', 'quick-capture',
       'sales-workspace', 'team', 'g64111', 'pde',
     ]);
     expect(assembleProductAccess({ edition: 'commercial' }).navigation).toHaveLength(4);

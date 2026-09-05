@@ -7,6 +7,7 @@ export type CommitmentPlanActionRow = Pick<PlanAction,
   | 'opportunityId'
   | 'personId'
   | 'title'
+  | 'target'
   | 'kind'
   | 'ownerUserId'
   | 'executionStatus'
@@ -43,6 +44,7 @@ export function commitmentFromPlanAction(row: CommitmentPlanActionRow): Commitme
     matterId: row.opportunityId,
     personId: row.personId,
     title: row.title,
+    expectedSignal: row.target,
     kind: row.kind,
     ownerUserId: row.ownerUserId,
     executionStatus: row.executionStatus,

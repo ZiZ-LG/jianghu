@@ -100,11 +100,13 @@ function CustomerPage({
   selectedCustomerId,
   onSelect,
   onQuickCapture,
+  onNavigate,
 }: {
   snapshot: CrmContextSnapshot;
   selectedCustomerId: string | null;
   onSelect: (customerId: string | null) => void;
   onQuickCapture: () => void;
+  onNavigate?: (path: string) => void;
 }) {
   const context = selectedCustomerId ? selectCustomerContext(snapshot, selectedCustomerId) : null;
   if (context) {
@@ -116,7 +118,7 @@ function CustomerPage({
             <h2>{context.customer.name}</h2>
             <span className="crm-context-badge">{customerCategoryLabel(context.customer.categoryKey)}</span>
           </div>
-          <button type="button" className="btn primary" data-crm-quick-capture="customer" onClick={onQuickCapture}>
+          <button type="button" className="btn primary" data-crm-quick-capture="customer" onClick={() => onNavigate ? onNavigate(`/quick-capture/${encodeURIComponent(context.customer.id)}`) : onQuickCapture()}>
             记录下一步
           </button>
         </header>
@@ -133,7 +135,7 @@ function CustomerPage({
             <ul className="crm-context-compact-list">
               {context.matters.map((matter) => (
                 <li key={matter.id}>
-                  <strong>{matter.title}</strong>
+                  {onNavigate ? <button className="btn ghost sm" onClick={() => onNavigate(`/matters/${encodeURIComponent(matter.id)}`)}>{matter.title} ↗</button> : <strong>{matter.title}</strong>}
                   <span>{matterKindLabel(matter.kind)} · {matterLifecycleLabel(matter.lifecycleStatus)}</span>
                 </li>
               ))}
@@ -284,12 +286,14 @@ export function CrmContextView({
   onQuickCapture,
   initialCustomerId,
   initialMatterId,
+  onNavigate,
 }: {
   mode: ContextMode;
   snapshot: CrmContextSnapshot;
   onQuickCapture: () => void;
   initialCustomerId?: string;
   initialMatterId?: string;
+  onNavigate?: (path: string) => void;
 }) {
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(initialCustomerId ?? null);
   const [selectedMatterId, setSelectedMatterId] = useState<string | null>(initialMatterId ?? null);
@@ -297,6 +301,7 @@ export function CrmContextView({
     <CustomerPage
       snapshot={snapshot}
       selectedCustomerId={selectedCustomerId}
+      onNavigate={onNavigate}
       onSelect={setSelectedCustomerId}
       onQuickCapture={onQuickCapture}
     />
@@ -315,11 +320,13 @@ export function CrmContextPanelStateView({
   state,
   onRetry,
   onQuickCapture,
+  onNavigate,
 }: {
   mode: ContextMode;
   state: CrmContextPanelState;
   onRetry: () => void;
   onQuickCapture: () => void;
+  onNavigate?: (path: string) => void;
 }) {
   if (state.status === 'loading') {
     return <div className="crm-context-state" data-crm-context-state="loading">正在读取当前权限范围内的客户与事项…</div>;
@@ -340,7 +347,7 @@ export function CrmContextPanelStateView({
           <button type="button" className="btn ghost sm" onClick={onRetry}>再次刷新</button>
         </div>
       ) : state.refreshing ? <p className="crm-context-refreshing" role="status">正在刷新当前权限数据…</p> : null}
-      <CrmContextView mode={mode} snapshot={state.snapshot} onQuickCapture={onQuickCapture} />
+      <CrmContextView mode={mode} snapshot={state.snapshot} onQuickCapture={onQuickCapture} onNavigate={onNavigate} />
     </div>
   );
 }
@@ -380,6 +387,7 @@ export function CrmContextPanel({
         </div>
         {matterSurface === 'list' ? (
           <CrmContextPanelStateView
+            onNavigate={onNavigate}
             mode={mode}
             state={state}
             onRetry={onRetry}
@@ -391,6 +399,7 @@ export function CrmContextPanel({
   }
   return (
     <CrmContextPanelStateView
+      onNavigate={onNavigate}
       mode={mode}
       state={state}
       onRetry={onRetry}

@@ -1,7 +1,7 @@
 export interface AuthValidationInput {
   mode: 'login' | 'register';
   method: 'phone' | 'email';
-  tenantName: string;
+  tenantName?: string;
   name: string;
   phone: string;
   email: string;
@@ -12,7 +12,6 @@ const MAINLAND_PHONE = /^1[3-9]\d{9}$/;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function validateAuth(input: AuthValidationInput): string | null {
-  if (input.mode === 'register' && !input.tenantName.trim()) return '请输入工作区名称';
   if (input.mode === 'register' && !input.name.trim()) return '请输入姓名';
   if (input.method === 'phone' && !MAINLAND_PHONE.test(input.phone.trim())) return '请输入有效的中国大陆手机号';
   if (input.method === 'email' && !EMAIL.test(input.email.trim())) return '请输入有效的邮箱地址';

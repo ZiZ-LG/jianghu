@@ -10,7 +10,6 @@ export function Auth({ onAuthed }: { onAuthed: (r: AuthResult) => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
-  const [tenantName, setTenantName] = useState('');
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
   // 登录命中同号多工作区时，后端返回候选；非空则展示工作区选择，用户点选后带 tenantId 二次登录
@@ -19,13 +18,13 @@ export function Auth({ onAuthed }: { onAuthed: (r: AuthResult) => void }) {
   const enter = (res: AuthResult) => { api.setToken(res.token); onAuthed(res); };
 
   const submit = async () => {
-    const validationError = validateAuth({ mode, method, tenantName, name, phone, email, password });
+    const validationError = validateAuth({ mode, method, name, phone, email, password });
     if (validationError) { setErr(validationError); return; }
     setErr(''); setLoading(true);
     try {
       const cred = method === 'phone' ? { phone: phone.trim(), password } : { email: email.trim(), password };
       if (mode === 'register') {
-        enter(await api.register({ ...cred, name: name.trim(), tenantName: tenantName.trim() }));
+        enter(await api.register({ ...cred, name: name.trim() }));
       } else {
         const res = await api.login(cred);
         if ('needWorkspace' in res) { setWorkspaces(res.workspaces); return; } // 同号多工作区 → 转选择
@@ -59,7 +58,7 @@ export function Auth({ onAuthed }: { onAuthed: (r: AuthResult) => void }) {
           <div className="logo lg">江</div>
           <div>
             <div className="hub-title">江湖 · Game of JiangHu</div>
-            <div className="hub-sub">销售干系人作战地图 · 云端协作版</div>
+            <div className="hub-sub">看清客户决策，接续下一步行动</div>
           </div>
         </div>
 
@@ -80,13 +79,13 @@ export function Auth({ onAuthed }: { onAuthed: (r: AuthResult) => void }) {
         ) : (
           <form noValidate onSubmit={(event) => { event.preventDefault(); void submit(); }}>
             <div className="auth-tabs">
-              <button type="button" className={mode === 'register' ? 'on' : ''} onClick={() => { setMode('register'); setErr(''); }}>注册新工作区</button>
+              <button type="button" className={mode === 'register' ? 'on' : ''} onClick={() => { setMode('register'); setErr(''); }}>创建私人账户</button>
               <button type="button" className={mode === 'login' ? 'on' : ''} onClick={() => { setMode('login'); setErr(''); }}>登录</button>
             </div>
 
             {mode === 'register' && (
               <div className="auth-join">
-                💡 要加入同事已有的工作区？<b>无需注册</b>——请工作区管理员在「👥 团队 → 邀请成员」中为你添加账号，拿到凭据后直接<button type="button" className="auth-link inline" onClick={() => { setMode('login'); setErr(''); }}>登录</button>即可。注册会创建一个全新的独立工作区。
+                从一个客户、一条记录开始。你的客户与商机保存在自己的私人工作区。
               </div>
             )}
 
@@ -96,12 +95,8 @@ export function Auth({ onAuthed }: { onAuthed: (r: AuthResult) => void }) {
             </div>
 
             {mode === 'register' && (
-              <label className="fld"><span>工作区名称（团队/公司）</span>
-                <input name="organization" autoComplete="organization" required value={tenantName} onChange={(e) => setTenantName(e.target.value)} placeholder="如：华东销售一部" /></label>
-            )}
-            {mode === 'register' && (
               <label className="fld"><span>你的姓名</span>
-                <input name="name" autoComplete="name" required value={name} onChange={(e) => setName(e.target.value)} placeholder="如：张三" /></label>
+                <input name="name" autoComplete="name" required maxLength={80} value={name} onChange={(e) => setName(e.target.value)} placeholder="如：曹经理" /></label>
             )}
             {method === 'phone' ? (
               <label className="fld"><span>手机号</span>
@@ -117,15 +112,15 @@ export function Auth({ onAuthed }: { onAuthed: (r: AuthResult) => void }) {
             {err && <div id="auth-error" className="auth-err" role="alert" aria-live="polite">{err}</div>}
 
             <button type="submit" className="btn primary" style={{ width: '100%', marginTop: 6 }} disabled={loading}>
-              {loading ? '请稍候…' : mode === 'register' ? '创建工作区并进入' : '登录'}
+              {loading ? '请稍候…' : mode === 'register' ? '创建账户并开始' : '登录'}
             </button>
             <div className="auth-foot">
-              {mode === 'register' ? '已有账号？' : '还没有工作区？'}
+              {mode === 'register' ? '已有账号？' : '还没有账号？'}
               <button type="button" className="auth-link" onClick={() => { setMode(mode === 'register' ? 'login' : 'register'); setErr(''); }}>
                 {mode === 'register' ? '去登录' : '去注册'}
               </button>
             </div>
-            <div className="auth-tip">手机号即可注册使用，无需企业资质。微信登录需企业认证，暂未开放。</div>
+            <div className="auth-tip">使用手机号或邮箱即可开始。已有工作区的账号可直接登录。</div>
           </form>
         )}
       </div>

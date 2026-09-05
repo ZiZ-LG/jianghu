@@ -44,6 +44,10 @@ export function CrmRelationshipGraph({
   showHypotheses = false,
   focusPersonId = null,
   title,
+  selectedPersonId,
+  selectedRelationId,
+  onSelectPerson,
+  onSelectRelation,
 }: {
   people: readonly Person[];
   formalRelations: readonly RelationV2[];
@@ -53,6 +57,10 @@ export function CrmRelationshipGraph({
   showHypotheses?: boolean;
   focusPersonId?: string | null;
   title: string;
+  selectedPersonId?: string;
+  selectedRelationId?: string;
+  onSelectPerson?: (id: string) => void;
+  onSelectRelation?: (id: string) => void;
 }) {
   const titleId = useId();
   const markerSuffix = useId().split(':').join('');
@@ -83,7 +91,7 @@ export function CrmRelationshipGraph({
 
   return (
     <div className="crm-relation-canvas">
-      <svg viewBox="0 0 640 320" role="img" aria-labelledby={titleId} preserveAspectRatio="xMidYMid meet">
+      <svg viewBox="0 0 640 320" role={onSelectPerson || onSelectRelation ? 'group' : 'img'} aria-labelledby={titleId} preserveAspectRatio="xMidYMid meet">
         <title id={titleId}>{title}</title>
         <defs>
           <marker id={formalMarkerId} viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -98,9 +106,19 @@ export function CrmRelationshipGraph({
           const source = positions.get(relation.sourcePersonId);
           const target = positions.get(relation.targetPersonId);
           if (!source || !target) return null;
-          return <g key={relation.id} data-relation-id={relation.id} data-relation-layer="formal">
+          const distance = Math.hypot(target.x - source.x, target.y - source.y) || 1;
+          const normalX = -(target.y - source.y) / distance * 12;
+          const normalY = (target.x - source.x) / distance * 12;
+          const label = `${nodes.find(node => node.id === relation.sourcePersonId)?.label} ${relation.directed ? '→' : '—'} ${nodes.find(node => node.id === relation.targetPersonId)?.label}：${relation.label ?? '关系待说明'}`;
+          return <g key={relation.id} data-relation-id={relation.id} data-relation-layer="formal"
+            role={onSelectRelation ? 'button' : undefined} tabIndex={onSelectRelation ? 0 : undefined}
+            aria-label={label} aria-pressed={onSelectRelation ? selectedRelationId === relation.id : undefined}
+            onClick={() => onSelectRelation?.(relation.id)}
+            onKeyDown={event => { if (onSelectRelation && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); onSelectRelation(relation.id); } }}>
+            <title>{label}</title>
+            {onSelectRelation ? <path className="personal-relation-hit" d={`M ${source.x + normalX} ${source.y + normalY} L ${target.x + normalX} ${target.y + normalY} L ${target.x - normalX} ${target.y - normalY} L ${source.x - normalX} ${source.y - normalY} Z`} /> : null}
             <line
-              className="crm-relation-line"
+              className={`crm-relation-line${selectedRelationId === relation.id ? ' selected' : ''}`}
               x1={source.x}
               y1={source.y}
               x2={target.x}
@@ -151,8 +169,16 @@ export function CrmRelationshipGraph({
             key={node.id}
             className={`crm-relation-node${node.candidate ? ' candidate' : ''}${focused ? ' focused' : ''}`}
             data-focus-person={focused ? 'true' : undefined}
+            data-person-id={node.candidate ? undefined : node.id}
+            role={!node.candidate && onSelectPerson ? 'button' : undefined}
+            tabIndex={!node.candidate && onSelectPerson ? 0 : undefined}
+            aria-label={`${node.candidate ? '待审核人物：' : ''}${node.label} · ${node.title ?? '职务待核实'}`}
+            aria-pressed={!node.candidate && onSelectPerson ? selectedPersonId === node.id : undefined}
+            onClick={() => { if (!node.candidate) onSelectPerson?.(node.id); }}
+            onKeyDown={event => { if (!node.candidate && onSelectPerson && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); onSelectPerson(node.id); } }}
             transform={`translate(${position.x} ${position.y})`}
           >
+            <title>{node.label} · {node.title ?? '职务待核实'}</title>
             <circle r="34" />
             <text textAnchor="middle" dominantBaseline="middle">{node.label.slice(0, 6)}</text>
             {node.title ? <text className="crm-relation-node-title" textAnchor="middle" y="53">{node.title.slice(0, 12)}</text> : null}

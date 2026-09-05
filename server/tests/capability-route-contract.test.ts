@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 describe('SAAS-206 capability route contract', () => {
-  it('registers only dedicated authenticated endpoints under the default sales.workspace guard', async () => {
+  it('registers dedicated authenticated personal endpoints without loose prefix matches', async () => {
     const routes = await readFile(resolve('src/intelligenceFocus/routes.ts'), 'utf8');
     const app = await readFile(resolve('src/app.ts'), 'utf8');
     for (const endpoint of [

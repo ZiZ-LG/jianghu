@@ -15,3 +15,4 @@ export * from './postMeetingImport.js';
 export * from './researchBrief.js';
 export * from './relationshipWorkspace.js';
 export * from './relationshipRadar.js';
+export * from './personalWorkbench.js';

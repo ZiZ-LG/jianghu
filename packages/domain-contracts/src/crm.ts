@@ -286,6 +286,7 @@ const commitmentFields = {
   matterId: id.nullable(),
   personId: id.nullable(),
   title: z.string().trim().min(1),
+  expectedSignal: z.string().optional(),
   kind: openKey,
   // Legacy PlanAction rows may be explicitly unassigned during expand/migrate.
   // Generic CREATE_COMMITMENT still requires a stable owner id below.
@@ -582,6 +583,7 @@ const commitmentCreateFields = {
   matterId: id.nullable(),
   personId: id.nullable(),
   title: z.string().trim().min(1),
+  expectedSignal: z.string().trim().max(2_000).optional(),
   kind: openKey,
   ownerUserId: id,
   confirmationStatus: z.enum(['not_required', 'pending']),

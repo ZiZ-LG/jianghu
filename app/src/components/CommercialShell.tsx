@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   isG64111RunnableMatter,
   type CommandContext,
@@ -6,7 +7,8 @@ import {
   type ProductEntryId,
 } from '@jianghu/domain-contracts';
 import type { Account } from '../types';
-import { resolveProductRoute } from '../lib/productRoutes';
+import { personalMatterPath, personalRouteContext, quickCapturePath, resolveProductRoute } from '../lib/productRoutes';
+import { PersonalCustomerForm, PersonalWorkbench } from './PersonalWorkbench';
 import { QuickCapture } from './QuickCapture';
 import { TodayPanel } from './TodayPanel';
 import { CrmContextPanel, type CrmContextPanelState } from './CrmContextPages';
@@ -49,10 +51,11 @@ function LegacyG64111MatterList({ state, onOpenLegacy }: {
 }
 
 function ProductPanel({
-  id, accounts, crmContextState, quickCaptureAccounts, actorUserId, actorRole, readonly, portfolioEnabled,
+  id, pathname, accounts, crmContextState, quickCaptureAccounts, actorUserId, actorRole, readonly, portfolioEnabled,
   methodologyState, onNavigate, onOpenLegacy, onOpenTeam, onMethodologyAction, onRetryMethodology, onQuickCaptureSaved,
 }: {
   id: ProductEntryId;
+  pathname: string;
   accounts: Account[];
   crmContextState: CrmContextPanelState;
   quickCaptureAccounts: QuickCaptureAccountOption[];
@@ -68,16 +71,22 @@ function ProductPanel({
   onRetryMethodology: () => void;
   onQuickCaptureSaved: () => Promise<unknown>;
 }) {
+  const [addingCustomer, setAddingCustomer] = useState(false);
   if (id === 'today') {
     return <TodayPanel
       actorUserId={actorUserId}
       readonly={readonly}
       onDataChanged={onQuickCaptureSaved}
+      onOpenMatter={matterId => onNavigate(personalMatterPath(matterId))}
     />;
   }
   const matters = accounts.flatMap((account) => account.opportunities.map((matter) => ({ account, matter })));
-  if (id === 'customers' || id === 'matters') {
-    return <CrmContextPanel
+  if (id === 'matters') return <PersonalWorkbench pathname={pathname} readonly={readonly} actorUserId={actorUserId} onNavigate={onNavigate} onDataChanged={onQuickCaptureSaved} />;
+  if (id === 'customers') {
+    return <>
+      {!readonly ? <div className="personal-toolbar"><span>客户与商机共享同一份联系人记录</span><button className="btn" onClick={() => setAddingCustomer(true)}>添加客户</button></div> : null}
+      {addingCustomer && !readonly ? <PersonalCustomerForm actorUserId={actorUserId} onClose={() => setAddingCustomer(false)} onSaved={() => { setAddingCustomer(false); void onQuickCaptureSaved().catch(() => undefined); }} /> : null}
+      <CrmContextPanel
       mode={id}
       state={crmContextState}
       onRetry={() => { void onQuickCaptureSaved().catch(() => undefined); }}
@@ -85,14 +94,17 @@ function ProductPanel({
       readonly={readonly}
       onNavigate={onNavigate}
       portfolioEnabled={portfolioEnabled}
-    />;
+    /></>;
   }
   if (id === 'quick-capture') {
     return <QuickCapture
+      key={`${actorUserId}:${pathname}`}
       accounts={quickCaptureAccounts}
       actorUserId={actorUserId}
       readonly={readonly}
       onSaved={onQuickCaptureSaved}
+      initialCustomerId={personalRouteContext(pathname).customerId}
+      initialMatterId={personalRouteContext(pathname).matterId}
     />;
   }
   if (id === 'team') {
@@ -170,15 +182,19 @@ export function CommercialShell({
     ? crmContextState.snapshot
     : null;
   const quickCaptureAccounts = toQuickCaptureAccounts(crmContext);
+  const context = personalRouteContext(pathname);
+  const customerId = context.customerId ?? crmContext?.matters.find(matter => matter.id === context.matterId)?.customerId;
+  const advanced = access.navigation.filter(entry => !['matters', 'today', 'customers', 'quick-capture'].includes(entry.id));
   return (
     <div className="commercial-shell">
       <header className="commercial-shell-header">
         <div className="logo">江</div>
-        <div><strong>江湖 CRM</strong><small>轻量客户与事项</small></div>
+        <div><strong>江湖 CRM</strong><small>我的客户经营</small></div>
+        {!readonly && access.navigation.some(entry => entry.id === 'quick-capture') ? <button className="btn primary" data-global-quick-capture="true" onClick={() => onNavigate(customerId ? quickCapturePath(customerId, context.matterId) : '/quick-capture')}>＋ 快速记录</button> : null}
         <button className="btn ghost xs" onClick={onLogout}>退出登录</button>
       </header>
       <nav className="commercial-shell-nav" aria-label="产品导航">
-        {access.navigation.map((entry) => (
+        {access.navigation.filter(entry => ['matters', 'today', 'customers'].includes(entry.id)).map((entry) => (
           <button
             key={entry.id}
             data-product-entry={entry.id}
@@ -187,12 +203,15 @@ export function CommercialShell({
             onClick={() => onNavigate(entry.path)}
           >{entry.label}</button>
         ))}
+        {advanced.length ? <details className="commercial-advanced"><summary>历史工具</summary><div>{advanced.map(entry => <button key={entry.id} data-product-entry={entry.id} aria-current={entry.id === route.entry.id ? 'page' : undefined} onClick={() => onNavigate(entry.path)}>{entry.label}</button>)}</div></details> : null}
       </nav>
       <main data-product-panel={route.entry.id} className="commercial-shell-panel">
-        <h1>{route.entry.title}</h1>
-        <p className="commercial-shell-description">{route.entry.description}</p>
+        {route.entry.id === 'matters' && context.matterId ? null : <><h1>{route.entry.title}</h1>
+          <p className="commercial-shell-description">{route.entry.description}</p></>}
         <ProductPanel
+          key={`${actorUserId}:${route.entry.id}:${readonly}`}
           id={route.entry.id}
+          pathname={pathname}
           accounts={accounts}
           crmContextState={crmContextState}
           quickCaptureAccounts={quickCaptureAccounts}

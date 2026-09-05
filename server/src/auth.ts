@@ -13,8 +13,8 @@ const registerSchema = z.object({
   phone: phone.optional(),
   email: email.optional(),
   password: z.string().min(6),
-  name: z.string().min(1),
-  tenantName: z.string().min(1),
+  name: z.string().trim().min(1, '请输入姓名').max(80),
+  tenantName: z.string().trim().min(1, '工作区名称不能为空').max(120).optional(),
 }).refine((d) => d.phone || d.email, { message: '请提供手机号或邮箱' });
 
 const loginSchema = z.object({
@@ -39,10 +39,27 @@ export function authRoutes(app: FastifyInstance, product: ProductAccess) {
 
     // 注册即新建独立工作区（租户）。复合唯一 [tenantId, phone/email] 下，同一手机号可在不同工作区各注册一个账号，
     // 故不再做全局查重（旧逻辑造成跨租户 DoS：A 占号后 B 永远无法注册）；新建租户内必不撞号。
-    const tenant = await prisma.tenant.create({ data: { id: randomUUID(), name: tenantName } });
-    const user = await prisma.user.create({
-      data: { tenantId: tenant.id, phone: ph ?? null, email: em ?? null, name, role: 'owner', passwordHash: await bcrypt.hash(password, 10) },
-    });
+    // CORE-208: absent organization means a new personal tenant. Existing explicit
+    // workspace clients keep their policy; no existing tenant is switched or imported.
+    let registration;
+    try {
+      const passwordHash = await bcrypt.hash(password, 10);
+      registration = await prisma.$transaction(async (tx) => {
+        const tenant = await tx.tenant.create({ data: {
+          id: randomUUID(), name: tenantName ?? `${name}的私人工作区`,
+          dataScopePolicy: tenantName === undefined ? 'scoped' : 'legacy_tenant_shared',
+        } });
+        const user = await tx.user.create({ data: {
+          tenantId: tenant.id, phone: ph ?? null, email: em ?? null, name, role: 'owner', passwordHash,
+        } });
+        return { tenant, user };
+      });
+    } catch {
+      // A stable public error never includes Prisma details or registration credentials.
+      req.log.warn({ code: 'registration_unavailable' }, 'Account transaction failed');
+      return reply.code(503).send({ code: 'registration_unavailable', error: '暂时无法创建账户，请稍后重试' });
+    }
+    const { tenant, user } = registration;
     const token = app.jwt.sign({ userId: user.id, tenantId: tenant.id, role: user.role });
     return { token, user: userView(user), tenant: tenantView(tenant), product };
   });
@@ -59,7 +76,8 @@ export function authRoutes(app: FastifyInstance, product: ProductAccess) {
     if (matched.length === 0) return reply.code(401).send({ error: '账号或密码错误' });
 
     // 命中唯一账号 → 直接登录；命中多个（同号多工作区且同密码）→ 让前端选工作区后带 tenantId 二次提交。
-    const user = matched.length === 1 ? matched[0] : matched.find((u) => u.tenantId === tenantId);
+    const user = tenantId ? matched.find((u) => u.tenantId === tenantId) : matched.length === 1 ? matched[0] : undefined;
+    if (tenantId && !user) return reply.code(401).send({ error: '账号或密码错误' });
     if (!user) {
       const tenants = await prisma.tenant.findMany({ where: { id: { in: matched.map((u) => u.tenantId) } } });
       return reply.send({ needWorkspace: true, workspaces: tenants.map((t) => ({ tenantId: t.id, tenantName: t.name })) });

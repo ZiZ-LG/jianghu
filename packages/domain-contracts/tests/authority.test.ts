@@ -25,8 +25,8 @@ const VALID_ENTRY = {
 } as const;
 
 describe('CRM field authority map', () => {
-  it('contains the seventeen approved logical fields with classified consumers', () => {
-    expect(CRM_FIELD_AUTHORITY).toHaveLength(17);
+  it('contains the historical fields and the independent personal sales progress authority', () => {
+    expect(CRM_FIELD_AUTHORITY).toHaveLength(18);
     for (const entry of CRM_FIELD_AUTHORITY) expect(listCrmFieldConsumers(entry).length).toBeGreaterThan(0);
   });
 
@@ -280,6 +280,7 @@ describe('CRM field authority map', () => {
       'app/src/components/MdDocPanel.tsx',
       'app/src/components/MdDocView.tsx',
       'app/src/components/NewOpportunityDialog.tsx',
+      'app/src/components/PersonalWorkbench.tsx',
       'app/src/components/RepairPanel.tsx',
       'app/src/data/seed.ts',
       'app/src/lib/mdProfile.ts',
@@ -303,6 +304,7 @@ describe('CRM field authority map', () => {
       'server/src/mutation/customers.ts',
       'server/src/mutation/reviewedFields.ts',
       'server/src/opp.ts',
+      'server/src/personalWorkbench/service.ts',
       'server/src/postMeeting/commit.ts',
       'server/src/postMeeting/extractor.ts',
       'server/src/postMeeting/handler.ts',

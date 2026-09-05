@@ -13,7 +13,6 @@ const valid = {
 
 describe('认证表单中文校验', () => {
   it.each([
-    [{ ...valid, tenantName: ' ' }, '请输入工作区名称'],
     [{ ...valid, name: '' }, '请输入姓名'],
     [{ ...valid, phone: '123' }, '请输入有效的中国大陆手机号'],
     [{ ...valid, password: '12345' }, '密码至少 6 位'],
@@ -24,6 +23,7 @@ describe('认证表单中文校验', () => {
 
   it('有效登录和注册不返回错误', () => {
     expect(validateAuth(valid)).toBeNull();
+    expect(validateAuth({ ...valid, tenantName: undefined })).toBeNull();
     expect(validateAuth({ ...valid, mode: 'login', tenantName: '', name: '' })).toBeNull();
   });
 

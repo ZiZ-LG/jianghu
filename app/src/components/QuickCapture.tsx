@@ -19,17 +19,21 @@ export function QuickCapture({
   actorUserId,
   readonly,
   onSaved,
+  initialCustomerId,
+  initialMatterId,
 }: {
   accounts: QuickCaptureAccountOption[];
   actorUserId: string;
   readonly: boolean;
   onSaved: () => Promise<unknown>;
+  initialCustomerId?: string;
+  initialMatterId?: string;
 }) {
-  const [customerSelection, setCustomerSelection] = useState(accounts.length === 0 ? NEW_CUSTOMER : '');
+  const [customerSelection, setCustomerSelection] = useState(initialCustomerId ?? (accounts.length === 0 ? NEW_CUSTOMER : ''));
   const [newCustomerName, setNewCustomerName] = useState('');
   const [title, setTitle] = useState('');
   const [localDateTime, setLocalDateTime] = useState('');
-  const [matterId, setMatterId] = useState('');
+  const [matterId, setMatterId] = useState(initialMatterId ?? '');
   const [personId, setPersonId] = useState('');
   const [requiresConfirmation, setRequiresConfirmation] = useState(false);
   const [confirmationDueLocalDateTime, setConfirmationDueLocalDateTime] = useState('');
@@ -43,6 +47,12 @@ export function QuickCapture({
   const [timeZone] = useState(resolveBrowserTimeZone);
   const customerRef = useRef<HTMLSelectElement>(null);
   const draftRef = useRef<HTMLElement>(null);
+  const mounted = useRef(true);
+  const sending = useRef(false);
+  const contextRevision = JSON.stringify(accounts);
+
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => { setDraft(null); }, [contextRevision, actorUserId]);
 
   const selectedAccount = useMemo(
     () => accounts.find((account) => account.id === customerSelection) ?? null,
@@ -75,6 +85,7 @@ export function QuickCapture({
         : { mode: 'existing', id: '', name: '' };
     const matter = selectedAccount?.opportunities.find((candidate) => candidate.id === matterId);
     const person = selectedAccount?.persons.find((candidate) => candidate.id === personId);
+    if ((matterId && !matter) || (personId && !person)) throw new Error('关联商机或联系人已不可用，请刷新后重新选择。');
     return {
       customer,
       title: patch.title ?? title,
@@ -118,11 +129,16 @@ export function QuickCapture({
   };
 
   const confirm = async () => {
-    if (!draft || saving) return;
+    if (!draft || saving || sending.current) return;
+    const session = api.getToken();
+    const current = () => mounted.current && api.getToken() === session;
+    sending.current = true;
     setSaving(true);
     setError('');
     try {
-      const result = await saveAndRefreshQuickCaptureDraft(draft, api.quickCapture, onSaved);
+      inputFor(); // A vanished association must not be silently saved as customer-only.
+      const result = await saveAndRefreshQuickCaptureDraft(draft, api.quickCapture, async () => { if (current()) await onSaved(); });
+      if (!current()) return;
       setDraft(null);
       setTitle('');
       setLocalDateTime('');
@@ -136,9 +152,10 @@ export function QuickCapture({
       setSuccess('已保存为正式下一步。');
       setRefreshWarning(result.refreshed ? '' : '正式记录已保存，但客户列表刷新失败。');
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '保存失败，请使用同一草稿重试');
+      if (current()) setError(cause instanceof Error ? cause.message : '保存失败，请使用同一草稿重试');
     } finally {
-      setSaving(false);
+      sending.current = false;
+      if (current()) setSaving(false);
     }
   };
 
@@ -164,6 +181,7 @@ export function QuickCapture({
 
   return (
     <div className="quick-capture">
+      {selectedAccount && matterId ? <p className="personal-goal">当前商机：{selectedAccount.opportunities.find(matter => matter.id === matterId)?.name ?? '关联已失效，请重新选择'}</p> : null}
       <fieldset className="quick-capture-editor" disabled={saving} aria-busy={saving}>
         <section className="quick-capture-natural" aria-label="自然语言快速填写">
           <label htmlFor="quick-natural">可选：先写一句话</label>

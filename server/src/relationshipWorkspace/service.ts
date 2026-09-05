@@ -54,7 +54,8 @@ function storageInvalid(): never {
 }
 
 function requireCapability(policy: CapabilityPolicy): void {
-  if (!capabilityPolicyAllows(policy, { entitlement: 'sales.workspace' })) {
+  if (!capabilityPolicyAllows(policy, { entitlement: 'crm.core' })
+    && !capabilityPolicyAllows(policy, { entitlement: 'sales.workspace' })) {
     throw new RelationshipWorkspaceError('capability_denied', 403);
   }
 }

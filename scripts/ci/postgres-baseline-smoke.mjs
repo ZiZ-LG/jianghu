@@ -29,7 +29,7 @@ try {
     for (const suffix of ['a', 'b']) {
       const auth = await request('/api/auth/register', { body: {
         email: `core215-${suffix}@example.test`, password: 'core215-fixture-password',
-        name: `CORE-215 ${suffix}`, tenantName: `CORE-215 synthetic ${suffix}`,
+        name: `CORE-215 ${suffix}`,
       } });
       const customerId = `customer_${createHash('sha256').update(`core215-${suffix}`).digest('hex').slice(0, 32)}`;
       const command = { type: 'CREATE_CUSTOMER', customer: { id: customerId,
@@ -69,18 +69,54 @@ try {
     await request('/api/suggest/persons/core215-person-pending/accept', { token: left.token, body: {}, expected: 403 });
     assert.equal(await db.person.count(), 1);
     console.log('CURRENT_BASELINE_TENANT_REVIEW_IDEMPOTENCY_OK=1');
+    const matterId = `matter_${'b'.repeat(32)}`;
+    const personal = (body, key) => request('/api/commands/personal-workbench', { token: right.token, body, key });
+    const created = { type: 'CREATE_PERSONAL_MATTER', customerId: right.customerId, matterId,
+      title: 'CORE-210 synthetic opportunity', customerBusinessGoal: 'Synthetic delivery goal', salesProgress: null, priority: 'high' };
+    await personal(created, 'core210-personal-matter');
+    assert.equal((await personal(created, 'core210-personal-matter')).replayed, true);
+    const people = ['c', 'd'].map(value => `person_${value.repeat(32)}`);
+    for (const personId of people) await personal({ type: 'CREATE_MATTER_PERSON', customerId: right.customerId, matterId,
+      personId, name: `Synthetic ${personId.slice(-1)}`, title: 'Contact', decisionRole: null }, `core210-${personId}`);
+    await personal({ type: 'CREATE_PERSONAL_RELATION', customerId: right.customerId, matterId,
+      relationId: `relation_${'e'.repeat(32)}`, sourcePersonId: people[0], targetPersonId: people[1], label: 'Reported introduction', directed: true,
+      basis: { statement: 'Synthetic reported source', assertionType: 'reported', sourceDescription: 'Synthetic manual record', occurredAt: null } }, 'core210-relation');
+    const basis = await db.intelligenceItem.findFirstOrThrow({ where: { tenantId: right.tenant.id, matterId } });
+    await personal({ type: 'SET_PERSON_DECISION_ROLE', customerId: right.customerId, matterId, personId: people[0],
+      baseVersion: 0, decisionRole: 'Reported facilitator', basis: { id: basis.id, version: basis.version } }, 'core210-role');
+    await personal({ type: 'UPDATE_PERSONAL_MATTER', customerId: right.customerId, matterId, baseVersion: 0,
+      patch: { salesProgress: 'Manual validation', lifecycle: 'paused' } }, 'core210-stage');
+    await request('/api/commands/commitment', { token: right.token, key: 'core210-commitment', body: { type: 'CREATE_COMMITMENT', commitment: {
+      id: `commitment_${'f'.repeat(32)}`, customerId: right.customerId, matterId, personId: people[0],
+      title: 'Synthetic next conversation', expectedSignal: 'Synthetic observed response', kind: 'follow_up', ownerUserId: right.user.id,
+      confirmationStatus: 'not_required', scheduledAtUtc: '2026-09-08T01:00:00.000Z', dueAtUtc: null, timeZone: 'Asia/Shanghai',
+      isAllDay: false, localDate: null, confirmationDueAtUtc: null, source: 'manual', sourceRef: null,
+    } } });
+    const detail = await request(`/api/personal-workbench/${matterId}`, { token: right.token });
+    assert.equal(detail.opportunity.salesProgress, 'Manual validation');
+    assert.equal(detail.workspace.matter.lifecycleStatus, 'paused');
+    assert.equal(detail.participants.find(item => item.personId === people[0]).basisState, 'current');
+    assert.equal(detail.commitments[0].expectedSignal, 'Synthetic observed response');
+    await request(`/api/personal-workbench/${matterId}`, { token: left.token, expected: 404 });
+    console.log('CURRENT_BASELINE_PERSONAL_WORKBENCH_OK=1');
   } else {
     assert.equal(process.argv[2], 'verify');
   }
   assert.equal(await db.tenant.count(), 2);
   assert.equal(await db.account.count(), 2);
-  assert.equal(await db.person.count(), 1);
+  assert.equal(await db.person.count(), 3);
+  assert.equal(await db.opportunity.count(), 1);
+  assert.equal(await db.matterParticipant.count(), 2);
+  assert.equal(await db.edge.count(), 1);
+  assert.equal(await db.planAction.count(), 1);
+  assert.equal(await db.intelligenceItem.count(), 1);
   assert.equal(await db.candidate.count({ where: { status: 'pending' } }), 1);
   assert.equal(await db.candidate.count({ where: { status: 'accepted' } }), 1);
   assert.equal(await db.auditEvent.count({ where: { action: 'customer_created' } }), 2);
   assert.equal(await db.commandRun.count({ where: { kind: 'customer', status: 'completed' } }), 2);
   const records = {};
-  for (const model of ['tenant', 'user', 'account', 'person', 'candidate', 'auditEvent', 'commandRun']) {
+  for (const model of ['tenant', 'user', 'account', 'person', 'candidate', 'auditEvent', 'commandRun',
+    'opportunity', 'matterParticipant', 'edge', 'planAction', 'intelligenceItem', 'pdeDecisionContext']) {
     records[model] = await db[model].findMany({ orderBy: { id: 'asc' } });
   }
   console.log(`CURRENT_BASELINE_DATA_SHA256=${createHash('sha256').update(JSON.stringify(records)).digest('hex')}`);

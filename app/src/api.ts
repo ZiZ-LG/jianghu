@@ -33,6 +33,20 @@ import {
 } from './lib/matterPortfolio';
 import {
   ActorRoleSchema,
+  IntelligenceItemCommandSchema,
+  IntelligenceItemCommandReceiptSchema,
+  StakeholderFocusCommandSchema,
+  StakeholderFocusCommandReceiptSchema,
+  type IntelligenceItemCommand,
+  type StakeholderFocusCommand,
+  CustomerCreateCommandSchema,
+  CustomerCommandReceiptSchema,
+  PersonalWorkbenchCommandSchema,
+  PersonalWorkbenchDetailSchema,
+  PersonalWorkbenchListSchema,
+  PersonalWorkbenchReceiptSchema,
+  type CustomerCreateCommand,
+  type PersonalWorkbenchCommand,
   AgentJobCardSchema,
   AgentJobControlRequestSchema,
   AgentManualRunRequestSchema,
@@ -584,7 +598,7 @@ export const api = {
     unauthorizedListeners.add(listener);
     return () => { unauthorizedListeners.delete(listener); };
   },
-  register: async (b: Credentials & { name: string; tenantName: string }): Promise<AuthResult> => parseAuthResult(
+  register: async (b: Credentials & { name: string; tenantName?: string }): Promise<AuthResult> => parseAuthResult(
     await req<unknown>('/api/auth/register', { method: 'POST', body: JSON.stringify(b) }),
   ),
   login: async (b: Credentials & { tenantId?: string }): Promise<AuthResult | WorkspaceChoice> => parseLoginResult(
@@ -597,6 +611,49 @@ export const api = {
   crmContext: async (): Promise<CrmContextSnapshot> => parseCrmContextResponse(
     await req<unknown>('/api/crm/context'),
   ),
+  personalWorkbench: async (signal?: AbortSignal) => PersonalWorkbenchListSchema.parse(await req<unknown>('/api/personal-workbench', { signal })),
+  intelligenceCommand: async (input: IntelligenceItemCommand, idempotencyKey: string) => {
+    const command = IntelligenceItemCommandSchema.parse(input);
+    const result = IntelligenceItemCommandReceiptSchema.parse(await commandReq<unknown>('/api/commands/intelligence-item', {
+      method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(command),
+    }));
+    const id = command.type === 'CREATE_INTELLIGENCE_ITEM' ? command.item.id : command.intelligenceItemId;
+    if (result.type !== command.type || result.intelligenceItemId !== id
+      || (command.type === 'CREATE_INTELLIGENCE_ITEM' && (result.customerId !== command.item.customerId || result.matterId !== command.item.matterId))) throw new Error('依据回执不一致，请刷新确认');
+    return result;
+  },
+  stakeholderFocusCommand: async (input: StakeholderFocusCommand, idempotencyKey: string) => {
+    const command = StakeholderFocusCommandSchema.parse(input);
+    const result = StakeholderFocusCommandReceiptSchema.parse(await commandReq<unknown>('/api/commands/stakeholder-focus', {
+      method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(command),
+    }));
+    const id = command.type === 'SET_STAKEHOLDER_FOCUS' ? command.focus.id : command.stakeholderFocusId;
+    if (result.type !== command.type || result.stakeholderFocusId !== id
+      || (command.type === 'SET_STAKEHOLDER_FOCUS' && (result.customerId !== command.focus.customerId || result.matterId !== command.focus.matterId || result.personId !== command.focus.personId))) throw new Error('关注回执不一致，请刷新确认');
+    return result;
+  },
+  personalMatter: async (matterId: string, signal?: AbortSignal) => {
+    const result = PersonalWorkbenchDetailSchema.parse(await req<unknown>(`/api/personal-workbench/${encodeURIComponent(matterId)}`, { signal }));
+    if (result.opportunity.matter.id !== matterId) throw new Error('商机上下文不一致，请刷新');
+    return result;
+  },
+  personalCommand: async (input: PersonalWorkbenchCommand, idempotencyKey: string) => {
+    const command = PersonalWorkbenchCommandSchema.parse(input);
+    const result = PersonalWorkbenchReceiptSchema.parse(await commandReq<unknown>('/api/commands/personal-workbench', {
+      method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(command),
+    }));
+    const entityId = 'personId' in command ? command.personId : 'relationId' in command ? command.relationId : command.matterId;
+    if (result.entityId !== entityId || result.type !== command.type || result.customerId !== command.customerId || result.matterId !== command.matterId) throw new Error('保存回执不一致，请刷新确认');
+    return result;
+  },
+  createCustomer: async (input: CustomerCreateCommand, idempotencyKey: string) => {
+    const command = CustomerCreateCommandSchema.parse(input);
+    const result = CustomerCommandReceiptSchema.parse(await commandReq<unknown>('/api/commands/customer', {
+      method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(command),
+    }));
+    if (result.customerId !== command.customer.id) throw new Error('客户回执不一致，请刷新确认');
+    return result;
+  },
   g64111Methodology: async (): Promise<G64111MethodologyReadModel> => parseG64111MethodologyResponse(
     await req<unknown>('/api/methodology/g64111'),
   ),

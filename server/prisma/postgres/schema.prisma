@@ -176,6 +176,7 @@ model Opportunity {
   changeMode                 String?
   singleSalesGoal            String                       @default("")
   customerBusinessGoal       String?
+  salesProgress              String? // CORE-210：个人商机手动阶段；空值待判断，禁止回退到 legacy / 方法论阶段
   buyingMotivation           String?
   primaryDPersonId           String? // 主拍板人 D；服务端校验同租户/客户/商机当前有效 D
   externalRef                String? // 销售包商机锚，跨系统幂等(WorkBuddy)
@@ -1153,6 +1154,10 @@ model MatterParticipant {
   personId      String
   person        Person      @relation(fields: [tenantId, personId], references: [tenantId, id], onDelete: Cascade)
   createdAt     DateTime    @default(now())
+  decisionRole  String? // 本商机中的人工角色判断，不是职务或 ADURC
+  roleBasisId   String? // IntelligenceItem 精确版本；服务端校验租户、父级、人物目标及当前 ACL
+  roleBasisVersion Int?
+  version       Int         @default(0)
 
   @@unique([tenantId, opportunityId, personId])
   @@index([tenantId, accountId, opportunityId])

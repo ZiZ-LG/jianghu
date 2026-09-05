@@ -8,7 +8,7 @@
 
 **Tech Stack:** React + TypeScript + Vite；Fastify + Prisma；当前 SQLite 开发/测试与 PostgreSQL 生产；目标为 PostgreSQL 单一引擎。
 
-**状态：** 产品方向已批准；CORE-207 是本次执行任务，后续任务状态仅以商业清单为准。
+**状态：** 产品方向及续研已批准；CORE-215 工程完成，第一批产品从 CORE-208 接续；任务状态仅以商业清单为准。以下治理落盘记录按当时事实保留。
 
 **批准依据：** 2026-09-04 项目所有者回复“整体同意并批准。”；[ADR-004](../../ADR-004-个人商机推进工作台与研发范围收敛.md) 为本计划的产品与治理权威。
 
@@ -148,13 +148,34 @@ CORE-211 依赖盘点 → CORE-212 schema 权威与迁移衔接
 
 - [x] 先以 `node --test scripts/ci/*.test.mjs` 固定路由与失败汇总边界：说明文档、消费文档、前端、后端、三共享包、依赖、schema、运维、未知路径、选择器自身；rename/delete 和早期代码后续文档均保留影响。
 - [x] 实现选择与文档检查：未知影响完整选择；共享包扩大到消费者；依赖变化/定期/完整检查保留五包 audit；工作流始终启动固定 `CI required` 汇总。
-- [ ] 新建隔离 PostgreSQL 入口：只创建本任务随机 Compose 项目和临时目录；空库 `migrate deploy`、重复迁移、合成数据、重启持久化、认证备份/恢复、错误密钥/篡改/坏归档/危险目标拒绝及应用镜像回滚。旧 2743 行接续演练原样留档，不再用于每次普通开发。
+- [x] 新建隔离 PostgreSQL 入口：只创建本任务随机 Compose 项目和临时目录；空库 `migrate deploy`、重复迁移、合成数据、重启持久化、认证备份/恢复、错误密钥/篡改/坏归档/危险目标拒绝及应用镜像回滚。旧 2743 行接续演练原样留档，不再用于每次普通开发。
 - [x] 工作流接线与自查：`git diff --check`、Node 边界测试、YAML/表达式检查、Bash 语法、关联 Server/五包回归；通过 `verification-before-completion` 核对实际证据再提交。
-- [ ] 集中推送候选并创建本批 draft PR，核对精确 head/base、运行事件、attempt、全部所选 job、PostgreSQL 标记与耗时。结果引用不可变运行，不为回写成功记录重复触发全量 CI；未完成的远程验证不写成通过。
+- [x] 集中推送候选并创建本批 draft PR，核对精确 head/base、运行事件、attempt、全部所选 job、PostgreSQL 标记与耗时。结果引用不可变运行，不为回写成功记录重复触发全量 CI；未完成的远程验证不写成通过。
 
 **本地环境核对：** 2026-09-05 当前工作区干净且 HEAD 精确为上述回滚点；Docker daemon 的 Unix socket 不存在，数据库实测由 GitHub 隔离 runner 承担。未启动或连接任何既有部署环境。
 
 **本地核验（2026-09-05）：** 41 个 Node 边界测试、actionlint 1.7.12、Bash 语法、工作文档新增链接/历史一致性及 `git diff --check` 通过；Domain 17/161、App 60/413 + production build、Server 122/975、G64111 2/32、PDE 3/25 与全部类型检查、Prisma generate/PostgreSQL schema check 通过。技术自查补强人工完整验证仍使用候选相对 main 的累计差异，并阻止重跑旧 PR 自动取消较新运行。PostgreSQL 新入口已实现，Docker 本地不可用，真实运行及最终 SHA CI 待远程验证；未声称 CORE-215 DONE。
+
+**远程交付（2026-09-05 10:22 PDT）：** [PR #47](https://github.com/ZiZ-LG/jianghu/pull/47) 为 draft；精确候选 `214a132493cb7717df637fee06a479951f4c4f1f`，base `9cccff76c7f22fbf2449a7507ef6ad5be789ec10`。[CI 33980069852](https://github.com/ZiZ-LG/jianghu/actions/runs/33980069852) 为 pull_request / attempt 1 / completed / success，16 个 job 中 15 成功、legacy 按策略 skipped，`CI required` 核对全部选择与身份。当前 PostgreSQL job 4:30，旧运行 33974248356 的 legacy job 为 58:25；覆盖范围分层，不以两者声称同范围性能提升。远程新库、重复迁移数据摘要、租户/人审/幂等、认证恢复、负例拒绝、固定镜像回退及清理通过。首轮 `fb0da14` 失败来自夹具临时去重键；本地复现后改用实际 MCP 的标准 key，新增启动迁移回归并在新 SHA 复验。工程 DONE、用户验收待完成、main 未集成、未发布；本记录随下一批提交，不单独触发一轮 CI。
+
+### 第一批：私有账户 → 商机地图查证 → 行动接续（2026-09-05 启动）
+
+| 项目 | 本批登记 |
+|---|---|
+| 用户成果 | 复用曹经理 C1/C2/C4/C5：注册私人账户，从商机查人物与依据，人工确认关注和下一步，刷新/今日继续 |
+| 范围 | CORE-208、CORE-209、CORE-210、SAAS-213、SAAS-216，单项依次进行。Auth 与验证/API；共享 CRM/authority/capability 契约及必要 migration；商业壳、商机盘、通用上下文、关系图/详情、快速记录、相关样式及测试。原 Canvas、评分、自我修养与生产工作流不改 |
+| 验证 | 鉴权事务失败回滚、双私人租户与直接 API；领域权威逐项盘点；命令租户/当前角色/版本/幂等/审计；按影响双库与备份恢复；gstack browse 在隔离合成环境走真实表单、地图/列表和上下文切换；批末集中精确 SHA CI |
+| 交付 | 本地独立端口预览和 3–5 步体验路径；分支 `codex/core-208-personal-crm-batch1`，仍在用户指定 worktree；基线与回滚点 `214a132493cb7717df637fee06a479951f4c4f1f`。本批 PR 以 CORE-215 候选为基线，保持 PR #47 验收版本不变 |
+| 授权 | 用户本轮明确要求 CORE-215 后按已批准计划继续，实现/审查/测试/修复/批次推送自动进行；main 合并、正式发布、既有库破坏性操作、对外发送均未授权 |
+
+CORE-208 文件：`server/src/auth.ts`、`server/tests/personal-auth.test.ts`、`app/src/components/Auth.tsx`、`app/src/lib/authValidation.ts` 及既有测试、`app/src/api.ts`。无 schema 或全局身份唯一索引；新的无组织名个人注册以 `scoped` 租户保存，保留显式旧工作区参数及旧身份选择。租户和 owner 在同一事务创建，失败不签发 token、不留下半成品。CORE-209 的字段/命令设计完成后，再登记 CORE-210 的具体修改清单。
+
+- [x] CORE-208：完成个人注册与鉴权回归，独立本地 commit。
+- [x] CORE-209：形成 C1–C7 唯一权威、最小补齐与历史映射，独立文档核验和 commit。
+- [x] CORE-210：补齐必要命令/投影/结构，本地安全与 SQLite 验证通过；PostgreSQL 实测保留为批次远程 Gate，独立 commit。
+- [x] SAAS-213：收敛入口与商机接续，类型/消费者及浏览器验证，独立 commit。
+- [x] SAAS-216：图内证据、关注与行动衔接，本地真实交互及批次回归，独立 commit。
+- [ ] 批末：集中候选 PR、精确 SHA CI、预览与工程验收记录；用户验收、main 与发布分别记录。
 
 ### CORE-208：私有账户默认与鉴权（2d）
 
@@ -164,6 +185,8 @@ CORE-211 依赖盘点 → CORE-212 schema 权威与迁移衔接
 
 **验收：** 两个个人账户无法互读；直接 API 不能借隐藏入口绕过授权；保留角色/资源权限安全测试；注册失败和身份冲突有明确行为。无需迁入旧测试账号、协作数据或历史租户，不为它们安排保全与身份合并项目。
 
+**CORE-208 本地验收（2026-09-05）：** 新增 6 个真实 API/数据库用例，包括注入 User INSERT 失败后租户和用户均不增长、两个私人租户互不读取、过期角色与隐藏能力拒绝、显式工作区兼容、同号不同密码不暴露其它候选，以及显式错误工作区不被静默忽略。相关 Server 4 文件/19 tests、App 类型/60 文件/412 tests、Server 类型和 G64111 类型/2 文件/32 tests 通过。技术自查确认无 schema、全局唯一索引、现有租户切换、权限放宽或凭据日志。gstack browse 在独立 5188/3188 与 `/tmp/jianghu-batch1-preview-qodmwmer/preview.db` 完成无组织名邮箱注册、服务重启后登录、刷新接续；完成正常初始化后控制台无错误。预览只有合成账户；本项本地 DONE，批次远程和地图体验仍待完成。
+
 ### CORE-209：客户决策与行动权威设计（3d）
 
 **主要位置：** `packages/domain-contracts/src/crm.ts`、`authority.ts`、`methodology.ts`、`matterPortfolio.ts`、`relationshipWorkspace.ts`、`intelligence.ts`；`server/prisma/schema.prisma`；`server/src/crmContext.ts`、`server/src/methodology/`、`server/src/matterPortfolio/`、`server/src/intelligenceFocus/`、`server/src/hypotheses/`、`server/src/mcpServer.ts`。本项先形成领域设计与任务实施计划，不执行 migration。
@@ -171,6 +194,10 @@ CORE-211 依赖盘点 → CORE-212 schema 权威与迁移衔接
 **结果：** 对待判断线索、销售进展、客户业务目标、本次决策中的人物角色、关系依据、关键缺口、六问核实状态、行动预期/结果与候选入口，逐项给出当前权威、最小复用方式、写命令和历史映射。阶段不依赖 G64111 安装，不与 MethodologyStageState、pipelineStage、OppStage 建立双主写入。焦点沿用 StakeholderFocus，不回写 primaryDPersonId；行动沿用 Commitment。盘点旧 MCP `sync_business` 与候选权限，明确新 Agent 通路只读/提案/人审边界，不在此项改造客户端。
 
 **验收：** C1–C7 的每项数据和动作有明确权威；同一人在不同商机中的角色、转述与已采纳状态、过期/冲突来源、无包与历史绑定、阶段回退/暂停和恢复均有映射；不会用“新值为空就读旧值”掩盖权威冲突。具体阶段列表、字段和存储选择属于该项设计结果，不能假定本 ADR 已批准一套固定行业流程。若盘点后实现缺口超过 CORE-210 的 3d 边界，先按独立验收项拆分清单，不隐式扩大任务。
+
+**CORE-209 本地设计验收（2026-09-05）：** [领域权威设计](../../designs/2026-09-05-personal-crm-domain-authority.md) 完成 C1–C7 当前字段、最小命令、来源/角色隔离、生命周期兼容和旧 MCP scope 的盘点。保留销售阶段独立文本与无包路径；六问 topicKey、普通行动结果分别归下一批任务，未在本项执行 migration。设计无新增产品方向、生产操作或方法论改造，按已有批次授权自动进入 CORE-210。
+
+**CORE-210 文件白名单：** 新增 `packages/domain-contracts/src/personalWorkbench.ts` 与测试、`server/src/personalWorkbench/` 与测试；修改共享导出、`crm.ts` 的 Commitment expectedSignal、`authority.ts`；`server/prisma/schema.prisma`、生成的 PostgreSQL schema 和追加 migration；`server/src/app.ts` 路由接线、`mutation/commandRunner.ts` 脱敏、`mutation/commitments.ts` 与 `commitment/view.ts`；`intelligenceFocus/service.ts`、`hypotheses/service.ts`、`relationshipWorkspace/service.ts` 的具体能力边界及关联测试。按实际 select 补齐 Commitment 消费者字段，范围仍只限该契约接线。隔离 PostgreSQL fixture 随批次增加个人场景；不改生产工作流、历史 migration、旧客户端 scope 或旧 Canvas。
 
 ### CORE-210：最小正式命令与迁移（3d）
 
@@ -180,6 +207,10 @@ CORE-211 依赖盘点 → CORE-212 schema 权威与迁移衔接
 
 **验收：** 跨租户、viewer 写入、版本冲突、重复采纳失败/回放路径均符合既有约束；AI 候选在确认前零正式变化；适用引擎的空库初始化、合成数据持久化和相关 schema 变更通过，新基线恢复/回滚按影响检查。无 schema 差异时明确记录，不制造空 migration；不搬运或逐历史版本升级旧假数据。
 
+**CORE-210 本地验收（2026-09-05）：** 新个人 API 在仅 crm.core 的隔离预览保存客户、无包商机、人物、角色、来源和 Commitment 预期；阶段前进/退回待判断、暂停/恢复、赢单/重新开始保留 ID。新增 6 个 API 集成用例与 8 个共享契约用例，包含事务失败回滚、CAS、重复请求、同人跨商机角色独立、来源版本/归档隐藏、跨租户/当前角色/Agent 伪造拒绝。Domain 18/169、App 60/412、G64111 2/32、各类型、41 个 CI 脚本用例通过。完整 Server 125 文件/988 项中 986 通过，两项旧 capability 预期按批准的个人范围更新后，相关 3 文件/15 项复验通过。SQLite 受控升级和重复初始化后 Account/Opportunity/PDE context/Person/Participant/PlanAction/Audit/CommandRun 摘要相同（224ab4a873cca7af9f35bbed2a1b8b7418e0336d32713d1043bcf518db17a9be）。新增 PostgreSQL migration 与生成 schema 一致，隔离 fixture 已扩展；真实 PostgreSQL 运行和当前新 SHA 远程 CI 仍待本批末。技术自查保持历史长文本可读、旧 scope 不扩权、日志脱敏和 source 精确引用。
+
+**SAAS-213 页面实施范围：** `app/src/components/CommercialShell.tsx`、新增个人商机列表/详情与表单组件、`CrmContextPages.tsx`、`TodayPanel.tsx`、`QuickCapture.tsx`、`app/src/lib/productRoutes.ts` 及必要的小型个人工作台 adapter / `app/src/api.ts` / `styles.css` 与测试；共享 capability registry 只调整默认入口顺序、名称和说明。使用 `/matters/:id` 保留商机深链，以 `/quick-capture/:customerId/:matterId` 保留记录上下文；不修改 App 主站导航或 Vite/锁文件。SAAS-216 再为复用地图补选择、证据与行动；不改旧 Canvas。
+
 ### SAAS-213：商机、今日、客户与地图入口（3d）
 
 **主要位置：** `app/src/components/CommercialShell.tsx`、`MatterPortfolioPanel.tsx`、`CrmContextPages.tsx`、`TodayPanel.tsx`、`QuickCapture.tsx`；`app/src/lib/productRoutes.ts`；必要的 capability/组合投影。
@@ -188,6 +219,10 @@ CORE-211 依赖盘点 → CORE-212 schema 权威与迁移衔接
 
 **验收：** 无包/无 Key/无 WorkBuddy 场景可以手动工作；多个客户、多条商机的上下文不串写；刷新、空态、权限变化后不显示过期他人数据；旧高级能力与历史记录有受控入口。App 主站导航、Vite、锁文件和自我修养路径不在本项默认修改范围。
 
+**SAAS-213 本地验收（2026-09-05）：** 三主入口、全局记录和上下文深链完成。真实浏览器在仅 crm.core 的隔离库创建空阶段线索，更新目标/阶段、暂停后筛选找回，ID 不变；从商机进入快速记录及整页刷新保留客户与商机关联；390×844 无横向溢出、无控制台错误。App 61/416、Domain 18/169、G64111 2/32、Server 相关 3/13、各类型及临时目录 build 通过；新增 Customer 分类消费者进入 authority inventory，消费者复制已刷新。无 App.tsx、锁文件、自我修养或生产变更；远程证据仍待批末。
+
+**SAAS-216 接续范围：** 在个人商机详情中复用 `CrmRelationshipGraph.tsx`，新增独立的个人地图操作面板与 action draft adapter；按共享契约接通既有 intelligence/focus/hypothesis/commitment API。新增人物、关系与角色来源使用 CORE-210 正式命令。原 `RelationshipWorkspacePanel.tsx` 保留历史受控入口；新默认体验不使用其直接确认建行动的流程。按发现的边界缺陷补充现有服务与测试，不扩展高级能力或 Agent 写权限。
+
 ### SAAS-216：商机地图、证据与行动衔接（3d）
 
 **主要位置：** `app/src/components/CrmRelationshipGraph.tsx`、`RelationshipWorkspacePanel.tsx`、`CrmContextPages.tsx`；`app/src/lib/relationshipWorkspace.ts`；`server/src/relationshipWorkspace/`。复用对应组件/服务测试和 `app/src/testFixtures/relationshipWorkspace.ts`，不重写旧 Canvas 或评分引擎。
@@ -195,6 +230,8 @@ CORE-211 依赖盘点 → CORE-212 schema 权威与迁移衔接
 **结果：** 地图作为商机详情主要界面，连接客户业务目标、人物/关系依据、当前缺口和行动；选择节点/关系后可查来源、确定关注对象、创建未提交的验证行动。小屏与无图操作路径保持相同上下文，不要求用户维护全部 L1–L4 标签或完整组织图。
 
 **验收：** C2/C4/C5 成立；未知决策人不会生成虚构节点；同一人物跨商机的角色不互相覆盖；候选/假设/已采纳记录可区分；无 G64111 路径无评分空壳；来源撤销或版本变化后隐藏受限正文并提示复核；布局和看图操作零正式写入，创建行动仍由用户确认。
+
+**SAAS-216 本地验收（2026-09-05）：** [第一批体验与技术记录](../../qa/2026-09-05-personal-crm-batch1.md) 已落盘。App 63/423、Domain 169、G64111 32、Server 关联 27 项、各类型/build 与 CI 脚本 41 项通过；真实浏览器完成人物/关系来源、关注、判断和行动草稿至今日回路，看图零命令，确认单次写入；来源更新/撤回隐藏旧正文与旧作用，关闭失效草稿；同一人物的跨商机作用独立，390px 列表无溢出。技术自查修复竖直关系的点击面积。保持原 Canvas、公式、App 主站导航、锁文件、自我修养和生产不变。本批精确 SHA CI、PostgreSQL 及用户验收仍在各自 Gate 核对，不以本地或旧 CI 代替。
 
 ### SAAS-214：会后速审与情境六问（3d）
 
