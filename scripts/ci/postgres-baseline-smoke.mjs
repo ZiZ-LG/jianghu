@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
-import { createPersonCandidate } from './src/candidates/personRelation.ts';
+import { createPersonCandidate, personCandidateDedupeKey } from './src/candidates/personRelation.ts';
 
 const url = new URL(process.env.DATABASE_URL);
 assert.equal(process.env.CI_CURRENT_BASELINE, '1');
@@ -52,7 +52,8 @@ try {
         accountId: left.customerId, matterId: null, name: `Synthetic ${suffix}`, title: 'Unknown',
         orgLevel: 3, source: 'mcp', sourceRef: `core215:synthetic:${suffix}`,
         evidence: 'Synthetic test source; human review required', confidence: 0.6,
-        createdByUserId: left.user.id, dedupeKey: `core215-person-${suffix}` };
+        createdByUserId: left.user.id,
+        dedupeKey: personCandidateDedupeKey(left.customerId, `Synthetic ${suffix}`) };
       const first = await createPersonCandidate(db, input);
       const replay = await createPersonCandidate(db, { ...input, id: `${input.id}-replay` });
       assert.equal(first.created, true);
