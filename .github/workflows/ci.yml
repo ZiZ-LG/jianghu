@@ -2,19 +2,95 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      legacy_postgres:
+        description: Also exercise the retained historical database adoption suite
+        type: boolean
+        default: false
+  schedule:
+    - cron: '23 10 * * 1'
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && github.run_attempt == 1 && format('ci-pr-{0}', github.event.pull_request.number) || format('ci-run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.run_attempt == 1 }}
+
+env:
+  CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
+
 jobs:
-  domain-contracts:
+  select:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      selection: ${{ steps.plan.outputs.selection }}
+      docs: ${{ steps.plan.outputs.docs }}
+      domain-contracts: ${{ steps.plan.outputs.domain-contracts }}
+      app: ${{ steps.plan.outputs.app }}
+      server: ${{ steps.plan.outputs.server }}
+      g64111: ${{ steps.plan.outputs.g64111 }}
+      pde-kernel: ${{ steps.plan.outputs.pde-kernel }}
+      dependency-audit: ${{ steps.plan.outputs.dependency-audit }}
+      production-images: ${{ steps.plan.outputs.production-images }}
+      postgres-operations: ${{ steps.plan.outputs.postgres-operations }}
+      legacy-postgres-operations: ${{ steps.plan.outputs.legacy-postgres-operations }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CI_HEAD_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test scripts/ci/*.test.mjs
+      - id: plan
+        name: Select checks for the entire candidate
+        env:
+          CI_LEGACY: ${{ inputs.legacy_postgres || 'false' }}
+          CI_SELECTION_FILE: ${{ runner.temp }}/ci-selection.json
+        run: node scripts/ci/select-checks.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-selection-${{ env.CI_HEAD_SHA }}
+          path: ${{ runner.temp }}/ci-selection.json
+          if-no-files-found: error
+
+  docs:
+    needs: select
+    if: needs.select.outputs.docs == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CI_HEAD_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/ci/check-docs.mjs
+
+  domain-contracts:
+    needs: select
+    if: needs.select.outputs.domain-contracts == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: packages/domain-contracts
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CI_HEAD_SHA }}
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -25,12 +101,18 @@ jobs:
       - run: npm test
 
   app:
+    needs: select
+    if: needs.select.outputs.app == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: app
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CI_HEAD_SHA }}
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -42,7 +124,10 @@ jobs:
       - run: npm run build
 
   server:
+    needs: select
+    if: needs.select.outputs.server == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       DATABASE_URL: file:./test.db
     defaults:
@@ -50,6 +135,9 @@ jobs:
         working-directory: server
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CI_HEAD_SHA }}
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -62,12 +150,18 @@ jobs:
       - run: npm test
 
   g64111:
+    needs: select
+    if: needs.select.outputs.g64111 == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: packages/g64111
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CI_HEAD_SHA }}
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -78,12 +172,18 @@ jobs:
       - run: npm test
 
   pde-kernel:
+    needs: select
+    if: needs.select.outputs.pde-kernel == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: packages/pde-kernel
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CI_HEAD_SHA }}
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -94,7 +194,10 @@ jobs:
       - run: npm test
 
   dependency-audit:
+    needs: select
+    if: needs.select.outputs.dependency-audit == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -109,6 +212,9 @@ jobs:
         working-directory: ${{ matrix.package }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CI_HEAD_SHA }}
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -116,10 +222,12 @@ jobs:
           cache-dependency-path: ${{ matrix.package }}/package-lock.json
       - run: npm ci --install-links
       - run: npm audit --audit-level=high
-      - run: npm audit --omit=dev --audit-level=high
 
   production-images:
+    needs: select
+    if: needs.select.outputs.production-images == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       POSTGRES_PASSWORD: ci-build-only
       JWT_SECRET: ci-build-only
@@ -127,10 +235,51 @@ jobs:
       OUTBOUND_ALLOWED_HOSTS: example.com
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CI_HEAD_SHA }}
+          persist-credentials: false
       - run: docker compose build server web
 
   postgres-operations:
+    needs: select
+    if: needs.select.outputs.postgres-operations == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CI_HEAD_SHA }}
+          persist-credentials: false
+      - run: bash scripts/test-postgres-current-baseline.sh
+
+  legacy-postgres-operations:
+    needs: select
+    if: needs.select.outputs.legacy-postgres-operations == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CI_HEAD_SHA }}
+          persist-credentials: false
       - run: bash scripts/test-postgres-ops-integration.sh
+
+  required:
+    name: CI required
+    if: always()
+    needs: [select, docs, domain-contracts, app, server, g64111, pde-kernel, dependency-audit, production-images, postgres-operations, legacy-postgres-operations]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CI_HEAD_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify every required result for this exact candidate
+        env:
+          CI_SELECTION: ${{ needs.select.outputs.selection }}
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: node scripts/ci/verify-results.mjs

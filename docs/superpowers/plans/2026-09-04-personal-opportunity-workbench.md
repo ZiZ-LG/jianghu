@@ -132,6 +132,30 @@ CORE-211 依赖盘点 → CORE-212 schema 权威与迁移衔接
 
 **验收：** 纯说明文档、被构建消费的资料、前端、后端、共享契约、schema、依赖、运维及检查器自身变化均有路由证据；全部候选差异与传递依赖纳入选择，未知范围扩大检查；必需汇总不会把失败/取消/漏跑写成成功；避免 push/PR 重复，过时开发运行可取消，发布运行不被误取消；main 的轻量结果不能触发未经完整验证的发布。保留精确 SHA、租户/人审/审计与新基线恢复、回滚证据。先用隔离测试与配置核验验证工作流变化，再按实际必需检查交付，不通过关闭保护实现提速。若必须改动排除的发布线才能达成，先提出具体方案，不能越界实施。
 
+#### CORE-215 实施批次（2026-09-05 启动）
+
+| 项目 | 本次登记 |
+|---|---|
+| 用户成果 | 说明文档在开发 PR 只做轻量核验；代码按整个候选影响选检查；一次提交只运行一次开发 CI，失败和漏跑明确阻断 |
+| 范围 | `.github/workflows/ci.yml`、新增 `scripts/ci/` 选择/汇总/文档检查及测试、`scripts/test-postgres-current-baseline.sh`、必要的隔离 fixture；同步本计划、协议过渡提示与商业清单。旧 PostgreSQL 演练及所有生产/自我修养工作流只读保留 |
+| 验证 | Node 内置测试覆盖路由、累计差异、未知范围、消费者、失败/取消/漏跑、版本身份与发布边界；本地类型及关联回归；GitHub 精确候选 SHA 的完整检查和新 PostgreSQL 空库/持久化/恢复/回滚实测 |
+| 交付 | 本批候选 PR 与 CI 运行摘要、检查选择 JSON 和耗时；回滚点 `1176cda2090bef79f481984fd4d6011d310677e9`。后续进入 CORE-208～210、SAAS-213/216 的可体验批次 |
+| 授权 | 本轮用户明确授权研发、技术审查、测试、修复及按协议集中推送；不合并 main、不部署、不触碰 PR #46/自我修养、不操作既有数据库 |
+
+**实现选择：** `CI` 名称继续保留。开发使用 `pull_request`，push 只接受 main；人工完整核验与每周安全检查使用独立事件。只有同一 PR 的旧运行自动取消，main/人工/定期检查按 run ID 独立执行。共享发布当前仅以 main push 的 CI success 为上游，因此 main 一律完整核验；本批不让 main 产生轻量发布放行结果，也不修改发布流程。合并仍须明确授权。
+
+**文件与接口：** `scripts/ci/select-checks.mjs` 消费 base/head Git 对象和事件，输出版本化 JSON（精确 SHA、merge base、整个候选路径、所需 job 和原因）；`scripts/ci/check-docs.mjs` 校验变更 Markdown 的新增链接与商业任务一致性；`scripts/ci/verify-results.mjs` 消费选择 JSON 与 `needs` 结果，仅当所有必要任务成功且身份一致时通过。Node 测试使用临时 Git 仓库验证真实累计差异，不依赖网络或 npm 包。
+
+- [x] 先以 `node --test scripts/ci/*.test.mjs` 固定路由与失败汇总边界：说明文档、消费文档、前端、后端、三共享包、依赖、schema、运维、未知路径、选择器自身；rename/delete 和早期代码后续文档均保留影响。
+- [x] 实现选择与文档检查：未知影响完整选择；共享包扩大到消费者；依赖变化/定期/完整检查保留五包 audit；工作流始终启动固定 `CI required` 汇总。
+- [ ] 新建隔离 PostgreSQL 入口：只创建本任务随机 Compose 项目和临时目录；空库 `migrate deploy`、重复迁移、合成数据、重启持久化、认证备份/恢复、错误密钥/篡改/坏归档/危险目标拒绝及应用镜像回滚。旧 2743 行接续演练原样留档，不再用于每次普通开发。
+- [x] 工作流接线与自查：`git diff --check`、Node 边界测试、YAML/表达式检查、Bash 语法、关联 Server/五包回归；通过 `verification-before-completion` 核对实际证据再提交。
+- [ ] 集中推送候选并创建本批 draft PR，核对精确 head/base、运行事件、attempt、全部所选 job、PostgreSQL 标记与耗时。结果引用不可变运行，不为回写成功记录重复触发全量 CI；未完成的远程验证不写成通过。
+
+**本地环境核对：** 2026-09-05 当前工作区干净且 HEAD 精确为上述回滚点；Docker daemon 的 Unix socket 不存在，数据库实测由 GitHub 隔离 runner 承担。未启动或连接任何既有部署环境。
+
+**本地核验（2026-09-05）：** 41 个 Node 边界测试、actionlint 1.7.12、Bash 语法、工作文档新增链接/历史一致性及 `git diff --check` 通过；Domain 17/161、App 60/413 + production build、Server 122/975、G64111 2/32、PDE 3/25 与全部类型检查、Prisma generate/PostgreSQL schema check 通过。技术自查补强人工完整验证仍使用候选相对 main 的累计差异，并阻止重跑旧 PR 自动取消较新运行。PostgreSQL 新入口已实现，Docker 本地不可用，真实运行及最终 SHA CI 待远程验证；未声称 CORE-215 DONE。
+
 ### CORE-208：私有账户默认与鉴权（2d）
 
 **主要位置：** `server/src/auth.ts`、`server/src/scope.ts`、`packages/domain-contracts/src/capabilities.ts`、`app/src/components/Auth.tsx`；现有 auth/capability/scope 测试。
