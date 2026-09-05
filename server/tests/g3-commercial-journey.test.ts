@@ -59,7 +59,7 @@ describe('SAAS-106 commercial Free first-day stage gate', () => {
         policy: { entitlements: ['crm.core'], permissions: [] },
       });
       expect(me.json().product.navigation.map((entry: { id: string }) => entry.id)).toEqual([
-        'today', 'customers', 'matters', 'quick-capture',
+        'matters', 'today', 'customers', 'quick-capture',
       ]);
 
       const denied = await Promise.all([
