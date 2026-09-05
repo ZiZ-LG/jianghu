@@ -171,7 +171,7 @@ CORE-211 依赖盘点 → CORE-212 schema 权威与迁移衔接
 CORE-208 文件：`server/src/auth.ts`、`server/tests/personal-auth.test.ts`、`app/src/components/Auth.tsx`、`app/src/lib/authValidation.ts` 及既有测试、`app/src/api.ts`。无 schema 或全局身份唯一索引；新的无组织名个人注册以 `scoped` 租户保存，保留显式旧工作区参数及旧身份选择。租户和 owner 在同一事务创建，失败不签发 token、不留下半成品。CORE-209 的字段/命令设计完成后，再登记 CORE-210 的具体修改清单。
 
 - [x] CORE-208：完成个人注册与鉴权回归，独立本地 commit。
-- [ ] CORE-209：形成 C1–C7 唯一权威、最小补齐与历史映射，独立文档核验和 commit。
+- [x] CORE-209：形成 C1–C7 唯一权威、最小补齐与历史映射，独立文档核验和 commit。
 - [ ] CORE-210：补齐盘点证明必要的命令/投影/结构，运行适用安全与双库验证，独立 commit。
 - [ ] SAAS-213：收敛入口与商机接续，类型/消费者及浏览器验证，独立 commit。
 - [ ] SAAS-216：图内证据、关注与行动衔接，真实交互及批次回归，独立 commit。
@@ -194,6 +194,10 @@ CORE-208 文件：`server/src/auth.ts`、`server/tests/personal-auth.test.ts`、
 **结果：** 对待判断线索、销售进展、客户业务目标、本次决策中的人物角色、关系依据、关键缺口、六问核实状态、行动预期/结果与候选入口，逐项给出当前权威、最小复用方式、写命令和历史映射。阶段不依赖 G64111 安装，不与 MethodologyStageState、pipelineStage、OppStage 建立双主写入。焦点沿用 StakeholderFocus，不回写 primaryDPersonId；行动沿用 Commitment。盘点旧 MCP `sync_business` 与候选权限，明确新 Agent 通路只读/提案/人审边界，不在此项改造客户端。
 
 **验收：** C1–C7 的每项数据和动作有明确权威；同一人在不同商机中的角色、转述与已采纳状态、过期/冲突来源、无包与历史绑定、阶段回退/暂停和恢复均有映射；不会用“新值为空就读旧值”掩盖权威冲突。具体阶段列表、字段和存储选择属于该项设计结果，不能假定本 ADR 已批准一套固定行业流程。若盘点后实现缺口超过 CORE-210 的 3d 边界，先按独立验收项拆分清单，不隐式扩大任务。
+
+**CORE-209 本地设计验收（2026-09-05）：** [领域权威设计](../../designs/2026-09-05-personal-crm-domain-authority.md) 完成 C1–C7 当前字段、最小命令、来源/角色隔离、生命周期兼容和旧 MCP scope 的盘点。保留销售阶段独立文本与无包路径；六问 topicKey、普通行动结果分别归下一批任务，未在本项执行 migration。设计无新增产品方向、生产操作或方法论改造，按已有批次授权自动进入 CORE-210。
+
+**CORE-210 文件白名单：** 新增 `packages/domain-contracts/src/personalWorkbench.ts` 与测试、`server/src/personalWorkbench/` 与测试；修改共享导出、`crm.ts` 的 Commitment expectedSignal、`authority.ts`；`server/prisma/schema.prisma`、生成的 PostgreSQL schema 和追加 migration；`server/src/app.ts` 路由接线、`mutation/commandRunner.ts` 脱敏、`mutation/commitments.ts` 与 `commitment/view.ts`；`intelligenceFocus/service.ts`、`hypotheses/service.ts`、`relationshipWorkspace/service.ts` 的具体能力边界及关联测试。按实际 select 补齐 Commitment 消费者字段，范围仍只限该契约接线。隔离 PostgreSQL fixture 随批次增加个人场景；不改生产工作流、历史 migration、旧客户端 scope 或旧 Canvas。
 
 ### CORE-210：最小正式命令与迁移（3d）
 
