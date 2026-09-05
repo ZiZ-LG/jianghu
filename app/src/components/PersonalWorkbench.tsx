@@ -5,17 +5,8 @@ import { createOpaqueEntityId } from '../lib/opaqueId';
 import { personalLifecycleLabel, personalTime, selectPersonalMatters, usePersonalRead, usePersonalSubmission } from '../lib/personalWorkbench';
 import { personalMatterPath, personalRouteContext, quickCapturePath } from '../lib/productRoutes';
 import { CrmRelationshipGraph } from './CrmRelationshipGraph';
-
-export function PersonalForm({ title, busy, error, onSubmit, onClose, children, submitLabel = '确认保存' }: {
-  title: string; busy: boolean; error: string; onSubmit: (event: FormEvent) => void; onClose: () => void; children: ReactNode; submitLabel?: string;
-}) {
-  return <form className="personal-form" aria-label={title} onSubmit={onSubmit}>
-    <header><h3>{title}</h3><button type="button" className="btn ghost sm" disabled={busy} onClick={onClose}>收起</button></header>
-    <fieldset disabled={busy}>{children}</fieldset>
-    {error ? <p className="personal-error" role="alert">{error}</p> : null}
-    <button className="btn primary" type="submit" disabled={busy}>{busy ? '正在保存…' : submitLabel}</button>
-  </form>;
-}
+import { PersonalForm } from './PersonalForm';
+import { PersonalMapWorkspace } from './PersonalMapWorkspace';
 
 export function PersonalCustomerForm({ actorUserId, onSaved, onClose }: { actorUserId: string; onSaved: () => void; onClose: () => void }) {
   const [name, setName] = useState(''), [id] = useState(() => createOpaqueEntityId('customer'));
@@ -127,11 +118,14 @@ export function PersonalMatterView({ detail, readonly, onRefresh, onNavigate, ch
   </article>;
 }
 
-function PersonalMatterPanel({ matterId, readonly, onNavigate }: { matterId: string; readonly: boolean; onNavigate: (path: string) => void }) {
+function PersonalMatterPanel({ matterId, readonly, actorUserId, onNavigate, onDataChanged }: { matterId: string; readonly: boolean; actorUserId: string; onNavigate: (path: string) => void; onDataChanged: () => Promise<unknown> }) {
   const view = usePersonalRead(signal => api.personalMatter(matterId, signal));
+  const refresh = async () => { await Promise.allSettled([view.reload(), onDataChanged()]); };
   return <section data-personal-workbench={view.error ? 'error' : view.data ? 'ready' : 'loading'}>
     <ReadFeedback {...view} />
-    {view.data ? <div hidden={view.loading}><PersonalMatterView detail={view.data} readonly={readonly} onRefresh={view.reload} onNavigate={onNavigate} /></div> : null}
+    {view.data ? <div hidden={view.loading}><PersonalMatterView detail={view.data} readonly={readonly} onRefresh={refresh} onNavigate={onNavigate}>
+      <PersonalMapWorkspace detail={view.data} actorUserId={actorUserId} readonly={readonly} onRefresh={refresh} onToday={() => onNavigate('/today')} />
+    </PersonalMatterView></div> : null}
   </section>;
 }
 
@@ -139,6 +133,6 @@ export function PersonalWorkbench({ pathname, readonly, actorUserId, onNavigate,
   pathname: string; readonly: boolean; actorUserId: string; onNavigate: (path: string) => void; onDataChanged: () => Promise<unknown>;
 }) {
   const { matterId } = personalRouteContext(pathname);
-  return matterId ? <PersonalMatterPanel key={`${actorUserId}:${matterId}:${readonly}`} matterId={matterId} readonly={readonly} onNavigate={onNavigate} />
+  return matterId ? <PersonalMatterPanel key={`${actorUserId}:${matterId}:${readonly}`} matterId={matterId} actorUserId={actorUserId} readonly={readonly} onNavigate={onNavigate} onDataChanged={onDataChanged} />
     : <PersonalMatterList key={`${actorUserId}:${readonly}`} actorUserId={actorUserId} readonly={readonly} onNavigate={onNavigate} onDataChanged={onDataChanged} />;
 }

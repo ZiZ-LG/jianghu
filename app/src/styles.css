@@ -120,6 +120,45 @@ button.commercial-shell-row:hover { background: var(--hover); }
 .personal-lifecycle { margin-top: 24px; border-top: 1px solid var(--line); padding-top: 18px; color: var(--ink-2); }
 .personal-lifecycle summary { cursor: pointer; padding: 8px 0; }
 .personal-lifecycle > div { display: flex; flex-wrap: wrap; gap: 8px; }
+.personal-map-layout { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(290px, 1fr); gap: 20px; align-items: start; }
+.personal-map-reading { min-width: 0; position: sticky; top: 12px; }
+.personal-map-inspector { padding: 18px; border: 1px solid var(--line); border-radius: 12px; overflow-wrap: anywhere; }
+.personal-map-inspector > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.personal-map-inspector h3 { margin: 0; font-size: 18px; }
+.personal-map-inspector h4 { margin: 22px 0 10px; font-size: 13px; color: var(--ink-2); }
+.personal-map-inspector p { line-height: 1.7; }
+.personal-inspector-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.personal-inspector-actions .btn { min-height: 44px; }
+.personal-evidence-list article { padding: 12px 0; border-top: 1px solid var(--line); }
+.personal-evidence-list header { display: flex; justify-content: space-between; gap: 8px; }
+.personal-evidence-list strong { font-size: 12px; color: var(--accent); }
+.personal-evidence-list small, .personal-commitments small { display: block; line-height: 1.7; color: var(--ink-2); font-size: 12px; }
+.personal-evidence-list p { margin: 8px 0; }
+.personal-map-layers { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; margin-bottom: 14px; }
+.personal-map-layers label { display: flex; align-items: center; gap: 8px; min-height: 44px; }
+.personal-map-list-row { width: 100%; padding: 14px; display: grid; gap: 7px; border: 0; border-bottom: 1px solid var(--line); text-align: left; color: var(--ink); background: var(--panel); cursor: pointer; }
+.personal-map-list-row span, .personal-map-list-row small { color: var(--ink-2); }
+.personal-map-list-row:hover, .personal-map-list-row[aria-pressed="true"] { background: var(--hover); }
+.personal-map-list-row[aria-pressed="true"] { box-shadow: inset 3px 0 var(--accent); }
+.personal-map-section svg [role="button"] { cursor: pointer; }
+.personal-map-section svg [role="button"]:focus-visible { outline: none; }
+.personal-map-section svg [role="button"]:focus-visible circle, .personal-map-section svg [role="button"]:focus-visible .crm-relation-line { stroke: var(--accent); stroke-width: 4px; stroke-dasharray: 4 3; }
+.personal-map-section svg [aria-pressed="true"] circle { stroke: var(--accent); stroke-width: 4px; }
+.personal-map-section .crm-relation-line.selected { stroke: var(--accent); stroke-width: 4px; }
+.personal-relation-hit { fill: transparent; stroke: none; }
+.personal-current-focus { margin-top: 20px; padding: 18px; background: var(--hover); border-left: 3px solid var(--accent); overflow-wrap: anywhere; }
+.personal-current-focus h4 { margin: 0; }
+.personal-current-focus small { color: var(--ink-2); }
+.personal-hypothesis-list article, .personal-candidate-list article { padding: 18px; margin-top: 12px; border: 1px dashed var(--line); border-radius: 10px; overflow-wrap: anywhere; }
+.personal-candidate-list blockquote { margin: 10px 0; padding-left: 12px; border-left: 2px solid var(--line); }
+.personal-commitments { margin-top: 24px; }
+.personal-commitments ul { list-style: none; margin: 0; padding: 0; }
+.personal-commitments li { padding: 16px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.personal-commitments p { margin: 8px 0 0; color: var(--ink-2); }
+@media (max-width: 900px) {
+  .personal-map-layout { grid-template-columns: 1fr; }
+  .personal-map-reading { position: static; }
+}
 @media (max-width: 650px) {
   .personal-filters { grid-template-columns: 1fr 1fr; }
   .personal-filters label:first-child { grid-column: 1 / -1; }

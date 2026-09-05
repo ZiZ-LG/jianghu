@@ -206,8 +206,8 @@ export function CommercialShell({
         {advanced.length ? <details className="commercial-advanced"><summary>历史工具</summary><div>{advanced.map(entry => <button key={entry.id} data-product-entry={entry.id} aria-current={entry.id === route.entry.id ? 'page' : undefined} onClick={() => onNavigate(entry.path)}>{entry.label}</button>)}</div></details> : null}
       </nav>
       <main data-product-panel={route.entry.id} className="commercial-shell-panel">
-        <h1>{route.entry.title}</h1>
-        <p className="commercial-shell-description">{route.entry.description}</p>
+        {route.entry.id === 'matters' && context.matterId ? null : <><h1>{route.entry.title}</h1>
+          <p className="commercial-shell-description">{route.entry.description}</p></>}
         <ProductPanel
           key={`${actorUserId}:${route.entry.id}:${readonly}`}
           id={route.entry.id}

@@ -33,6 +33,12 @@ import {
 } from './lib/matterPortfolio';
 import {
   ActorRoleSchema,
+  IntelligenceItemCommandSchema,
+  IntelligenceItemCommandReceiptSchema,
+  StakeholderFocusCommandSchema,
+  StakeholderFocusCommandReceiptSchema,
+  type IntelligenceItemCommand,
+  type StakeholderFocusCommand,
   CustomerCreateCommandSchema,
   CustomerCommandReceiptSchema,
   PersonalWorkbenchCommandSchema,
@@ -606,6 +612,26 @@ export const api = {
     await req<unknown>('/api/crm/context'),
   ),
   personalWorkbench: async (signal?: AbortSignal) => PersonalWorkbenchListSchema.parse(await req<unknown>('/api/personal-workbench', { signal })),
+  intelligenceCommand: async (input: IntelligenceItemCommand, idempotencyKey: string) => {
+    const command = IntelligenceItemCommandSchema.parse(input);
+    const result = IntelligenceItemCommandReceiptSchema.parse(await commandReq<unknown>('/api/commands/intelligence-item', {
+      method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(command),
+    }));
+    const id = command.type === 'CREATE_INTELLIGENCE_ITEM' ? command.item.id : command.intelligenceItemId;
+    if (result.type !== command.type || result.intelligenceItemId !== id
+      || (command.type === 'CREATE_INTELLIGENCE_ITEM' && (result.customerId !== command.item.customerId || result.matterId !== command.item.matterId))) throw new Error('依据回执不一致，请刷新确认');
+    return result;
+  },
+  stakeholderFocusCommand: async (input: StakeholderFocusCommand, idempotencyKey: string) => {
+    const command = StakeholderFocusCommandSchema.parse(input);
+    const result = StakeholderFocusCommandReceiptSchema.parse(await commandReq<unknown>('/api/commands/stakeholder-focus', {
+      method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(command),
+    }));
+    const id = command.type === 'SET_STAKEHOLDER_FOCUS' ? command.focus.id : command.stakeholderFocusId;
+    if (result.type !== command.type || result.stakeholderFocusId !== id
+      || (command.type === 'SET_STAKEHOLDER_FOCUS' && (result.customerId !== command.focus.customerId || result.matterId !== command.focus.matterId || result.personId !== command.focus.personId))) throw new Error('关注回执不一致，请刷新确认');
+    return result;
+  },
   personalMatter: async (matterId: string, signal?: AbortSignal) => {
     const result = PersonalWorkbenchDetailSchema.parse(await req<unknown>(`/api/personal-workbench/${encodeURIComponent(matterId)}`, { signal }));
     if (result.opportunity.matter.id !== matterId) throw new Error('商机上下文不一致，请刷新');
