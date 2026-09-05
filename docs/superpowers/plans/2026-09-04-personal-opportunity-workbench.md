@@ -8,7 +8,7 @@
 
 **Tech Stack:** React + TypeScript + Vite；Fastify + Prisma；当前 SQLite 开发/测试与 PostgreSQL 生产；目标为 PostgreSQL 单一引擎。
 
-**状态：** 产品方向已批准；CORE-207 是本次执行任务，后续任务状态仅以商业清单为准。
+**状态：** 产品方向及续研已批准；CORE-215 工程完成，第一批产品从 CORE-208 接续；任务状态仅以商业清单为准。以下治理落盘记录按当时事实保留。
 
 **批准依据：** 2026-09-04 项目所有者回复“整体同意并批准。”；[ADR-004](../../ADR-004-个人商机推进工作台与研发范围收敛.md) 为本计划的产品与治理权威。
 
@@ -148,13 +148,34 @@ CORE-211 依赖盘点 → CORE-212 schema 权威与迁移衔接
 
 - [x] 先以 `node --test scripts/ci/*.test.mjs` 固定路由与失败汇总边界：说明文档、消费文档、前端、后端、三共享包、依赖、schema、运维、未知路径、选择器自身；rename/delete 和早期代码后续文档均保留影响。
 - [x] 实现选择与文档检查：未知影响完整选择；共享包扩大到消费者；依赖变化/定期/完整检查保留五包 audit；工作流始终启动固定 `CI required` 汇总。
-- [ ] 新建隔离 PostgreSQL 入口：只创建本任务随机 Compose 项目和临时目录；空库 `migrate deploy`、重复迁移、合成数据、重启持久化、认证备份/恢复、错误密钥/篡改/坏归档/危险目标拒绝及应用镜像回滚。旧 2743 行接续演练原样留档，不再用于每次普通开发。
+- [x] 新建隔离 PostgreSQL 入口：只创建本任务随机 Compose 项目和临时目录；空库 `migrate deploy`、重复迁移、合成数据、重启持久化、认证备份/恢复、错误密钥/篡改/坏归档/危险目标拒绝及应用镜像回滚。旧 2743 行接续演练原样留档，不再用于每次普通开发。
 - [x] 工作流接线与自查：`git diff --check`、Node 边界测试、YAML/表达式检查、Bash 语法、关联 Server/五包回归；通过 `verification-before-completion` 核对实际证据再提交。
-- [ ] 集中推送候选并创建本批 draft PR，核对精确 head/base、运行事件、attempt、全部所选 job、PostgreSQL 标记与耗时。结果引用不可变运行，不为回写成功记录重复触发全量 CI；未完成的远程验证不写成通过。
+- [x] 集中推送候选并创建本批 draft PR，核对精确 head/base、运行事件、attempt、全部所选 job、PostgreSQL 标记与耗时。结果引用不可变运行，不为回写成功记录重复触发全量 CI；未完成的远程验证不写成通过。
 
 **本地环境核对：** 2026-09-05 当前工作区干净且 HEAD 精确为上述回滚点；Docker daemon 的 Unix socket 不存在，数据库实测由 GitHub 隔离 runner 承担。未启动或连接任何既有部署环境。
 
 **本地核验（2026-09-05）：** 41 个 Node 边界测试、actionlint 1.7.12、Bash 语法、工作文档新增链接/历史一致性及 `git diff --check` 通过；Domain 17/161、App 60/413 + production build、Server 122/975、G64111 2/32、PDE 3/25 与全部类型检查、Prisma generate/PostgreSQL schema check 通过。技术自查补强人工完整验证仍使用候选相对 main 的累计差异，并阻止重跑旧 PR 自动取消较新运行。PostgreSQL 新入口已实现，Docker 本地不可用，真实运行及最终 SHA CI 待远程验证；未声称 CORE-215 DONE。
+
+**远程交付（2026-09-05 10:22 PDT）：** [PR #47](https://github.com/ZiZ-LG/jianghu/pull/47) 为 draft；精确候选 `214a132493cb7717df637fee06a479951f4c4f1f`，base `9cccff76c7f22fbf2449a7507ef6ad5be789ec10`。[CI 33980069852](https://github.com/ZiZ-LG/jianghu/actions/runs/33980069852) 为 pull_request / attempt 1 / completed / success，16 个 job 中 15 成功、legacy 按策略 skipped，`CI required` 核对全部选择与身份。当前 PostgreSQL job 4:30，旧运行 33974248356 的 legacy job 为 58:25；覆盖范围分层，不以两者声称同范围性能提升。远程新库、重复迁移数据摘要、租户/人审/幂等、认证恢复、负例拒绝、固定镜像回退及清理通过。首轮 `fb0da14` 失败来自夹具临时去重键；本地复现后改用实际 MCP 的标准 key，新增启动迁移回归并在新 SHA 复验。工程 DONE、用户验收待完成、main 未集成、未发布；本记录随下一批提交，不单独触发一轮 CI。
+
+### 第一批：私有账户 → 商机地图查证 → 行动接续（2026-09-05 启动）
+
+| 项目 | 本批登记 |
+|---|---|
+| 用户成果 | 复用曹经理 C1/C2/C4/C5：注册私人账户，从商机查人物与依据，人工确认关注和下一步，刷新/今日继续 |
+| 范围 | CORE-208、CORE-209、CORE-210、SAAS-213、SAAS-216，单项依次进行。Auth 与验证/API；共享 CRM/authority/capability 契约及必要 migration；商业壳、商机盘、通用上下文、关系图/详情、快速记录、相关样式及测试。原 Canvas、评分、自我修养与生产工作流不改 |
+| 验证 | 鉴权事务失败回滚、双私人租户与直接 API；领域权威逐项盘点；命令租户/当前角色/版本/幂等/审计；按影响双库与备份恢复；gstack browse 在隔离合成环境走真实表单、地图/列表和上下文切换；批末集中精确 SHA CI |
+| 交付 | 本地独立端口预览和 3–5 步体验路径；分支 `codex/core-208-personal-crm-batch1`，仍在用户指定 worktree；基线与回滚点 `214a132493cb7717df637fee06a479951f4c4f1f`。本批 PR 以 CORE-215 候选为基线，保持 PR #47 验收版本不变 |
+| 授权 | 用户本轮明确要求 CORE-215 后按已批准计划继续，实现/审查/测试/修复/批次推送自动进行；main 合并、正式发布、既有库破坏性操作、对外发送均未授权 |
+
+CORE-208 文件：`server/src/auth.ts`、`server/tests/personal-auth.test.ts`、`app/src/components/Auth.tsx`、`app/src/lib/authValidation.ts` 及既有测试、`app/src/api.ts`。无 schema 或全局身份唯一索引；新的无组织名个人注册以 `scoped` 租户保存，保留显式旧工作区参数及旧身份选择。租户和 owner 在同一事务创建，失败不签发 token、不留下半成品。CORE-209 的字段/命令设计完成后，再登记 CORE-210 的具体修改清单。
+
+- [x] CORE-208：完成个人注册与鉴权回归，独立本地 commit。
+- [ ] CORE-209：形成 C1–C7 唯一权威、最小补齐与历史映射，独立文档核验和 commit。
+- [ ] CORE-210：补齐盘点证明必要的命令/投影/结构，运行适用安全与双库验证，独立 commit。
+- [ ] SAAS-213：收敛入口与商机接续，类型/消费者及浏览器验证，独立 commit。
+- [ ] SAAS-216：图内证据、关注与行动衔接，真实交互及批次回归，独立 commit。
+- [ ] 批末：集中候选 PR、精确 SHA CI、预览与工程验收记录；用户验收、main 与发布分别记录。
 
 ### CORE-208：私有账户默认与鉴权（2d）
 
@@ -163,6 +184,8 @@ CORE-211 依赖盘点 → CORE-212 schema 权威与迁移衔接
 **结果：** 新个人账户进入私有租户，无需创建团队或填写组织层级。检查注册中租户与账户创建的失败一致性；不直接添加全局手机号/邮箱唯一索引。
 
 **验收：** 两个个人账户无法互读；直接 API 不能借隐藏入口绕过授权；保留角色/资源权限安全测试；注册失败和身份冲突有明确行为。无需迁入旧测试账号、协作数据或历史租户，不为它们安排保全与身份合并项目。
+
+**CORE-208 本地验收（2026-09-05）：** 新增 6 个真实 API/数据库用例，包括注入 User INSERT 失败后租户和用户均不增长、两个私人租户互不读取、过期角色与隐藏能力拒绝、显式工作区兼容、同号不同密码不暴露其它候选，以及显式错误工作区不被静默忽略。相关 Server 4 文件/19 tests、App 类型/60 文件/412 tests、Server 类型和 G64111 类型/2 文件/32 tests 通过。技术自查确认无 schema、全局唯一索引、现有租户切换、权限放宽或凭据日志。gstack browse 在独立 5188/3188 与 `/tmp/jianghu-batch1-preview-qodmwmer/preview.db` 完成无组织名邮箱注册、服务重启后登录、刷新接续；完成正常初始化后控制台无错误。预览只有合成账户；本项本地 DONE，批次远程和地图体验仍待完成。
 
 ### CORE-209：客户决策与行动权威设计（3d）
 

@@ -584,7 +584,7 @@ export const api = {
     unauthorizedListeners.add(listener);
     return () => { unauthorizedListeners.delete(listener); };
   },
-  register: async (b: Credentials & { name: string; tenantName: string }): Promise<AuthResult> => parseAuthResult(
+  register: async (b: Credentials & { name: string; tenantName?: string }): Promise<AuthResult> => parseAuthResult(
     await req<unknown>('/api/auth/register', { method: 'POST', body: JSON.stringify(b) }),
   ),
   login: async (b: Credentials & { tenantId?: string }): Promise<AuthResult | WorkspaceChoice> => parseLoginResult(
