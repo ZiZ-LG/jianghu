@@ -2,6 +2,14 @@
 
 > 给 Codex 的项目操作手册。每次对话都会被读入，**保持精简**。
 
+## 研发合作方式（先读）
+
+- 每次开始/恢复先读 [研发协作协议](docs/研发协作协议v1.md) 及商业清单活跃部分；[ADR-005](docs/ADR-005-按功能批次自主研发与上线前数据基线.md) 约束研发节奏与上线前数据前提，替代旧计划相冲突的逐步审批要求。
+- 用户确认目标、验收可用成果；Agent 在已批准批次内自行实现、复核、测试和修复，技术检查通过自动继续。同一批次必要共享文件授权持续有效，不逐子任务重复索要。
+- 子任务保留小步 commit、适用检查和回滚；按可体验批次集中推送/交付，不逐任务等待全量 CI 或合入 main。停止条件、精确版本证据和发布权限按协议执行。
+- 用户确认尚未正式投产，现有 CRM 库都是可弃用测试数据，**不要求搬运或保全旧假数据**。保留空库初始化、版本化 migration、租户隔离和上线前恢复验证；不顺手清库或删除历史实现/文件。
+- 本协议只约束载入它的工作区；候选未合入时不声称 main/全局已生效。CI 分层由 CORE-215 实现，当前工作流不会因文档更新自动改变。
+
 ## 这是什么
 
 面向个人大客户销售的「客户经营工作台」：以更少的整理成本，看清**客户为什么买、谁能推动、下一步找谁谈什么**。默认导航为商机、今日、客户；商机详情以**干系人地图—证据—行动—复盘**为核心，保留列表回退。六问可选，首版验证一个外部 Agent 的候选通路；G64111/PDE 与既有协作模型冻结新增并保留历史，不开发团队管理。
@@ -55,7 +63,7 @@ npm run dev          # tsx watch
 cd app && npm install && npm run dev
 ```
 
-收尾必跑（提交前）
+代码任务收尾（按协议选择适用范围；纯说明文档做文档核验）
 ```bash
 cd packages/g64111 && npm run typecheck && npm test   # G64111 类型 + 公式/兼容回归
 cd app && npx tsc --noEmit && npm run test   # 前端类型 + adapter 消费回归
@@ -71,7 +79,7 @@ cd packages/pde-kernel && npx tsc --noEmit && npm run test   # 内核类型 + go
 
 1. **多租户隔离**：所有数据读写**必须按 `tenantId` 作用域**过滤；新增任何查询/接口都要带租户隔离。数据安全红线，**绝不跨租户**。viewer 角色（销售包只读投影）再加一层行级隔离：只见 `Account.primaryOwner === User.name` 的客户——新增「按 id 直查」的读接口须带 viewer 归属校验，写接口须挡 viewer（helper 在 `server/src/scope.ts`）。
 2. **AI 结果绝不自动写库**：AI 推断的关系/节点一律先作为候选（带置信度/证据/来源、画布灰虚线 ❓），**人审采纳后才建边**；导入的企查查/AI 节点要带「待验证」溯源日志。企查查多候选时同理——**展示候选让用户点选，不自动锁定主体**。
-3. **数据库过渡纪律**：CORE-214 退出 Gate 通过前，Prisma schema **不用原生 enum/json**，保证 SQLite ↔ Postgres 一致；不得提前删除 SQLite 支持、历史 migration 或存量文件。PostgreSQL 单一引擎目标不取消版本化 migration、备份恢复与回滚。
+3. **数据库过渡纪律**：CORE-214 退出 Gate 通过前，Prisma schema **不用原生 enum/json**，保证 SQLite ↔ Postgres 一致；不得提前删除 SQLite 支持或历史 migration 文件。旧假数据无需迁入新库；开发/测试依赖仍须完成切换验证。PostgreSQL 单一引擎目标不取消版本化 migration、备份恢复与回滚。
 4. **用户自配模型/数据 Key（BYO）**：Key（AI 模型、企查查 MCP token）经 **AES-256-GCM 加密存服务端**、用用户自己额度调用，平台零成本；无 Key 走演示/回退模式。**绝不明文落库、绝不外发、绝不写进提交。**
 5. **数据契约 = `app/src/store.ts` 的 Action**：改契约要前端 store、后端 `mutate.ts` / `types.ts` 同步。
 6. **G64111 引擎对齐规格**：改 `packages/g64111/src/score.ts` 前先读 `docs/G64111-评分规格.md`；App/Server 只做 adapter，禁止复制公式。改完跑通共享包和 server parity 单测。
@@ -85,6 +93,8 @@ cd packages/pde-kernel && npx tsc --noEmit && npm run test   # 内核类型 + go
 - 大陆服务器构建慢：Dockerfile 已配 npmmirror + Prisma 引擎镜像加速。
 
 ## 部署现状（双轨）
+
+2026-09-05 项目所有者确认 CRM 尚未进入正式生产、现有数据库均为测试数据。以下为历史基础设施实测记录，不表示已有生产业务数据，也不授权连接或清理这些环境。
 
 - **阿里云大陆轻量服务器**：Docker 栈已实测跑通，等 ICP 备案过审后开放公网（80/443）+ 域名 + HTTPS。
 - **Mac mini（内网/Tailscale）**：备案期给团队验证用，`bash deploy-macmini.sh` 一键起；团队走 `http://Leons-Mac-mini.local`（局域网）或 Tailscale IP（远程）。数据在 Docker 卷 `pgdata`，**勿 `docker compose down -v`**。
@@ -102,13 +112,14 @@ cd packages/pde-kernel && npx tsc --noEmit && npm run test   # 内核类型 + go
 ## 当前执行基线（2026-09-05）
 
 - 产品路线：`docs/ADR-004-个人商机推进工作台与研发范围收敛.md` 已批准，部分替代 ADR-002 的团队/企业/G5–G7 路线；ADR-001/002 的共享核心、数据单一权威、安全、算法、物理隔离与重大偏差治理继续有效。
+- 研发流程与测试数据范围：`docs/ADR-005-按功能批次自主研发与上线前数据基线.md` 及 `docs/研发协作协议v1.md`；不以旧假数据迁移作为新产品或 PostgreSQL 收敛前置。
 - 当前产品方案：`docs/designs/2026-09-05-jianghu-personal-customer-decision-workbench.md`；复用曹经理个人旅程，地图为商机主要界面。模拟场景支持设计与工程验收，真实使用价值在 SAAS-219 试用观察，不作为本轮设计前置。
 - 当前计划：`docs/superpowers/plans/2026-09-04-personal-opportunity-workbench.md`；2026-08-19 计划保留为历史，不从旧 G5–G7 自动启动任务。
 - 唯一日常状态清单：`docs/商业版开发待办清单v1.md`；持续建设代码任务必须引用 `CORE-*` 或 `SAAS-*` ID，同一时间最多一项 `IN_PROGRESS`。
 - CORE-207 仅治理落盘；后续从清单的当前无依赖任务启动。PR #46 / SAAS-211 保持暂停，不合并、不关闭、不自动解除。
 - 个人方法论上传后置；六问可跳过，AI 只产出带来源、证据与置信度的候选。正式状态、关系和方法论结论经用户确认后才写入。
 - 外部 Agent 不能自行采纳候选或凭模型文本授权正式写入；用户在江湖确认，服务端重验 scope、来源与版本。首个真实客户端由 SAAS-218 验证，旧 WorkBuddy HTTP 测试不等于桌面客户端已接通。
-- 不因个人化削弱 tenant scope，不直接增加全局手机号/邮箱唯一约束；不触碰自我修养开发线，不部署 lake2ocean.top、阿里云或 Mac mini，不破坏性删除 G64111/PDE/协作模型与历史数据。
+- 不因个人化削弱 tenant scope，不直接增加全局手机号/邮箱唯一约束；不触碰自我修养开发线，不部署 lake2ocean.top、阿里云或 Mac mini，不破坏性删除 G64111/PDE/协作实现与工程历史；旧测试数据处理按 ADR-005。
 - 原 CORE-301 权限矩阵及 CORE-503 备份恢复/安全职责由新计划承接；精确 SHA CI、审计、版本化 migration、备份恢复与回滚门持续生效。新产品/数据库目标不代表运行时已实现。
 - `docs/内部版开发待办清单v1.md` 已转维护冻结；只有安全、兼容、恢复或经批准的显式迁移维护，才可另行授权 `INT-*` 任务。`INT-502` 及其发布验收资料仅作 `NO-GO / STOPPED` 历史证据，不再阻塞商业主线。
 - 除重大偏差外严格按商业清单阶段门执行；重大偏差先暂停、写 ADR、由项目所有者批准，再更新计划和清单。
