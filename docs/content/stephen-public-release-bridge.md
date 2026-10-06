@@ -32,6 +32,7 @@
 |---|---|---|
 | 2026-10-06 | 实施中 | 公开代码已合并；私有桥接正在独立工作树实现。未上传、未激活生产。经当前网络访问 Stephen 时出现证书主机名不匹配，服务器直连超时；尚不能确定服务器配置原因。 |
 | 2026-10-06 | 本地实现与验证完成，生产受阻 | 新增双仓库发布器和 60 项测试；Stephen 两套类型检查通过。全量 206 项首次运行 205 项通过，唯一运行手册保护条款断言补回后单独通过；随后新增的确定性归档用例通过，现 207 项均有通过证据，未再重复整套运行。独立发布器审查无新增阻断，shell 语法与 diff 检查通过。公共 dist 副本经两仓库验证器独立重算一致，9 文件、内容 checksum `f80529f2c6b6b0f0fe1b639a31c2aee0b3736912f19d4440f9df921186ebe464`；此结果不替代生产预检。已通过可信 SSH 确认线上缺少域名入口及挂载；仍无上传或激活。 |
+| 2026-10-06 | 桥接已推送，草稿 PR 待解除阻断 | [PR #49](https://github.com/ZiZ-LG/jianghu/pull/49)，实现提交 `98d54979a8e22d9eb535de0761d9e7098c26c994`。[push Stephen checks 37430614265](https://github.com/ZiZ-LG/jianghu/actions/runs/37430614265) 与 [PR Stephen checks 37430683986](https://github.com/ZiZ-LG/jianghu/actions/runs/37430683986) 均成功；[完整 CI 37430614291](https://github.com/ZiZ-LG/jianghu/actions/runs/37430614291) 的五个依赖审计任务均因既有 high 告警失败。未合并私有 main，未部署。 |
 
 具体操作及失败处理以 [发布运行手册](stephen-release-runbook.md) 为准。操作产生的 bundle、日志、状态文件与访问凭据保留在仓库外，不提交到公开仓库。
 
@@ -39,15 +40,15 @@
 
 共享入口缺失的只读证据、最小修复范围及回退步骤见 [生产入口恢复审核方案](stephen-production-entry-repair-review.md)。其中 Nginx 与容器重建超出本批批准范围，尚未执行。
 
-2026-10-06 对私有仓库现有锁文件进行依赖审计，前端报告 1 个 high 依赖，后端报告 4 个 high 依赖。它们都已存在于本次基线，本次没有修改依赖；计数不是可利用漏洞数量，也不证明线上服务已经受攻击。完整 `ci.yml` 含 `npm audit --audit-level=high`，因此这些现有问题会阻止新的完整 CI 通过，发布器不绕过此门。
+2026-10-06 对私有仓库现有锁文件进行依赖审计，前端报告 1 个 high 依赖，后端报告 4 个 high 依赖。远端 CI 还确认三个共享包同样因 `source-map-js` 失败。它们都已存在于本次基线，本次没有修改依赖；计数不是可利用漏洞数量，也不证明线上服务已经受攻击。完整 `ci.yml` 含 `npm audit --audit-level=high`，这些现有问题已阻止新的完整 CI 通过，发布器不绕过此门。
 
-建议另行批准一次兼容补丁升级，仅调整私有 `app/package-lock.json`、`server/package-lock.json` 中受影响条目及必要传递依赖；如现有版本范围不足，再单独列出 package.json 差异。当前声明范围允许下表目标。保留 CRM 业务代码、契约与数据库，且不部署 CRM。
+建议另行批准一次兼容补丁升级，仅调整私有 `app/package-lock.json`、`server/package-lock.json`、`packages/domain-contracts/package-lock.json`、`packages/g64111/package-lock.json` 和 `packages/pde-kernel/package-lock.json` 中受影响条目及必要传递依赖；如现有版本范围不足，再单独列出 package.json 差异。当前声明范围允许下表目标。保留 CRM 业务代码、评分算法、契约与数据库，且不部署 CRM。
 
 | 依赖 | 当前锁定 | 拟验证的最低修复版本 | 范围与依据 |
 |---|---|---|---|
-| `source-map-js` | 前后端均为 `1.2.1` | `1.2.2` | 开发依赖；[公告](https://github.com/advisories/GHSA-68fv-2mgg-jv7q) |
+| `source-map-js` | 前后端及三个共享包均为 `1.2.1` | `1.2.2` | 开发依赖；[公告](https://github.com/advisories/GHSA-68fv-2mgg-jv7q) |
 | `fastify` | 后端 `5.12.1` | `5.12.5` | 后端运行依赖；[修复版本公告](https://github.com/advisories/GHSA-4mh8-r7rc-xpvc)；npm 审计另列多项低于 `5.12.2` 的问题 |
 | `undici` | 后端 `7.29.0` | `7.29.1` | 后端运行依赖；[公告](https://github.com/advisories/GHSA-w293-vg96-wgc3) |
 | `@fastify/busboy` | 后端 `3.2.0` | `3.2.2` | 后端传递依赖；[公告](https://github.com/advisories/GHSA-gxm5-99cw-xjw9) |
 
-批准后先在隔离工作树生成锁文件差异，确保没有额外主版本升级；再运行前后端类型检查、现有测试、Stephen 检查、构建与开发/生产依赖审计。完整 CI 成功后才合并桥接代码并继续发布。若补丁带来行为变化或出现新的影响范围，保留差异与失败证据再审核。回退仅撤销该补丁提交，不改数据库或生产运行服务。
+批准后先在隔离工作树生成锁文件差异，确保没有额外主版本升级。按项目要求刷新前后端 `file:` 包副本，再运行前后端及三个共享包的现有验证、Stephen 检查、构建与开发/生产依赖审计。完整 CI 成功后才合并桥接代码并继续发布。若补丁带来行为变化或出现新的影响范围，保留差异与失败证据再审核。回退仅撤销该补丁提交，不改数据库或生产运行服务。
