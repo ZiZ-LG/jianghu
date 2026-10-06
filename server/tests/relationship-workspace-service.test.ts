@@ -366,7 +366,7 @@ describe('SAAS-208 relationship workspace projection', () => {
       customerId, matterId, commitmentId, salesHypothesisId: hypothesisId,
       expectedCommitmentVersion: 0, expectedCommitmentScheduleVersion: 0,
       expectedHypothesisVersion: 0, expectedCurrentRevisionId: revisionId,
-      ownerUserId: test.owner.id, nextReviewAt: '2026-09-15T12:00:00.000Z',
+      ownerUserId: test.owner.id, nextReviewAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
     };
     const send = () => test.app.inject({
       method: 'POST', url: '/api/commands/hypothesis-verification-review',

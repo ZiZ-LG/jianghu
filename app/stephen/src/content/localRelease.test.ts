@@ -1345,3 +1345,99 @@ describe('SAAS-607 deterministic release bundle', () => {
     }
   });
 });
+
+const sharedSiteSmokeFixtures = [
+  { key: 'home', url: 'https://lake2ocean.top/', body: '<title>江湖 CRM｜自在江湖客户管理</title>', contentType: 'text/html' },
+  { key: 'crm', url: 'https://crm.lake2ocean.top/', body: '<title>江湖 · Game of JiangHu</title>', contentType: 'text/html' },
+  { key: 'health', url: 'https://crm.lake2ocean.top/api/health', body: '{"ok":true}', contentType: 'application/json' },
+  { key: 'zizai', url: 'https://zizai.tech/', body: '<title>ZiZai 自在创造 —— 用智慧科技，让每个人体验生活的美好</title>', contentType: 'text/html' },
+  { key: 'bjj', url: 'https://bjj.zizai.tech/', body: '<title>ZiZBJJ — Make Your Own Jiu-Jitsu Game</title>', contentType: 'text/html' },
+] as const;
+
+async function exerciseSharedSiteSmoke(
+  override?: { key: typeof sharedSiteSmokeFixtures[number]['key']; body?: string; status?: number; contentType?: string },
+) {
+  const temporaryRoot = await mkdtemp(join(tmpdir(), 'saas-607-shared-site-smoke-'));
+  try {
+    for (const fixture of sharedSiteSmokeFixtures) {
+      const changed = override?.key === fixture.key ? override : undefined;
+      await writeFile(join(temporaryRoot, `${fixture.key}.body`), changed?.body ?? fixture.body, 'utf8');
+      await writeFile(join(temporaryRoot, `${fixture.key}.status`), String(changed?.status ?? 200), 'utf8');
+      await writeFile(join(temporaryRoot, `${fixture.key}.headers`), `Content-Type: ${changed?.contentType ?? fixture.contentType}\r\n`, 'utf8');
+    }
+    const operator = await readFile(localReleasePath, 'utf8');
+    const start = operator.indexOf('smoke_shared_sites() {');
+    const end = operator.indexOf('\nsmoke_current_release() {', start);
+    expect(start).toBeGreaterThan(0);
+    expect(end).toBeGreaterThan(start);
+    // Execute the actual production identity checks. Only HTTP acquisition is replaced;
+    // statuses, content types, JSON health, and each site's body are still checked.
+    const harness = `set -Eeuo pipefail
+operator_tmp=$PROBE_ROOT
+fetch_status() {
+  local expected=$1 url=$2 key
+  printf '%s\\n' "$url" >> "$PROBE_LOG"
+  case "$url" in
+    'https://lake2ocean.top/') key=home ;;
+    'https://crm.lake2ocean.top/') key=crm ;;
+    'https://crm.lake2ocean.top/api/health') key=health ;;
+    'https://zizai.tech/') key=zizai ;;
+    'https://bjj.zizai.tech/') key=bjj ;;
+    *) printf 'UNEXPECTED_URL\\n' >> "$PROBE_LOG"; return 97 ;;
+  esac
+  cp "$PROBE_ROOT/$key.body" "$operator_tmp/http-body"
+  cp "$PROBE_ROOT/$key.headers" "$operator_tmp/http-headers"
+  [[ "$(cat "$PROBE_ROOT/$key.status")" == "$expected" ]]
+}
+curl() { printf 'UNEXPECTED_NETWORK\\n' >> "$PROBE_LOG"; return 98; }
+ssh() { printf 'UNEXPECTED_NETWORK\\n' >> "$PROBE_LOG"; return 98; }
+${operator.slice(start, end)}
+smoke_shared_sites
+`;
+    const harnessPath = join(temporaryRoot, 'smoke.sh');
+    const logPath = join(temporaryRoot, 'calls.log');
+    await writeFile(harnessPath, harness, 'utf8');
+    await writeFile(logPath, '', 'utf8');
+    const result = spawnSync('bash', [harnessPath], {
+      encoding: 'utf8',
+      env: { ...process.env, PROBE_ROOT: temporaryRoot, PROBE_LOG: logPath },
+    });
+    const log = await readFile(logPath, 'utf8');
+    expect(log).not.toContain('UNEXPECTED_URL');
+    expect(log).not.toContain('UNEXPECTED_NETWORK');
+    return { result, urls: log.trim().split('\n') };
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+}
+
+describe('SAAS-607 shared-site smoke with isolated transport', () => {
+  it('accepts the verified exact BJJ title while retaining every shared-site check', async () => {
+    const { result, urls } = await exerciseSharedSiteSmoke();
+    expect(result.status, result.stderr).toBe(0);
+    expect(urls).toEqual(sharedSiteSmokeFixtures.map((fixture) => fixture.url));
+  });
+
+  it.each([
+    ['home', '<title>ZiZai 自在创造</title>'],
+    ['crm', '<title>江湖 CRM｜自在江湖客户管理</title>'],
+    ['health', '{"ok":false}'],
+    ['zizai', '<title>ZiZBJJ — Make Your Own Jiu-Jitsu Game</title>'],
+    ['bjj', '<title>ZiZ 记事本</title>'],
+    ['bjj', '<title>ZiZ — Another Site</title>'],
+    ['bjj', '<title>Wrong Site</title><main>ZiZBJJ — Make Your Own Jiu-Jitsu Game</main>'],
+  ] as const)('rejects a wrong identity from %s: %s', async (key, body) => {
+    const { result } = await exerciseSharedSiteSmoke({ key, body });
+    expect(result.status).not.toBe(0);
+  });
+
+  it.each(sharedSiteSmokeFixtures)('rejects a redirect instead of HTTP 200 from $key', async ({ key }) => {
+    const { result } = await exerciseSharedSiteSmoke({ key, status: 301 });
+    expect(result.status).not.toBe(0);
+  });
+
+  it('rejects a non-JSON content type even when the health body says ok', async () => {
+    const { result } = await exerciseSharedSiteSmoke({ key: 'health', contentType: 'text/html' });
+    expect(result.status).not.toBe(0);
+  });
+});

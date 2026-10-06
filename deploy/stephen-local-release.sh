@@ -361,13 +361,13 @@ smoke_shared_sites() {
   fetch_status 200 'https://crm.lake2ocean.top/' || return 1
   grep -Fq '江湖 · Game of JiangHu' "$operator_tmp/http-body" || return 1
   fetch_status 200 'https://crm.lake2ocean.top/api/health' || return 1
-  content_type=$(awk 'BEGIN { IGNORECASE = 1 } /^content-type:/ { sub(/\r$/, ""); sub(/^[^:]*:[[:space:]]*/, ""); print; exit }' "$operator_tmp/http-headers")
+  content_type=$(awk 'tolower($0) ~ /^content-type:/ { sub(/\r$/, ""); sub(/^[^:]*:[[:space:]]*/, ""); print; exit }' "$operator_tmp/http-headers")
   [[ "$content_type" == application/json* ]] || return 1
   jq -e 'type == "object" and .ok == true' "$operator_tmp/http-body" >/dev/null || return 1
   fetch_status 200 'https://zizai.tech/' || return 1
   grep -Fq 'ZiZai 自在创造' "$operator_tmp/http-body" || return 1
   fetch_status 200 'https://bjj.zizai.tech/' || return 1
-  grep -Fq 'ZiZ 记事本' "$operator_tmp/http-body" || return 1
+  grep -Fq '<title>ZiZBJJ — Make Your Own Jiu-Jitsu Game</title>' "$operator_tmp/http-body" || return 1
 }
 
 smoke_current_release() {
