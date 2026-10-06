@@ -11,6 +11,7 @@ on:
       - 'app/public/stephen/**'
       - 'app/src/components/StephenSite.test.ts'
       - 'deploy/stephen*'
+      - 'deploy/public-site-targets.json'
       - 'docs/content/stephen-*'
       - 'docs/content/stephen-*/**'
       - '.github/workflows/stephen-*.yml'
@@ -49,6 +50,9 @@ jobs:
 
       - name: Type-check editorial intake
         run: npx tsc --noEmit -p stephen/tsconfig.editorial.json
+
+      - name: Check private release operator syntax
+        run: bash -n ../deploy/stephen-local-release.sh
 
       - name: Test Stephen site and intake
         run: npx vitest run --root stephen

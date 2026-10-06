@@ -99,9 +99,10 @@
       "canonicalUrl": "https://stephen.lake2ocean.top/",
       "source": {
         "authority": "authoritative",
-        "directory": "app/stephen",
-        "buildCommand": "cd app && npm ci --install-links && npm run build:stephen",
-        "artifactPath": "app/dist/stephen"
+        "repository": "ZiZ-LG/stephen-knowledge-hub",
+        "directory": ".",
+        "buildCommand": "npm ci && npm run check",
+        "artifactPath": "dist"
       },
       "artifactIdentity": {
         "title": "自我修养｜AI 技术、大客户销售与岗位组织转型",
@@ -119,17 +120,19 @@
         ]
       },
       "deployment": {
-        "manager": "self-cultivation-thread",
+        "manager": "stephen-release-helper",
         "destinationHost": "admin@47.95.13.214",
-        "destinationPath": "/usr/share/nginx/jianghu/stephen",
-        "versionRoot": "/home/admin/jianghu/deployments",
-        "versionDirectoryPattern": "edge-<source-sha>/stephen",
-        "atomicRuntimeAuthority": false,
-        "currentRuntime": "Static files are embedded in the active zizai-site edge image and are protected from CRM task writes."
+        "destinationPath": "/srv/jianghu/stephen/current",
+        "versionRoot": "/srv/jianghu/stephen",
+        "versionDirectoryPattern": "releases/<source-sha>",
+        "atomicRuntimeAuthority": true,
+        "currentRuntime": "Expected runtime contract: the host parent /srv/jianghu/stephen is mounted read-only at /srv/stephen and Nginx resolves /srv/stephen/current. The operator must confirm live identity and HTTPS before any upload; the registry is not proof of current runtime health.",
+        "enablementGate": "Explicit release approval, clean exact-main operator and public source checkouts, exact-SHA CI, verified artifact checksum, healthy HTTPS and pending-lease browser verification are required. GitHub automatic release remains disabled.",
+        "operatorRepository": "ZiZ-LG/jianghu"
       },
       "nginx": {
         "serverName": "stephen.lake2ocean.top",
-        "root": "/usr/share/nginx/jianghu/stephen",
+        "root": "/srv/stephen/current",
         "location": "location / { try_files $uri $uri/ /index.html; }"
       }
     }
