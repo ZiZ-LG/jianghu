@@ -99,6 +99,17 @@ function validArtifact(): StephenArtifactEntry[] {
   ];
 }
 
+function mixedCaseArtifact(): StephenArtifactEntry[] {
+  return [
+    ...validArtifact(),
+    ...['assets/RagThemeExample.js', 'assets/index-A.js', 'assets/index_a.js'].map((path) => ({
+      path,
+      type: 'file' as const,
+      bytes: new TextEncoder().encode(`export const asset = ${JSON.stringify(path)};`),
+    })),
+  ];
+}
+
 function publishedItemLocationsFromSitemap(sitemap: string) {
   const locations: string[] = [];
   for (const match of sitemap.matchAll(/<loc>\s*([^<]+?)\s*<\/loc>/g)) {
@@ -144,6 +155,32 @@ describe('SAAS-607 exact-SHA artifact contract', () => {
 
     expect(reversed).toBe(forward);
     expect(buildStephenReleaseMetadata(changed, SOURCE_SHA).contentChecksum).not.toBe(forward);
+  });
+
+  it('matches the Python helper checksum for mixed-case ASCII paths from raw bytes', () => {
+    const entries = mixedCaseArtifact();
+    const metadata = buildStephenReleaseMetadata(entries, SOURCE_SHA);
+    const oracle = spawnSync('python3', ['-I', '-c', [
+      'import hashlib, json, sys',
+      "entries = {entry['path']: bytes(entry['bytes']) for entry in json.load(sys.stdin)}",
+      "files = [{'path': path, 'size': len(data), 'sha256': hashlib.sha256(data).hexdigest()}",
+      '         for path, data in sorted(entries.items())]',
+      'checksum_input = "".join(f"{file[\'path\']}\\0{file[\'size\']}\\0{file[\'sha256\']}\\n" for file in files)',
+      "print(json.dumps({'files': files, 'contentChecksum': hashlib.sha256(checksum_input.encode('utf-8')).hexdigest()}))",
+    ].join('\n')], {
+      encoding: 'utf8',
+      input: new TextEncoder().encode(JSON.stringify(entries.map((entry) => ({
+        path: entry.path, bytes: Array.from(entry.bytes),
+      })))),
+    });
+
+    expect(oracle.status, oracle.stderr).toBe(0);
+    const expected = JSON.parse(oracle.stdout);
+    expect(metadata.files.filter((file) => file.path.startsWith('assets/')).map((file) => file.path))
+      .toEqual(['assets/RagThemeExample.js', 'assets/index-A.js', 'assets/index.js', 'assets/index_a.js']);
+    expect(metadata.files).toEqual(expected.files);
+    expect(metadata.contentChecksum).toBe(expected.contentChecksum);
+    expect(buildStephenReleaseMetadata([...entries].reverse(), SOURCE_SHA)).toEqual(metadata);
   });
 
   it('bounds file count, path depth, individual files, and total artifact bytes', () => {
@@ -358,9 +395,10 @@ function runDispatcher(
 async function createReleaseArchive(
   temporaryRoot: string,
   sourceSha: string,
+  entries: readonly StephenArtifactEntry[] = validArtifact(),
 ) {
   const artifactDirectory = join(temporaryRoot, `artifact-${sourceSha}`);
-  for (const entry of validArtifact()) {
+  for (const entry of entries) {
     const destination = join(artifactDirectory, entry.path);
     await mkdir(dirname(destination), { recursive: true });
     await writeFile(destination, entry.bytes);
@@ -474,11 +512,11 @@ describe('SAAS-607 remote release helper', () => {
     expect(helper).toContain('chown -R root:root -- "$stage_tmp"');
   });
 
-  it('stages a checksummed archive idempotently and refuses a checksum mismatch', async () => {
+  it('stages mixed-case paths idempotently and refuses content or archive tampering', async () => {
     const temporaryRoot = await mkdtemp(join(tmpdir(), 'saas-607-helper-'));
     const releaseRoot = join(temporaryRoot, 'release-root');
     try {
-      const release = await createReleaseArchive(temporaryRoot, SOURCE_SHA);
+      const release = await createReleaseArchive(temporaryRoot, SOURCE_SHA, mixedCaseArtifact());
       await installIncomingArchive(releaseRoot, SOURCE_SHA, release.archive);
 
       const staged = runReleaseHelper(releaseRoot, 'stage', SOURCE_SHA, release.checksum);

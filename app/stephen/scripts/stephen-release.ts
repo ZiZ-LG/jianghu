@@ -235,7 +235,8 @@ export function buildStephenReleaseMetadata(
       size: entry.bytes.byteLength,
       sha256: sha256(entry.bytes),
     }))
-    .sort((left, right) => left.path.localeCompare(right.path));
+    // Artifact paths are ASCII; match the Python helper's order regardless of locale.
+    .sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
   const checksumInput = files
     .map((file) => `${file.path}\0${file.size}\0${file.sha256}\n`)
     .join('');
