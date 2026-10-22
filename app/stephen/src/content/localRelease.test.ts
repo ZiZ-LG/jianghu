@@ -1173,8 +1173,8 @@ async function exerciseProductionIdentityGate(fault: string, gate = 'verify_exac
     const publicRuns = [makeRun(SOURCE_REPOSITORY, sourceSha)];
     if (fault === 'operator-latest-workflow-failed') privateRuns.push(makeRun(OPERATOR_REPOSITORY, operatorSha, 2, 'failure'));
     if (fault === 'source-latest-workflow-failed') publicRuns.push(makeRun(SOURCE_REPOSITORY, sourceSha, 2, 'failure'));
-    await writeFile(join(temporaryRoot, 'private-runs.json'), JSON.stringify({ workflow_runs: privateRuns }), 'utf8');
-    await writeFile(join(temporaryRoot, 'public-runs.json'), JSON.stringify({ workflow_runs: publicRuns }), 'utf8');
+    await writeFile(join(temporaryRoot, 'private-runs.json'), JSON.stringify({ total_count: privateRuns.length, workflow_runs: privateRuns }), 'utf8');
+    await writeFile(join(temporaryRoot, 'public-runs.json'), JSON.stringify({ total_count: publicRuns.length, workflow_runs: publicRuns }), 'utf8');
     await writeFile(join(temporaryRoot, 'variables.json'), JSON.stringify([{ total_count: 1, variables: [{ name: 'STEPHEN_RELEASE_ENABLED', value: fault === 'automatic-release-enabled' ? '1' : '0' }] }]), 'utf8');
     const operator = await readFile(localReleasePath, 'utf8');
     const dispatchStart = operator.indexOf('[[ $# -ge 1 ]] || usage');
@@ -1439,5 +1439,172 @@ describe('SAAS-607 shared-site smoke with isolated transport', () => {
   it('rejects a non-JSON content type even when the health body says ok', async () => {
     const { result } = await exerciseSharedSiteSmoke({ key: 'health', contentType: 'text/html' });
     expect(result.status).not.toBe(0);
+  });
+});
+
+async function exerciseWorkflowLookup(responses: unknown[], httpFailure = false) {
+  const root = await mkdtemp(join(tmpdir(), 'saas-607-workflow-lookup-'));
+  try {
+    await writeFile(join(root, 'responses.json'), JSON.stringify(responses), 'utf8');
+    const operator = await readFile(localReleasePath, 'utf8');
+    const start = operator.indexOf('[[ $# -ge 1 ]] || usage');
+    const script = `${operator.slice(0, start)}
+gh() {
+  printf '%s\\n' "$*" >> "$PROBE_ROOT/calls"
+  [[ "$PROBE_HTTP_FAILURE" != '1' ]] || return 22
+  local count=0
+  if [[ -f "$PROBE_ROOT/count" ]]; then count=$(cat "$PROBE_ROOT/count"); fi
+  jq -c --argjson n "$count" '.[$n] // .[-1]' "$PROBE_ROOT/responses.json"
+  printf '%s\\n' "$((count + 1))" > "$PROBE_ROOT/count"
+}
+sleep() { printf '%s\\n' "$*" >> "$PROBE_ROOT/delays"; }
+require_successful_workflow_run "$SOURCE_REPO" "$PROBE_SHA" checks.yml "$PROBE_ROOT/response.json"
+printf '%s\\n' "$SOURCE_CHECK_RUN_URL"
+`;
+    const path = join(root, 'lookup.sh');
+    await writeFile(path, script, 'utf8');
+    const result = spawnSync('bash', [path], {
+      encoding: 'utf8',
+      env: { ...process.env, PROBE_ROOT: root, PROBE_SHA: SOURCE_SHA, PROBE_HTTP_FAILURE: httpFailure ? '1' : '0' },
+    });
+    const calls = (await readFile(join(root, 'calls'), 'utf8')).trim().split('\n');
+    return { result, calls };
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+describe('SAAS-607 bounded empty workflow lookup recovery', () => {
+  const success = {
+    id: 1, created_at: '2026-10-22T00:00:00Z', run_attempt: 1,
+    head_sha: SOURCE_SHA, head_branch: 'main', event: 'push',
+    head_repository: { full_name: SOURCE_REPOSITORY }, status: 'completed', conclusion: 'success',
+    html_url: `https://github.com/${SOURCE_REPOSITORY}/actions/runs/1`,
+  };
+  const empty = { total_count: 0, workflow_runs: [] };
+  const response = (...runs: Record<string, unknown>[]) => ({ total_count: runs.length, workflow_runs: runs });
+
+  it('requeries an empty response with the same exact filters and fresh-cache request', async () => {
+    const { result, calls } = await exerciseWorkflowLookup([empty, empty, response(success)]);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe(success.html_url);
+    expect(calls).toHaveLength(3);
+    for (const call of calls) {
+      expect(call).toContain(`head_sha=${SOURCE_SHA}`);
+      expect(call).toContain('branch=main');
+      expect(call).toContain('event=push');
+      expect(call).toContain('Cache-Control: no-cache');
+      expect(call).toContain(`repos/${SOURCE_REPOSITORY}/actions/workflows/checks.yml/runs`);
+    }
+  });
+
+  it('fails closed after five empty responses', async () => {
+    const { result, calls } = await exerciseWorkflowLookup([empty]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('empty');
+    expect(calls).toHaveLength(5);
+  });
+
+  it.each([
+    { name: 'newer failure', value: response(success, { ...success, id: 2, created_at: '2026-10-22T00:01:00Z', conclusion: 'failure' }) },
+    { name: 'newer queued rerun', value: response(success, { ...success, run_attempt: 2, status: 'queued', conclusion: null }) },
+    { name: 'wrong SHA', value: response({ ...success, head_sha: OLDER_SHA }) },
+    { name: 'wrong branch', value: response({ ...success, head_branch: 'feature' }) },
+    { name: 'wrong event', value: response({ ...success, event: 'pull_request' }) },
+    { name: 'wrong repository', value: response({ ...success, head_repository: { full_name: OPERATOR_REPOSITORY } }) },
+    { name: 'malformed response', value: { total_count: 0, workflow_runs: null } },
+    { name: 'inconsistent empty result', value: { total_count: 1, workflow_runs: [] } },
+  ])('does not retry or accept a later success after $name', async ({ value }) => {
+    const { result, calls } = await exerciseWorkflowLookup([value, response(success)]);
+    expect(result.status).not.toBe(0);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('does not replace a failure found after an empty response with an older success', async () => {
+    const { result, calls } = await exerciseWorkflowLookup([empty, response({ ...success, conclusion: 'failure' }), response(success)]);
+    expect(result.status).not.toBe(0);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('does not accept an empty response after an HTTP error', async () => {
+    const { result, calls } = await exerciseWorkflowLookup([response(success)], true);
+    expect(result.status).not.toBe(0);
+    expect(calls).toHaveLength(1);
+  });
+});
+
+async function runReleaseWithTransportNotice(
+  fixture: LocalReleaseFixture,
+  command: 'activate' | 'finalize' | 'rollback' | 'verify',
+  environment: Record<string, string> = {},
+  fault = 'stderr',
+) {
+  const harness = join(fixture.temporaryRoot, 'transport-notice.sh');
+  // Source the unmodified operator; wrap its test helper process at the same
+  // stdout/stderr boundary as SSH, while keeping all filesystem transactions real.
+  await writeFile(harness, `bash() {
+  local rc
+  if [[ "$1" == */deploy/stephen-remote-release.sh ]]; then
+    if [[ "$PROBE_NOTICE_FAULT" == 'stdout' ]]; then
+      printf 'unexpected protocol text\\n'
+    else
+      printf '** WARNING: connection is not using a post-quantum key exchange algorithm.\\n' >&2
+    fi
+    command bash "$@"
+    rc=$?
+    [[ "$PROBE_NOTICE_FAULT" != 'exit' ]] || return 73
+    return "$rc"
+  fi
+  command bash "$@"
+}
+source "$PROBE_OPERATOR" "$@"
+`, 'utf8');
+  return spawnSync('bash', [harness, ...localReleaseArgs(fixture, command).slice(1)], {
+    encoding: 'utf8',
+    env: { ...process.env, STEPHEN_LOCAL_RELEASE_TEST_MODE: '1', PROBE_OPERATOR: localReleasePath, PROBE_NOTICE_FAULT: fault, ...environment },
+  });
+}
+
+describe('SAAS-607 transport diagnostics stay outside machine receipts', () => {
+  it('activates, finalizes and verifies while preserving stderr notices', async () => {
+    const fixture = await createLocalReleaseFixture('saas-607-transport-finalize-');
+    try {
+      const pending = await runReleaseWithTransportNotice(fixture, 'activate', { STEPHEN_PRODUCTION_RELEASE_APPROVAL: `release:${SOURCE_SHA}` });
+      expect(pending.status, pending.stderr).toBe(0);
+      const state = JSON.parse(pending.stdout);
+      expect(state.releaseState).toBe('PENDING_BROWSER_VERIFICATION');
+      expect(pending.stderr).toContain('post-quantum');
+      const finalized = await runReleaseWithTransportNotice(fixture, 'finalize', { STEPHEN_BROWSER_VERIFICATION: `verified:${SOURCE_SHA}:${state.leaseId}` });
+      expect(finalized.status, finalized.stderr).toBe(0);
+      expect(JSON.parse(finalized.stdout).releaseState).toBe('FINALIZED');
+      expect(finalized.stderr).toContain('post-quantum');
+      const verified = await runReleaseWithTransportNotice(fixture, 'verify');
+      expect(verified.status, verified.stderr).toBe(0);
+      expect(JSON.parse(verified.stdout).observedReleaseState).toBe('FINALIZED');
+    } finally { await rm(fixture.temporaryRoot, { recursive: true, force: true }); }
+  });
+
+  it('can roll back the exact pending lease despite stderr notices', async () => {
+    const fixture = await createLocalReleaseFixture('saas-607-transport-rollback-');
+    try {
+      const pending = await runReleaseWithTransportNotice(fixture, 'activate', { STEPHEN_PRODUCTION_RELEASE_APPROVAL: `release:${SOURCE_SHA}` });
+      expect(pending.status, pending.stderr).toBe(0);
+      const state = JSON.parse(pending.stdout);
+      const rolledBack = await runReleaseWithTransportNotice(fixture, 'rollback', { STEPHEN_PRODUCTION_ROLLBACK_APPROVAL: `rollback:${SOURCE_SHA}:${state.leaseId}` });
+      expect(rolledBack.status, rolledBack.stderr).toBe(0);
+      expect(JSON.parse(rolledBack.stdout).releaseState).toBe('ROLLED_BACK');
+      expect(rolledBack.stderr).toContain('post-quantum');
+      expect(runReleaseHelper(fixture.releaseRoot, 'status').stdout).toContain(`current_sha=${PREVIOUS_SHA}`);
+    } finally { await rm(fixture.temporaryRoot, { recursive: true, force: true }); }
+  });
+
+  it.each(['stdout', 'exit'])('rejects %s faults without a new activation', async (fault) => {
+    const fixture = await createLocalReleaseFixture('saas-607-transport-reject-');
+    try {
+      const rejected = await runReleaseWithTransportNotice(fixture, 'activate', { STEPHEN_PRODUCTION_RELEASE_APPROVAL: `release:${SOURCE_SHA}` }, fault);
+      expect(rejected.status).not.toBe(0);
+      expect(runReleaseHelper(fixture.releaseRoot, 'status').stdout).toContain(`current_sha=${PREVIOUS_SHA}`);
+      await expect(readFile(fixture.stateFile)).rejects.toThrow();
+    } finally { await rm(fixture.temporaryRoot, { recursive: true, force: true }); }
   });
 });
