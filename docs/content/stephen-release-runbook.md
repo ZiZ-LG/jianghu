@@ -45,6 +45,8 @@ bash deploy/stephen-local-release.sh plan \
 
 任一条件不满足即停止。证书错误、站点身份错误、已有 pending 事务或 CI 失败都不是可忽略警告。不得通过跳过 TLS 校验、替换域名或直接复制文件绕过。
 
+GitHub 精确 SHA 列表查询仅对结构完整的空结果重查，最多 5 次、间隔 2 秒，并要求刷新缓存。失败、排队中、身份不符、响应格式错误或 HTTP 错误都直接阻断；不会改用旧成功记录。每次重查仍保留仓库、workflow、SHA、`main` 和 `push` 条件。
+
 ## 4. 激活与浏览器验收
 
 当前版本已获发布批准且预检成功后，使用新的空 bundle 目录：
@@ -92,6 +94,8 @@ bash deploy/stephen-local-release.sh verify \
 ## 6. 失败与中断
 
 结果不明时保留原状态文件，先 verify；不得直接再发起一次激活。verify 不修改状态文件。它区分本地最后记录与远端观察结果，处理上传、stage、切换或 finalize 响应中断。
+
+远端 helper 的 stdout 专供机器回执，SSH 和 helper 的 stderr 保留为诊断日志，不合并进状态解析。stdout 出现额外文本或传输返回非零状态仍视为失败；不能通过过滤未知回执或隐藏 SSH 提示继续发布。
 
 自动检查发现 pending 激活失败时，发布器沿用既有失败回退。服务器保留 30 分钟过期恢复和重启恢复机制。浏览器未通过时不得 finalize；手工回退须有当前授权，并绑定精确 SHA 和 lease：
 

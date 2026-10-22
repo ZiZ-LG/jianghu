@@ -124,11 +124,30 @@ ensure_operator_tmp() {
 }
 
 require_successful_workflow_run() {
-  local repository=$1 expected_sha=$2 workflow_file=$3 output_file=$4 run_url
-  gh api --hostname github.com --method GET \
-    "repos/$repository/actions/workflows/$workflow_file/runs" \
-    -f head_sha="$expected_sha" -f branch=main -f event=push -F per_page=20 \
-    > "$output_file"
+  local repository=$1 expected_sha=$2 workflow_file=$3 output_file=$4 run_url attempt
+  # The list API can transiently return no runs for a known exact SHA. Requery
+  # only a valid empty result; never retry a failed/queued run into a green one.
+  for attempt in 1 2 3 4 5; do
+    gh api --hostname github.com --method GET \
+      "repos/$repository/actions/workflows/$workflow_file/runs" \
+      -H 'Cache-Control: no-cache' \
+      -f head_sha="$expected_sha" -f branch=main -f event=push -F per_page=20 \
+      > "$output_file" \
+      || fail "$repository/$workflow_file workflow query failed"
+    jq -e 'type == "object"
+      and (.total_count | type == "number" and . >= 0 and floor == .)
+      and (.workflow_runs | type == "array")
+      and ((.workflow_runs | length) <= .total_count)
+      and ((.total_count == 0) == ((.workflow_runs | length) == 0))' \
+      "$output_file" >/dev/null \
+      || fail "$repository/$workflow_file workflow query response is malformed"
+    if ! jq -e '.total_count == 0' "$output_file" >/dev/null; then break; fi
+    [[ $attempt -lt 5 ]] \
+      || fail "$repository/$workflow_file workflow query remained empty after 5 attempts"
+    printf 'STEPHEN_WORKFLOW_QUERY_RETRY=%s/%s empty exact-SHA result (%s/5)\n' \
+      "$repository" "$workflow_file" "$attempt" >&2
+    sleep 2
+  done
   jq -e --arg source_sha "$expected_sha" --arg repository "$repository" \
     "$WORKFLOW_RUN_FILTER" "$output_file" >/dev/null \
     || fail "$repository/$workflow_file newest run is not successful for the exact current main SHA"
@@ -303,6 +322,7 @@ configure_ssh() {
 }
 
 remote_helper() {
+  # stdout is the helper protocol; SSH and helper diagnostics stay on stderr.
   local helper_command=$1
   shift
   local remote_command
@@ -718,7 +738,7 @@ classify_remote_transaction() {
 rollback_pending_activation() {
   local failed_sha=$1 lease_id=$2 expected_previous=$3 rollback_output
   set +e
-  rollback_output=$(remote_helper rollback "$failed_sha" "$lease_id" 2>&1)
+  rollback_output=$(remote_helper rollback "$failed_sha" "$lease_id")
   local rollback_rc=$?
   set -e
   [[ $rollback_rc -eq 0 ]] || fail "pending activation rollback failed: $rollback_output"
@@ -1023,7 +1043,7 @@ case "$command_name" in
     update_release_state 'activate' 'UPLOAD_REQUESTED' true false
     upload_archive
     set +e
-    stage_output=$(remote_helper stage "$source_sha" "$BUNDLE_ARCHIVE_CHECKSUM" 2>&1)
+    stage_output=$(remote_helper stage "$source_sha" "$BUNDLE_ARCHIVE_CHECKSUM")
     stage_rc=$?
     set -e
     if [[ $stage_rc -ne 0 ]] \
@@ -1042,11 +1062,11 @@ case "$command_name" in
       fail "exact-main revalidation failed before activation: $exact_main_output"
     fi
     set +e
-    activation_output=$(remote_helper activate "$source_sha" "$lease_id" 2>&1)
+    activation_output=$(remote_helper activate "$source_sha" "$lease_id")
     activation_rc=$?
     set -e
     set +e
-    reconciliation=$(remote_helper status 2>&1)
+    reconciliation=$(remote_helper status)
     reconciliation_rc=$?
     set -e
     [[ $reconciliation_rc -eq 0 ]] \
@@ -1136,7 +1156,7 @@ case "$command_name" in
 
     update_release_state 'finalize' 'FINALIZE_REQUESTED' true false
     set +e
-    finalization_output=$(remote_helper finalize "$source_sha" "$STATE_LEASE_ID" 2>&1)
+    finalization_output=$(remote_helper finalize "$source_sha" "$STATE_LEASE_ID")
     finalization_rc=$?
     set -e
     finalization_response='untrusted'
@@ -1147,7 +1167,7 @@ case "$command_name" in
       finalization_response='acknowledged'
     fi
     set +e
-    reconciliation=$(remote_helper status 2>&1)
+    reconciliation=$(remote_helper status)
     reconciliation_rc=$?
     set -e
     [[ $reconciliation_rc -eq 0 ]] \
