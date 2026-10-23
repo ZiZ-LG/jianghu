@@ -114,6 +114,35 @@ class TransactionTests(unittest.TestCase):
         self.assertEqual(max(self.events), 1)
         self.assertIn(0, self.events)
 
+    def test_fast_proxy_failures_can_recover_after_dns_resolution_window(self):
+        clock = {'now': 0.0}
+        def sleep(seconds):
+            clock['now'] += seconds
+        def request(*args, **kw):
+            healthy = clock['now'] >= 31
+            return m.subprocess.CompletedProcess(args[0], 0 if healthy else 22,
+                                                  b'{"ok":true}' if healthy else b'')
+        with patch.object(m.time, 'monotonic', lambda: clock['now']), \
+             patch.object(m.time, 'sleep', sleep), patch.object(m.subprocess, 'run', request):
+            m.Release.public_ready(self.r)
+        self.assertGreaterEqual(clock['now'], 31)
+        self.assertLess(clock['now'], 75)
+
+    def test_public_dns_wait_is_wall_clock_bounded_and_never_extends_lease(self):
+        for lease in [None, 12]:
+            clock = {'now': 0.0}
+            self.r.active_lease = None if lease is None else {'deadline': lease, 'monotonicDeadline': lease}
+            def sleep(seconds):
+                clock['now'] += seconds
+            with patch.object(m.time, 'time', lambda: clock['now']), \
+                 patch.object(m.time, 'monotonic', lambda: clock['now']), \
+                 patch.object(m.time, 'sleep', sleep), \
+                 patch.object(m.subprocess, 'run', return_value=m.subprocess.CompletedProcess([], 22, b'')):
+                with self.assertRaises(m.ReleaseError):
+                    m.Release.public_ready(self.r)
+            self.assertEqual(clock['now'], lease if lease is not None else 75)
+        self.r.active_lease = None
+
     def test_single_worker_foreign_worker_blocks_before_mutation(self):
         self.cs[PEER] = copy.deepcopy(self.cs[OLD])
         self.cs[PEER]['Id'] = PEER

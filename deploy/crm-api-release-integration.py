@@ -24,6 +24,7 @@ NETWORKS = []
 IMAGE = PREFIX + ':fixture'
 ROOT = Path(tempfile.mkdtemp(prefix=PREFIX + '-'))
 ENV = dict(os.environ, PYTHONDONTWRITEBYTECODE='1')
+DIAGNOSTICS_EMITTED = False
 
 
 def run(*args, **kw):
@@ -47,6 +48,7 @@ def release(root, action, *args, expect_success=True):
                         action] + list(args), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                        env=ENV, timeout=180)
     if expect_success and p.returncode:
+        diagnostics()
         raise RuntimeError(p.stderr.decode()[-1800:])
     if not expect_success:
         assert p.returncode != 0, 'injected failure was silently accepted'
@@ -93,7 +95,7 @@ def scenario(label, mode):
     oldmarker = inspect(old)['Config']['Hostname']
     oldip = inspect(old)['NetworkSettings']['Networks'][front]['IPAddress']
     config = ROOT / (label + '-nginx.conf')
-    config.write_text('events {}\nhttp { upstream api { zone api 64k; resolver 127.0.0.11 valid=1s ipv6=off; '
+    config.write_text('error_log /dev/stderr info;\nevents {}\nhttp { upstream api { zone api 64k; resolver 127.0.0.11 valid=1s ipv6=off; '
                       'server crm-api-production:3001 resolve; } server { listen 80; location / { '
                       'proxy_pass http://api; proxy_connect_timeout 1s; proxy_read_timeout 2s; } } }\n')
     docker('create', '--name', edge, '--network', front, '--label', LABEL, '--memory', '48m',
@@ -122,7 +124,9 @@ def scenario(label, mode):
     new = state['apiId']
     CREATED.append(new)
     fixture = {'new': new, 'old': oldid, 'front': front, 'holder': holder,
-               'mode': mode, 'unhealthyFile': str(ROOT / 'unhealthy')}
+               'mode': mode, 'edge': edgeid, 'unhealthyFile': str(ROOT / 'unhealthy')}
+    fixture['dnsEvidence'] = str(ROOT / (label + '-dns.jsonl'))
+    fixture['proxyDelayFile'] = str(ROOT / (label + '-proxy-delay'))
     (ROOT / 'injection.json').write_text(json.dumps(fixture))
     if mode in ['network-failure', 'unhealthy', 'activation-expiry']:
         began = time.monotonic()
@@ -186,9 +190,53 @@ def scenario(label, mode):
     assert all(not inspect(cid)['HostConfig'].get('PortBindings') for cid in [oldid, new])
     assert set(inspect(oldid)['NetworkSettings']['Networks']) == {back, front}
     assert inspect(oldid)['Config']['Entrypoint'] == ['npm']
+    observations = [json.loads(line) for line in Path(fixture['dnsEvidence']).read_text().splitlines()] if Path(fixture['dnsEvidence']).exists() else []
     print(json.dumps({'scenario': label, 'passed': True, 'oldId': oldid, 'newId': new,
                       'phase': state['phase'], 'pending': state['pending'],
-                      'automaticIPAM': True, 'productionCredentialsOrDBUsed': False}), flush=True)
+                      'automaticIPAM': True, 'productionCredentialsOrDBUsed': False,
+                      'dnsObservations': observations, 'fastProxyFailureSeconds': 35 if mode == 'reserve-address' else 0}), flush=True)
+
+
+def diagnostics():
+    """Only disposable fixture evidence; never emit Config.Env/private baseline."""
+    global DIAGNOSTICS_EMITTED
+    if DIAGNOSTICS_EMITTED:
+        return
+    DIAGNOSTICS_EMITTED = True
+    result = {'fixtureFailure': True, 'containers': [], 'states': []}
+    try:
+        result['dockerEngine'] = run(REAL_DOCKER, 'version', '--format', '{{.Server.Version}}', timeout=5).decode().strip()
+    except Exception as error:
+        result['engineQueryError'] = type(error).__name__
+    for name in CREATED:
+        try:
+            c = inspect(name)
+            labels = c['Config'].get('Labels') or {}
+            owned = (labels.get('crm.release.integration') == PREFIX or
+                     labels.get('crm.release.transaction', '').startswith(str(ROOT) + '/'))
+            if not owned:
+                continue
+            row = {k: c[k] for k in ['Id', 'Name', 'Image']}
+            row['running'] = c['State']['Running']
+            row['networks'] = {n: {'address': v.get('IPAddress'), 'aliases': v.get('Aliases')}
+                               for n, v in c['NetworkSettings']['Networks'].items()}
+            if c['Name'].endswith('-edge'):
+                # Docker logs writes nginx errors to stderr; capture both streams.
+                log = subprocess.run([REAL_DOCKER, 'logs', '--tail', '50', c['Id']],
+                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=5)
+                row['nginxLog'] = log.stdout.decode(errors='replace')
+            result['containers'].append(row)
+        except Exception as error:
+            result['containers'].append({'fixture': name, 'diagnosticError': type(error).__name__})
+    for path in ROOT.glob('*-state/state.json'):
+        try:
+            state = json.loads(path.read_text())
+            result['states'].append({k: state.get(k) for k in
+                                     ['phase', 'pending', 'apiId', 'oldId', 'deadline', 'rollbackReason']})
+        except Exception as error:
+            result['states'].append({'diagnosticError': type(error).__name__})
+    result['dnsObservations'] = [line for p in ROOT.glob('*-dns.jsonl') for line in p.read_text().splitlines()]
+    print(json.dumps(result), flush=True)
 
 
 def main():
@@ -197,11 +245,13 @@ def main():
     ENV['CRM_RELEASE_DOCKER_SOCKET'] = endpoint[len('unix://'):]
     build = ROOT / 'build'
     build.mkdir()
-    (build / 'worker.py').write_text('''import http.server,json,os,socket
+    (build / 'worker.py').write_text('''import http.server,json,os,socket,time
 class Handler(http.server.BaseHTTPRequestHandler):
  def do_GET(self):
   bad=self.path=="/api/health/ready" and os.path.exists("/tmp/unhealthy")
-  self.send_response(503 if bad else 200);self.end_headers()
+  # Real fast proxy errors can outlast nginx's default 30s DNS resolution.
+  delay=os.path.exists("/tmp/proxy-delay-until") and self.headers.get("Host")=="api" and time.time()<float(open("/tmp/proxy-delay-until").read())
+  self.send_response(503 if bad or delay else 200);self.end_headers()
   body=socket.gethostname() if self.path=="/marker" else '{"ok":true}'
   self.wfile.write(body.encode())
  def log_message(self,*a):pass
@@ -215,7 +265,7 @@ http.server.HTTPServer(("0.0.0.0",3001),Handler).serve_forever()
     bindir.mkdir()
     shim = bindir / 'docker'
     shim.write_text('''#!PYTHON
-import json,os,subprocess,sys,pathlib
+import json,os,subprocess,sys,pathlib,time
 real=REAL
 conf=pathlib.Path(CONF)
 a=sys.argv[1:]
@@ -232,8 +282,22 @@ if conf.exists():
    elif target==c['old']:
     subprocess.check_call([real,'stop','-t','2',c['holder']],stdout=subprocess.DEVNULL)
     subprocess.check_call([real,'network','disconnect',c['front'],c['holder']],stdout=subprocess.DEVNULL)
+ if a[:1]==['start'] and a[-1]==c['new'] and c['mode']=='reserve-address':
+  pathlib.Path(c['proxyDelayFile']).write_text(str(time.time()+35))
+  subprocess.check_call([real,'cp',c['proxyDelayFile'],c['new']+':/tmp/proxy-delay-until'])
  if a[:1]==['start'] and a[-1]==c['new'] and c['mode'] in ['unhealthy','activation-expiry']:
   subprocess.check_call([real,'cp',c['unhealthyFile'],c['new']+':/tmp/unhealthy'])
+ if c['mode']=='reserve-address' and (a[:1] in [['start'],['stop']] and a[-1] in [c['old'],c['new']] or a[:2] in [['network','connect'],['network','disconnect']] and a[-2]==c['front'] and a[-1] in [c['old'],c['new']]):
+  rc=subprocess.call([real]+a)
+  event={'operation':a[:2],'target':a[-1],'commandExit':rc}
+  try:
+   q=subprocess.run([real,'exec',c['edge'],'nslookup','crm-api-production','127.0.0.11'],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=3)
+   event.update(dnsExit=q.returncode,dns=q.stdout.decode(errors='replace'))
+  except subprocess.TimeoutExpired as error:
+   event.update(dnsExit='timeout',dns=(error.output or b'').decode(errors='replace'))
+  with open(c['dnsEvidence'],'a') as f:f.write(json.dumps(event)+'\\n')
+  if a[:2]==['network','disconnect'] and a[-2]==c['front'] and a[-1]==c['old']:time.sleep(3)
+  sys.exit(rc)
 os.execv(real,[real]+a)
 '''.replace('PYTHON', sys.executable).replace('REAL', repr(REAL_DOCKER)).replace('CONF', repr(str(ROOT / 'injection.json'))))
     shim.chmod(0o700)
@@ -249,6 +313,9 @@ os.execv(real,[real]+a)
 if __name__ == '__main__':
     try:
         main()
+    except BaseException:
+        diagnostics()
+        raise
     finally:
         # Restrict cleanup to exact IDs/names created by this unique fixture run.
         for name in reversed(CREATED):

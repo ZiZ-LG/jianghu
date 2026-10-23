@@ -225,13 +225,20 @@ class Release:
         raise ReleaseError('API readiness deadline')
 
     def public_ready(self):
-        for _ in range(20):
+        # A fast 502 must not exhaust an attempt counter before nginx's default
+        # 30s DNS-resolution timeout. Use a real deadline, still capped by lease.
+        until = time.monotonic() + 75
+        while time.monotonic() < until:
+            timeout = min(self.budget(7), until - time.monotonic())
+            require(timeout > 0, 'public dynamic alias readiness deadline')
             p = subprocess.run(['curl', '--noproxy', '*', '-fsS', '--max-time', '5',
                                 self.plan['healthURL']], stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE, timeout=self.budget(7))
+                               stderr=subprocess.PIPE, timeout=timeout)
             if p.returncode == 0 and p.stdout.strip() == b'{"ok":true}':
                 return
-            self.pause(1)
+            remaining = until - time.monotonic()
+            if remaining > 0:
+                self.pause(min(1, remaining))
         raise ReleaseError('public dynamic alias readiness deadline')
 
     def disconnect(self, cid):

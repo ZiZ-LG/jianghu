@@ -37,6 +37,8 @@ python3 deploy/crm-api-release.py --root "$STATE" status
 python3 deploy/crm-api-release.py --root "$STATE" activate
 ```
 
+公网就绪采用 75 秒单调时钟预算，每个请求与暂停同时受原租约剩余时间约束。快速 502/503 不再按 20 次计数提前耗尽；Nginx 默认 DNS 解析超时为 30 秒（[官方说明](https://nginx.org/en/docs/http/ngx_http_upstream_module.html#resolver_timeout)），短 TTL 不等于短解析超时。此处不修改生产 Nginx、租约或 CI 的恢复耗时上限。停止容器保存的 aliases 不代表有可解析的活动 endpoint，切换允许先停后启的短 DNS 空窗，必须以真实代理恢复和单 worker 回读验收。
+
 激活返回 `AWAITING_ACCEPTANCE`、`pending=true` 与精确 lease。独立 watchdog 在首次停服前确认启动；激活和最终验收的命令、等待均受剩余租约约束。墙钟回拨不会延长单调时钟期限。若 Docker stop 超时且结果不明，恢复会等待原停止请求结束，不能把仍将停止的旧容器误报为已恢复。
 
 ## 验收、确认与失败恢复
@@ -69,6 +71,6 @@ python3 -O deploy/crm-api-release.test.py
 python3 deploy/crm-api-release-integration.py
 ```
 
-单元测试覆盖 IPAM/别名、单 worker、恢复失败、旧停止请求不明、验收失败、过期/错绑租约、环境保护和文件权限。CI 的独立 `crm-release` job 在 Linux/Python 3.12 运行单测和真实 Docker 集成，另用无网络 Python 3.6 容器验证兼容单测。集成只创建带唯一标记的临时容器/内部网络与 loopback 代理，不使用数据库、生产 DSN 或 SSH；强制新旧地址不同，验证动态 DNS 切换和回退，并覆盖网络失败、不健康、激活中到期、验收中到期和返回后的 watchdog 到期。清理仅处理本次 fixture。
+单元测试覆盖 IPAM/别名、单 worker、恢复失败、旧停止请求不明、验收失败、过期/错绑租约、环境保护和文件权限。CI 的独立 `crm-release` job 在 Linux/Python 3.12 运行单测和真实 Docker 集成，另用无网络 Python 3.6 容器验证兼容单测。集成只创建带唯一标记的临时容器/内部网络与 loopback 代理，不使用数据库、生产 DSN 或 SSH；强制新旧地址不同，逐步记录 edge 侧真实 DNS 应答，验证动态 DNS 切换和回退；地址场景还注入 35 秒快速代理 503，证明就绪预算不会过早耗尽。该人为反例不证明某次 CI 的唯一根因。失败仅收集带本次 fixture 标记的容器状态、网络、代理日志和事务摘要，禁止输出完整 Env/私有基线。同时覆盖网络失败、不健康、激活中到期、验收中到期和返回后的 watchdog 到期。清理仅处理本次 fixture。
 
 源码修复、CI 成功和生产替换各自记录证据；本文件定义流程，不代表任何一轮已发布。实际 SHA、镜像、租约、CI 与验收证据保存在该轮交付记录。
