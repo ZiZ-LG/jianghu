@@ -134,3 +134,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: bash scripts/test-postgres-ops-integration.sh
+
+  crm-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python deploy/crm-api-release.test.py
+      - name: Python 3.6 compatibility (no network or database)
+        run: docker run --rm --network none -e PYTHONDONTWRITEBYTECODE=1 -v "$PWD:/source:ro" -w /source python:3.6-alpine python deploy/crm-api-release.test.py
+      - run: python -O deploy/crm-api-release.test.py
+      - run: python deploy/crm-api-release-integration.py
